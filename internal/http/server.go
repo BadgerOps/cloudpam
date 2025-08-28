@@ -71,6 +71,8 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 		s.createPool(w, r)
 	case http.MethodPatch:
 		s.patchPool(w, r)
+	case http.MethodDelete:
+		s.deletePool(w, r)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -117,6 +119,8 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		s.listAccounts(w, r)
 	case http.MethodPost:
 		s.createAccount(w, r)
+	case http.MethodDelete:
+		s.deleteAccount(w, r)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -155,6 +159,46 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(a)
+}
+
+func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	ok, err := s.store.DeletePool(ctx, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	ok, err := s.store.DeleteAccount(ctx, id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // GET /api/v1/blocks?accounts=1,2&pools=10,11

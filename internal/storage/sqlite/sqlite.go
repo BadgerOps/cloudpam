@@ -157,6 +157,23 @@ func (s *Store) UpdatePoolAccount(ctx context.Context, id int64, accountID *int6
     return s.GetPool(ctx, id)
 }
 
+func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
+    // check children
+    var cnt int
+    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=?`, id).Scan(&cnt); err != nil {
+        return false, err
+    }
+    if cnt > 0 {
+        return false, errors.New("pool has child pools")
+    }
+    res, err := s.db.ExecContext(ctx, `DELETE FROM pools WHERE id=?`, id)
+    if err != nil {
+        return false, err
+    }
+    n, _ := res.RowsAffected()
+    return n > 0, nil
+}
+
 // Accounts
 func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
     rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, created_at FROM accounts ORDER BY id ASC`)
@@ -192,4 +209,21 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
         return domain.Account{}, err
     }
     return domain.Account{ID: id, Key: in.Key, Name: in.Name, Provider: in.Provider, ExternalID: in.ExternalID, Description: in.Description, CreatedAt: time.Now().UTC()}, nil
+}
+
+func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
+    // ensure not referenced
+    var cnt int
+    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=?`, id).Scan(&cnt); err != nil {
+        return false, err
+    }
+    if cnt > 0 {
+        return false, errors.New("account in use by pools")
+    }
+    res, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id)
+    if err != nil {
+        return false, err
+    }
+    n, _ := res.RowsAffected()
+    return n > 0, nil
 }

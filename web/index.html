@@ -44,10 +44,15 @@
     <header>
       <h1>CloudPAM</h1>
       <span class="muted">Lightweight Cloud IPAM (AWS/GCP)</span>
+      <nav style="margin-left:auto; display:flex; gap:1rem;">
+        <a href="#pools">Pools</a>
+        <a href="#accounts">Accounts</a>
+        <a href="#all-blocks">All Blocks</a>
+      </nav>
     </header>
 
     <main>
-    <section x-data="pools()" x-init="init()" class="card">
+    <section id="pools" x-data="pools()" x-init="init()" class="card">
       <h2>Top-level Pools</h2>
       <div class="row">
         <input type="text" placeholder="Name" x-model="form.name" />
@@ -73,7 +78,10 @@
               <td x-text="p.cidr"></td>
               <td x-text="accountName(p.account_id)"></td>
               <td x-text="new Date(p.created_at).toLocaleString()"></td>
-              <td><button class="btn ghost" @click="selectPool(p)">View Blocks</button></td>
+              <td>
+                <button class="btn ghost" @click="selectPool(p)">View Blocks</button>
+                <button class="btn ghost" style="margin-left:.5rem" @click="deletePool(p)">Delete</button>
+              </td>
             </tr>
           </template>
           <tr x-show="topLevel.length === 0"><td colspan="5" style="color:#999">No pools yet</td></tr>
@@ -161,7 +169,7 @@
       </template>
     </section>
     
-    <section x-data="accountsView()" x-init="fetchAccounts()" class="card" style="margin-top:1rem;">
+    <section id="accounts" x-data="accountsView()" x-init="fetchAccounts()" class="card" style="margin-top:1rem;">
       <h2>Accounts</h2>
       <div class="row">
         <input type="text" placeholder="Key (e.g., aws:123, gcp:proj)" x-model="acctForm.key" />
@@ -185,7 +193,10 @@
               <td x-text="a.provider || '-' "></td>
               <td x-text="a.external_id || '-' "></td>
               <td x-text="a.description || '-' "></td>
-              <td x-text="new Date(a.created_at).toLocaleString()"></td>
+              <td>
+                <span x-text="new Date(a.created_at).toLocaleString()"></span>
+                <button class="btn ghost" style="margin-left:.5rem" @click="deleteAccount(a)">Delete</button>
+              </td>
             </tr>
           </template>
           <tr x-show="accounts.length === 0"><td colspan="7" style="color:#999">No accounts yet</td></tr>
@@ -216,12 +227,22 @@
                 this.acctMsg = 'Created';
               } catch (e) { this.acctMsg = 'Create failed'; }
             }
+            ,
+            async deleteAccount(a) {
+              if (!confirm(`Delete account "${a.name}"? This requires no pools use it.`)) return;
+              try {
+                const res = await fetch(`/api/v1/accounts?id=${a.id}`, { method: 'DELETE' });
+                if (!res.ok) { this.acctMsg = await res.text(); return; }
+                await this.fetchAccounts();
+                this.acctMsg = 'Deleted';
+              } catch (e) { this.acctMsg = 'Delete failed'; }
+            }
           }
         }
       </script>
     </section>
 
-    <section x-data="allBlocksView()" x-init="init()" class="card" style="margin-top:1rem;">
+    <section id="all-blocks" x-data="allBlocksView()" x-init="init()" class="card" style="margin-top:1rem;">
       <h2>All Assigned Blocks</h2>
       <div class="row" style="align-items:center; gap:1rem;">
         <div>
@@ -248,10 +269,10 @@
       </div>
       <table>
         <thead>
-          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Parent Pool</th><th>Account</th><th>Created</th></tr>
+          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Parent Pool</th><th>Account</th><th>Created</th><th>Action</th></tr>
         </thead>
         <tbody>
-          <template x-for="b in blocks" :key="b.id">
+          <template x-for="b in filtered()" :key="b.id">
             <tr>
               <td x-text="b.id"></td>
               <td x-text="b.name"></td>
@@ -259,11 +280,16 @@
               <td x-text="b.parent_name"></td>
               <td x-text="b.account_name || '-' "></td>
               <td x-text="new Date(b.created_at).toLocaleString()"></td>
+              <td><button class="btn ghost" @click="deleteBlock(b)">Delete</button></td>
             </tr>
           </template>
-          <tr x-show="blocks.length === 0"><td colspan="6" style="color:#999">No assigned blocks match filters</td></tr>
+          <tr x-show="filtered().length === 0"><td colspan="7" style="color:#999">No assigned blocks match filters</td></tr>
         </tbody>
       </table>
+      <div class="row" style="margin-top:.5rem; align-items:center;">
+        <input type="text" placeholder="Search (name, cidr, parent, account)" x-model="search" style="min-width:24rem;" />
+        <button class="btn" @click="downloadCsv()">Export CSV</button>
+      </div>
       <script>
         function allBlocksView() {
           return {
@@ -272,6 +298,7 @@
             selectedAccounts: [],
             selectedPools: [],
             blocks: [],
+            search: '',
             msg: '',
             async init() {
               await Promise.all([this.fetchAccounts(), this.fetchParentPools()]);
@@ -297,6 +324,39 @@
               } catch (e) { this.msg = 'Failed to load blocks'; }
             },
             clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.load(); }
+            ,
+            filtered() {
+              const q = (this.search || '').toLowerCase();
+              if (!q) return this.blocks;
+              return this.blocks.filter(b =>
+                String(b.id).includes(q) ||
+                (b.name||'').toLowerCase().includes(q) ||
+                (b.cidr||'').toLowerCase().includes(q) ||
+                (b.parent_name||'').toLowerCase().includes(q) ||
+                (b.account_name||'').toLowerCase().includes(q)
+              );
+            }
+            ,
+            async deleteBlock(b) {
+              if (!confirm(`Delete sub-pool "${b.name}" (${b.cidr})?`)) return;
+              try {
+                const res = await fetch(`/api/v1/pools?id=${b.id}`, { method: 'DELETE' });
+                if (!res.ok) { this.msg = await res.text(); return; }
+                await this.load();
+              } catch (e) { this.msg = 'Delete failed'; }
+            }
+            ,
+            downloadCsv() {
+              const rows = this.filtered();
+              const header = ['id','name','cidr','parent_id','parent_name','account_id','account_name','created_at'];
+              const esc = v => '"' + String(v ?? '').replace(/"/g,'""') + '"';
+              const lines = [header.join(',')].concat(rows.map(r => [r.id,r.name,r.cidr,r.parent_id,r.parent_name,r.account_id||'',r.account_name||'',r.created_at].map(esc).join(',')));
+              const blob = new Blob([lines.join('\n')], {type:'text/csv'});
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url; a.download = 'assigned_blocks.csv'; a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 2000);
+            }
           }
         }
       </script>
@@ -425,6 +485,16 @@
             } catch (e) {
               this.msg = 'Network error';
             }
+          },
+          async deletePool(p) {
+            if (!confirm(`Delete pool "${p.name}"? Server will prevent deleting non-empty pools.`)) return;
+            try {
+              const res = await fetch(`/api/v1/pools?id=${p.id}`, { method: 'DELETE' });
+              if (!res.ok) { this.msg = await res.text(); return; }
+              await this.fetchList();
+              if (this.current && this.current.id === p.id) this.current = null;
+              this.msg = 'Deleted';
+            } catch (e) { this.msg = 'Delete failed'; }
           },
           async updateCurrentPoolAccount() {
             if (!this.current) return;

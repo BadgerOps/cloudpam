@@ -15,9 +15,11 @@ type Store interface {
 	CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error)
 	GetPool(ctx context.Context, id int64) (domain.Pool, bool, error)
 	UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error)
+	DeletePool(ctx context.Context, id int64) (bool, error)
 	// Accounts management
 	ListAccounts(ctx context.Context) ([]domain.Account, error)
 	CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error)
+	DeleteAccount(ctx context.Context, id int64) (bool, error)
 }
 
 // MemoryStore is an in-memory implementation for quick start and tests.
@@ -83,6 +85,22 @@ func (m *MemoryStore) UpdatePoolAccount(ctx context.Context, id int64, accountID
 	return p, true, nil
 }
 
+func (m *MemoryStore) DeletePool(ctx context.Context, id int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// ensure no children
+	for _, p := range m.pools {
+		if p.ParentID != nil && *p.ParentID == id {
+			return false, errors.New("pool has child pools")
+		}
+	}
+	if _, ok := m.pools[id]; !ok {
+		return false, nil
+	}
+	delete(m.pools, id)
+	return true, nil
+}
+
 // Accounts
 func (m *MemoryStore) ListAccounts(ctx context.Context) ([]domain.Account, error) {
 	m.mu.RLock()
@@ -113,4 +131,20 @@ func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount
 	}
 	m.accounts[id] = a
 	return a, nil
+}
+
+func (m *MemoryStore) DeleteAccount(ctx context.Context, id int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// ensure no pools reference
+	for _, p := range m.pools {
+		if p.AccountID != nil && *p.AccountID == id {
+			return false, errors.New("account in use by pools")
+		}
+	}
+	if _, ok := m.accounts[id]; !ok {
+		return false, nil
+	}
+	delete(m.accounts, id)
+	return true, nil
 }
