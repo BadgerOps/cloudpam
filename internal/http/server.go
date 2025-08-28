@@ -152,10 +152,11 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 }
 
 type blockInfo struct {
-	CIDR      string `json:"cidr"`
-	PrefixLen int    `json:"prefix_len"`
-	Hosts     uint64 `json:"hosts"`
-	Used      bool   `json:"used"`
+	CIDR         string `json:"cidr"`
+	PrefixLen    int    `json:"prefix_len"`
+	Hosts        uint64 `json:"hosts"`
+	Used         bool   `json:"used"`
+	AssignedName string `json:"assigned_name,omitempty"`
 }
 
 func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64) {
@@ -220,15 +221,20 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	used := map[string]bool{}
+	used := map[string]string{}
 	for _, p := range all {
 		if p.ParentID != nil && *p.ParentID == pool.ID {
-			used[p.CIDR] = true
+			used[p.CIDR] = p.Name
 		}
 	}
 	out := make([]blockInfo, 0, len(blocks))
 	for _, b := range blocks {
-		out = append(out, blockInfo{CIDR: b, PrefixLen: npl, Hosts: hosts, Used: used[b]})
+		bi := blockInfo{CIDR: b, PrefixLen: npl, Hosts: hosts}
+		if name, ok := used[b]; ok {
+			bi.Used = true
+			bi.AssignedName = name
+		}
+		out = append(out, bi)
 	}
 	type resp struct {
 		Items    []blockInfo `json:"items"`

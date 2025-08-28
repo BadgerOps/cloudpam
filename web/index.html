@@ -99,11 +99,15 @@
             <button class="btn ghost" @click="nextPage()" :disabled="page>=totalPages || pageSize==='all'">Next</button>
             <button class="btn ghost" @click="lastPage()" :disabled="page>=totalPages || pageSize==='all'">Last</button>
             <span class="muted" x-show="total>0">Showing <strong x-text="fromItem"></strong>–<strong x-text="toItem"></strong> of <strong x-text="total"></strong></span>
+            <label style="margin-left:auto; display:flex; gap:.4rem; align-items:center;">
+              <input type="checkbox" x-model="showOnlyUsed" @change="filterBlocks()" />
+              Show only used
+            </label>
           </div>
 
           <table>
             <thead>
-              <tr><th>Prefix</th><th>Hosts</th><th>Status</th><th>Action</th></tr>
+              <tr><th>Prefix</th><th>Hosts</th><th>Status</th><th>Assigned Name</th><th>Action</th></tr>
             </thead>
             <tbody>
               <template x-for="b in blocks" :key="b.cidr">
@@ -113,12 +117,13 @@
                   <td>
                     <span :class="b.used ? 'status-used' : 'status-free'" x-text="b.used ? 'Used' : 'Free'"></span>
                   </td>
+                  <td x-text="b.assigned_name || '-' "></td>
                   <td>
                     <button class="btn" :disabled="b.used" @click="createSub(b)">Create Sub-pool</button>
                   </td>
                 </tr>
               </template>
-              <tr x-show="blocks.length === 0"><td colspan="4" style="color:#999">No blocks yet</td></tr>
+              <tr x-show="blocks.length === 0"><td colspan="5" style="color:#999">No blocks yet</td></tr>
             </tbody>
           </table>
         </div>
@@ -136,6 +141,8 @@
           current: null,
           blockPrefix: 24,
           blocks: [],
+          rawBlocks: [],
+          showOnlyUsed: false,
           subMsg: '',
           pageSize: '50',
           page: 1,
@@ -171,23 +178,32 @@
               const data = await res.json();
               if (Array.isArray(data)) {
                 // Back-compat (shouldn't happen with new server)
-                this.blocks = data;
+                this.rawBlocks = data;
+                this.filterBlocks();
                 this.total = data.length;
                 this.totalPages = 1;
                 this.fromItem = data.length ? 1 : 0;
                 this.toItem = data.length;
               } else {
-                this.blocks = data.items || [];
+                this.rawBlocks = data.items || [];
                 this.total = data.total || 0;
                 const pageSizeNum = this.pageSize === 'all' ? this.total : parseInt(this.pageSize, 10);
                 this.totalPages = pageSizeNum > 0 ? Math.max(1, Math.ceil(this.total / pageSizeNum)) : 1;
                 const startIdx = this.total === 0 ? 0 : ((this.page - 1) * (pageSizeNum || this.total)) + 1;
-                const endIdx = this.total === 0 ? 0 : Math.min(this.total, (this.page - 1) * (pageSizeNum || this.total) + this.blocks.length);
+                const endIdx = this.total === 0 ? 0 : Math.min(this.total, (this.page - 1) * (pageSizeNum || this.total) + this.rawBlocks.length);
                 this.fromItem = startIdx;
                 this.toItem = endIdx;
                 this.pageInput = this.page;
+                this.filterBlocks();
               }
             } catch (e) { this.subMsg = 'Failed to load blocks'; }
+          },
+          filterBlocks() {
+            if (this.showOnlyUsed) {
+              this.blocks = this.rawBlocks.filter(b => b.used);
+            } else {
+              this.blocks = this.rawBlocks;
+            }
           },
           async prevPage() { if (this.page > 1) { this.page--; await this.loadBlocks(); } },
           async nextPage() { if (this.page < this.totalPages) { this.page++; await this.loadBlocks(); } },

@@ -1,30 +1,27 @@
-name: Lint
-
+name: golangci-lint
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   pull_request:
-    branches: [ "**" ]
+
+permissions:
+  contents: read
+  # Optional: allow read access to pull requests. Use with `only-new-issues` option.
+  # pull-requests: read
 
 jobs:
   golangci:
-    name: golangci-lint
+    name: lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
         with:
-          # Align with go.mod (go 1.23 + toolchain 1.24.x)
-          go-version: '1.24.x'
-
-      - name: Run golangci-lint
+          go-version: stable
+      - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
-          args: --timeout=5m
+          version: v2.1
 
-      - name: go vet
-        run: go vet ./...
