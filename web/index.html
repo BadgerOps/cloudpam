@@ -220,6 +220,87 @@
         }
       </script>
     </section>
+
+    <section x-data="allBlocksView()" x-init="init()" class="card" style="margin-top:1rem;">
+      <h2>All Assigned Blocks</h2>
+      <div class="row" style="align-items:center; gap:1rem;">
+        <div>
+          <div class="muted">Filter by Accounts</div>
+          <select x-model="selectedAccounts" multiple size="4" style="min-width:18rem;">
+            <template x-for="a in accounts" :key="a.id">
+              <option :value="String(a.id)" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+            </template>
+          </select>
+        </div>
+        <div>
+          <div class="muted">Filter by Parent Pools</div>
+          <select x-model="selectedPools" multiple size="4" style="min-width:18rem;">
+            <template x-for="p in parentPools" :key="p.id">
+              <option :value="String(p.id)" x-text="p.name + ' ('+p.cidr+')'"></option>
+            </template>
+          </select>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:.5rem;">
+          <button class="btn" @click="load()">Refresh</button>
+          <button class="btn ghost" @click="clearFilters()">Clear Filters</button>
+        </div>
+        <span class="muted" x-text="msg"></span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Parent Pool</th><th>Account</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="b in blocks" :key="b.id">
+            <tr>
+              <td x-text="b.id"></td>
+              <td x-text="b.name"></td>
+              <td x-text="b.cidr"></td>
+              <td x-text="b.parent_name"></td>
+              <td x-text="b.account_name || '-' "></td>
+              <td x-text="new Date(b.created_at).toLocaleString()"></td>
+            </tr>
+          </template>
+          <tr x-show="blocks.length === 0"><td colspan="6" style="color:#999">No assigned blocks match filters</td></tr>
+        </tbody>
+      </table>
+      <script>
+        function allBlocksView() {
+          return {
+            accounts: [],
+            parentPools: [],
+            selectedAccounts: [],
+            selectedPools: [],
+            blocks: [],
+            msg: '',
+            async init() {
+              await Promise.all([this.fetchAccounts(), this.fetchParentPools()]);
+              await this.load();
+            },
+            async fetchAccounts() {
+              try { const res = await fetch('/api/v1/accounts'); this.accounts = await res.json(); }
+              catch (e) { this.msg = 'Failed to load accounts'; }
+            },
+            async fetchParentPools() {
+              try { const res = await fetch('/api/v1/pools'); const all = await res.json(); this.parentPools = all.filter(p => !p.parent_id); }
+              catch (e) { this.msg = 'Failed to load pools'; }
+            },
+            async load() {
+              this.msg = '';
+              try {
+                const q = new URLSearchParams();
+                if (this.selectedAccounts.length) q.set('accounts', this.selectedAccounts.join(','));
+                if (this.selectedPools.length) q.set('pools', this.selectedPools.join(','));
+                const res = await fetch('/api/v1/blocks?' + q.toString());
+                if (!res.ok) { this.msg = await res.text(); return; }
+                this.blocks = await res.json();
+              } catch (e) { this.msg = 'Failed to load blocks'; }
+            },
+            clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.load(); }
+          }
+        }
+      </script>
+    </section>
     </main>
 
     <script>
