@@ -19,7 +19,7 @@ coverage.out
 **/pkg/mod/
 
 # SQLite and data
-*.db
+*.db*
 *.sqlite
 *.sqlite3
 cloudpam.db
@@ -36,4 +36,5 @@ dist/
 # OS
 ._*
 Icon?
+
 

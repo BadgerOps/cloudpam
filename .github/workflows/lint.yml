@@ -17,14 +17,15 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x'
+          # Align with go.mod (go 1.23 + toolchain 1.24.x)
+          go-version: '1.24.x'
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.58.2
+          # Use a version compatible with Go 1.24 export data
+          version: latest
           args: --timeout=5m
 
       - name: go vet
         run: go vet ./...
-

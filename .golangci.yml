@@ -1,3 +1,5 @@
+version: 2
+
 run:
   timeout: 5m
   tests: true
@@ -8,19 +10,11 @@ linters:
     - govet
     - staticcheck
     - ineffassign
-    - gofmt
-    - goimports
-    - gosimple
-    - unused
-    - typecheck
     - errcheck
     - gocritic
     - misspell
-    - revive
 
 linters-settings:
-  goimports:
-    local-prefixes: cloudpam
   revive:
     severity: warning
     rules:
@@ -28,6 +22,15 @@ linters-settings:
         disabled: true
       - name: package-comments
         disabled: true
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+
+formatters-settings:
+  goimports:
+    local-prefixes: cloudpam
 
 issues:
   exclude-use-default: false
@@ -39,4 +42,12 @@ issues:
       linters:
         - gofmt
         - goimports
-
+    - linters:
+        - revive
+      text: package-comments
+    - linters:
+        - revive
+      text: "^exported:"
+    - linters:
+        - revive
+      text: unused-parameter

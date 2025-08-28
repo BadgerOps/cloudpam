@@ -36,6 +36,11 @@ help:
 
 .fallback-lint:
 	@command -v golangci-lint >/dev/null || { echo "golangci-lint not found. Install from https://golangci-lint.run/ to use 'make lint'"; exit 1; }
+	@v=$$(golangci-lint --version 2>/dev/null | awk '{print $$4}' | sed 's/^v//'); req=1.61.0; \
+	if [ -n "$$v" ] && [ "$$req" != "$$(printf '%s\n' "$$req" "$$v" | sort -V | head -n1)" ]; then \
+		echo "golangci-lint $$v is too old; need >= $$req for Go 1.24"; \
+		exit 1; \
+	fi
 	golangci-lint run
 
 .fallback-test:
@@ -43,4 +48,3 @@ help:
 
 .fallback-tidy:
 	go mod tidy
-
