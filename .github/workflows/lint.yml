@@ -23,8 +23,8 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          # Use a version compatible with Go 1.24 export data
-          version: latest
+          # Pin to v2 to support config 'version: 2' and formatters section
+          version: v2.2.2
           args: --timeout=5m
 
       - name: go vet
