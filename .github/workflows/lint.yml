@@ -21,10 +21,9 @@ jobs:
           go-version: '1.24.x'
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          # Pin to v2 to support config 'version: 2' and formatters section
-          version: v2.2.2
+          version: latest
           args: --timeout=5m
 
       - name: go vet
