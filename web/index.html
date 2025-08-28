@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CloudPAM</title>
+    <style>
+      :root {
+        --bg: #f6f7fb;
+        --card: #ffffff;
+        --muted: #6b7280;
+        --text: #0f172a;
+        --border: #e5e7eb;
+        --primary: #2563eb;
+        --primary-600: #1d4ed8;
+        --success: #059669;
+        --danger: #dc2626;
+        --radius: 12px;
+        --shadow: 0 6px 20px rgba(0,0,0,0.08);
+      }
+      body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
+      header { display:flex; align-items:center; gap:1rem; padding: 1.25rem 2rem; background: var(--card); box-shadow: var(--shadow); position: sticky; top: 0; z-index: 10; }
+      header h1 { margin: 0; font-size: 20px; }
+      .muted { color: var(--muted); }
+      main { padding: 2rem; max-width: 1000px; margin: 0 auto; }
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem 1.25rem; }
+      input, select { padding: 0.5rem 0.6rem; font-size: 14px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--text); outline: none; }
+      input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
+      .btn { border: 1px solid var(--primary); color: #fff; background: var(--primary); padding: 0.5rem 0.8rem; border-radius: 8px; cursor: pointer; transition: background 0.15s ease, transform 0.04s ease; font-size: 14px; }
+      .btn:hover { background: var(--primary-600); }
+      .btn:active { transform: translateY(1px); }
+      .btn.ghost { background: transparent; color: var(--primary); border-color: var(--primary); }
+      .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+      table { border-collapse: collapse; width: 100%; margin-top: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+      th, td { border-bottom: 1px solid var(--border); padding: 10px 12px; }
+      th { background: #fafafa; text-align: left; font-weight: 600; }
+      .row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+      .status-used { color: var(--danger); font-weight: 600; }
+      .status-free { color: var(--success); font-weight: 600; }
+    </style>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1>CloudPAM</h1>
+      <span class="muted">Lightweight Cloud IPAM (AWS/GCP)</span>
+    </header>
+
+    <main>
+    <section x-data="pools()" x-init="init()" class="card">
+      <h2>Top-level Pools</h2>
+      <div class="row">
+        <input type="text" placeholder="Name" x-model="form.name" />
+        <input type="text" placeholder="CIDR (e.g., 10.0.0.0/16)" x-model="form.cidr" />
+        <button class="btn" @click="createTop()">Create</button>
+        <span x-text="msg" class="muted"></span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Created</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="p in topLevel" :key="p.id">
+            <tr>
+              <td x-text="p.id"></td>
+              <td x-text="p.name"></td>
+              <td x-text="p.cidr"></td>
+              <td x-text="new Date(p.created_at).toLocaleString()"></td>
+              <td><button class="btn ghost" @click="selectPool(p)">View Blocks</button></td>
+            </tr>
+          </template>
+          <tr x-show="topLevel.length === 0"><td colspan="5" style="color:#999">No pools yet</td></tr>
+        </tbody>
+      </table>
+
+      <template x-if="current">
+        <div style="margin-top: 2rem;" class="card">
+          <h3 x-text="`Pool #${current.id}: ${current.name} (${current.cidr})`"></h3>
+          <div class="row" style="margin: 0.5rem 0; align-items:center;">
+            <label>Block size (prefix):</label>
+            <input type="number" min="16" max="32" x-model.number="blockPrefix" style="width:6rem" />
+            <label>Per page:</label>
+            <select x-model="pageSize" @change="onPageSize()">
+              <option value="10">10</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="all">All</option>
+            </select>
+            <button class="btn" @click="loadBlocks()">List Blocks</button>
+            <span x-text="subMsg" class="muted"></span>
+          </div>
+          <div class="row" style="margin: 0.5rem 0; align-items:center;">
+            <button class="btn ghost" @click="firstPage()" :disabled="page<=1 || pageSize==='all'">First</button>
+            <button class="btn ghost" @click="prevPage()" :disabled="page<=1 || pageSize==='all'">Prev</button>
+            <span>Page</span>
+            <input type="number" min="1" :max="totalPages" x-model.number="pageInput" style="width:5rem" />
+            <button class="btn ghost" @click="goToPage()" :disabled="pageSize==='all'">Go</button>
+            <span>of <strong x-text="totalPages"></strong></span>
+            <button class="btn ghost" @click="nextPage()" :disabled="page>=totalPages || pageSize==='all'">Next</button>
+            <button class="btn ghost" @click="lastPage()" :disabled="page>=totalPages || pageSize==='all'">Last</button>
+            <span class="muted" x-show="total>0">Showing <strong x-text="fromItem"></strong>–<strong x-text="toItem"></strong> of <strong x-text="total"></strong></span>
+          </div>
+
+          <table>
+            <thead>
+              <tr><th>Prefix</th><th>Hosts</th><th>Status</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+              <template x-for="b in blocks" :key="b.cidr">
+                <tr>
+                  <td x-text="b.cidr"></td>
+                  <td x-text="b.hosts"></td>
+                  <td>
+                    <span :class="b.used ? 'status-used' : 'status-free'" x-text="b.used ? 'Used' : 'Free'"></span>
+                  </td>
+                  <td>
+                    <button class="btn" :disabled="b.used" @click="createSub(b)">Create Sub-pool</button>
+                  </td>
+                </tr>
+              </template>
+              <tr x-show="blocks.length === 0"><td colspan="4" style="color:#999">No blocks yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </section>
+    </main>
+
+    <script>
+      function pools() {
+        return {
+          list: [],
+          topLevel: [],
+          form: { name: '', cidr: ''},
+          msg: '',
+          current: null,
+          blockPrefix: 24,
+          blocks: [],
+          subMsg: '',
+          pageSize: '50',
+          page: 1,
+          pageInput: 1,
+          total: 0,
+          totalPages: 1,
+          fromItem: 0,
+          toItem: 0,
+          async init() {
+            await this.fetchList();
+          },
+          async fetchList() {
+            try {
+              const res = await fetch('/api/v1/pools');
+              this.list = await res.json();
+              this.topLevel = this.list.filter(p => !p.parent_id);
+            } catch (e) {
+              this.msg = 'Failed to load pools';
+            }
+          },
+          selectPool(p) { this.current = p; this.blocks = []; this.subMsg=''; this.page=1; this.pageInput=1; this.total=0; this.totalPages=1; },
+          onPageSize() { this.page = 1; this.loadBlocks(); },
+          async loadBlocks() {
+            if (!this.current) return;
+            this.subMsg = '';
+            try {
+              const q = new URLSearchParams();
+              q.set('new_prefix_len', this.blockPrefix);
+              if (this.pageSize !== 'all') { q.set('page_size', this.pageSize); q.set('page', this.page); }
+              else { q.set('page_size', 'all'); }
+              const res = await fetch(`/api/v1/pools/${this.current.id}/blocks?${q.toString()}`);
+              if (!res.ok) { this.subMsg = await res.text(); return; }
+              const data = await res.json();
+              if (Array.isArray(data)) {
+                // Back-compat (shouldn't happen with new server)
+                this.blocks = data;
+                this.total = data.length;
+                this.totalPages = 1;
+                this.fromItem = data.length ? 1 : 0;
+                this.toItem = data.length;
+              } else {
+                this.blocks = data.items || [];
+                this.total = data.total || 0;
+                const pageSizeNum = this.pageSize === 'all' ? this.total : parseInt(this.pageSize, 10);
+                this.totalPages = pageSizeNum > 0 ? Math.max(1, Math.ceil(this.total / pageSizeNum)) : 1;
+                const startIdx = this.total === 0 ? 0 : ((this.page - 1) * (pageSizeNum || this.total)) + 1;
+                const endIdx = this.total === 0 ? 0 : Math.min(this.total, (this.page - 1) * (pageSizeNum || this.total) + this.blocks.length);
+                this.fromItem = startIdx;
+                this.toItem = endIdx;
+                this.pageInput = this.page;
+              }
+            } catch (e) { this.subMsg = 'Failed to load blocks'; }
+          },
+          async prevPage() { if (this.page > 1) { this.page--; await this.loadBlocks(); } },
+          async nextPage() { if (this.page < this.totalPages) { this.page++; await this.loadBlocks(); } },
+          async firstPage() { if (this.page !== 1) { this.page = 1; await this.loadBlocks(); } },
+          async lastPage() { if (this.page !== this.totalPages) { this.page = this.totalPages; await this.loadBlocks(); } },
+          async goToPage() {
+            if (this.pageSize === 'all') return;
+            let target = parseInt(this.pageInput, 10);
+            if (!target || target < 1) target = 1;
+            if (target > this.totalPages) target = this.totalPages;
+            if (target === this.page) return;
+            this.page = target;
+            await this.loadBlocks();
+          },
+          async createTop() {
+            this.msg = '';
+            try {
+              const res = await fetch('/api/v1/pools', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(this.form)
+              });
+              if (!res.ok) {
+                const t = await res.text();
+                this.msg = t || 'Error creating pool';
+                return;
+              }
+              this.form = { name: '', cidr: '' };
+              await this.fetchList();
+              this.msg = 'Created';
+            } catch (e) {
+              this.msg = 'Network error';
+            }
+          },
+          async createSub(b) {
+            if (!this.current) return;
+            const name = prompt(`Name for sub-pool ${b.cidr}`);
+            if (!name) return;
+            try {
+              const res = await fetch('/api/v1/pools', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, cidr: b.cidr, parent_id: this.current.id })
+              });
+              if (!res.ok) { this.subMsg = await res.text(); return; }
+              await this.fetchList();
+              await this.loadBlocks();
+              this.subMsg = 'Sub-pool created';
+            } catch (e) {
+              this.subMsg = 'Network error creating sub-pool';
+            }
+          }
+        }
+      }
+    </script>
+  </body>
+</html>
