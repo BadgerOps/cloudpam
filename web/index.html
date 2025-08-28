@@ -52,12 +52,18 @@
       <div class="row">
         <input type="text" placeholder="Name" x-model="form.name" />
         <input type="text" placeholder="CIDR (e.g., 10.0.0.0/16)" x-model="form.cidr" />
+        <select x-model.number="form.account_id">
+          <option :value="null">No Account</option>
+          <template x-for="a in accounts" :key="a.id">
+            <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+          </template>
+        </select>
         <button class="btn" @click="createTop()">Create</button>
         <span x-text="msg" class="muted"></span>
       </div>
       <table>
         <thead>
-          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Created</th><th>Action</th></tr>
+          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Account</th><th>Created</th><th>Action</th></tr>
         </thead>
         <tbody>
           <template x-for="p in topLevel" :key="p.id">
@@ -65,6 +71,7 @@
               <td x-text="p.id"></td>
               <td x-text="p.name"></td>
               <td x-text="p.cidr"></td>
+              <td x-text="accountName(p.account_id)"></td>
               <td x-text="new Date(p.created_at).toLocaleString()"></td>
               <td><button class="btn ghost" @click="selectPool(p)">View Blocks</button></td>
             </tr>
@@ -75,7 +82,23 @@
 
       <template x-if="current">
         <div style="margin-top: 2rem;" class="card">
-          <h3 x-text="`Pool #${current.id}: ${current.name} (${current.cidr})`"></h3>
+          <h3>
+            <span x-text="`Pool #${current.id}: ${current.name} (${current.cidr})`"></span>
+            <span class="muted" x-show="current.account_id"> · Account:
+              <strong x-text="accountName(current.account_id)"></strong>
+            </span>
+          </h3>
+          <div class="row" style="margin: 0.25rem 0; align-items:center;">
+            <label>Assign account:</label>
+            <select x-model.number="currentAccountId" style="min-width: 14rem;">
+              <option :value="null">No Account</option>
+              <template x-for="a in accounts" :key="a.id">
+                <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+              </template>
+            </select>
+            <button class="btn ghost" @click="updateCurrentPoolAccount()">Update</button>
+            <span class="muted" x-text="updateMsg"></span>
+          </div>
           <div class="row" style="margin: 0.5rem 0; align-items:center;">
             <label>Block size (prefix):</label>
             <input type="number" min="16" max="32" x-model.number="blockPrefix" style="width:6rem" />
@@ -107,7 +130,7 @@
 
           <table>
             <thead>
-              <tr><th>Prefix</th><th>Hosts</th><th>Status</th><th>Assigned Name</th><th>Action</th></tr>
+              <tr><th>Prefix</th><th>Hosts</th><th>Status</th><th>Assigned Name</th><th>Assigned Account</th><th>Action</th></tr>
             </thead>
             <tbody>
               <template x-for="b in blocks" :key="b.cidr">
@@ -117,17 +140,85 @@
                   <td>
                     <span :class="b.used ? 'status-used' : 'status-free'" x-text="b.used ? 'Used' : 'Free'"></span>
                   </td>
-                  <td x-text="b.assigned_name || '-' "></td>
+                  <td>
+                    <template x-if="b.assigned_id">
+                      <a href="#" @click.prevent="selectPoolById(b.assigned_id)" x-text="b.assigned_name"></a>
+                    </template>
+                    <template x-if="!b.assigned_id">
+                      <span>-</span>
+                    </template>
+                  </td>
+                  <td x-text="b.assigned_account_name || accountName(b.assigned_account_id) || '-' "></td>
                   <td>
                     <button class="btn" :disabled="b.used" @click="createSub(b)">Create Sub-pool</button>
                   </td>
                 </tr>
               </template>
-              <tr x-show="blocks.length === 0"><td colspan="5" style="color:#999">No blocks yet</td></tr>
+              <tr x-show="blocks.length === 0"><td colspan="6" style="color:#999">No blocks yet</td></tr>
             </tbody>
           </table>
         </div>
       </template>
+    </section>
+    
+    <section x-data="accountsView()" x-init="fetchAccounts()" class="card" style="margin-top:1rem;">
+      <h2>Accounts</h2>
+      <div class="row">
+        <input type="text" placeholder="Key (e.g., aws:123, gcp:proj)" x-model="acctForm.key" />
+        <input type="text" placeholder="Name" x-model="acctForm.name" />
+        <input type="text" placeholder="Provider (optional)" x-model="acctForm.provider" />
+        <input type="text" placeholder="External ID (optional)" x-model="acctForm.external_id" />
+        <input type="text" placeholder="Description (optional)" x-model="acctForm.description" />
+        <button class="btn" @click="createAccount()">Create</button>
+        <span x-text="acctMsg" class="muted"></span>
+      </div>
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Key</th><th>Name</th><th>Provider</th><th>External ID</th><th>Description</th><th>Created</th></tr>
+        </thead>
+        <tbody>
+          <template x-for="a in accounts" :key="a.id">
+            <tr>
+              <td x-text="a.id"></td>
+              <td x-text="a.key"></td>
+              <td x-text="a.name"></td>
+              <td x-text="a.provider || '-' "></td>
+              <td x-text="a.external_id || '-' "></td>
+              <td x-text="a.description || '-' "></td>
+              <td x-text="new Date(a.created_at).toLocaleString()"></td>
+            </tr>
+          </template>
+          <tr x-show="accounts.length === 0"><td colspan="7" style="color:#999">No accounts yet</td></tr>
+        </tbody>
+      </table>
+      <script>
+        function accountsView() {
+          return {
+            accounts: [],
+            acctForm: { key:'', name:'', provider:'', external_id:'', description:'' },
+            acctMsg: '',
+            async fetchAccounts() {
+              try {
+                const res = await fetch('/api/v1/accounts');
+                this.accounts = await res.json();
+              } catch (e) { this.acctMsg = 'Failed to load accounts'; }
+            },
+            async createAccount() {
+              this.acctMsg = '';
+              try {
+                const res = await fetch('/api/v1/accounts', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(this.acctForm)
+                });
+                if (!res.ok) { this.acctMsg = await res.text(); return; }
+                this.acctForm = { key:'', name:'', provider:'', external_id:'', description:'' };
+                await this.fetchAccounts();
+                this.acctMsg = 'Created';
+              } catch (e) { this.acctMsg = 'Create failed'; }
+            }
+          }
+        }
+      </script>
     </section>
     </main>
 
@@ -136,9 +227,12 @@
         return {
           list: [],
           topLevel: [],
-          form: { name: '', cidr: ''},
+          accounts: [],
+          form: { name: '', cidr: '', account_id: null},
           msg: '',
           current: null,
+          currentAccountId: null,
+          updateMsg: '',
           blockPrefix: 24,
           blocks: [],
           rawBlocks: [],
@@ -152,7 +246,15 @@
           fromItem: 0,
           toItem: 0,
           async init() {
-            await this.fetchList();
+            await Promise.all([this.fetchAccounts(), this.fetchList()]);
+          },
+          async fetchAccounts() {
+            try {
+              const res = await fetch('/api/v1/accounts');
+              this.accounts = await res.json();
+            } catch (e) {
+              // ignore
+            }
           },
           async fetchList() {
             try {
@@ -163,7 +265,12 @@
               this.msg = 'Failed to load pools';
             }
           },
-          selectPool(p) { this.current = p; this.blocks = []; this.subMsg=''; this.page=1; this.pageInput=1; this.total=0; this.totalPages=1; },
+          accountName(id) {
+            if (!id) return '-';
+            const a = this.accounts.find(a => a.id === id);
+            return a ? a.name : `#${id}`;
+          },
+          selectPool(p) { this.current = p; this.currentAccountId = p.account_id || null; this.blocks = []; this.subMsg=''; this.page=1; this.pageInput=1; this.total=0; this.totalPages=1; this.updateMsg=''; },
           onPageSize() { this.page = 1; this.loadBlocks(); },
           async loadBlocks() {
             if (!this.current) return;
@@ -232,21 +339,41 @@
                 return;
               }
               this.form = { name: '', cidr: '' };
-              await this.fetchList();
+              await Promise.all([this.fetchList(), this.fetchAccounts()]);
               this.msg = 'Created';
             } catch (e) {
               this.msg = 'Network error';
             }
           },
+          async updateCurrentPoolAccount() {
+            if (!this.current) return;
+            this.updateMsg = '';
+            try {
+              const res = await fetch(`/api/v1/pools?id=${this.current.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ account_id: this.currentAccountId ?? null })
+              });
+              if (!res.ok) { this.updateMsg = await res.text(); return; }
+              const p = await res.json();
+              // Update current and list
+              this.current = p;
+              const idx = this.list.findIndex(x => x.id === p.id);
+              if (idx >= 0) this.list[idx] = p;
+              await this.loadBlocks();
+              this.updateMsg = 'Updated';
+            } catch (e) { this.updateMsg = 'Update failed'; }
+          },
           async createSub(b) {
             if (!this.current) return;
             const name = prompt(`Name for sub-pool ${b.cidr}`);
             if (!name) return;
+            const accountId = this.form.account_id || null;
             try {
               const res = await fetch('/api/v1/pools', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, cidr: b.cidr, parent_id: this.current.id })
+                body: JSON.stringify({ name, cidr: b.cidr, parent_id: this.current.id, account_id: accountId })
               });
               if (!res.ok) { this.subMsg = await res.text(); return; }
               await this.fetchList();
@@ -255,6 +382,10 @@
             } catch (e) {
               this.subMsg = 'Network error creating sub-pool';
             }
+          },
+          selectPoolById(id) {
+            const p = this.list.find(p => p.id === id);
+            if (p) this.selectPool(p);
           }
         }
       }

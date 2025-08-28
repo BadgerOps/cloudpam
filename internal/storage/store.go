@@ -14,6 +14,10 @@ type Store interface {
 	ListPools(ctx context.Context) ([]domain.Pool, error)
 	CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error)
 	GetPool(ctx context.Context, id int64) (domain.Pool, bool, error)
+	UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error)
+	// Accounts management
+	ListAccounts(ctx context.Context) ([]domain.Account, error)
+	CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error)
 }
 
 // MemoryStore is an in-memory implementation for quick start and tests.
@@ -21,10 +25,13 @@ type MemoryStore struct {
 	mu    sync.RWMutex
 	pools map[int64]domain.Pool
 	next  int64
+	// accounts
+	accounts    map[int64]domain.Account
+	nextAccount int64
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{pools: make(map[int64]domain.Pool), next: 1}
+	return &MemoryStore{pools: make(map[int64]domain.Pool), next: 1, accounts: make(map[int64]domain.Account), nextAccount: 1}
 }
 
 func (m *MemoryStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
@@ -50,6 +57,7 @@ func (m *MemoryStore) CreatePool(ctx context.Context, in domain.CreatePool) (dom
 		Name:      in.Name,
 		CIDR:      in.CIDR,
 		ParentID:  in.ParentID,
+		AccountID: in.AccountID,
 		CreatedAt: time.Now().UTC(),
 	}
 	m.pools[id] = p
@@ -61,4 +69,48 @@ func (m *MemoryStore) GetPool(ctx context.Context, id int64) (domain.Pool, bool,
 	defer m.mu.RUnlock()
 	p, ok := m.pools[id]
 	return p, ok, nil
+}
+
+func (m *MemoryStore) UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.pools[id]
+	if !ok {
+		return domain.Pool{}, false, nil
+	}
+	p.AccountID = accountID
+	m.pools[id] = p
+	return p, true, nil
+}
+
+// Accounts
+func (m *MemoryStore) ListAccounts(ctx context.Context) ([]domain.Account, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]domain.Account, 0, len(m.accounts))
+	for _, a := range m.accounts {
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error) {
+	if in.Key == "" || in.Name == "" {
+		return domain.Account{}, errors.New("key and name required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id := m.nextAccount
+	m.nextAccount++
+	a := domain.Account{
+		ID:          id,
+		Key:         in.Key,
+		Name:        in.Name,
+		Provider:    in.Provider,
+		ExternalID:  in.ExternalID,
+		Description: in.Description,
+		CreatedAt:   time.Now().UTC(),
+	}
+	m.accounts[id] = a
+	return a, nil
 }

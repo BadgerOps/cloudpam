@@ -31,6 +31,7 @@ func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
 	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
+	s.mux.HandleFunc("/api/v1/accounts", s.handleAccounts)
 	// Static index
 	s.mux.HandleFunc("/", s.handleIndex)
 }
@@ -66,10 +67,92 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 		s.listPools(w, r)
 	case http.MethodPost:
 		s.createPool(w, r)
+	case http.MethodPatch:
+		s.patchPool(w, r)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// PATCH /api/v1/pools?id=<id> with {"account_id": <int|null>}
+func (s *Server) patchPool(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	idStr := r.URL.Query().Get("id")
+	if idStr == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var payload struct {
+		AccountID *int64 `json:"account_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	p, ok, err := s.store.UpdatePoolAccount(ctx, id, payload.AccountID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(p)
+}
+
+// Accounts: GET list, POST create
+func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.listAccounts(w, r)
+	case http.MethodPost:
+		s.createAccount(w, r)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	accs, err := s.store.ListAccounts(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(accs)
+}
+
+func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var in domain.CreateAccount
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	in.Key = strings.TrimSpace(in.Key)
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Key == "" || in.Name == "" {
+		http.Error(w, "key and name are required", http.StatusBadRequest)
+		return
+	}
+	a, err := s.store.CreateAccount(ctx, in)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(a)
 }
 
 // /api/v1/pools/{id}/blocks?new_prefix_len=24
@@ -152,11 +235,14 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 }
 
 type blockInfo struct {
-	CIDR         string `json:"cidr"`
-	PrefixLen    int    `json:"prefix_len"`
-	Hosts        uint64 `json:"hosts"`
-	Used         bool   `json:"used"`
-	AssignedName string `json:"assigned_name,omitempty"`
+	CIDR                string `json:"cidr"`
+	PrefixLen           int    `json:"prefix_len"`
+	Hosts               uint64 `json:"hosts"`
+	Used                bool   `json:"used"`
+	AssignedID          int64  `json:"assigned_id,omitempty"`
+	AssignedName        string `json:"assigned_name,omitempty"`
+	AssignedAccountID   int64  `json:"assigned_account_id,omitempty"`
+	AssignedAccountName string `json:"assigned_account_name,omitempty"`
 }
 
 func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64) {
@@ -221,18 +307,40 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	used := map[string]string{}
+	type usedInfo struct {
+		id        int64
+		name      string
+		accountID *int64
+	}
+	used := map[string]usedInfo{}
 	for _, p := range all {
 		if p.ParentID != nil && *p.ParentID == pool.ID {
-			used[p.CIDR] = p.Name
+			used[p.CIDR] = usedInfo{id: p.ID, name: p.Name, accountID: p.AccountID}
 		}
+	}
+	// Account id -> name map
+	accs, err := s.store.ListAccounts(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	accName := map[int64]string{}
+	for _, a := range accs {
+		accName[a.ID] = a.Name
 	}
 	out := make([]blockInfo, 0, len(blocks))
 	for _, b := range blocks {
 		bi := blockInfo{CIDR: b, PrefixLen: npl, Hosts: hosts}
-		if name, ok := used[b]; ok {
+		if info, ok := used[b]; ok {
 			bi.Used = true
-			bi.AssignedName = name
+			bi.AssignedID = info.id
+			bi.AssignedName = info.name
+			if info.accountID != nil {
+				bi.AssignedAccountID = *info.accountID
+				if n, ok := accName[*info.accountID]; ok {
+					bi.AssignedAccountName = n
+				}
+			}
 		}
 		out = append(out, bi)
 	}
