@@ -24,6 +24,7 @@ type Store interface {
 	UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error)
 	DeleteAccount(ctx context.Context, id int64) (bool, error)
 	DeleteAccountCascade(ctx context.Context, id int64) (bool, error)
+	GetAccount(ctx context.Context, id int64) (domain.Account, bool, error)
 }
 
 // MemoryStore is an in-memory implementation for quick start and tests.
@@ -249,4 +250,11 @@ func (m *MemoryStore) DeleteAccountCascade(ctx context.Context, id int64) (bool,
 	}
 	delete(m.accounts, id)
 	return true, nil
+}
+
+func (m *MemoryStore) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	a, ok := m.accounts[id]
+	return a, ok, nil
 }

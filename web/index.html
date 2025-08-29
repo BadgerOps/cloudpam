@@ -308,7 +308,7 @@
             async saveAccount() {
               const f = this.editForm;
               try {
-                const res = await fetch(`/api/v1/accounts?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, provider:f.provider, external_id:f.external_id, description:f.description }) });
+                const res = await fetch(`/api/v1/accounts/${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, provider:f.provider, external_id:f.external_id, description:f.description }) });
                 if (!res.ok) { this.acctMsg = await res.text(); return; }
                 this.editOpen = false;
                 await this.fetchAccounts(); showToast('Account updated');
@@ -340,8 +340,8 @@
               if (!a) a = this.deleteTarget;
               if (!a) return;
               try {
-                const force = this.deleteCascade ? '&force=1' : '';
-                const res = await fetch(`/api/v1/accounts?id=${a.id}${force}`, { method: 'DELETE' });
+                const force = this.deleteCascade ? '?force=1' : '';
+                const res = await fetch(`/api/v1/accounts/${a.id}${force}`, { method: 'DELETE' });
                 if (!res.ok) { this.acctMsg = await res.text(); return; }
                 await this.fetchAccounts();
                 this.deleteOpen = false;
@@ -500,7 +500,7 @@
             async saveEditBlock(){
               const f=this.editForm;
               try {
-                const res = await fetch(`/api/v1/pools?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, account_id:f.account_id }) });
+                const res = await fetch(`/api/v1/pools/${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, account_id:f.account_id }) });
                 if (!res.ok) { this.msg = await res.text(); return; }
                 this.editOpen=false; await this.load(); showToast('Block updated');
               } catch(e){ this.msg='Update failed'; }
@@ -523,7 +523,7 @@
               this.deleteOpen=true;
             }
             ,
-            async deleteBlock(){ const b=this.deleteTarget; if(!b) return; try{ const force=this.deleteCascade?'&force=1':''; const res=await fetch(`/api/v1/pools?id=${b.id}${force}`, {method:'DELETE'}); if(!res.ok){ this.msg=await res.text(); return;} this.deleteOpen=false; await this.load(); showToast('Block deleted'); } catch(e){ this.msg='Delete failed'; } }
+            async deleteBlock(){ const b=this.deleteTarget; if(!b) return; try{ const force=this.deleteCascade?'?force=1':''; const res=await fetch(`/api/v1/pools/${b.id}${force}`, {method:'DELETE'}); if(!res.ok){ this.msg=await res.text(); return;} this.deleteOpen=false; await this.load(); showToast('Block deleted'); } catch(e){ this.msg='Delete failed'; } }
             ,
             downloadCsv() {
               const rows = this.filtered();
@@ -671,7 +671,7 @@
           async saveEditPool() {
             const f = this.editPoolForm;
             try {
-              const res = await fetch(`/api/v1/pools?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: f.name, account_id: f.account_id }) });
+              const res = await fetch(`/api/v1/pools/${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: f.name, account_id: f.account_id }) });
               if (!res.ok) { this.msg = await res.text(); return; }
               const updated = await res.json();
               const idx = this.list.findIndex(x => x.id === updated.id);
@@ -699,8 +699,8 @@
           async performDeletePool() {
             const p = this.deletePoolTarget; if (!p) return;
             try {
-              const force = this.deletePoolCascade ? '&force=1' : '';
-              const res = await fetch(`/api/v1/pools?id=${p.id}${force}`, { method:'DELETE' });
+              const force = this.deletePoolCascade ? '?force=1' : '';
+              const res = await fetch(`/api/v1/pools/${p.id}${force}`, { method:'DELETE' });
               if (!res.ok) { this.msg = await res.text(); return; }
               await this.fetchList(); if (this.current && this.current.id===p.id) this.current=null; this.deletePoolOpen=false;
               showToast('Pool deleted');
@@ -787,7 +787,7 @@
             if (!this.current) return;
             this.updateMsg = '';
             try {
-              const res = await fetch(`/api/v1/pools?id=${this.current.id}`, {
+              const res = await fetch(`/api/v1/pools/${this.current.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ account_id: this.currentAccountId ?? null })
