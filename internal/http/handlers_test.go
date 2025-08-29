@@ -231,17 +231,18 @@ func TestAccountsHandlers_AndBlocks(t *testing.T) {
 		t.Fatalf("expected to find assigned child block")
 	}
 
-	// global blocks filter by account
-	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/blocks?accounts="+strconv.FormatInt(acc.ID, 10), "", stdhttp.StatusOK)
-	var rows []struct {
-		AccountID *int64 `json:"account_id"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &rows); err != nil {
-		t.Fatalf("unmarshal rows: %v", err)
-	}
-	if len(rows) == 0 || rows[0].AccountID == nil || *rows[0].AccountID != acc.ID {
-		t.Fatalf("expected rows for account %d", acc.ID)
-	}
+    // global blocks filter by account (request all for simple assertion)
+    rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/blocks?accounts="+strconv.FormatInt(acc.ID, 10)+"&page_size=all", "", stdhttp.StatusOK)
+    var env struct {
+        Items []struct{ AccountID *int64 `json:"account_id"` }
+        Total int `json:"total"`
+    }
+    if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+        t.Fatalf("unmarshal rows: %v", err)
+    }
+    if env.Total == 0 || len(env.Items) == 0 || env.Items[0].AccountID == nil || *env.Items[0].AccountID != acc.ID {
+        t.Fatalf("expected rows for account %d", acc.ID)
+    }
 
 	// delete account without force should fail due to referencing pools
 	rr = doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/accounts?id="+strconv.FormatInt(acc.ID, 10), "", stdhttp.StatusConflict)

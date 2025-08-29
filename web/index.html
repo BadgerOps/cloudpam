@@ -77,6 +77,17 @@
         <button class="btn" @click="createTop()">Create</button>
         <span x-text="msg" class="muted"></span>
       </div>
+      <div class="row" style="margin-top:1rem; align-items:center; gap:.75rem;">
+        <input type="text" placeholder="Search..." x-model="search" style="flex:1; max-width:300px;" />
+        <label>Page size
+          <select x-model="pageSize" @change="page=1; load()">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+      </div>
       <table>
         <thead>
           <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Account</th><th>Created</th><th></th></tr>
@@ -447,6 +458,16 @@
           <tr x-show="filtered().length === 0"><td colspan="7" style="color:#999">No assigned blocks match filters</td></tr>
         </tbody>
       </table>
+      <div class="row" style="justify-content:space-between; align-items:center; margin-top:.5rem;">
+        <div class="muted" x-text="total ? `Showing ${fromItem}-${toItem} of ${total}` : ''"></div>
+        <div class="row" style="align-items:center; gap:.5rem;">
+          <button class="btn ghost" @click="firstPage()" :disabled="page<=1">« First</button>
+          <button class="btn ghost" @click="prevPage()" :disabled="page<=1">‹ Prev</button>
+          <div>Page <input type="number" min="1" x-model.number="pageInput" style="width:64px;" @keydown.enter.prevent="goToPage()" /> of <span x-text="totalPages"></span></div>
+          <button class="btn ghost" @click="nextPage()" :disabled="page>=totalPages">Next ›</button>
+          <button class="btn ghost" @click="lastPage()" :disabled="page>=totalPages">Last »</button>
+        </div>
+      </div>
       <script>
         function allBlocksView() {
           return {
@@ -455,8 +476,16 @@
             selectedAccounts: [],
             selectedPools: [],
             blocks: [],
+            rawBlocks: [],
             msg: '',
             search: '',
+            pageSize: '50',
+            page: 1,
+            pageInput: 1,
+            total: 0,
+            totalPages: 1,
+            fromItem: 0,
+            toItem: 0,
             editOpen:false,
             editForm:{ id:null, name:'', account_id:null },
             deleteOpen:false,
@@ -482,19 +511,46 @@
                 const q = new URLSearchParams();
                 if (this.selectedAccounts.length) q.set('accounts', this.selectedAccounts.join(','));
                 if (this.selectedPools.length) q.set('pools', this.selectedPools.join(','));
+                if (this.pageSize !== 'all') { q.set('page_size', this.pageSize); q.set('page', this.page); }
+                else { q.set('page_size', 'all'); }
                 const res = await fetch('/api/v1/blocks?' + q.toString());
                 if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
-                this.blocks = await res.json();
+                const data = await res.json();
+                const items = Array.isArray(data) ? data : (data.items || []);
+                this.rawBlocks = items;
+                const pageSizeNum = this.pageSize === 'all' ? items.length : parseInt(this.pageSize, 10);
+                this.total = data.total ?? items.length;
+                this.totalPages = this.pageSize === 'all' ? 1 : Math.max(1, Math.ceil(this.total / pageSizeNum));
+                const startIdx = this.total === 0 ? 0 : ((this.page - 1) * (pageSizeNum || this.total)) + 1;
+                const endIdx = this.total === 0 ? 0 : Math.min(this.total, (this.page - 1) * (pageSizeNum || this.total) + items.length);
+                this.fromItem = startIdx;
+                this.toItem = endIdx;
+                this.pageInput = this.page;
+                this.blocks = this.filtered();
               } catch (e) { this.msg = 'Failed to load blocks'; }
             },
             clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.load(); }
             ,
             filtered() {
               const q = (this.search||'').toLowerCase();
-              if (!q) return this.blocks;
-              return this.blocks.filter(b => String(b.id).includes(q) || (b.name||'').toLowerCase().includes(q) || (b.cidr||'').toLowerCase().includes(q) || (b.parent_name||'').toLowerCase().includes(q) || (b.account_name||'').toLowerCase().includes(q));
+              const src = this.rawBlocks;
+              if (!q) return src;
+              return src.filter(b => String(b.id).includes(q) || (b.name||'').toLowerCase().includes(q) || (b.cidr||'').toLowerCase().includes(q) || (b.parent_name||'').toLowerCase().includes(q) || (b.account_name||'').toLowerCase().includes(q));
             }
             ,
+            async prevPage() { if (this.page > 1) { this.page--; await this.load(); } },
+            async nextPage() { if (this.page < this.totalPages) { this.page++; await this.load(); } },
+            async firstPage() { if (this.page !== 1) { this.page = 1; await this.load(); } },
+            async lastPage() { if (this.page !== this.totalPages) { this.page = this.totalPages; await this.load(); } },
+            async goToPage() {
+              if (this.pageSize === 'all') return;
+              let target = parseInt(this.pageInput, 10);
+              if (!target || target < 1) target = 1;
+              if (target > this.totalPages) target = this.totalPages;
+              if (target === this.page) return;
+              this.page = target;
+              await this.load();
+            },
             openEditBlock(b){ this.editForm = { id:b.id, name:b.name, account_id: null }; this.editOpen = true; }
             ,
             async saveEditBlock(){

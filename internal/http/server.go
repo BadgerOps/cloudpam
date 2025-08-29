@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+    "sort"
 	"strconv"
 	"strings"
 	"time"
@@ -271,82 +272,133 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
         writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
         return
     }
-	// Build lookups
-	accName := map[int64]string{}
-	for _, a := range accs {
-		accName[a.ID] = a.Name
-	}
-	poolName := map[int64]string{}
-	for _, p := range ps {
-		poolName[p.ID] = p.Name
-	}
-	// Parse filters
-	parseIDs := func(s string) map[int64]struct{} {
-		set := map[int64]struct{}{}
-		if s == "" {
-			return set
-		}
-		for _, part := range strings.Split(s, ",") {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			if id, err := strconv.ParseInt(part, 10, 64); err == nil {
-				set[id] = struct{}{}
-			}
-		}
-		return set
-	}
-	accFilter := parseIDs(r.URL.Query().Get("accounts"))
-	poolFilter := parseIDs(r.URL.Query().Get("pools"))
-	// Collect assigned blocks (sub-pools)
-	type row struct {
-		ID          int64     `json:"id"`
-		Name        string    `json:"name"`
-		CIDR        string    `json:"cidr"`
-		ParentID    int64     `json:"parent_id"`
-		ParentName  string    `json:"parent_name"`
-		AccountID   *int64    `json:"account_id,omitempty"`
-		AccountName string    `json:"account_name,omitempty"`
-		CreatedAt   time.Time `json:"created_at"`
-	}
-	var out []row
-	for _, p := range ps {
-		if p.ParentID == nil {
-			continue
-		}
-		// Filters
-		if len(accFilter) > 0 {
-			if p.AccountID == nil {
-				continue
-			}
-			if _, ok := accFilter[*p.AccountID]; !ok {
-				continue
-			}
-		}
-		if len(poolFilter) > 0 {
-			if _, ok := poolFilter[*p.ParentID]; !ok {
-				continue
-			}
-		}
-		r := row{
-			ID:         p.ID,
-			Name:       p.Name,
-			CIDR:       p.CIDR,
-			ParentID:   *p.ParentID,
-			ParentName: poolName[*p.ParentID],
-			AccountID:  p.AccountID,
-			CreatedAt:  p.CreatedAt,
-		}
-		if p.AccountID != nil {
-			if n, ok := accName[*p.AccountID]; ok {
-				r.AccountName = n
-			}
-		}
-		out = append(out, r)
-	}
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(out)
+    // Build lookups
+    accName := map[int64]string{}
+    for _, a := range accs {
+        accName[a.ID] = a.Name
+    }
+    poolName := map[int64]string{}
+    for _, p := range ps {
+        poolName[p.ID] = p.Name
+    }
+    // Parse filters
+    parseIDs := func(s string) map[int64]struct{} {
+        set := map[int64]struct{}{}
+        if s == "" {
+            return set
+        }
+        for _, part := range strings.Split(s, ",") {
+            part = strings.TrimSpace(part)
+            if part == "" {
+                continue
+            }
+            if id, err := strconv.ParseInt(part, 10, 64); err == nil {
+                set[id] = struct{}{}
+            }
+        }
+        return set
+    }
+    accFilter := parseIDs(r.URL.Query().Get("accounts"))
+    poolFilter := parseIDs(r.URL.Query().Get("pools"))
+    // Pagination params
+    pageSizeStr := r.URL.Query().Get("page_size")
+    pageStr := r.URL.Query().Get("page")
+    // Defaults
+    pageSize := 50
+    if strings.ToLower(pageSizeStr) == "all" {
+        pageSize = 0
+    } else if pageSizeStr != "" {
+        psn, err := strconv.Atoi(pageSizeStr)
+        if err != nil || psn < 0 {
+            writeErr(w, http.StatusBadRequest, "invalid page_size", "")
+            return
+        }
+        pageSize = psn
+    }
+    // Cap page size
+    if pageSize > 0 && pageSize > 500 {
+        pageSize = 500
+    }
+    page := 1
+    if pageStr != "" {
+        p, err := strconv.Atoi(pageStr)
+        if err != nil || p <= 0 {
+            writeErr(w, http.StatusBadRequest, "invalid page", "")
+            return
+        }
+        page = p
+    }
+    // Collect assigned blocks (sub-pools)
+    type row struct {
+        ID          int64     `json:"id"`
+        Name        string    `json:"name"`
+        CIDR        string    `json:"cidr"`
+        ParentID    int64     `json:"parent_id"`
+        ParentName  string    `json:"parent_name"`
+        AccountID   *int64    `json:"account_id,omitempty"`
+        AccountName string    `json:"account_name,omitempty"`
+        CreatedAt   time.Time `json:"created_at"`
+    }
+    var items []row
+    for _, p := range ps {
+        if p.ParentID == nil {
+            continue
+        }
+        // Filters
+        if len(accFilter) > 0 {
+            if p.AccountID == nil {
+                continue
+            }
+            if _, ok := accFilter[*p.AccountID]; !ok {
+                continue
+            }
+        }
+        if len(poolFilter) > 0 {
+            if _, ok := poolFilter[*p.ParentID]; !ok {
+                continue
+            }
+        }
+        r := row{
+            ID:         p.ID,
+            Name:       p.Name,
+            CIDR:       p.CIDR,
+            ParentID:   *p.ParentID,
+            ParentName: poolName[*p.ParentID],
+            AccountID:  p.AccountID,
+            CreatedAt:  p.CreatedAt,
+        }
+        if p.AccountID != nil {
+            if n, ok := accName[*p.AccountID]; ok {
+                r.AccountName = n
+            }
+        }
+        items = append(items, r)
+    }
+    // Sort by CreatedAt then ID for deterministic order
+    sort.Slice(items, func(i, j int) bool {
+        if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+            return items[i].ID < items[j].ID
+        }
+        return items[i].CreatedAt.Before(items[j].CreatedAt)
+    })
+    total := len(items)
+    // Paginate
+    if pageSize > 0 {
+        start := (page - 1) * pageSize
+        if start > total {
+            start = total
+        }
+        end := start + pageSize
+        if end > total { end = total }
+        items = items[start:end]
+    }
+    type resp struct {
+        Items    []row `json:"items"`
+        Total    int   `json:"total"`
+        Page     int   `json:"page"`
+        PageSize int   `json:"page_size"`
+    }
+    writeJSON(w, http.StatusOK, resp{Items: items, Total: total, Page: page, PageSize: pageSize})
 }
 
 // /api/v1/pools/{id}/blocks?new_prefix_len=24

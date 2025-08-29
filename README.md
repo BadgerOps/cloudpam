@@ -3,7 +3,7 @@
 Lightweight, cloud‑native IP Address Management (IPAM) for AWS and GCP with an extensible provider model. Backend in Go, UI with Alpine.js, storage via in‑memory or SQLite.
 
 ## Quick Start (Dev)
-- Prereqs: Go 1.22+
+- Prereqs: Go 1.24+
 - Run (in‑memory): `make dev` (or `go run ./cmd/cloudpam`)
 - Open: http://localhost:8080
 
@@ -23,7 +23,7 @@ Features in the UI
 
 ## CI and Linting
 - This repo includes `.golangci.yml` and a GitHub Actions workflow at `.github/workflows/lint.yml`.
-- CI pins Go `1.22.x` and golangci-lint `v1.58.2` to avoid local toolchain mismatches.
+- CI pins Go `1.24.x` and golangci-lint `v2.1.6` to avoid local toolchain mismatches.
 
 Notes
 - Without the `sqlite` build tag, the server uses an in‑memory store and logs a hint if `SQLITE_DSN` is set.
@@ -34,6 +34,7 @@ Notes
 - `GET /api/v1/pools`: list pools
 - `POST /api/v1/pools`: create pool `{name, cidr, parent_id?}`
 - `GET /api/v1/pools/{id}/blocks?new_prefix_len=24&page_size=50&page=1`: paged block listing with hosts and Used/Free flags
+- `GET /api/v1/blocks?accounts=1,2&pools=10,11&page_size=50&page=1`: paginated list of assigned sub-pools across all parents (envelope: `{items,total,page,page_size}`).
 
 ## Documentation
 - Project plan: `docs/PROJECT_PLAN.md`
