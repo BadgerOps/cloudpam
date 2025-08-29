@@ -56,7 +56,13 @@
       <span class="muted">Lightweight Cloud IPAM (AWS/GCP)</span>
     </header>
 
-    <main>
+    <main x-data="tabState()" x-init="init()">
+    <div class="card" style="margin-bottom:1rem; display:flex; gap:.5rem; align-items:flex-end;">
+      <button :class="tab==='pools' ? 'btn' : 'btn ghost'" @click="tab='pools'">Pools</button>
+      <button :class="tab==='accounts' ? 'btn' : 'btn ghost'" @click="tab='accounts'">Accounts</button>
+      <button :class="tab==='analytics' ? 'btn' : 'btn ghost'" @click="tab='analytics'">Analytics</button>
+    </div>
+    <template x-if="tab==='pools'">
     <section x-data="pools()" x-init="init()" class="card">
       <h2>Top-level Pools</h2>
       <div class="row">
@@ -221,8 +227,10 @@
         </div>
       </div>
     </section>
+    </template>
     
-    <section x-data="accountsView()" x-init="fetchAccounts()" class="card" style="margin-top:1rem;">
+    <template x-if="tab==='accounts'">
+    <section x-data="accountsView()" x-init="fetchAccounts()" class="card">
       <h2>Accounts</h2>
       <div class="row">
         <input type="text" placeholder="Key (e.g., aws:123, gcp:proj)" x-model="acctForm.key" />
@@ -386,8 +394,10 @@
         </div>
       </div>
     </section>
+    </template>
 
-    <section x-data="allBlocksView()" x-init="init()" class="card" style="margin-top:1rem;">
+    <template x-if="tab==='analytics'">
+    <section x-data="allBlocksView()" x-init="init()" class="card">
       <h2>All Assigned Blocks</h2>
       <div class="row" style="align-items:center; gap:1rem;">
         <div>
@@ -572,9 +582,20 @@
         </div>
       </div>
     </section>
+    </template>
     </main>
 
     <script>
+      function tabState(){
+        return {
+          tab: 'pools',
+          init(){
+            const h = (location.hash||'').replace('#','');
+            if (['pools','accounts','analytics'].includes(h)) this.tab = h;
+            this.$watch('tab', t => { history.replaceState(null,'','#'+t); });
+          }
+        }
+      }
       function toaster(){
         return {
           toasts: [],

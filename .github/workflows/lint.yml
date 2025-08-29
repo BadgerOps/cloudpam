@@ -1,4 +1,4 @@
-name: golangci-lint
+name: Lint
 on:
   push:
     branches:
@@ -16,12 +16,14 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          go-version: stable
-      - name: golangci-lint
+          go-version: '1.24.x'
+      - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.1
-
+          version: v2.1.6
+          args: --timeout=5m

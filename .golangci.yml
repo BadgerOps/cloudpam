@@ -1,11 +1,10 @@
-version: 2
+version: "2"
 
 run:
   timeout: 5m
   tests: true
 
 linters:
-  disable-all: true
   enable:
     - govet
     - staticcheck
@@ -13,41 +12,3 @@ linters:
     - errcheck
     - gocritic
     - misspell
-
-linters-settings:
-  revive:
-    severity: warning
-    rules:
-      - name: blank-imports
-        disabled: true
-      - name: package-comments
-        disabled: true
-
-formatters:
-  enable:
-    - gofmt
-    - goimports
-
-formatters-settings:
-  goimports:
-    local-prefixes: cloudpam
-
-issues:
-  exclude-use-default: false
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - errcheck
-    - path: ^web/
-      linters:
-        - gofmt
-        - goimports
-    - linters:
-        - revive
-      text: package-comments
-    - linters:
-        - revive
-      text: "^exported:"
-    - linters:
-        - revive
-      text: unused-parameter
