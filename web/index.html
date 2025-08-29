@@ -293,7 +293,7 @@
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(this.acctForm)
                 });
-                if (!res.ok) { this.acctMsg = await res.text(); return; }
+                if (!res.ok) { this.acctMsg = await parseError(res); showToast(this.acctMsg,'error'); return; }
                 this.acctForm = { key:'', name:'', provider:'', external_id:'', description:'' };
                 await this.fetchAccounts();
                 this.acctMsg = 'Created'; showToast('Account created');
@@ -309,7 +309,7 @@
               const f = this.editForm;
               try {
                 const res = await fetch(`/api/v1/accounts?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, provider:f.provider, external_id:f.external_id, description:f.description }) });
-                if (!res.ok) { this.acctMsg = await res.text(); return; }
+                if (!res.ok) { this.acctMsg = await parseError(res); showToast(this.acctMsg,'error'); return; }
                 this.editOpen = false;
                 await this.fetchAccounts(); showToast('Account updated');
               } catch (e) { this.acctMsg = 'Update failed'; }
@@ -342,7 +342,7 @@
               try {
                 const force = this.deleteCascade ? '&force=1' : '';
                 const res = await fetch(`/api/v1/accounts?id=${a.id}${force}`, { method: 'DELETE' });
-                if (!res.ok) { this.acctMsg = await res.text(); return; }
+                if (!res.ok) { this.acctMsg = await parseError(res); showToast(this.acctMsg,'error'); return; }
                 await this.fetchAccounts();
                 this.deleteOpen = false;
                 this.acctMsg = 'Deleted'; showToast('Account deleted');
@@ -483,7 +483,7 @@
                 if (this.selectedAccounts.length) q.set('accounts', this.selectedAccounts.join(','));
                 if (this.selectedPools.length) q.set('pools', this.selectedPools.join(','));
                 const res = await fetch('/api/v1/blocks?' + q.toString());
-                if (!res.ok) { this.msg = await res.text(); return; }
+                if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
                 this.blocks = await res.json();
               } catch (e) { this.msg = 'Failed to load blocks'; }
             },
@@ -501,7 +501,7 @@
               const f=this.editForm;
               try {
                 const res = await fetch(`/api/v1/pools?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, account_id:f.account_id }) });
-                if (!res.ok) { this.msg = await res.text(); return; }
+                if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
                 this.editOpen=false; await this.load(); showToast('Block updated');
               } catch(e){ this.msg='Update failed'; }
             }
@@ -523,7 +523,7 @@
               this.deleteOpen=true;
             }
             ,
-            async deleteBlock(){ const b=this.deleteTarget; if(!b) return; try{ const force=this.deleteCascade?'&force=1':''; const res=await fetch(`/api/v1/pools?id=${b.id}${force}`, {method:'DELETE'}); if(!res.ok){ this.msg=await res.text(); return;} this.deleteOpen=false; await this.load(); showToast('Block deleted'); } catch(e){ this.msg='Delete failed'; } }
+            async deleteBlock(){ const b=this.deleteTarget; if(!b) return; try{ const force=this.deleteCascade?'&force=1':''; const res=await fetch(`/api/v1/pools?id=${b.id}${force}`, {method:'DELETE'}); if(!res.ok){ this.msg=await parseError(res); showToast(this.msg,'error'); return;} this.deleteOpen=false; await this.load(); showToast('Block deleted'); } catch(e){ this.msg='Delete failed'; } }
             ,
             downloadCsv() {
               const rows = this.filtered();
@@ -585,7 +585,11 @@
     </template>
     </main>
 
-    <script>
+      <script>
+      async function parseError(res) {
+        try { const data = await res.json(); return data.error || data.detail || res.statusText || 'Request failed'; }
+        catch (e) { try { return await res.text(); } catch { return res.statusText || 'Request failed'; } }
+      }
       function tabState(){
         return {
           tab: 'pools',
@@ -672,7 +676,7 @@
             const f = this.editPoolForm;
             try {
               const res = await fetch(`/api/v1/pools?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: f.name, account_id: f.account_id }) });
-              if (!res.ok) { this.msg = await res.text(); return; }
+              if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
               const updated = await res.json();
               const idx = this.list.findIndex(x => x.id === updated.id);
               if (idx >= 0) this.list[idx] = updated;
@@ -701,7 +705,7 @@
             try {
               const force = this.deletePoolCascade ? '&force=1' : '';
               const res = await fetch(`/api/v1/pools?id=${p.id}${force}`, { method:'DELETE' });
-              if (!res.ok) { this.msg = await res.text(); return; }
+              if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
               await this.fetchList(); if (this.current && this.current.id===p.id) this.current=null; this.deletePoolOpen=false;
               showToast('Pool deleted');
             } catch (e) { this.msg='Delete failed'; }
@@ -716,7 +720,7 @@
               if (this.pageSize !== 'all') { q.set('page_size', this.pageSize); q.set('page', this.page); }
               else { q.set('page_size', 'all'); }
               const res = await fetch(`/api/v1/pools/${this.current.id}/blocks?${q.toString()}`);
-              if (!res.ok) { this.subMsg = await res.text(); return; }
+              if (!res.ok) { this.subMsg = await parseError(res); showToast(this.subMsg,'error'); return; }
               const data = await res.json();
               if (Array.isArray(data)) {
                 // Back-compat (shouldn't happen with new server)
@@ -768,12 +772,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(this.form)
               });
-              if (!res.ok) {
-                const t = await res.text();
-                this.msg = t || 'Error creating pool';
-                showToast(this.msg, 'error');
-                return;
-              }
+              if (!res.ok) { this.msg = await parseError(res); showToast(this.msg, 'error'); return; }
               this.form = { name: '', cidr: '' };
               await Promise.all([this.fetchList(), this.fetchAccounts()]);
               this.msg = 'Created';
@@ -792,7 +791,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ account_id: this.currentAccountId ?? null })
               });
-              if (!res.ok) { this.updateMsg = await res.text(); return; }
+              if (!res.ok) { this.updateMsg = await parseError(res); showToast(this.updateMsg,'error'); return; }
               const p = await res.json();
               // Update current and list
               this.current = p;
@@ -813,7 +812,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, cidr: b.cidr, parent_id: this.current.id, account_id: accountId })
               });
-              if (!res.ok) { this.subMsg = await res.text(); return; }
+              if (!res.ok) { this.subMsg = await parseError(res); showToast(this.subMsg,'error'); return; }
               await this.fetchList();
               await this.loadBlocks(); showToast('Sub-pool created');
               this.subMsg = 'Sub-pool created';

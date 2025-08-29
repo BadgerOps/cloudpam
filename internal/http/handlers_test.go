@@ -249,3 +249,30 @@ func TestAccountsHandlers_AndBlocks(t *testing.T) {
 	// with force should succeed
 	doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/accounts?id="+strconv.FormatInt(acc.ID, 10)+"&force=1", "", stdhttp.StatusNoContent)
 }
+
+func TestErrorEnvelope_JSON(t *testing.T) {
+    srv, _ := setupTestServer()
+    // create a valid parent
+    rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+    var root poolDTO
+    if err := json.Unmarshal(rr.Body.Bytes(), &root); err != nil {
+        t.Fatalf("unmarshal: %v", err)
+    }
+    // missing new_prefix_len -> should be JSON error envelope
+    req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/pools/"+strconv.FormatInt(root.ID, 10)+"/blocks", nil)
+    res := httptest.NewRecorder()
+    srv.mux.ServeHTTP(res, req)
+    if res.Code != stdhttp.StatusBadRequest {
+        t.Fatalf("expected 400, got %d", res.Code)
+    }
+    if ct := res.Header().Get("Content-Type"); ct == "" || ct[:16] != "application/json" {
+        t.Fatalf("expected json content-type, got %q", ct)
+    }
+    var e struct{ Error string `json:"error"` }
+    if err := json.Unmarshal(res.Body.Bytes(), &e); err != nil {
+        t.Fatalf("not json: %v: %s", err, res.Body.String())
+    }
+    if e.Error == "" {
+        t.Fatalf("expected error message")
+    }
+}

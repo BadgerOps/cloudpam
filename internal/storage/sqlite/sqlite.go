@@ -23,60 +23,15 @@ func New(dsn string) (*Store, error) {
     if err != nil {
         return nil, err
     }
-    if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`); err != nil {
+    if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`); err != nil {
         _ = db.Close()
         return nil, err
     }
-    if err := migrate(db); err != nil {
+    if err := runMigrations(db); err != nil {
         _ = db.Close()
         return nil, err
     }
     return &Store{db: db}, nil
-}
-
-func migrate(db *sql.DB) error {
-    // Minimal bootstrap migration with additive column for parent_id.
-    if _, err := db.Exec(`
-CREATE TABLE IF NOT EXISTS pools (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    cidr TEXT NOT NULL,
-    parent_id INTEGER NULL,
-    account_id INTEGER NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-`); err != nil {
-        return err
-    }
-    // Ensure parent_id exists for older schemas.
-    var cnt int
-    if err := db.QueryRow(`SELECT COUNT(1) FROM pragma_table_info('pools') WHERE name='parent_id'`).Scan(&cnt); err == nil && cnt == 0 {
-        if _, err := db.Exec(`ALTER TABLE pools ADD COLUMN parent_id INTEGER NULL`); err != nil {
-            return err
-        }
-    }
-    // Ensure account_id exists.
-    cnt = 0
-    if err := db.QueryRow(`SELECT COUNT(1) FROM pragma_table_info('pools') WHERE name='account_id'`).Scan(&cnt); err == nil && cnt == 0 {
-        if _, err := db.Exec(`ALTER TABLE pools ADD COLUMN account_id INTEGER NULL`); err != nil {
-            return err
-        }
-    }
-    // Accounts table
-    if _, err := db.Exec(`
-CREATE TABLE IF NOT EXISTS accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    key TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    provider TEXT NULL,
-    external_id TEXT NULL,
-    description TEXT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-`); err != nil {
-        return err
-    }
-    return nil
 }
 
 var _ storage.Store = (*Store)(nil)
