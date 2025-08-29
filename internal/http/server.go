@@ -382,9 +382,13 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name and cidr are required", http.StatusBadRequest)
 		return
 	}
-	// lightweight validation
+	// Validate CIDR format and IPv4
 	if !strings.Contains(in.CIDR, "/") {
 		http.Error(w, "cidr must be in a.b.c.d/x form", http.StatusBadRequest)
+		return
+	}
+	if pfx, err := netip.ParsePrefix(in.CIDR); err != nil || !pfx.Addr().Is4() {
+		http.Error(w, "invalid cidr", http.StatusBadRequest)
 		return
 	}
 	// If ParentID provided, ensure child CIDR is subset of parent CIDR (IPv4 only for now).
