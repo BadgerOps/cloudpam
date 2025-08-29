@@ -143,9 +143,9 @@ func TestPoolsHandlers_Negative(t *testing.T) {
 	if rr2.Code != stdhttp.StatusBadRequest {
 		t.Fatalf("expected 400 for too small prefix, got %d", rr2.Code)
 	}
-	if !(strings.Contains(rr2.Body.String(), "between") || strings.Contains(rr2.Body.String(), "invalid new_prefix_len")) {
-		t.Fatalf("expected range/invalid message, got: %q", rr2.Body.String())
-	}
+    if !strings.Contains(rr2.Body.String(), "between") && !strings.Contains(rr2.Body.String(), "invalid new_prefix_len") {
+        t.Fatalf("expected range/invalid message, got: %q", rr2.Body.String())
+    }
 
 	// new_prefix_len greater than 32
 	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/pools/"+strconv.FormatInt(root.ID, 10)+"/blocks?new_prefix_len=33", nil)
@@ -154,9 +154,9 @@ func TestPoolsHandlers_Negative(t *testing.T) {
 	if rr2.Code != stdhttp.StatusBadRequest {
 		t.Fatalf("expected 400 for too large prefix, got %d", rr2.Code)
 	}
-	if !(strings.Contains(rr2.Body.String(), "between") || strings.Contains(rr2.Body.String(), "invalid new_prefix_len")) {
-		t.Fatalf("expected range/invalid message, got: %q", rr2.Body.String())
-	}
+    if !strings.Contains(rr2.Body.String(), "between") && !strings.Contains(rr2.Body.String(), "invalid new_prefix_len") {
+        t.Fatalf("expected range/invalid message, got: %q", rr2.Body.String())
+    }
 
 	// delete pool invalid id
 	req = httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/pools?id=notanint", nil)
