@@ -74,7 +74,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		s.deletePool(w, r)
 	default:
-		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete}, ", "))
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -93,13 +93,14 @@ func (s *Server) patchPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		AccountID *int64 `json:"account_id"`
+		AccountID *int64  `json:"account_id"`
+		Name      *string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-	p, ok, err := s.store.UpdatePoolAccount(ctx, id, payload.AccountID)
+	p, ok, err := s.store.UpdatePoolMeta(ctx, id, payload.Name, payload.AccountID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -112,6 +113,32 @@ func (s *Server) patchPool(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(p)
 }
 
+func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	idStr := r.URL.Query().Get("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	var ok bool
+	force := strings.ToLower(r.URL.Query().Get("force"))
+	if force == "1" || force == "true" || force == "yes" {
+		ok, err = s.store.DeletePoolCascade(ctx, id)
+	} else {
+		ok, err = s.store.DeletePool(ctx, id)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // Accounts: GET list, POST create
 func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -119,10 +146,12 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		s.listAccounts(w, r)
 	case http.MethodPost:
 		s.createAccount(w, r)
+	case http.MethodPatch:
+		s.patchAccount(w, r)
 	case http.MethodDelete:
 		s.deleteAccount(w, r)
 	default:
-		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete}, ", "))
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -161,7 +190,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(a)
 }
 
-func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
+func (s *Server) patchAccount(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	idStr := r.URL.Query().Get("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -169,16 +198,22 @@ func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	ok, err := s.store.DeletePool(ctx, id)
+	var in domain.Account
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	a, ok, err := s.store.UpdateAccount(ctx, id, in)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(a)
 }
 
 func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +224,13 @@ func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", http.StatusBadRequest)
 		return
 	}
-	ok, err := s.store.DeleteAccount(ctx, id)
+	var ok bool
+	force := strings.ToLower(r.URL.Query().Get("force"))
+	if force == "1" || force == "true" || force == "yes" {
+		ok, err = s.store.DeleteAccountCascade(ctx, id)
+	} else {
+		ok, err = s.store.DeleteAccount(ctx, id)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return

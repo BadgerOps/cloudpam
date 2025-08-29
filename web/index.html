@@ -18,6 +18,8 @@
         --radius: 12px;
         --shadow: 0 6px 20px rgba(0,0,0,0.08);
       }
+      /* Hide cloaked elements until Alpine initializes */
+      [x-cloak] { display: none !important; }
       body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
       header { display:flex; align-items:center; gap:1rem; padding: 1.25rem 2rem; background: var(--card); box-shadow: var(--shadow); position: sticky; top: 0; z-index: 10; }
       header h1 { margin: 0; font-size: 20px; }
@@ -31,7 +33,7 @@
       .btn:active { transform: translateY(1px); }
       .btn.ghost { background: transparent; color: var(--primary); border-color: var(--primary); }
       .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-      table { border-collapse: collapse; width: 100%; margin-top: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+      table { border-collapse: collapse; width: 100%; margin-top: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: visible; }
       th, td { border-bottom: 1px solid var(--border); padding: 10px 12px; }
       th { background: #fafafa; text-align: left; font-weight: 600; }
       .row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
@@ -41,18 +43,21 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   </head>
   <body>
+    <div x-data="toaster()" x-init="init()" style="position:fixed; right:16px; bottom:16px; display:flex; flex-direction:column; gap:10px; z-index:10000;">
+      <template x-for="t in toasts" :key="t.id">
+        <div :style="'background:#fff;border:1px solid '+(t.type==='error'?'#fecaca':'#bfdbfe')+';padding:10px 12px;border-radius:8px;box-shadow:var(--shadow);min-width:240px;'">
+          <strong x-text="t.type==='error'?'Error':'Info'"></strong>
+          <div x-text="t.message"></div>
+        </div>
+      </template>
+    </div>
     <header>
       <h1>CloudPAM</h1>
       <span class="muted">Lightweight Cloud IPAM (AWS/GCP)</span>
-      <nav style="margin-left:auto; display:flex; gap:1rem;">
-        <a href="#pools">Pools</a>
-        <a href="#accounts">Accounts</a>
-        <a href="#all-blocks">All Blocks</a>
-      </nav>
     </header>
 
     <main>
-    <section id="pools" x-data="pools()" x-init="init()" class="card">
+    <section x-data="pools()" x-init="init()" class="card">
       <h2>Top-level Pools</h2>
       <div class="row">
         <input type="text" placeholder="Name" x-model="form.name" />
@@ -68,19 +73,23 @@
       </div>
       <table>
         <thead>
-          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Account</th><th>Created</th><th>Action</th></tr>
+          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Account</th><th>Created</th><th></th></tr>
         </thead>
         <tbody>
           <template x-for="p in topLevel" :key="p.id">
-            <tr>
+            <tr x-data="{ open:false }" @click.outside="open=false">
               <td x-text="p.id"></td>
               <td x-text="p.name"></td>
               <td x-text="p.cidr"></td>
               <td x-text="accountName(p.account_id)"></td>
               <td x-text="new Date(p.created_at).toLocaleString()"></td>
-              <td>
-                <button class="btn ghost" @click="selectPool(p)">View Blocks</button>
-                <button class="btn ghost" style="margin-left:.5rem" @click="deletePool(p)">Delete</button>
+              <td style="text-align:right; position:relative;">
+                <button class="btn ghost" @click="selectPool(p)">View</button>
+                <button class="btn ghost" @click="open=!open" aria-label="Actions">⋮</button>
+                <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow: var(--shadow); z-index:9999; min-width:140px;">
+                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; openEditPool(p)">Edit</button>
+                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; confirmDeletePool(p)">Delete</button>
+                </div>
               </td>
             </tr>
           </template>
@@ -167,9 +176,53 @@
           </table>
         </div>
       </template>
+
+      <!-- Edit Pool Modal -->
+      <div x-show="editPoolOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:480px;">
+          <h3>Edit Pool</h3>
+          <div class="row">
+            <input type="text" placeholder="Name" x-model="editPoolForm.name" style="flex:1;" />
+            <select x-model.number="editPoolForm.account_id" style="flex:1;">
+              <option :value="null">No Account</option>
+              <template x-for="a in accounts" :key="a.id">
+                <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+              </template>
+            </select>
+          </div>
+          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
+            <button class="btn ghost" @click="editPoolOpen=false">Cancel</button>
+            <button class="btn" @click="saveEditPool()">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Delete Pool Confirm Modal -->
+      <div x-show="deletePoolOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:420px;">
+          <h3>Confirm Delete</h3>
+          <p>Are you sure you want to delete <strong x-text="deletePoolTarget?.name"></strong>?</p>
+          <template x-if="deletePoolChildren.length">
+            <div>
+              <p class="muted">This pool has the following child pools that will also be deleted:</p>
+              <ul>
+                <template x-for="c in deletePoolChildren" :key="c.id">
+                  <li x-text="c.name + ' ('+c.cidr+')'"></li>
+                </template>
+              </ul>
+              <label><input type="checkbox" x-model="deletePoolCascade" /> Delete all children</label>
+            </div>
+          </template>
+          <div class="row" style="justify-content:space-between; align-items:center; margin-top:1rem;">
+            <label style="display:flex; align-items:center; gap:.4rem;"><input type="checkbox" x-model="confirmPoolDelete" /> I understand this action cannot be undone</label>
+            <button class="btn ghost" @click="deletePoolOpen=false">Cancel</button>
+            <button class="btn" :disabled="(!confirmPoolDelete) || (deletePoolChildren.length && !deletePoolCascade)" @click="performDeletePool()">Delete</button>
+          </div>
+        </div>
+      </div>
     </section>
     
-    <section id="accounts" x-data="accountsView()" x-init="fetchAccounts()" class="card" style="margin-top:1rem;">
+    <section x-data="accountsView()" x-init="fetchAccounts()" class="card" style="margin-top:1rem;">
       <h2>Accounts</h2>
       <div class="row">
         <input type="text" placeholder="Key (e.g., aws:123, gcp:proj)" x-model="acctForm.key" />
@@ -182,20 +235,24 @@
       </div>
       <table>
         <thead>
-          <tr><th>ID</th><th>Key</th><th>Name</th><th>Provider</th><th>External ID</th><th>Description</th><th>Created</th></tr>
+          <tr><th>ID</th><th>Key</th><th>Name</th><th>Provider</th><th>External ID</th><th>Description</th><th>Created</th><th></th></tr>
         </thead>
         <tbody>
           <template x-for="a in accounts" :key="a.id">
-            <tr>
+            <tr x-data="{ open:false }" @click.outside="open=false">
               <td x-text="a.id"></td>
               <td x-text="a.key"></td>
               <td x-text="a.name"></td>
               <td x-text="a.provider || '-' "></td>
               <td x-text="a.external_id || '-' "></td>
               <td x-text="a.description || '-' "></td>
-              <td>
-                <span x-text="new Date(a.created_at).toLocaleString()"></span>
-                <button class="btn ghost" style="margin-left:.5rem" @click="deleteAccount(a)">Delete</button>
+              <td x-text="new Date(a.created_at).toLocaleString()"></td>
+              <td style="position:relative; text-align:right;">
+                <button class="btn ghost" @click="open=!open">⋮</button>
+                <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow: var(--shadow); z-index:9999; min-width:140px;">
+                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; openEditAccount(a)">Edit</button>
+                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; confirmDeleteAccount(a)">Delete</button>
+                </div>
               </td>
             </tr>
           </template>
@@ -208,6 +265,13 @@
             accounts: [],
             acctForm: { key:'', name:'', provider:'', external_id:'', description:'' },
             acctMsg: '',
+            editOpen: false,
+            editForm: { id:null, name:'', provider:'', external_id:'', description:'' },
+            deleteOpen: false,
+            deleteTarget: null,
+            deleteChildren: [],
+            deleteCascade: false,
+            confirmAccountDelete: false,
             async fetchAccounts() {
               try {
                 const res = await fetch('/api/v1/accounts');
@@ -224,25 +288,106 @@
                 if (!res.ok) { this.acctMsg = await res.text(); return; }
                 this.acctForm = { key:'', name:'', provider:'', external_id:'', description:'' };
                 await this.fetchAccounts();
-                this.acctMsg = 'Created';
+                this.acctMsg = 'Created'; showToast('Account created');
               } catch (e) { this.acctMsg = 'Create failed'; }
             }
             ,
-            async deleteAccount(a) {
-              if (!confirm(`Delete account "${a.name}"? This requires no pools use it.`)) return;
+            openEditAccount(a) {
+              this.editForm = { id:a.id, name:a.name, provider:a.provider||'', external_id:a.external_id||'', description:a.description||'' };
+              this.editOpen = true;
+            }
+            ,
+            async saveAccount() {
+              const f = this.editForm;
               try {
-                const res = await fetch(`/api/v1/accounts?id=${a.id}`, { method: 'DELETE' });
+                const res = await fetch(`/api/v1/accounts?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, provider:f.provider, external_id:f.external_id, description:f.description }) });
+                if (!res.ok) { this.acctMsg = await res.text(); return; }
+                this.editOpen = false;
+                await this.fetchAccounts(); showToast('Account updated');
+              } catch (e) { this.acctMsg = 'Update failed'; }
+            }
+            ,
+            confirmDeleteAccount(a) {
+              this.deleteTarget = a; this.deleteCascade = false; this.deleteChildren = []; this.confirmAccountDelete = false;
+              // Fetch pools and compute affected pools
+              fetch('/api/v1/pools').then(r=>r.json()).then(list => {
+                const byParent = new Map();
+                for (const p of list) { if (p.parent_id) { const arr = byParent.get(p.parent_id) || []; arr.push(p); byParent.set(p.parent_id, arr); } }
+                const roots = list.filter(p => p.account_id === a.id);
+                const byId = new Map(list.map(p=>[p.id,p]));
+                const out = [];
+                const stack = roots.map(r=>r.id);
+                while (stack.length) {
+                  const id = stack.pop();
+                  const p = byId.get(id); if (p) out.push(p);
+                  const children = byParent.get(id) || [];
+                  for (const c of children) { stack.push(c.id); }
+                }
+                this.deleteChildren = out;
+              });
+              this.deleteOpen = true;
+            }
+            ,
+            async deleteAccount(a) {
+              if (!a) a = this.deleteTarget;
+              if (!a) return;
+              try {
+                const force = this.deleteCascade ? '&force=1' : '';
+                const res = await fetch(`/api/v1/accounts?id=${a.id}${force}`, { method: 'DELETE' });
                 if (!res.ok) { this.acctMsg = await res.text(); return; }
                 await this.fetchAccounts();
-                this.acctMsg = 'Deleted';
+                this.deleteOpen = false;
+                this.acctMsg = 'Deleted'; showToast('Account deleted');
               } catch (e) { this.acctMsg = 'Delete failed'; }
             }
           }
         }
       </script>
+      <!-- Edit Account Modal -->
+      <div x-show="editOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:520px;">
+          <h3>Edit Account</h3>
+          <div class="row">
+            <input type="text" placeholder="Name" x-model="editForm.name" style="flex:1;" />
+            <input type="text" placeholder="Provider" x-model="editForm.provider" style="flex:1;" />
+          </div>
+          <div class="row">
+            <input type="text" placeholder="External ID" x-model="editForm.external_id" style="flex:1;" />
+            <input type="text" placeholder="Description" x-model="editForm.description" style="flex:1;" />
+          </div>
+          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
+            <button class="btn ghost" @click="editOpen=false">Cancel</button>
+            <button class="btn" @click="saveAccount()">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Delete Account Confirm Modal -->
+      <div x-show="deleteOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:420px;">
+          <h3>Confirm Delete</h3>
+          <p>Are you sure you want to delete <strong x-text="deleteTarget?.name"></strong>?</p>
+          <template x-if="deleteChildren.length">
+            <div>
+              <p class="muted">The following pools (and their descendants) are associated and will be deleted:</p>
+              <ul>
+                <template x-for="p in deleteChildren" :key="p.id">
+                  <li x-text="p.name + ' ('+p.cidr+')'"></li>
+                </template>
+              </ul>
+              <label><input type="checkbox" x-model="deleteCascade" /> Delete all associated pools</label>
+            </div>
+          </template>
+          <div class="row" style="justify-content:space-between; align-items:center; margin-top:1rem;">
+            <label style="display:flex; align-items:center; gap:.4rem;"><input type="checkbox" x-model="confirmAccountDelete" /> I understand this action cannot be undone</label>
+            <button class="btn ghost" @click="deleteOpen=false">Cancel</button>
+            <button class="btn" :disabled="(!confirmAccountDelete) || (deleteChildren.length && !deleteCascade)" @click="deleteAccount()">Delete</button>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <section id="all-blocks" x-data="allBlocksView()" x-init="init()" class="card" style="margin-top:1rem;">
+    <section x-data="allBlocksView()" x-init="init()" class="card" style="margin-top:1rem;">
       <h2>All Assigned Blocks</h2>
       <div class="row" style="align-items:center; gap:1rem;">
         <div>
@@ -269,27 +414,29 @@
       </div>
       <table>
         <thead>
-          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Parent Pool</th><th>Account</th><th>Created</th><th>Action</th></tr>
+          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Parent Pool</th><th>Account</th><th>Created</th><th></th></tr>
         </thead>
         <tbody>
           <template x-for="b in filtered()" :key="b.id">
-            <tr>
+            <tr x-data="{open:false}" @click.outside="open=false">
               <td x-text="b.id"></td>
               <td x-text="b.name"></td>
               <td x-text="b.cidr"></td>
               <td x-text="b.parent_name"></td>
               <td x-text="b.account_name || '-' "></td>
               <td x-text="new Date(b.created_at).toLocaleString()"></td>
-              <td><button class="btn ghost" @click="deleteBlock(b)">Delete</button></td>
+              <td style="text-align:right; position:relative;">
+                <button class="btn ghost" @click="open=!open">⋮</button>
+                <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow: var(--shadow); z-index:9999; min-width:140px;">
+                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; openEditBlock(b)">Edit</button>
+                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; confirmDeleteBlock(b)">Delete</button>
+                </div>
+              </td>
             </tr>
           </template>
           <tr x-show="filtered().length === 0"><td colspan="7" style="color:#999">No assigned blocks match filters</td></tr>
         </tbody>
       </table>
-      <div class="row" style="margin-top:.5rem; align-items:center;">
-        <input type="text" placeholder="Search (name, cidr, parent, account)" x-model="search" style="min-width:24rem;" />
-        <button class="btn" @click="downloadCsv()">Export CSV</button>
-      </div>
       <script>
         function allBlocksView() {
           return {
@@ -298,8 +445,15 @@
             selectedAccounts: [],
             selectedPools: [],
             blocks: [],
-            search: '',
             msg: '',
+            search: '',
+            editOpen:false,
+            editForm:{ id:null, name:'', account_id:null },
+            deleteOpen:false,
+            deleteTarget:null,
+            deleteDescendants: [],
+            deleteCascade: false,
+            confirmBlockDelete: false,
             async init() {
               await Promise.all([this.fetchAccounts(), this.fetchParentPools()]);
               await this.load();
@@ -326,25 +480,40 @@
             clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.load(); }
             ,
             filtered() {
-              const q = (this.search || '').toLowerCase();
+              const q = (this.search||'').toLowerCase();
               if (!q) return this.blocks;
-              return this.blocks.filter(b =>
-                String(b.id).includes(q) ||
-                (b.name||'').toLowerCase().includes(q) ||
-                (b.cidr||'').toLowerCase().includes(q) ||
-                (b.parent_name||'').toLowerCase().includes(q) ||
-                (b.account_name||'').toLowerCase().includes(q)
-              );
+              return this.blocks.filter(b => String(b.id).includes(q) || (b.name||'').toLowerCase().includes(q) || (b.cidr||'').toLowerCase().includes(q) || (b.parent_name||'').toLowerCase().includes(q) || (b.account_name||'').toLowerCase().includes(q));
             }
             ,
-            async deleteBlock(b) {
-              if (!confirm(`Delete sub-pool "${b.name}" (${b.cidr})?`)) return;
+            openEditBlock(b){ this.editForm = { id:b.id, name:b.name, account_id: null }; this.editOpen = true; }
+            ,
+            async saveEditBlock(){
+              const f=this.editForm;
               try {
-                const res = await fetch(`/api/v1/pools?id=${b.id}`, { method: 'DELETE' });
+                const res = await fetch(`/api/v1/pools?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, account_id:f.account_id }) });
                 if (!res.ok) { this.msg = await res.text(); return; }
-                await this.load();
-              } catch (e) { this.msg = 'Delete failed'; }
+                this.editOpen=false; await this.load(); showToast('Block updated');
+              } catch(e){ this.msg='Update failed'; }
             }
+            ,
+            confirmDeleteBlock(b){
+              this.deleteTarget=b; this.deleteCascade=false; this.deleteDescendants=[]; this.confirmBlockDelete=false;
+              // fetch all pools to compute descendants of this sub-pool
+              fetch('/api/v1/pools').then(r=>r.json()).then(list => {
+                const byParent = new Map();
+                for (const p of list) { if (p.parent_id) { const arr = byParent.get(p.parent_id) || []; arr.push(p); byParent.set(p.parent_id, arr); } }
+                const out=[]; const stack=[b.id];
+                while (stack.length){
+                  const id=stack.pop();
+                  const children = byParent.get(id) || [];
+                  for (const c of children){ out.push(c); stack.push(c.id); }
+                }
+                this.deleteDescendants=out;
+              });
+              this.deleteOpen=true;
+            }
+            ,
+            async deleteBlock(){ const b=this.deleteTarget; if(!b) return; try{ const force=this.deleteCascade?'&force=1':''; const res=await fetch(`/api/v1/pools?id=${b.id}${force}`, {method:'DELETE'}); if(!res.ok){ this.msg=await res.text(); return;} this.deleteOpen=false; await this.load(); showToast('Block deleted'); } catch(e){ this.msg='Delete failed'; } }
             ,
             downloadCsv() {
               const rows = this.filtered();
@@ -360,10 +529,68 @@
           }
         }
       </script>
+      <!-- Edit Block Modal -->
+      <div x-show="editOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:520px;">
+          <h3>Edit Block</h3>
+          <div class="row">
+            <input type="text" placeholder="Name" x-model="editForm.name" style="flex:1;" />
+            <select x-model.number="editForm.account_id" style="flex:1;">
+              <option :value="null">No Account</option>
+              <template x-for="a in accounts" :key="a.id">
+                <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+              </template>
+            </select>
+          </div>
+          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
+            <button class="btn ghost" @click="editOpen=false">Cancel</button>
+            <button class="btn" @click="saveEditBlock()">Save</button>
+          </div>
+        </div>
+      </div>
+      <!-- Delete Block Confirm Modal -->
+      <div x-show="deleteOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:420px;">
+          <h3>Confirm Delete</h3>
+          <p>Are you sure you want to delete <strong x-text="deleteTarget?.name"></strong>?</p>
+          <template x-if="deleteTarget">
+            <div>
+              <p class="muted" x-show="deleteDescendants.length">This block has the following child sub-pools that will also be deleted:</p>
+              <ul>
+                <template x-for="p in deleteDescendants" :key="p.id">
+                  <li x-text="p.name + ' ('+p.cidr+')'"></li>
+                </template>
+              </ul>
+              <label x-show="deleteDescendants.length"><input type="checkbox" x-model="deleteCascade" /> Delete all children</label>
+            </div>
+          </template>
+          <div class="row" style="justify-content:space-between; align-items:center; margin-top:1rem;">
+            <label style="display:flex; align-items:center; gap:.4rem;"><input type="checkbox" x-model="confirmBlockDelete" /> I understand this action cannot be undone</label>
+            <button class="btn ghost" @click="deleteOpen=false">Cancel</button>
+            <button class="btn" :disabled="(!confirmBlockDelete) || (deleteDescendants.length && !deleteCascade)" @click="deleteBlock()">Delete</button>
+          </div>
+        </div>
+      </div>
     </section>
     </main>
 
     <script>
+      function toaster(){
+        return {
+          toasts: [],
+          init(){
+            window.showToast = (message, type='info') => {
+              window.dispatchEvent(new CustomEvent('toast', { detail: { message, type } }));
+            };
+            window.addEventListener('toast', (e) => {
+              const id = Math.random().toString(36).slice(2);
+              const t = { id, message: e.detail.message, type: e.detail.type || 'info' };
+              this.toasts.push(t);
+              setTimeout(() => { this.toasts = this.toasts.filter(x => x.id !== id); }, 3000);
+            });
+          }
+        }
+      }
       function pools() {
         return {
           list: [],
@@ -374,6 +601,13 @@
           current: null,
           currentAccountId: null,
           updateMsg: '',
+          editPoolOpen: false,
+          editPoolForm: { id: null, name: '', account_id: null },
+          deletePoolOpen: false,
+          deletePoolTarget: null,
+          deletePoolChildren: [],
+          deletePoolCascade: false,
+          confirmPoolDelete: false,
           blockPrefix: 24,
           blocks: [],
           rawBlocks: [],
@@ -412,6 +646,45 @@
             return a ? a.name : `#${id}`;
           },
           selectPool(p) { this.current = p; this.currentAccountId = p.account_id || null; this.blocks = []; this.subMsg=''; this.page=1; this.pageInput=1; this.total=0; this.totalPages=1; this.updateMsg=''; },
+          openEditPool(p) { this.editPoolForm = { id: p.id, name: p.name, account_id: p.account_id||null }; this.editPoolOpen = true; },
+          async saveEditPool() {
+            const f = this.editPoolForm;
+            try {
+              const res = await fetch(`/api/v1/pools?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: f.name, account_id: f.account_id }) });
+              if (!res.ok) { this.msg = await res.text(); return; }
+              const updated = await res.json();
+              const idx = this.list.findIndex(x => x.id === updated.id);
+              if (idx >= 0) this.list[idx] = updated;
+              if (this.current && this.current.id === updated.id) this.current = updated;
+              this.editPoolOpen = false;
+              showToast('Pool updated');
+            } catch (e) { this.msg = 'Update failed'; }
+          },
+          confirmDeletePool(p) {
+            this.deletePoolTarget = p; this.deletePoolCascade = false; this.confirmPoolDelete = false;
+            // Build descendant list from this.list
+            const byParent = new Map();
+            for (const x of this.list) { if (x.parent_id) { const arr = byParent.get(x.parent_id) || []; arr.push(x); byParent.set(x.parent_id, arr); } }
+            const out = [];
+            const stack = [p.id];
+            while (stack.length) {
+              const id = stack.pop();
+              const children = byParent.get(id) || [];
+              for (const c of children) { out.push(c); stack.push(c.id); }
+            }
+            this.deletePoolChildren = out;
+            this.deletePoolOpen = true;
+          },
+          async performDeletePool() {
+            const p = this.deletePoolTarget; if (!p) return;
+            try {
+              const force = this.deletePoolCascade ? '&force=1' : '';
+              const res = await fetch(`/api/v1/pools?id=${p.id}${force}`, { method:'DELETE' });
+              if (!res.ok) { this.msg = await res.text(); return; }
+              await this.fetchList(); if (this.current && this.current.id===p.id) this.current=null; this.deletePoolOpen=false;
+              showToast('Pool deleted');
+            } catch (e) { this.msg='Delete failed'; }
+          },
           onPageSize() { this.page = 1; this.loadBlocks(); },
           async loadBlocks() {
             if (!this.current) return;
@@ -477,24 +750,17 @@
               if (!res.ok) {
                 const t = await res.text();
                 this.msg = t || 'Error creating pool';
+                showToast(this.msg, 'error');
                 return;
               }
               this.form = { name: '', cidr: '' };
               await Promise.all([this.fetchList(), this.fetchAccounts()]);
               this.msg = 'Created';
+              showToast('Pool created');
             } catch (e) {
               this.msg = 'Network error';
+              showToast(this.msg, 'error');
             }
-          },
-          async deletePool(p) {
-            if (!confirm(`Delete pool "${p.name}"? Server will prevent deleting non-empty pools.`)) return;
-            try {
-              const res = await fetch(`/api/v1/pools?id=${p.id}`, { method: 'DELETE' });
-              if (!res.ok) { this.msg = await res.text(); return; }
-              await this.fetchList();
-              if (this.current && this.current.id === p.id) this.current = null;
-              this.msg = 'Deleted';
-            } catch (e) { this.msg = 'Delete failed'; }
           },
           async updateCurrentPoolAccount() {
             if (!this.current) return;
@@ -528,7 +794,7 @@
               });
               if (!res.ok) { this.subMsg = await res.text(); return; }
               await this.fetchList();
-              await this.loadBlocks();
+              await this.loadBlocks(); showToast('Sub-pool created');
               this.subMsg = 'Sub-pool created';
             } catch (e) {
               this.subMsg = 'Network error creating sub-pool';

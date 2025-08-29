@@ -15,11 +15,15 @@ type Store interface {
 	CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error)
 	GetPool(ctx context.Context, id int64) (domain.Pool, bool, error)
 	UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error)
+	UpdatePoolMeta(ctx context.Context, id int64, name *string, accountID *int64) (domain.Pool, bool, error)
 	DeletePool(ctx context.Context, id int64) (bool, error)
+	DeletePoolCascade(ctx context.Context, id int64) (bool, error)
 	// Accounts management
 	ListAccounts(ctx context.Context) ([]domain.Account, error)
 	CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error)
+	UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error)
 	DeleteAccount(ctx context.Context, id int64) (bool, error)
+	DeleteAccountCascade(ctx context.Context, id int64) (bool, error)
 }
 
 // MemoryStore is an in-memory implementation for quick start and tests.
@@ -85,10 +89,27 @@ func (m *MemoryStore) UpdatePoolAccount(ctx context.Context, id int64, accountID
 	return p, true, nil
 }
 
+func (m *MemoryStore) UpdatePoolMeta(ctx context.Context, id int64, name *string, accountID *int64) (domain.Pool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.pools[id]
+	if !ok {
+		return domain.Pool{}, false, nil
+	}
+	if name != nil {
+		p.Name = *name
+	}
+	// Always set account if provided (including clearing with nil)
+	if accountID != nil || true {
+		p.AccountID = accountID
+	}
+	m.pools[id] = p
+	return p, true, nil
+}
+
 func (m *MemoryStore) DeletePool(ctx context.Context, id int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// ensure no children
 	for _, p := range m.pools {
 		if p.ParentID != nil && *p.ParentID == id {
 			return false, errors.New("pool has child pools")
@@ -98,6 +119,35 @@ func (m *MemoryStore) DeletePool(ctx context.Context, id int64) (bool, error) {
 		return false, nil
 	}
 	delete(m.pools, id)
+	return true, nil
+}
+
+func (m *MemoryStore) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Collect subtree ids starting from id
+	if _, ok := m.pools[id]; !ok {
+		return false, nil
+	}
+	toDelete := map[int64]struct{}{id: {}}
+	progressed := true
+	for progressed {
+		progressed = false
+		for pid, p := range m.pools {
+			if _, seen := toDelete[pid]; seen {
+				continue
+			}
+			if p.ParentID != nil {
+				if _, ok := toDelete[*p.ParentID]; ok {
+					toDelete[pid] = struct{}{}
+					progressed = true
+				}
+			}
+		}
+	}
+	for pid := range toDelete {
+		delete(m.pools, pid)
+	}
 	return true, nil
 }
 
@@ -133,10 +183,27 @@ func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount
 	return a, nil
 }
 
+func (m *MemoryStore) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok {
+		return domain.Account{}, false, nil
+	}
+	if update.Name != "" {
+		a.Name = update.Name
+	}
+	// Allow empty strings to clear optional fields
+	a.Provider = update.Provider
+	a.ExternalID = update.ExternalID
+	a.Description = update.Description
+	m.accounts[id] = a
+	return a, true, nil
+}
+
 func (m *MemoryStore) DeleteAccount(ctx context.Context, id int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// ensure no pools reference
 	for _, p := range m.pools {
 		if p.AccountID != nil && *p.AccountID == id {
 			return false, errors.New("account in use by pools")
@@ -144,6 +211,41 @@ func (m *MemoryStore) DeleteAccount(ctx context.Context, id int64) (bool, error)
 	}
 	if _, ok := m.accounts[id]; !ok {
 		return false, nil
+	}
+	delete(m.accounts, id)
+	return true, nil
+}
+
+func (m *MemoryStore) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.accounts[id]; !ok {
+		return false, nil
+	}
+	// Gather pools referencing this account and their descendants
+	toDelete := map[int64]struct{}{}
+	for pid, p := range m.pools {
+		if p.AccountID != nil && *p.AccountID == id {
+			toDelete[pid] = struct{}{}
+		}
+	}
+	progressed := true
+	for progressed {
+		progressed = false
+		for pid, p := range m.pools {
+			if _, seen := toDelete[pid]; seen {
+				continue
+			}
+			if p.ParentID != nil {
+				if _, ok := toDelete[*p.ParentID]; ok {
+					toDelete[pid] = struct{}{}
+					progressed = true
+				}
+			}
+		}
+	}
+	for pid := range toDelete {
+		delete(m.pools, pid)
 	}
 	delete(m.accounts, id)
 	return true, nil

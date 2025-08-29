@@ -157,21 +157,59 @@ func (s *Store) UpdatePoolAccount(ctx context.Context, id int64, accountID *int6
     return s.GetPool(ctx, id)
 }
 
+func (s *Store) UpdatePoolMeta(ctx context.Context, id int64, name *string, accountID *int64) (domain.Pool, bool, error) {
+    // Fetch current
+    p, ok, err := s.GetPool(ctx, id)
+    if err != nil || !ok { return domain.Pool{}, ok, err }
+    if name != nil { p.Name = *name }
+    // accountID can be nil to clear
+    if accountID != nil || true { p.AccountID = accountID }
+    if _, err := s.db.ExecContext(ctx, `UPDATE pools SET name=?, account_id=? WHERE id=?`, p.Name, p.AccountID, id); err != nil {
+        return domain.Pool{}, false, err
+    }
+    return s.GetPool(ctx, id)
+}
+
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
     // check children
     var cnt int
     if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=?`, id).Scan(&cnt); err != nil {
         return false, err
     }
-    if cnt > 0 {
-        return false, errors.New("pool has child pools")
-    }
+    if cnt > 0 { return false, errors.New("pool has child pools") }
     res, err := s.db.ExecContext(ctx, `DELETE FROM pools WHERE id=?`, id)
-    if err != nil {
-        return false, err
-    }
+    if err != nil { return false, err }
     n, _ := res.RowsAffected()
     return n > 0, nil
+}
+
+func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
+    // Load all pools, compute subtree, delete
+    ps, err := s.ListPools(ctx)
+    if err != nil { return false, err }
+    exists := false
+    children := map[int64][]int64{}
+    for _, p := range ps {
+        if p.ID == id { exists = true }
+        if p.ParentID != nil {
+            children[*p.ParentID] = append(children[*p.ParentID], p.ID)
+        }
+    }
+    if !exists { return false, nil }
+    // BFS
+    queue := []int64{id}
+    order := []int64{}
+    for len(queue) > 0 {
+        cur := queue[0]; queue = queue[1:]
+        order = append(order, cur)
+        for _, ch := range children[cur] { queue = append(queue, ch) }
+    }
+    // Delete leaves-first or any order since individual deletes are fine
+    for i := len(order)-1; i >=0; i-- {
+        _, err := s.db.ExecContext(ctx, `DELETE FROM pools WHERE id=?`, order[i])
+        if err != nil { return false, err }
+    }
+    return true, nil
 }
 
 // Accounts
@@ -211,19 +249,64 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
     return domain.Account{ID: id, Key: in.Key, Name: in.Name, Provider: in.Provider, ExternalID: in.ExternalID, Description: in.Description, CreatedAt: time.Now().UTC()}, nil
 }
 
+func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
+    // Fetch current
+    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, created_at FROM accounts WHERE id=?`, id)
+    if err != nil { return domain.Account{}, false, err }
+    defer rows.Close()
+    if !rows.Next() { return domain.Account{}, false, nil }
+    var a domain.Account
+    var ts string
+    if err := rows.Scan(&a.ID, &a.Key, &a.Name, &a.Provider, &a.ExternalID, &a.Description, &ts); err != nil { return domain.Account{}, false, err }
+    // Apply update
+    if update.Name != "" { a.Name = update.Name }
+    a.Provider = update.Provider
+    a.ExternalID = update.ExternalID
+    a.Description = update.Description
+    if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET name=?, provider=?, external_id=?, description=? WHERE id=?`, a.Name, a.Provider, a.ExternalID, a.Description, id); err != nil {
+        return domain.Account{}, false, err
+    }
+    return a, true, nil
+}
+
 func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
-    // ensure not referenced
     var cnt int
-    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=?`, id).Scan(&cnt); err != nil {
-        return false, err
-    }
-    if cnt > 0 {
-        return false, errors.New("account in use by pools")
-    }
+    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=?`, id).Scan(&cnt); err != nil { return false, err }
+    if cnt > 0 { return false, errors.New("account in use by pools") }
     res, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id)
-    if err != nil {
-        return false, err
-    }
+    if err != nil { return false, err }
     n, _ := res.RowsAffected()
     return n > 0, nil
+}
+
+func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
+    // Delete all pools referencing this account, including their descendants, then delete account
+    ps, err := s.ListPools(ctx)
+    if err != nil { return false, err }
+    // Check account exists
+    var accCnt int
+    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM accounts WHERE id=?`, id).Scan(&accCnt); err != nil { return false, err }
+    if accCnt == 0 { return false, nil }
+    // Build adjacency
+    children := map[int64][]int64{}
+    for _, p := range ps {
+        if p.ParentID != nil { children[*p.ParentID] = append(children[*p.ParentID], p.ID) }
+    }
+    // Collect roots: pools with account_id = id
+    roots := []int64{}
+    for _, p := range ps { if p.AccountID != nil && *p.AccountID == id { roots = append(roots, p.ID) } }
+    // Collect all to delete
+    toDel := map[int64]struct{}{}
+    var dfs func(int64)
+    dfs = func(n int64){
+        if _, ok := toDel[n]; ok { return }
+        toDel[n] = struct{}{}
+        for _, ch := range children[n] { dfs(ch) }
+    }
+    for _, r := range roots { dfs(r) }
+    // Delete pools
+    for pid := range toDel { if _, err := s.db.ExecContext(ctx, `DELETE FROM pools WHERE id=?`, pid); err != nil { return false, err } }
+    // Delete account
+    if _, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id); err != nil { return false, err }
+    return true, nil
 }
