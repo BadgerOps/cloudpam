@@ -717,7 +717,7 @@ func prefixesOverlapIPv4(a, b netip.Prefix) bool {
     aEndU := ipv4ToUint32(aEnd)
     bEndU := ipv4ToUint32(bEnd)
     // Overlap if intervals intersect
-    return !(aEndU < bStart || bEndU < aStart)
+    return aEndU >= bStart && bEndU >= aStart
 }
 
 func computeSubnetsIPv4Window(parentCIDR string, newPrefixLen int, offset, limit int) ([]string, uint64, int, error) {
