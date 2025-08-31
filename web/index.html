@@ -41,6 +41,7 @@
       .status-free { color: var(--success); font-weight: 600; }
     </style>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
   </head>
   <body>
     <div x-data="toaster()" x-init="init()" style="position:fixed; right:16px; bottom:16px; display:flex; flex-direction:column; gap:10px; z-index:10000;">
@@ -87,14 +88,22 @@
             <option value="all">All</option>
           </select>
         </label>
+        <div style="margin-left:auto; position:relative;">
+          <button class="btn ghost" @click="bulkOpen=!bulkOpen" :disabled="!selectedTop.length" :title="selectedTop.length ? (selectedTop.length + ' selected') : 'Select rows to enable actions'">⋮</button>
+          <div x-show="bulkOpen" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:9999; min-width:180px;">
+            <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="bulkOpen=false; openBulkAssignTop()">Assign Account…</button>
+            <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="bulkOpen=false; openBulkDeleteTop()">Delete…</button>
+          </div>
+        </div>
       </div>
       <table>
         <thead>
-          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Account</th><th>Created</th><th></th></tr>
+          <tr><th style="width:32px;"><input type="checkbox" @change="toggleSelectAllTop($event)" :checked="allTopSelected()" :indeterminate="indeterminateTop()" /></th><th>ID</th><th>Name</th><th>CIDR</th><th>Account</th><th>Created</th><th></th></tr>
         </thead>
         <tbody>
           <template x-for="p in topLevel" :key="p.id">
-            <tr x-data="{ open:false }" @click.outside="open=false">
+            <tr>
+              <td><input type="checkbox" :value="p.id" @change="toggleSelectTop(p.id)" :checked="selectedTop.includes(p.id)" /></td>
               <td x-text="p.id"></td>
               <td x-text="p.name"></td>
               <td x-text="p.cidr"></td>
@@ -102,17 +111,46 @@
               <td x-text="new Date(p.created_at).toLocaleString()"></td>
               <td style="text-align:right; position:relative;">
                 <button class="btn ghost" @click="selectPool(p)">View</button>
-                <button class="btn ghost" @click="open=!open" aria-label="Actions">⋮</button>
-                <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow: var(--shadow); z-index:9999; min-width:140px;">
-                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; openEditPool(p)">Edit</button>
-                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; confirmDeletePool(p)">Delete</button>
-                </div>
               </td>
             </tr>
           </template>
           <tr x-show="topLevel.length === 0"><td colspan="5" style="color:#999">No pools yet</td></tr>
         </tbody>
       </table>
+
+      <!-- Bulk Assign Top Pools -->
+      <div x-show="bulkAssignTopOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:420px;">
+          <h3>Assign Account to Selected</h3>
+          <div class="row" style="align-items:center;">
+            <select x-model.number="bulkAccountId" style="min-width: 14rem;">
+              <option :value="null">No Account</option>
+              <template x-for="a in accounts" :key="a.id">
+                <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+              </template>
+            </select>
+            <span class="muted" x-text="selectedTop.length + ' item(s)'" />
+          </div>
+          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
+            <button class="btn ghost" @click="bulkAssignTopOpen=false">Cancel</button>
+            <button class="btn" @click="performBulkAssignTop()">Apply</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bulk Delete Top Pools -->
+      <div x-show="bulkDeleteTopOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:460px;">
+          <h3>Delete Selected Pools</h3>
+          <p class="muted">This action can delete multiple pools. You may enable cascade to delete their descendants.</p>
+          <label style="display:flex; gap:.4rem; align-items:center;"><input type="checkbox" x-model="bulkCascade" /> Cascade delete descendants</label>
+          <label style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem;"><input type="checkbox" x-model="confirmBulkDelete" /> I understand this cannot be undone</label>
+          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
+            <button class="btn ghost" @click="bulkDeleteTopOpen=false">Cancel</button>
+            <button class="btn" :disabled="!confirmBulkDelete" @click="performBulkDeleteTop()">Delete</button>
+          </div>
+        </div>
+      </div>
 
       <template x-if="current">
         <div style="margin-top: 2rem;" class="card">
@@ -135,7 +173,7 @@
           </div>
           <div class="row" style="margin: 0.5rem 0; align-items:center;">
             <label>Block size (prefix):</label>
-            <input type="number" min="16" max="32" x-model.number="blockPrefix" style="width:6rem" />
+            <input type="number" :min="currentPrefixBits ? currentPrefixBits+1 : 16" max="32" x-model.number="blockPrefix" @change="if (currentPrefixBits!=null && blockPrefix <= currentPrefixBits) blockPrefix = Math.min(32, currentPrefixBits+1)" style="width:6rem" />
             <label>Per page:</label>
             <select x-model="pageSize" @change="onPageSize()">
               <option value="10">10</option>
@@ -156,15 +194,63 @@
             <button class="btn ghost" @click="nextPage()" :disabled="page>=totalPages || pageSize==='all'">Next</button>
             <button class="btn ghost" @click="lastPage()" :disabled="page>=totalPages || pageSize==='all'">Last</button>
             <span class="muted" x-show="total>0">Showing <strong x-text="fromItem"></strong>–<strong x-text="toItem"></strong> of <strong x-text="total"></strong></span>
-            <label style="margin-left:auto; display:flex; gap:.4rem; align-items:center;">
-              <input type="checkbox" x-model="showOnlyUsed" @change="filterBlocks()" />
-              Show only used
-            </label>
+            <div style="margin-left:auto; display:flex; gap:1rem; align-items:center;">
+              <label style="display:flex; gap:.35rem; align-items:center;">
+                <input type="checkbox" x-model="showOnlyUsed" @change="filterBlocks()" />
+                Show only used
+              </label>
+              <label style="display:flex; gap:.35rem; align-items:center;">
+                <input type="checkbox" x-model="hideUnavailable" @change="filterBlocks()" />
+                Hide unavailable
+              </label>
+            </div>
+          </div>
+
+          <div class="card" style="margin: .5rem 0; padding:.75rem;">
+            <div class="row" style="align-items:center; gap:.75rem;">
+              <strong>IP Space Visualization</strong>
+              <input type="text" placeholder="Search name or CIDR" x-model="vizSearch" @input="computeViz()" />
+              <label>Accounts
+                <select x-model="vizAccounts" multiple size="3" @change="computeViz()">
+                  <template x-for="a in accounts" :key="a.id">
+                    <option :value="String(a.id)" x-text="a.name"></option>
+                  </template>
+                </select>
+              </label>
+            </div>
+            <div style="position:relative; height:16px; background:#eef2ff; border:1px solid var(--border); border-radius:6px; margin-top:.5rem; overflow:hidden;">
+              <template x-for="seg in vizSegments" :key="seg.id">
+                <div :title="seg.title" :style="`position:absolute; left:${seg.left}%; width:${seg.width}%; top:0; bottom:0; background:${seg.color}; opacity:.85;`"></div>
+              </template>
+            </div>
+            <div class="muted" style="margin-top:.4rem;">
+              <span x-text="vizSegments.length"></span> block(s) displayed
+            </div>
           </div>
 
           <table>
             <thead>
-              <tr><th>Prefix</th><th>Hosts</th><th>Status</th><th>Assigned Name</th><th>Assigned Account</th><th>Action</th></tr>
+              <tr>
+                <th>Prefix</th>
+                <th>Hosts</th>
+                <th>Status</th>
+                <th>Assigned Name</th>
+                <th>Assigned Account</th>
+                <th>Network IP</th>
+                <th>Broadcast IP</th>
+                <th>Action</th>
+              </tr>
+              <tr>
+                <!-- No filter for Prefix (IP range) and Assigned Name -->
+                <th></th>
+                <th><input type="text" placeholder="Filter" x-model="blockFilters.hosts" @input="filterBlocks()" style="width:100%;" /></th>
+                <th><input type="text" placeholder="used/free/unavailable" x-model="blockFilters.status" @input="filterBlocks()" style="width:100%;" /></th>
+                <th></th>
+                <th><input type="text" placeholder="Account" x-model="blockFilters.account" @input="filterBlocks()" style="width:100%;" /></th>
+                <th><input type="text" placeholder="Network IP" x-model="blockFilters.network" @input="filterBlocks()" style="width:100%;" /></th>
+                <th><input type="text" placeholder="Broadcast IP" x-model="blockFilters.broadcast" @input="filterBlocks()" style="width:100%;" /></th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
               <template x-for="b in blocks" :key="b.cidr">
@@ -172,7 +258,9 @@
                   <td x-text="b.cidr"></td>
                   <td x-text="b.hosts"></td>
                   <td>
-                    <span :class="b.used ? 'status-used' : 'status-free'" x-text="b.used ? 'Used' : 'Free'"></span>
+                    <span :class="(b.used||blockUnavailable(b.cidr)) ? 'status-used' : 'status-free'"
+                          :title="blockUnavailableReason(b.cidr)"
+                          x-text="b.used ? 'Used' : (blockUnavailable(b.cidr) ? 'Unavailable' : 'Free')"></span>
                   </td>
                   <td>
                     <template x-if="b.assigned_id">
@@ -183,12 +271,14 @@
                     </template>
                   </td>
                   <td x-text="b.assigned_account_name || accountName(b.assigned_account_id) || '-' "></td>
+                  <td x-text="b.network_ip || '-' "></td>
+                  <td x-text="b.broadcast_ip || '-' "></td>
                   <td>
-                    <button class="btn" :disabled="b.used" @click="createSub(b)">Create Sub-pool</button>
+                    <button class="btn" :disabled="b.used || blockUnavailable(b.cidr)" :title="blockUnavailableReason(b.cidr) || 'Create a sub-pool in this block'" @click="createSub(b)">Create Sub-pool</button>
                   </td>
-                </tr>
+              </tr>
               </template>
-              <tr x-show="blocks.length === 0"><td colspan="6" style="color:#999">No blocks yet</td></tr>
+              <tr x-show="blocks.length === 0"><td colspan="8" style="color:#999">No blocks yet</td></tr>
             </tbody>
           </table>
         </div>
@@ -410,54 +500,139 @@
     <template x-if="tab==='analytics'">
     <section x-data="allBlocksView()" x-init="init()" class="card">
       <h2>All Assigned Blocks</h2>
-      <div class="row" style="align-items:center; gap:1rem;">
-        <div>
-          <div class="muted">Filter by Accounts</div>
-          <select x-model="selectedAccounts" multiple size="4" style="min-width:18rem;">
-            <template x-for="a in accounts" :key="a.id">
-              <option :value="String(a.id)" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
-            </template>
-          </select>
+      <div class="row" style="gap:1rem; align-items:stretch; margin-bottom:.5rem;">
+        <div class="card" style="flex:1; min-width:280px;">
+          <div style="font-weight:600; margin-bottom:.25rem;">Blocks by Parent Pool</div>
+          <div id="chart-parent" x-ref="chartParent"></div>
         </div>
-        <div>
-          <div class="muted">Filter by Parent Pools</div>
-          <select x-model="selectedPools" multiple size="4" style="min-width:18rem;">
-            <template x-for="p in parentPools" :key="p.id">
-              <option :value="String(p.id)" x-text="p.name + ' ('+p.cidr+')'"></option>
-            </template>
-          </select>
+        <div class="card" style="flex:1; min-width:280px;">
+          <div style="font-weight:600; margin-bottom:.25rem;">Address Space by Account</div>
+          <div id="chart-account" x-ref="chartAccount"></div>
         </div>
-        <div style="display:flex; flex-direction:column; gap:.5rem;">
-          <button class="btn" @click="load()">Refresh</button>
-          <button class="btn ghost" @click="clearFilters()">Clear Filters</button>
-        </div>
+      </div>
+      <div class="card" style="margin-bottom:.5rem;">
+        <div style="font-weight:600; margin-bottom:.25rem;">Creations Over Time</div>
+        <div id="chart-time" x-ref="chartTime"></div>
+      </div>
+      <div class="row" style="align-items:center; gap:1rem; position:relative;">
+        <button class="btn" @click="filtersOpen=!filtersOpen">Filters ▾</button>
+        <button class="btn ghost" @click="load()">Refresh</button>
+        <button class="btn ghost" @click="clearFilters()">Clear</button>
+        <span class="muted" x-text="summary()"></span>
         <span class="muted" x-text="msg"></span>
+        <div style="margin-left:auto; position:relative;">
+          <button class="btn ghost" @click="bulkOpen=!bulkOpen" :disabled="!selected.length" :title="selected.length ? (selected.length + ' selected') : 'Select rows to enable actions'">⋮</button>
+          <div x-show="bulkOpen" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:9999; min-width:180px;">
+            <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="bulkOpen=false; openBulkAssign()">Assign Account…</button>
+            <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="bulkOpen=false; openBulkDelete()">Delete…</button>
+          </div>
+        </div>
+        <div x-show="filtersOpen" x-cloak style="position:absolute; top:36px; left:0; background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:12px; display:flex; gap:16px; z-index:10020;">
+          <div style="min-width:220px; max-height:260px; overflow:auto;">
+            <div class="muted" style="margin-bottom:6px;">Accounts</div>
+            <template x-for="a in accounts" :key="a.id">
+              <label style="display:flex; align-items:center; gap:.5rem;">
+                <input type="checkbox" :value="String(a.id)" @change="toggleInArray(selectedAccounts, String(a.id))" :checked="selectedAccounts.includes(String(a.id))" />
+                <span x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></span>
+              </label>
+            </template>
+            <div class="muted" style="margin-top:.5rem;">Account name contains</div>
+            <input type="text" placeholder="e.g., prod" x-model="fltAccountName" @input="load()" style="width:100%;" />
+          </div>
+          <div style="min-width:220px; max-height:260px; overflow:auto;">
+            <div class="muted" style="margin-bottom:6px;">Parent Pools</div>
+            <template x-for="p in parentPools" :key="p.id">
+              <label style="display:flex; align-items:center; gap:.5rem;">
+                <input type="checkbox" :value="String(p.id)" @change="toggleInArray(selectedPools, String(p.id))" :checked="selectedPools.includes(String(p.id))" />
+                <span x-text="p.name + ' ('+p.cidr+')'"></span>
+              </label>
+            </template>
+            <div class="muted" style="margin-top:.5rem;">CIDR contains</div>
+            <input type="text" placeholder="e.g., 10.0.1." x-model="fltCIDR" @input="load()" style="width:100%;" />
+          </div>
+          <div style="min-width:220px; max-height:260px; overflow:auto;">
+            <div class="muted" style="margin-bottom:6px;">Platform</div>
+            <template x-for="pl in platforms()" :key="pl">
+              <label style="display:flex; align-items:center; gap:.5rem;">
+                <input type="checkbox" :value="pl" @change="toggleInArray(fltPlatforms, pl)" :checked="fltPlatforms.includes(pl)" />
+                <span x-text="pl"></span>
+              </label>
+            </template>
+            <div class="muted" style="margin:.5rem 0 6px;">Environment / Tier</div>
+            <template x-for="env in environments()" :key="env">
+              <label style="display:flex; align-items:center; gap:.5rem;">
+                <input type="checkbox" :value="env" @change="toggleInArray(fltEnvs, env)" :checked="fltEnvs.includes(env)" />
+                <span x-text="env"></span>
+              </label>
+            </template>
+          </div>
+          <div style="min-width:220px; max-height:260px; overflow:auto;">
+            <div class="muted" style="margin-bottom:6px;">Regions</div>
+            <template x-for="rg in regions()" :key="rg">
+              <label style="display:flex; align-items:center; gap:.5rem;">
+                <input type="checkbox" :value="rg" @change="toggleInArray(fltRegions, rg)" :checked="fltRegions.includes(rg)" />
+                <span x-text="rg"></span>
+              </label>
+            </template>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:.5rem; align-items:flex-end;">
+            <button class="btn" @click="filtersOpen=false; page=1; load()">Apply</button>
+            <button class="btn ghost" @click="clearFilters()">Clear</button>
+          </div>
+        </div>
       </div>
       <table>
         <thead>
-          <tr><th>ID</th><th>Name</th><th>CIDR</th><th>Parent Pool</th><th>Account</th><th>Created</th><th></th></tr>
+          <tr><th style="width:32px;"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected()" :indeterminate="indeterminate()" /></th><th>ID</th><th>Name</th><th>CIDR</th><th>Parent Pool</th><th>Account</th><th>Network IP</th><th>Broadcast IP</th><th>Created</th></tr>
         </thead>
         <tbody>
           <template x-for="b in filtered()" :key="b.id">
-            <tr x-data="{open:false}" @click.outside="open=false">
+            <tr>
+              <td><input type="checkbox" :value="b.id" @change="toggleSelect(b.id)" :checked="selected.includes(b.id)" /></td>
               <td x-text="b.id"></td>
               <td x-text="b.name"></td>
               <td x-text="b.cidr"></td>
               <td x-text="b.parent_name"></td>
               <td x-text="b.account_name || '-' "></td>
+              <td x-text="b.network_ip || '-' "></td>
+              <td x-text="b.broadcast_ip || '-' "></td>
               <td x-text="new Date(b.created_at).toLocaleString()"></td>
-              <td style="text-align:right; position:relative;">
-                <button class="btn ghost" @click="open=!open">⋮</button>
-                <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow: var(--shadow); z-index:9999; min-width:140px;">
-                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; openEditBlock(b)">Edit</button>
-                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; confirmDeleteBlock(b)">Delete</button>
-                </div>
-              </td>
             </tr>
           </template>
-          <tr x-show="filtered().length === 0"><td colspan="7" style="color:#999">No assigned blocks match filters</td></tr>
+          <tr x-show="filtered().length === 0"><td colspan="9" style="color:#999">No assigned blocks match filters</td></tr>
         </tbody>
       </table>
+      <!-- Bulk Assign (Analytics) -->
+      <div x-show="bulkAssignOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:420px;">
+          <h3>Assign Account to Selected</h3>
+          <div class="row" style="align-items:center;">
+            <select x-model.number="bulkAccountId" style="min-width: 14rem;">
+              <option :value="null">No Account</option>
+              <template x-for="a in accounts" :key="a.id">
+                <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+              </template>
+            </select>
+            <span class="muted" x-text="selected.length + ' item(s)'" />
+          </div>
+          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
+            <button class="btn ghost" @click="bulkAssignOpen=false">Cancel</button>
+            <button class="btn" @click="performBulkAssign()">Apply</button>
+          </div>
+        </div>
+      </div>
+      <!-- Bulk Delete (Analytics) -->
+      <div x-show="bulkDeleteOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" style="width:460px;">
+          <h3>Delete Selected Blocks</h3>
+          <label style="display:flex; gap:.4rem; align-items:center;"><input type="checkbox" x-model="bulkCascade" /> Cascade delete descendants</label>
+          <label style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem;"><input type="checkbox" x-model="confirmBulkDelete" /> I understand this cannot be undone</label>
+          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
+            <button class="btn ghost" @click="bulkDeleteOpen=false">Cancel</button>
+            <button class="btn" :disabled="!confirmBulkDelete" @click="performBulkDelete()">Delete</button>
+          </div>
+        </div>
+      </div>
       <div class="row" style="justify-content:space-between; align-items:center; margin-top:.5rem;">
         <div class="muted" x-text="total ? `Showing ${fromItem}-${toItem} of ${total}` : ''"></div>
         <div class="row" style="align-items:center; gap:.5rem;">
@@ -475,10 +650,16 @@
             parentPools: [],
             selectedAccounts: [],
             selectedPools: [],
+            filtersOpen: false,
             blocks: [],
             rawBlocks: [],
             msg: '',
             search: '',
+            fltAccountName: '',
+            fltCIDR: '',
+            fltPlatforms: [],
+            fltEnvs: [],
+            fltRegions: [],
             pageSize: '50',
             page: 1,
             pageInput: 1,
@@ -493,9 +674,20 @@
             deleteDescendants: [],
             deleteCascade: false,
             confirmBlockDelete: false,
+            chartParent: null,
+            chartAccount: null,
+            chartTime: null,
+            selected: [],
+            bulkOpen: false,
+            bulkAssignOpen: false,
+            bulkDeleteOpen: false,
+            bulkAccountId: null,
+            bulkCascade: false,
+            confirmBulkDelete: false,
             async init() {
               await Promise.all([this.fetchAccounts(), this.fetchParentPools()]);
               await this.load();
+              this.renderCharts();
             },
             async fetchAccounts() {
               try { const res = await fetch('/api/v1/accounts'); this.accounts = await res.json(); }
@@ -515,29 +707,146 @@
                 else { q.set('page_size', 'all'); }
                 const res = await fetch('/api/v1/blocks?' + q.toString());
                 if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
-                const data = await res.json();
-                const items = Array.isArray(data) ? data : (data.items || []);
-                this.rawBlocks = items;
-                const pageSizeNum = this.pageSize === 'all' ? items.length : parseInt(this.pageSize, 10);
-                this.total = data.total ?? items.length;
-                this.totalPages = this.pageSize === 'all' ? 1 : Math.max(1, Math.ceil(this.total / pageSizeNum));
-                const startIdx = this.total === 0 ? 0 : ((this.page - 1) * (pageSizeNum || this.total)) + 1;
-                const endIdx = this.total === 0 ? 0 : Math.min(this.total, (this.page - 1) * (pageSizeNum || this.total) + items.length);
-                this.fromItem = startIdx;
-                this.toItem = endIdx;
-                this.pageInput = this.page;
-                this.blocks = this.filtered();
-              } catch (e) { this.msg = 'Failed to load blocks'; }
+              const data = await res.json();
+              const items = Array.isArray(data) ? data : (data.items || []);
+              this.rawBlocks = this.withDerivedIPs(items);
+              const pageSizeNum = this.pageSize === 'all' ? items.length : parseInt(this.pageSize, 10);
+              this.total = data.total ?? items.length;
+              this.totalPages = this.pageSize === 'all' ? 1 : Math.max(1, Math.ceil(this.total / pageSizeNum));
+              const startIdx = this.total === 0 ? 0 : ((this.page - 1) * (pageSizeNum || this.total)) + 1;
+              const endIdx = this.total === 0 ? 0 : Math.min(this.total, (this.page - 1) * (pageSizeNum || this.total) + items.length);
+              this.fromItem = startIdx;
+              this.toItem = endIdx;
+              this.pageInput = this.page;
+              this.blocks = this.filtered();
+              // prune selection
+              const curIds = new Set(this.blocks.map(b=>b.id));
+              this.selected = this.selected.filter(id=>curIds.has(id));
+              this.renderCharts();
+            } catch (e) { this.msg = 'Failed to load blocks'; }
             },
-            clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.load(); }
+            clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.filtersOpen=false; this.page=1; this.load(); }
             ,
             filtered() {
-              const q = (this.search||'').toLowerCase();
               const src = this.rawBlocks;
-              if (!q) return src;
-              return src.filter(b => String(b.id).includes(q) || (b.name||'').toLowerCase().includes(q) || (b.cidr||'').toLowerCase().includes(q) || (b.parent_name||'').toLowerCase().includes(q) || (b.account_name||'').toLowerCase().includes(q));
+              let arr = src;
+              if (this.selectedAccounts.length) arr = arr.filter(b => this.selectedAccounts.includes(String(b.account_id)));
+              if (this.selectedPools.length) arr = arr.filter(b => this.selectedPools.includes(String(b.parent_id)));
+              if (this.fltAccountName) { const qn = this.fltAccountName.toLowerCase(); arr = arr.filter(b => (b.account_name||'').toLowerCase().includes(qn)); }
+              if (this.fltCIDR) { const qc = this.fltCIDR.toLowerCase(); arr = arr.filter(b => (b.cidr||'').toLowerCase().includes(qc)); }
+              if (this.fltPlatforms.length) arr = arr.filter(b => this.fltPlatforms.includes((b.account_platform||'').toLowerCase()));
+              if (this.fltEnvs.length) {
+                arr = arr.filter(b => {
+                  const env = (b.account_environment||b.account_tier||'').toLowerCase();
+                  return this.fltEnvs.includes(env);
+                });
+              }
+              if (this.fltRegions.length) {
+                arr = arr.filter(b => {
+                  const regs = Array.isArray(b.account_regions) ? b.account_regions.map(r=>String(r).toLowerCase()) : [];
+                  return this.fltRegions.some(r => regs.includes(r));
+                });
+              }
+              const q = (this.search||'').toLowerCase();
+              if (q) arr = arr.filter(b => String(b.id).includes(q) || (b.name||'').toLowerCase().includes(q) || (b.cidr||'').toLowerCase().includes(q) || (b.parent_name||'').toLowerCase().includes(q) || (b.account_name||'').toLowerCase().includes(q));
+              return arr;
             }
             ,
+            toggleSelect(id){ const i=this.selected.indexOf(id); if(i>=0) this.selected.splice(i,1); else this.selected.push(id); },
+            toggleSelectAll(ev){ if (ev.target.checked){ this.selected = this.filtered().map(b=>b.id); } else { this.selected = []; } },
+            allSelected(){ const data=this.filtered(); return data.length>0 && this.selected.length===data.length; },
+            indeterminate(){ const data=this.filtered(); return this.selected.length>0 && this.selected.length<data.length; },
+            openBulkAssign(){ this.bulkAssignOpen=true; this.bulkAccountId=null; },
+            async performBulkAssign(){ const target=this.bulkAccountId ?? null; for (const id of this.selected){ try { await fetch(`/api/v1/pools?id=${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ account_id: target }) }); } catch{} } this.bulkAssignOpen=false; await this.load(); showToast('Assigned account'); },
+            openBulkDelete(){ this.bulkDeleteOpen=true; this.bulkCascade=false; this.confirmBulkDelete=false; },
+            async performBulkDelete(){ for (const id of this.selected){ const force=this.bulkCascade?'&force=1':''; try { await fetch(`/api/v1/pools?id=${id}${force}`, { method:'DELETE' }); } catch{} } this.bulkDeleteOpen=false; this.selected=[]; await this.load(); showToast('Deleted selected'); },
+            platforms(){ const set=new Set(); for (const a of this.accounts) { const v=(a.platform||'').toLowerCase(); if (v) set.add(v); } return Array.from(set).sort(); },
+            environments(){ const set=new Set(); for (const a of this.accounts) { const v=((a.environment||a.tier)||'').toLowerCase(); if (v) set.add(v); } return Array.from(set).sort(); },
+            regions(){ const set=new Set(); for (const a of this.accounts) { const arr=Array.isArray(a.regions)?a.regions:[]; for (const r of arr) { const v=String(r).toLowerCase(); if (v) set.add(v); } } return Array.from(set).sort(); },
+            toggleInArray(arr, val){ const i=arr.indexOf(val); if(i>=0) arr.splice(i,1); else arr.push(val); },
+            summary(){
+              const parts=[];
+              if (this.selectedAccounts.length) parts.push(`${this.selectedAccounts.length} account(s)`);
+              if (this.selectedPools.length) parts.push(`${this.selectedPools.length} parent pool(s)`);
+              return parts.length? 'Filters: '+parts.join(', ') : 'No filters applied';
+            },
+            withDerivedIPs(items) {
+              const out = [];
+              for (const it of (items||[])) {
+                const cidr = it.cidr;
+                const derived = deriveIPv4Range(cidr);
+                out.push({ ...it, network_ip: derived?.network || null, broadcast_ip: derived?.broadcast || null });
+              }
+              return out;
+            },
+            // ---------- Charts ----------
+            ensureCharts() {
+              if (typeof ApexCharts === 'undefined') return;
+              if (!this.chartParent && this.$refs.chartParent) {
+                this.chartParent = new ApexCharts(this.$refs.chartParent, {
+                  chart: { type: 'bar', height: 260, toolbar: { show: false } },
+                  series: [{ name: 'Blocks', data: [] }],
+                  xaxis: { categories: [] },
+                  dataLabels: { enabled: false },
+                  grid: { borderColor: '#eee' }
+                });
+                this.chartParent.render();
+              }
+              if (!this.chartAccount && this.$refs.chartAccount) {
+                this.chartAccount = new ApexCharts(this.$refs.chartAccount, {
+                  chart: { type: 'donut', height: 260, toolbar: { show: false } },
+                  series: [], labels: [], legend: { position: 'bottom' }
+                });
+                this.chartAccount.render();
+              }
+              if (!this.chartTime && this.$refs.chartTime) {
+                this.chartTime = new ApexCharts(this.$refs.chartTime, {
+                  chart: { type: 'line', height: 260, toolbar: { show: false } },
+                  series: [{ name: 'Created', data: [] }],
+                  xaxis: { type: 'category', categories: [] },
+                  stroke: { curve: 'smooth' }, dataLabels: { enabled: false }, grid: { borderColor: '#eee' }
+                });
+                this.chartTime.render();
+              }
+            },
+            renderCharts() {
+              this.ensureCharts();
+              if (!this.chartParent || !this.chartAccount || !this.chartTime) return;
+              const rows = this.filtered();
+              // Bar: count by parent pool
+              const byParent = new Map();
+              for (const r of rows) { const k = r.parent_name || `#${r.parent_id}`; byParent.set(k, (byParent.get(k)||0)+1); }
+              const parentCats = Array.from(byParent.keys());
+              const parentVals = parentCats.map(k => byParent.get(k));
+              this.chartParent.updateOptions({ xaxis: { categories: parentCats } });
+              this.chartParent.updateSeries([{ name: 'Blocks', data: parentVals }]);
+              // Donut: address space by account (usable hosts)
+              const byAcct = new Map();
+              for (const r of rows) {
+                const lab = r.account_name || '-';
+                const bits = this.cidrBits(r.cidr);
+                const usable = this.usableHosts(bits);
+                byAcct.set(lab, (byAcct.get(lab)||0) + usable);
+              }
+              const acctLabels = Array.from(byAcct.keys());
+              const acctVals = acctLabels.map(k => byAcct.get(k));
+              this.chartAccount.updateOptions({ labels: acctLabels });
+              this.chartAccount.updateSeries(acctVals);
+              // Line: creations per day
+              const byDay = new Map();
+              for (const r of rows) {
+                const d = new Date(r.created_at);
+                if (isNaN(d.getTime())) continue;
+                const key = d.getFullYear()+ '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+                byDay.set(key, (byDay.get(key)||0)+1);
+              }
+              const dayCats = Array.from(byDay.keys()).sort();
+              const dayVals = dayCats.map(k => byDay.get(k));
+              this.chartTime.updateOptions({ xaxis: { categories: dayCats } });
+              this.chartTime.updateSeries([{ name: 'Created', data: dayVals }]);
+            },
+            cidrBits(cidr){ if (!cidr) return null; const i=cidr.indexOf('/'); if(i<0) return null; const b=parseInt(cidr.slice(i+1),10); return isNaN(b)?null:b; },
+            usableHosts(bits){ if (bits==null || bits<0 || bits>32) return 0; const total = Math.pow(2, 32-bits); if (bits <= 30) return Math.max(0, total - 2); return total; },
             async prevPage() { if (this.page > 1) { this.page--; await this.load(); } },
             async nextPage() { if (this.page < this.totalPages) { this.page++; await this.load(); } },
             async firstPage() { if (this.page !== 1) { this.page = 1; await this.load(); } },
@@ -583,9 +892,10 @@
             ,
             downloadCsv() {
               const rows = this.filtered();
-              const header = ['id','name','cidr','parent_id','parent_name','account_id','account_name','created_at'];
+              const header = ['id','name','cidr','parent_id','parent_name','account_id','account_name','account_platform','account_environment','account_regions','network_ip','broadcast_ip','created_at'];
               const esc = v => '"' + String(v ?? '').replace(/"/g,'""') + '"';
-              const lines = [header.join(',')].concat(rows.map(r => [r.id,r.name,r.cidr,r.parent_id,r.parent_name,r.account_id||'',r.account_name||'',r.created_at].map(esc).join(',')));
+              const fmtRegions = v => Array.isArray(v) ? v.join('|') : '';
+              const lines = [header.join(',')].concat(rows.map(r => [r.id,r.name,r.cidr,r.parent_id,r.parent_name,r.account_id||'',r.account_name||'',r.account_platform||'',(r.account_environment||r.account_tier||''),fmtRegions(r.account_regions),r.network_ip||'',r.broadcast_ip||'',r.created_at].map(esc).join(',')));
               const blob = new Blob([lines.join('\n')], {type:'text/csv'});
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
@@ -672,6 +982,37 @@
           }
         }
       }
+      // Compute IPv4 network and broadcast for a CIDR (e.g., 10.0.1.0/24)
+      function deriveIPv4Range(cidr) {
+        if (!cidr || typeof cidr !== 'string' || !cidr.includes('/')) return null;
+        const [ipStr, prefixStr] = cidr.split('/');
+        const oct = ipStr.split('.').map(n => parseInt(n, 10));
+        const p = parseInt(prefixStr, 10);
+        if (oct.length !== 4 || oct.some(n => isNaN(n) || n < 0 || n > 255)) return null;
+        if (isNaN(p) || p < 0 || p > 32) return null;
+        const toInt = (a,b,c,d) => ((a<<24)>>>0) + (b<<16) + (c<<8) + d;
+        const toStr = (x) => [ (x>>>24)&255, (x>>>16)&255, (x>>>8)&255, x&255 ].join('.');
+        const ip = toInt(oct[0],oct[1],oct[2],oct[3])>>>0;
+        const mask = (p === 0) ? 0 : (~((1<<(32-p)) - 1))>>>0; // network mask
+        const network = (ip & mask) >>> 0;
+        const broadcast = (network | (~mask >>> 0)) >>> 0;
+        return { network: toStr(network), broadcast: toStr(broadcast) };
+      }
+      function ipToInt(ipStr){
+        const oct = (ipStr||'').split('.').map(n=>parseInt(n,10));
+        if (oct.length!==4 || oct.some(n=>isNaN(n)||n<0||n>255)) return null;
+        return ((oct[0]<<24)>>>0) + (oct[1]<<16) + (oct[2]<<8) + oct[3];
+      }
+      function prefixRange(cidr){
+        if (!cidr || typeof cidr !== 'string' || !cidr.includes('/')) return null;
+        const [ipStr, prefixStr] = cidr.split('/');
+        const base = ipToInt(ipStr); const p = parseInt(prefixStr,10);
+        if (base==null || isNaN(p) || p<0 || p>32) return null;
+        const mask = (p===0) ? 0 : (~((1<<(32-p)) - 1))>>>0;
+        const start = (base & mask)>>>0;
+        const end = (start | (~mask>>>0))>>>0;
+        return { start, end };
+      }
       function pools() {
         return {
           list: [],
@@ -679,21 +1020,34 @@
           accounts: [],
           form: { name: '', cidr: '', account_id: null},
           msg: '',
+          selectedTop: [],
+          bulkOpen: false,
           current: null,
           currentAccountId: null,
           updateMsg: '',
           editPoolOpen: false,
           editPoolForm: { id: null, name: '', account_id: null },
+          bulkAssignTopOpen: false,
+          bulkDeleteTopOpen: false,
+          bulkAccountId: null,
+          bulkCascade: false,
+          confirmBulkDelete: false,
           deletePoolOpen: false,
           deletePoolTarget: null,
           deletePoolChildren: [],
           deletePoolCascade: false,
           confirmPoolDelete: false,
           blockPrefix: 24,
+          currentPrefixBits: null,
           blocks: [],
           rawBlocks: [],
           showOnlyUsed: false,
+          hideUnavailable: false,
+          blockFilters: { hosts:'', status:'', account:'', network:'', broadcast:'' },
           subMsg: '',
+          vizSearch: '',
+          vizAccounts: [],
+          vizSegments: [],
           pageSize: '50',
           page: 1,
           pageInput: 1,
@@ -717,16 +1071,41 @@
               const res = await fetch('/api/v1/pools');
               this.list = await res.json();
               this.topLevel = this.list.filter(p => !p.parent_id);
+              // prune selections no longer present
+              const ids = new Set(this.topLevel.map(p=>p.id));
+              this.selectedTop = this.selectedTop.filter(id=>ids.has(id));
             } catch (e) {
               this.msg = 'Failed to load pools';
             }
+          },
+          toggleSelectTop(id){ const i=this.selectedTop.indexOf(id); if(i>=0) this.selectedTop.splice(i,1); else this.selectedTop.push(id); },
+          toggleSelectAllTop(ev){ if (ev.target.checked){ this.selectedTop = this.topLevel.map(p=>p.id); } else { this.selectedTop = []; } },
+          allTopSelected(){ return this.topLevel.length>0 && this.selectedTop.length===this.topLevel.length; },
+          indeterminateTop(){ return this.selectedTop.length>0 && this.selectedTop.length<this.topLevel.length; },
+          openBulkAssignTop(){ this.bulkAssignTopOpen=true; this.bulkAccountId=null; },
+          async performBulkAssignTop(){
+            const target = this.bulkAccountId ?? null;
+            for (const id of this.selectedTop){
+              try { await fetch(`/api/v1/pools?id=${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ account_id: target }) }); } catch {}
+            }
+            this.bulkAssignTopOpen=false; await this.fetchList(); if(this.current){ const cur = this.list.find(x=>x.id===this.current.id); if(cur) this.current=cur; }
+            showToast('Assigned account to selected');
+          },
+          openBulkDeleteTop(){ this.bulkDeleteTopOpen=true; this.bulkCascade=false; this.confirmBulkDelete=false; },
+          async performBulkDeleteTop(){
+            for (const id of this.selectedTop){
+              const force = this.bulkCascade ? '&force=1' : '';
+              try { await fetch(`/api/v1/pools?id=${id}${force}`, { method:'DELETE' }); } catch {}
+            }
+            this.bulkDeleteTopOpen=false; this.selectedTop=[]; await this.fetchList(); if (this.current && !this.list.find(x=>x.id===this.current.id)) this.current=null;
+            showToast('Deleted selected pools');
           },
           accountName(id) {
             if (!id) return '-';
             const a = this.accounts.find(a => a.id === id);
             return a ? a.name : `#${id}`;
           },
-          selectPool(p) { this.current = p; this.currentAccountId = p.account_id || null; this.blocks = []; this.subMsg=''; this.page=1; this.pageInput=1; this.total=0; this.totalPages=1; this.updateMsg=''; },
+          selectPool(p) { this.current = p; this.currentAccountId = p.account_id || null; this.blocks = []; this.subMsg=''; this.page=1; this.pageInput=1; this.total=0; this.totalPages=1; this.updateMsg=''; this.currentPrefixBits = this.cidrBits(p.cidr); if (this.currentPrefixBits!=null && (this.blockPrefix <= this.currentPrefixBits)) { this.blockPrefix = Math.min(32, this.currentPrefixBits+1); } this.computeViz(); },
           openEditPool(p) { this.editPoolForm = { id: p.id, name: p.name, account_id: p.account_id||null }; this.editPoolOpen = true; },
           async saveEditPool() {
             const f = this.editPoolForm;
@@ -780,14 +1159,14 @@
               const data = await res.json();
               if (Array.isArray(data)) {
                 // Back-compat (shouldn't happen with new server)
-                this.rawBlocks = data;
+                this.rawBlocks = this.withDerivedIPs(data);
                 this.filterBlocks();
                 this.total = data.length;
                 this.totalPages = 1;
                 this.fromItem = data.length ? 1 : 0;
                 this.toItem = data.length;
               } else {
-                this.rawBlocks = data.items || [];
+                this.rawBlocks = this.withDerivedIPs(data.items || []);
                 this.total = data.total || 0;
                 const pageSizeNum = this.pageSize === 'all' ? this.total : parseInt(this.pageSize, 10);
                 this.totalPages = pageSizeNum > 0 ? Math.max(1, Math.ceil(this.total / pageSizeNum)) : 1;
@@ -801,11 +1180,54 @@
             } catch (e) { this.subMsg = 'Failed to load blocks'; }
           },
           filterBlocks() {
-            if (this.showOnlyUsed) {
-              this.blocks = this.rawBlocks.filter(b => b.used);
-            } else {
-              this.blocks = this.rawBlocks;
+            const f = this.blockFilters;
+            const normalize = (v) => (v ?? '').toString().toLowerCase();
+            const hostsMatch = (b) => !f.hosts || normalize(b.hosts).includes(normalize(f.hosts));
+            const statusStr = (b) => b.used ? 'used' : (this.blockUnavailable(b.cidr) ? 'unavailable' : 'free');
+            const statusMatch = (b) => !f.status || statusStr(b).includes(normalize(f.status));
+            const acct = (b) => (b.assigned_account_name || this.accountName(b.assigned_account_id) || '-');
+            const accountMatch = (b) => !f.account || normalize(acct(b)).includes(normalize(f.account));
+            const networkMatch = (b) => !f.network || normalize(b.network_ip || '').includes(normalize(f.network));
+            const broadcastMatch = (b) => !f.broadcast || normalize(b.broadcast_ip || '').includes(normalize(f.broadcast));
+            let arr = this.rawBlocks;
+            if (this.showOnlyUsed) arr = arr.filter(b => b.used);
+            if (this.hideUnavailable) arr = arr.filter(b => !(b.used || this.blockUnavailable(b.cidr)));
+            this.blocks = arr.filter(b => hostsMatch(b) && statusMatch(b) && accountMatch(b) && networkMatch(b) && broadcastMatch(b));
+          },
+          blockUnavailable(cidr) {
+            if (!this.current || !cidr) return false;
+            // A block is unavailable if it overlaps any existing direct child of current
+            const children = this.list.filter(p => p.parent_id === this.current.id);
+            const br = prefixRange(cidr); if (!br) return false;
+            for (const c of children) {
+              if (c.cidr === cidr) return true; // exact match occupied
+              const cr = prefixRange(c.cidr); if (!cr) continue;
+              // intervals overlap if not disjoint
+              if (!(br.end < cr.start || cr.end < br.start)) return true;
             }
+            return false;
+          },
+          blockUnavailableReason(cidr) {
+            if (!this.current || !cidr) return '';
+            const children = this.list.filter(p => p.parent_id === this.current.id);
+            const br = prefixRange(cidr); if (!br) return '';
+            for (const c of children) {
+              const cr = prefixRange(c.cidr); if (!cr) continue;
+              if (c.cidr === cidr || !(br.end < cr.start || cr.end < br.start)) {
+                const nm = c.name ? `\"${c.name}\"` : `#${c.id}`;
+                return `Overlaps existing child ${nm} (${c.cidr})`;
+              }
+            }
+            return '';
+          },
+          withDerivedIPs(items) {
+            const out = [];
+            for (const it of (items||[])) {
+              const cidr = it.cidr;
+              const derived = deriveIPv4Range(cidr);
+              out.push({ ...it, network_ip: derived?.network || null, broadcast_ip: derived?.broadcast || null });
+            }
+            return out;
           },
           async prevPage() { if (this.page > 1) { this.page--; await this.loadBlocks(); } },
           async nextPage() { if (this.page < this.totalPages) { this.page++; await this.loadBlocks(); } },
@@ -855,7 +1277,36 @@
               if (idx >= 0) this.list[idx] = p;
               await this.loadBlocks();
               this.updateMsg = 'Updated';
+              this.computeViz();
             } catch (e) { this.updateMsg = 'Update failed'; }
+          },
+          cidrBits(cidr){ if (!cidr) return null; const i = cidr.indexOf('/'); if (i<0) return null; const b = parseInt(cidr.slice(i+1),10); return isNaN(b)?null:b; },
+          computeViz() {
+            if (!this.current) { this.vizSegments = []; return; }
+            const curRange = prefixRange(this.current.cidr);
+            if (!curRange) { this.vizSegments = []; return; }
+            const base = curRange.start, total = (curRange.end - curRange.start + 1)>>>0;
+            const q = (this.vizSearch||'').toLowerCase();
+            const selected = this.vizAccounts || [];
+            const segs = [];
+            for (const p of this.list) {
+              if (!p || p.id === this.current.id) continue;
+              const pr = prefixRange(p.cidr);
+              if (!pr) continue;
+              if (!(pr.start >= base && pr.end <= curRange.end)) continue;
+              if (selected.length) {
+                const aid = p.account_id != null ? String(p.account_id) : '';
+                if (!selected.includes(aid)) continue;
+              }
+              if (q) {
+                const hay = ((p.name||'')+' '+(p.cidr||'')).toLowerCase();
+                if (!hay.includes(q)) continue;
+              }
+              const left = ((pr.start - base) / total) * 100;
+              const width = (Math.max(1, (pr.end - pr.start + 1)) / total) * 100;
+              segs.push({ id:p.id, left, width, title:`${p.name||'-'} (${p.cidr})`, color:'#93c5fd' });
+            }
+            this.vizSegments = segs;
           },
           async createSub(b) {
             if (!this.current) return;
@@ -870,7 +1321,7 @@
               });
               if (!res.ok) { this.subMsg = await parseError(res); showToast(this.subMsg,'error'); return; }
               await this.fetchList();
-              await this.loadBlocks(); showToast('Sub-pool created');
+              await this.loadBlocks(); this.computeViz(); showToast('Sub-pool created');
               this.subMsg = 'Sub-pool created';
             } catch (e) {
               this.subMsg = 'Network error creating sub-pool';

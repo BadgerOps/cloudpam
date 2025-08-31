@@ -12,32 +12,40 @@ import (
     "sort"
     "strings"
     "time"
+
+    migfs "cloudpam/migrations"
 )
 
 var migFileRe = regexp.MustCompile(`^(\d+)_.+\.sql$`)
+
 
 func runMigrations(db *sql.DB) error {
     if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
         return err
     }
+    if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_info (id INTEGER PRIMARY KEY CHECK(id=1), schema_version INTEGER NOT NULL, min_supported_schema INTEGER NOT NULL DEFAULT 1, app_version TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
+        return err
+    }
     // discover migrations dir
-    dir, err := findMigrationsDir()
-    if err != nil {
-        return err
+    var useFS fs.FS
+    if dir, err := findMigrationsDir(); err == nil {
+        useFS = os.DirFS(dir)
+    } else {
+        // fallback to embedded
+        useFS = migfs.Files
     }
-    entries, err := os.ReadDir(dir)
-    if err != nil {
-        return err
-    }
+    entries, err := fs.ReadDir(useFS, ".")
+    if err != nil { return err }
     type mig struct{ version int; name, path string }
     var files []mig
     for _, e := range entries {
         if e.IsDir() { continue }
-        m := migFileRe.FindStringSubmatch(e.Name())
+        name := e.Name()
+        m := migFileRe.FindStringSubmatch(name)
         if len(m) == 0 { continue }
         v := 0
         fmt.Sscanf(m[1], "%d", &v)
-        files = append(files, mig{version: v, name: e.Name(), path: filepath.Join(dir, e.Name())})
+        files = append(files, mig{version: v, name: name, path: name})
     }
     sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
     applied := map[int]bool{}
@@ -50,11 +58,20 @@ func runMigrations(db *sql.DB) error {
         applied[v] = true
     }
     if err := rows.Err(); err != nil { return err }
+    latest := 0
     for _, f := range files {
         if applied[f.version] { continue }
-        sqlBytes, err := os.ReadFile(f.path)
+        var sqlBytes []byte
+        // read from selected fs
+        if of, ok := useFS.(fs.ReadFileFS); ok {
+            b, e := of.ReadFile(f.path); if e != nil { return e }; sqlBytes = b
+        } else {
+            // should not happen, but keep fallback
+            b, e := os.ReadFile(filepath.Clean(f.path)); if e != nil { return e }; sqlBytes = b
+        }
         if err != nil { return err }
         stmt := strings.TrimSpace(string(sqlBytes))
+        if stmt == "" { continue }
         tx, err := db.Begin()
         if err != nil { return err }
         if _, err := tx.Exec(stmt); err != nil {
@@ -66,7 +83,20 @@ func runMigrations(db *sql.DB) error {
             return err
         }
         if err := tx.Commit(); err != nil { return err }
+        if f.version > latest { latest = f.version }
     }
+    // Update schema_info
+    if latest == 0 {
+        // compute current by reading max(version)
+        _ = db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&latest)
+    }
+    appVersion := os.Getenv("APP_VERSION")
+    if appVersion == "" { appVersion = "dev" }
+    // upsert id=1
+    _, _ = db.Exec(`INSERT INTO schema_info(id, schema_version, min_supported_schema, app_version, applied_at)
+                    VALUES(1, ?, COALESCE((SELECT min_supported_schema FROM schema_info WHERE id=1),1), ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET schema_version=excluded.schema_version, app_version=excluded.app_version, applied_at=excluded.applied_at`,
+        latest, appVersion, time.Now().UTC().Format(time.RFC3339))
     return nil
 }
 
@@ -98,4 +128,3 @@ func dirHasSQL(dir string) (bool, error) {
     })
     return found, err
 }
-

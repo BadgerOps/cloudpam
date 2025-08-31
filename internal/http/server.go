@@ -32,6 +32,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string, detail string) {
+    if detail != "" {
+        log.Printf("http %d error: %s detail=%s", code, msg, detail)
+    } else {
+        log.Printf("http %d error: %s", code, msg)
+    }
     writeJSON(w, code, apiError{Error: msg, Detail: detail})
 }
 
@@ -45,14 +50,27 @@ func NewServer(mux *http.ServeMux, store storage.Store) *Server {
 }
 
 func (s *Server) RegisterRoutes() {
-	s.mux.HandleFunc("/healthz", s.handleHealth)
-	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
-	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
-	s.mux.HandleFunc("/api/v1/accounts", s.handleAccounts)
-	s.mux.HandleFunc("/api/v1/blocks", s.handleBlocksList)
-	// Static index
-	s.mux.HandleFunc("/", s.handleIndex)
+    s.mux.HandleFunc("/healthz", s.handleHealth)
+    s.mux.HandleFunc("/api/v1/pools", s.handlePools)
+    s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
+    s.mux.HandleFunc("/api/v1/accounts", s.handleAccounts)
+    s.mux.HandleFunc("/api/v1/blocks", s.handleBlocksList)
+    // Static index
+    s.mux.HandleFunc("/", s.handleIndex)
 }
+
+// LoggingMiddleware wraps an http.Handler to log basic request info.
+func LoggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        start := time.Now()
+        sr := &statusRecorder{ResponseWriter: w, status: 200}
+        next.ServeHTTP(sr, r)
+        log.Printf("%s %s -> %d in %s", r.Method, r.URL.Path, sr.status, time.Since(start))
+    })
+}
+
+type statusRecorder struct { http.ResponseWriter; status int }
+func (s *statusRecorder) WriteHeader(code int) { s.status = code; s.ResponseWriter.WriteHeader(code) }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -274,8 +292,10 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
     }
     // Build lookups
     accName := map[int64]string{}
+    accMeta := map[int64]struct{ Platform, Tier, Environment string; Regions []string }{}
     for _, a := range accs {
         accName[a.ID] = a.Name
+        accMeta[a.ID] = struct{ Platform, Tier, Environment string; Regions []string }{Platform:a.Platform, Tier:a.Tier, Environment:a.Environment, Regions:a.Regions}
     }
     poolName := map[int64]string{}
     for _, p := range ps {
@@ -337,6 +357,10 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
         ParentName  string    `json:"parent_name"`
         AccountID   *int64    `json:"account_id,omitempty"`
         AccountName string    `json:"account_name,omitempty"`
+        AccountPlatform string `json:"account_platform,omitempty"`
+        AccountTier      string `json:"account_tier,omitempty"`
+        AccountEnvironment string `json:"account_environment,omitempty"`
+        AccountRegions   []string `json:"account_regions,omitempty"`
         CreatedAt   time.Time `json:"created_at"`
     }
     var items []row
@@ -368,9 +392,8 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
             CreatedAt:  p.CreatedAt,
         }
         if p.AccountID != nil {
-            if n, ok := accName[*p.AccountID]; ok {
-                r.AccountName = n
-            }
+            if n, ok := accName[*p.AccountID]; ok { r.AccountName = n }
+            if m, ok := accMeta[*p.AccountID]; ok { r.AccountPlatform = m.Platform; r.AccountTier = m.Tier; r.AccountEnvironment = m.Environment; r.AccountRegions = m.Regions }
         }
         items = append(items, r)
     }
@@ -474,6 +497,36 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+    // Overlap protection: disallow any overlapping CIDRs within the same parent scope
+    // (i.e., among pools sharing the same parent_id, or among top-level pools).
+    {
+        pfxNew, _ := netip.ParsePrefix(in.CIDR)
+        if !pfxNew.Addr().Is4() {
+            writeErr(w, http.StatusBadRequest, "only ipv4 supported for now", "")
+            return
+        }
+        all, err := s.store.ListPools(ctx)
+        if err != nil {
+            writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+            return
+        }
+        for _, p := range all {
+            if in.ParentID == nil {
+                if p.ParentID != nil { continue }
+            } else {
+                if p.ParentID == nil || *p.ParentID != *in.ParentID { continue }
+            }
+            // Skip comparing with an exact duplicate; DB uniqueness should also catch
+            if strings.EqualFold(strings.TrimSpace(p.CIDR), in.CIDR) { continue }
+            old, err := netip.ParsePrefix(p.CIDR)
+            if err != nil || !old.Addr().Is4() { continue }
+            if prefixesOverlapIPv4(old, pfxNew) {
+                writeErr(w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", p.ID, p.CIDR))
+                return
+            }
+        }
+    }
 	p, err := s.store.CreatePool(ctx, in)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error(), "")
@@ -485,14 +538,17 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 }
 
 type blockInfo struct {
-	CIDR                string `json:"cidr"`
-	PrefixLen           int    `json:"prefix_len"`
-	Hosts               uint64 `json:"hosts"`
-	Used                bool   `json:"used"`
-	AssignedID          int64  `json:"assigned_id,omitempty"`
-	AssignedName        string `json:"assigned_name,omitempty"`
-	AssignedAccountID   int64  `json:"assigned_account_id,omitempty"`
-	AssignedAccountName string `json:"assigned_account_name,omitempty"`
+    CIDR                string `json:"cidr"`
+    PrefixLen           int    `json:"prefix_len"`
+    Hosts               uint64 `json:"hosts"`
+    Used                bool   `json:"used"`
+    AssignedID          int64  `json:"assigned_id,omitempty"`
+    AssignedName        string `json:"assigned_name,omitempty"`
+    AssignedAccountID   int64  `json:"assigned_account_id,omitempty"`
+    AssignedAccountName string `json:"assigned_account_name,omitempty"`
+    ExistsElsewhere     bool   `json:"exists_elsewhere,omitempty"`
+    ExistsElsewhereID   int64  `json:"exists_elsewhere_id,omitempty"`
+    ExistsElsewhereName string `json:"exists_elsewhere_name,omitempty"`
 }
 
 func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64) {
@@ -562,12 +618,18 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 		name      string
 		accountID *int64
 	}
-	used := map[string]usedInfo{}
-	for _, p := range all {
-		if p.ParentID != nil && *p.ParentID == pool.ID {
-			used[p.CIDR] = usedInfo{id: p.ID, name: p.Name, accountID: p.AccountID}
-		}
-	}
+    used := map[string]usedInfo{}
+    // Collect direct children of the current pool to evaluate overlaps
+    type childPrefix struct { id int64; name string; pfx netip.Prefix; cidr string; accountID *int64 }
+    var children []childPrefix
+    for _, p := range all {
+        if p.ParentID != nil && *p.ParentID == pool.ID {
+            used[p.CIDR] = usedInfo{id: p.ID, name: p.Name, accountID: p.AccountID}
+            if pf, err := netip.ParsePrefix(p.CIDR); err == nil && pf.Addr().Is4() {
+                children = append(children, childPrefix{id:p.ID, name:p.Name, pfx:pf, cidr:p.CIDR, accountID:p.AccountID})
+            }
+        }
+    }
 	// Account id -> name map
     accs, err := s.store.ListAccounts(ctx)
     if err != nil {
@@ -578,22 +640,36 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 	for _, a := range accs {
 		accName[a.ID] = a.Name
 	}
-	out := make([]blockInfo, 0, len(blocks))
-	for _, b := range blocks {
-		bi := blockInfo{CIDR: b, PrefixLen: npl, Hosts: hosts}
-		if info, ok := used[b]; ok {
-			bi.Used = true
-			bi.AssignedID = info.id
-			bi.AssignedName = info.name
-			if info.accountID != nil {
-				bi.AssignedAccountID = *info.accountID
-				if n, ok := accName[*info.accountID]; ok {
-					bi.AssignedAccountName = n
-				}
-			}
-		}
-		out = append(out, bi)
-	}
+    out := make([]blockInfo, 0, len(blocks))
+    for _, b := range blocks {
+        bi := blockInfo{CIDR: b, PrefixLen: npl, Hosts: hosts}
+        if info, ok := used[b]; ok {
+            bi.Used = true
+            bi.AssignedID = info.id
+            bi.AssignedName = info.name
+            if info.accountID != nil {
+                bi.AssignedAccountID = *info.accountID
+                if n, ok := accName[*info.accountID]; ok {
+                    bi.AssignedAccountName = n
+                }
+            }
+        } else {
+            // mark as unavailable if overlaps any existing direct child with a different CIDR
+            bp, err := netip.ParsePrefix(b)
+            if err == nil && bp.Addr().Is4() {
+                for _, ch := range children {
+                    if ch.cidr == b { continue }
+                    if prefixesOverlapIPv4(ch.pfx, bp) {
+                        bi.ExistsElsewhere = true
+                        bi.ExistsElsewhereID = ch.id
+                        bi.ExistsElsewhereName = ch.name
+                        break
+                    }
+                }
+            }
+        }
+        out = append(out, bi)
+    }
 	type resp struct {
 		Items    []blockInfo `json:"items"`
 		Total    int         `json:"total"`
@@ -616,8 +692,8 @@ func validateChildCIDR(parentCIDR, childCIDR string) error {
 	if !pp.Addr().Is4() || !cp.Addr().Is4() {
 		return fmt.Errorf("only ipv4 supported")
 	}
-	if cp.Bits() < pp.Bits() {
-		return fmt.Errorf("child prefix len must be >= parent")
+	if cp.Bits() <= pp.Bits() {
+		return fmt.Errorf("child prefix len must be greater than parent")
 	}
 	// Check both start and end addresses within parent.
 	cstart := cp.Masked().Addr()
@@ -629,6 +705,19 @@ func validateChildCIDR(parentCIDR, childCIDR string) error {
 		return fmt.Errorf("child not within parent")
 	}
 	return nil
+}
+
+// prefixesOverlapIPv4 returns true if two IPv4 prefixes overlap in address space.
+func prefixesOverlapIPv4(a, b netip.Prefix) bool {
+    if !a.Addr().Is4() || !b.Addr().Is4() { return false }
+    aStart := ipv4ToUint32(a.Masked().Addr())
+    aEnd, _ := lastAddr(a)
+    bStart := ipv4ToUint32(b.Masked().Addr())
+    bEnd, _ := lastAddr(b)
+    aEndU := ipv4ToUint32(aEnd)
+    bEndU := ipv4ToUint32(bEnd)
+    // Overlap if intervals intersect
+    return !(aEndU < bStart || bEndU < aStart)
 }
 
 func computeSubnetsIPv4Window(parentCIDR string, newPrefixLen int, offset, limit int) ([]string, uint64, int, error) {

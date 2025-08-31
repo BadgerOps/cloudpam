@@ -277,3 +277,37 @@ func TestErrorEnvelope_JSON(t *testing.T) {
         t.Fatalf("expected error message")
     }
 }
+
+func TestPoolsHandlers_OverlapProtection(t *testing.T) {
+    srv, _ := setupTestServer()
+
+    // Create a large top-level pool
+    rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/8"}`, stdhttp.StatusCreated)
+    var root poolDTO
+    if err := json.Unmarshal(rr.Body.Bytes(), &root); err != nil { t.Fatalf("unmarshal root: %v", err) }
+
+    // Create a child /24 inside it (in a region we won't reuse later)
+    body := `{"name":"c24","cidr":"10.1.0.0/24","parent_id":` + strconv.FormatInt(root.ID, 10) + `}`
+    _ = doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", body, stdhttp.StatusCreated)
+
+    // Attempt overlapping /29 under the same parent -> should fail
+    body = `{"name":"c29","cidr":"10.1.0.0/29","parent_id":` + strconv.FormatInt(root.ID, 10) + `}`
+    bad := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", body, stdhttp.StatusBadRequest)
+    if !strings.Contains(bad.Body.String(), "overlap") {
+        t.Fatalf("expected overlap error, got: %s", bad.Body.String())
+    }
+
+    // Attempt child equal to parent prefix -> should fail (must be stricter than parent)
+    eq := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"eq","cidr":"10.0.0.0/8","parent_id":`+strconv.FormatInt(root.ID,10)+`}`, stdhttp.StatusBadRequest)
+    if !strings.Contains(eq.Body.String(), "greater") && !strings.Contains(eq.Body.String(), "invalid sub-pool") {
+        t.Fatalf("expected strict subset error, got: %s", eq.Body.String())
+    }
+
+    // Attempt another overlapping top-level root -> should fail
+    bad2 := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root2","cidr":"10.0.0.0/16"}`, stdhttp.StatusBadRequest)
+    if !strings.Contains(bad2.Body.String(), "overlap") {
+        t.Fatalf("expected overlap error for top-level, got: %s", bad2.Body.String())
+    }
+
+    // Additional cross-tree global tests are constrained by strict subset rules.
+}

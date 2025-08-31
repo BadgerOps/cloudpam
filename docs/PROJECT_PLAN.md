@@ -190,3 +190,29 @@ Implementation notes:
 - Add SQLite migrations for `pools`, `prefixes`, `allocations`, `events`.
 - Implement minimal allocator (in‑memory) and wire to endpoints.
 - Build a simple Alpine.js page to create/list pools and allocations.
+
+## Next Options (UI, Analytics, Ops)
+
+- Analytics Slices & Filters
+  - Add filters for Account ID/Name, Platform, Environment/Tier (SDLC: dev, stg, sbx, prd), Regions (multi‑select), and CIDR search/containment.
+  - Plumb account metadata into API rows (platform, environment/tier, regions) and CSV export.
+  - Support CIDR containment filter (e.g., “within 10.0.0.0/16”), not just substring.
+- Charts & Visualization
+  - Add ApexCharts (or Chart.js) dashboards in Analytics: blocks by parent pool (bar), address space by account (donut), creations over time (line).
+  - Color by account/platform and provide a legend; click‑through to filtered table.
+  - Pool view: compact IP space bar showing used blocks regardless of size; hover tooltips; filters by account and search.
+- Usability
+  - Show “why unavailable” tooltips when a block cannot be created (overlap with sibling).
+  - Toggle to hide unavailable/used blocks; status column filterable.
+- Overlap & Safety
+  - Enforce partial‑overlap protection across siblings (same parent) in create path.
+  - Future: IPv6 overlap and visualization support.
+- Accounts Metadata
+  - Extend accounts with optional fields: `platform`, `tier`, `environment`, and `regions` (multi).
+  - UI to create/edit these fields; validate tier enum (dev, stg, sbx, prd) and region formats.
+- Migrations & Versioning (proposed direction)
+  - Keep forward‑only, file‑based migrations with `schema_migrations(version, name, applied_at)`.
+  - Embed migrations with `go:embed` to avoid path issues in packaged binaries.
+  - Add `schema_info` table tracking `schema_version`, `app_version`, `min_supported_schema`, `applied_at`.
+  - On startup: run pending migrations; validate `schema_version >= min_supported_schema`.
+  - Provide `cloudpam migrate {status|up|stamp}` and a release checklist for DB changes.
