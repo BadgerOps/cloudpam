@@ -1264,7 +1264,7 @@
             if (!this.current) return;
             this.updateMsg = '';
             try {
-              const res = await fetch(`/api/v1/pools?id=${this.current.id}`, {
+              const res = await fetch(`/api/v1/pools/${this.current.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ account_id: this.currentAccountId ?? null })

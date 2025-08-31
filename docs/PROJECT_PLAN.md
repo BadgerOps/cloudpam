@@ -1,74 +1,87 @@
-# CloudPAM: Cloud-Native IPAM (AWS, GCP, Extensible)
+# CloudPAM Project Plan
 
-## Vision
+This document captures recommended next steps to harden, scale, and polish CloudPAM across API, storage, UI, testing, and delivery.
 
-A lightweight, cloud‑native IP Address Management (IPAM) service that centrally plans, allocates, and audits IP space across AWS and GCP, with a clean provider interface to add more clouds later. Backend in Go, frontend in Alpine.js, and SQLite for storage (embeddable, simple ops, optional migration to external DB later).
+## Overview
+CloudPAM now supports:
+- Memory + SQLite stores, pool hierarchy, accounts, and block exploration.
+- API endpoints for pools, accounts, and global block listing.
+- Web UI with tabs (Pools, Accounts, Analytics), modals with confirmations, and toasts.
+- CI for lint and tests; unit + handler tests for core behaviors.
 
-## Core Requirements
+Below is a prioritized roadmap.
 
-- Multi-cloud: manage address pools, prefixes, and allocations across AWS and GCP.
-- Extensible providers: add Azure/On‑prem by implementing a clear interface.
-- IP plan & allocation: hierarchical pools, reservations, automatic CIDR/IP allocation, release, and GC.
-- Reconciliation: detect drift vs. cloud state; idempotent controllers to converge to desired state.
-- Safety & policy: prevent overlaps, enforce ranges/tenancy/ownership, approvals where needed.
-- Auditability: change history, who/what/when, event log of allocations and syncs.
-- Simple UI: fast CRUD for pools/allocations, insights, and drift reports (Alpine.js).
-- Deployable: single container, runs locally, or in Kubernetes; config via env.
+## API Hardening
+- Consistent JSON error envelope: `{ "error": "...", "detail": "..." }` with appropriate HTTP codes.
+- RESTful paths and verbs (canonical):
+  - Pools: `GET/POST /api/v1/pools`, `GET/PATCH/DELETE /api/v1/pools/{id}`
+  - Accounts: `GET/POST /api/v1/accounts`, `GET/PATCH/DELETE /api/v1/accounts/{id}`
+  - Blocks: `GET /api/v1/pools/{id}/blocks` and `GET /api/v1/blocks`
+- Validation:
+  - Pool names (length/charset), Account keys (`aws:<12 digits>`, `gcp:<project>`), `page_size` caps.
+  - Enforce unique child CIDR under same parent; reject overlaps.
+- AuthN/Z (phase 2): add API token or OIDC, and roles (view/manage pools/accounts).
+- Rate limiting and structured request logs.
 
-## High-Level Architecture
+## Storage & Schema
+- Enable PRAGMA foreign_keys and define FKs for `pools.parent_id` and `pools.account_id`.
+- Indexes: `pools(parent_id)`, `pools(account_id)`, `pools(cidr)`; consider unique `(parent_id, cidr)`.
+- Move inline schema to versioned migrations under `migrations/`; add a small migrator runner.
+- Optional soft-deletes (`deleted_at`) to support undo and audit.
 
-- API server (Go): REST/JSON and server-rendered HTML for the Alpine.js UI (or static assets).
-- Allocator engine: pure Go library for CIDR/IP selection with a prefix tree.
-- Provider layer: `Provider` interface with concrete implementations for AWS and GCP.
-- Controller loop: reconciliation workers that poll/provider‑event and converge desired vs. observed.
-- Storage: SQLite with migrations; repository layer isolates SQL from domain logic.
-- Background jobs: compaction, GC of expired leases/reservations, sync scheduling, metrics.
-- Observability: structured logs, Prometheus metrics, OpenTelemetry traces (optional).
+## Compute & Performance
+- Blocks endpoint: server-side pagination and ordering (default sensible page size).
+- Guard against huge ranges (e.g., /8→/24): require pagination; never generate full set in memory.
+- Add caching for account lookups in blocks if needed.
 
-## Backend (Go)
+## Testing & CI
+- HTTP tests: expand negative cases (invalid `page`, `page_size`, missing IDs) and JSON error payloads once added.
+- SQLite tests (build-tagged): CRUD + cascade + index/constraint checks on temp DB.
+- CI enhancements:
+  - Add `-race` test job.
+  - Add coverage reporting and (optional) threshold.
+  - Gradually reintroduce linters (e.g., `revive`) with a minimal rule-set compatible with the pinned golangci-lint v2.1.x.
 
-- Version: Go 1.22+; use `net/netip` for IPv4/IPv6 types; consider `go4.org/netipx` for prefix ops.
-- Project layout:
-  - `cmd/cloudpam/` main server
-  - `internal/domain/` entities, services (allocator, policy)
-  - `internal/providers/{aws,gcp}/` cloud providers
-  - `internal/recon/` controllers & schedulers
-  - `internal/storage/` repositories, migrations
-  - `internal/http/` handlers, router, middlewares
-  - `web/` static assets, templates (Alpine.js)
-- Dependencies: prefer stdlib; use `chi` or `gorilla/mux` for routing; `zerolog` or `zap` for logs; `goose` or `golang-migrate` for migrations; `modernc.org/sqlite` for CGO‑less builds (or `mattn/go-sqlite3` with CGO).
+## UI/UX
+- Modals: ESC/backdrop close, focus trapping, ARIA attributes.
+- Analytics: server-side pagination + multi-sort; link rows to pools; CSV keeps filters.
+- Pools: inline create/edit validation; uniform error rendering alongside toasts.
+- Accounts: search + provider filters.
 
-## Frontend (Alpine.js)
+## Operations & Delivery
+- Docker: multi-stage builds (static Go binary + minimal runtime image).
+- Release workflow: build cross-platform artifacts; variants with and without `-tags sqlite`.
+- Config: unify flags + env (`ADDR`, `SQLITE_DSN`, `LOG_LEVEL`), log config on startup (redact secrets).
+- Observability: structured logs (zerolog/zap), request IDs, optional OpenTelemetry.
 
-- Minimal HTML templates rendered by Go, Alpine.js sprinkles for interactivity.
-- Pages: Dashboard, Pools & Prefixes, Allocations, Providers/Accounts, Drift, Audit log.
-- API consumption: JSON endpoints; use fetch; avoid heavy build steps if possible.
-- Styling: Basic CSS or Tailwind (optional); keep bundle small.
+## Code Quality
+- Consider renaming `internal/http` package to `internal/api` to avoid shadowing std `net/http` in tests.
+- Ensure contexts and timeouts on DB operations; plumb them through handlers.
+- Embed UI via `embed.FS` for single-binary deployment (dev flag to serve from disk).
 
-## Data Model (initial)
+## Proposed Milestones
+1) API & Contracts
+- JSON error envelope, RESTful path normalization, updated handler tests.
+- Document API (OpenAPI) and publish basic usage in README.
 
-- `providers` (id, type: aws|gcp|custom, name, credentials_ref, created_at)
-- `accounts` (id, provider_id, ext_id [AWS account ID / GCP project], name, labels)
-- `pools` (id, name, parent_pool_id NULLABLE, ip_version, cidr, scope [global|account], owner, labels)
-- `prefixes` (id, pool_id, cidr, status [free|reserved|allocated|blocked], source [desired|observed], account_id NULLABLE)
-- `allocations` (id, pool_id, account_id, cidr_or_ip, kind [subnet|ip], owner, purpose, ttl NULLABLE, created_at, deleted_at NULLABLE)
-- `reservations` (id, pool_id, cidr_or_ip, owner, reason, expires_at NULLABLE)
-- `sync_state` (id, provider_id, account_id, resource_kind, checkpoint, updated_at)
-- `events` (id, ts, actor, action, object_kind, object_id, data JSON)
-- `users`/`roles` (optional; if OIDC/JWT, map claims to roles)
+2) Schema & Constraints
+- PRAGMA FKs ON, add indexes + uniqueness, move to migrations.
+- SQLite test suite under build tag.
 
-Notes:
-- Separate desired vs observed state for prefixes to support reconciliation and drift reports.
-- Store IPs/CIDRs using canonical strings and/or integer ranges for efficient queries.
+3) Pagination & Performance
+- Server-side pagination on global blocks; cap page sizes; ordering.
+- UI wired to paginated endpoints.
 
-## Allocation & Policy
+4) Security & Observability
+- API tokens or OIDC for auth; request logging + rate limits.
+- Structured logs; optional tracing.
 
-- Allocation strategies: smallest‑fit, largest‑fit, or policy‑driven; avoid overlaps via prefix tree.
-- Support VRF/Scopes: isolate pools per tenant or network scope.
-- Reservations: manual holds or automatic during provisioning workflows.
-- Reuse: release and defragmentation strategies; soft‑delete allocations prior to GC.
+5) Delivery
+- Dockerfile + release workflow; config surfaces and docs; embed UI.
 
-## Provider Abstraction
+## Immediate Next Step (Recommended)
+- Implement JSON error envelope and normalize REST paths for pools/accounts (Milestone 1), then update handler tests to assert error bodies and the new paths.
+- Reason: This solidifies the API contract early, reduces downstream churn, and sets a consistent pattern for subsequent work (pagination, auth, etc.).
 
 Define interface (conceptual):
 

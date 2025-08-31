@@ -241,6 +241,18 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
     return domain.Account{ID: id, Key: in.Key, Name: in.Name, Provider: in.Provider, ExternalID: in.ExternalID, Description: in.Description, Platform: in.Platform, Tier: in.Tier, Environment: in.Environment, Regions: append([]string(nil), in.Regions...), CreatedAt: time.Now().UTC()}, nil
 }
 
+func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {
+    row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, created_at FROM accounts WHERE id=?`, id)
+    var a domain.Account
+    var ts string
+    if err := row.Scan(&a.ID, &a.Key, &a.Name, &a.Provider, &a.ExternalID, &a.Description, &ts); err != nil {
+        if errors.Is(err, sql.ErrNoRows) { return domain.Account{}, false, nil }
+        return domain.Account{}, false, err
+    }
+    if t, e := time.Parse(time.RFC3339, ts); e == nil { a.CreatedAt = t }
+    return a, true, nil
+}
+
 func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
     // Fetch current
     rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at FROM accounts WHERE id=?`, id)

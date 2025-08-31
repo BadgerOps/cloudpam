@@ -73,21 +73,19 @@ type statusRecorder struct { http.ResponseWriter; status int }
 func (s *statusRecorder) WriteHeader(code int) { s.status = code; s.ResponseWriter.WriteHeader(code) }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`{"status":"ok"}`))
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+		writeErr(w, http.StatusNotFound, "not found", "")
 		return
 	}
 	// Serve web/index.html from the repo directory.
 	path := filepath.Join("web", "index.html")
 	f, err := os.Open(path)
 	if err != nil {
-		http.Error(w, "index not found", http.StatusNotFound)
+		writeErr(w, http.StatusNotFound, "not found", "index")
 		return
 	}
 	defer func() { _ = f.Close() }()
@@ -103,10 +101,6 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 		s.listPools(w, r)
 	case http.MethodPost:
 		s.createPool(w, r)
-	case http.MethodPatch:
-		s.patchPool(w, r)
-	case http.MethodDelete:
-		s.deletePool(w, r)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete}, ", "))
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -180,10 +174,6 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		s.listAccounts(w, r)
 	case http.MethodPost:
 		s.createAccount(w, r)
-	case http.MethodPatch:
-		s.patchAccount(w, r)
-	case http.MethodDelete:
-		s.deleteAccount(w, r)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete}, ", "))
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -429,7 +419,7 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/pools/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
-		http.NotFound(w, r)
+		writeErr(w, http.StatusNotFound, "not found", "")
 		return
 	}
 	id64, err := strconv.ParseInt(parts[0], 10, 64)
@@ -445,7 +435,58 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.blocksForPool(w, r, id64)
 		return
 	}
-	http.NotFound(w, r)
+	// Pool detail
+	switch r.Method {
+	case http.MethodGet:
+		p, ok, err := s.store.GetPool(r.Context(), id64)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "not found", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+	case http.MethodPatch:
+		var payload struct {
+			AccountID *int64  `json:"account_id"`
+			Name      *string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid json", "")
+			return
+		}
+		p, ok, err := s.store.UpdatePoolMeta(r.Context(), id64, payload.Name, payload.AccountID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "not found", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, p)
+	case http.MethodDelete:
+		var ok bool
+		force := strings.ToLower(r.URL.Query().Get("force"))
+		if force == "1" || force == "true" || force == "yes" {
+			ok, err = s.store.DeletePoolCascade(r.Context(), id64)
+		} else {
+			ok, err = s.store.DeletePool(r.Context(), id64)
+		}
+		if err != nil {
+			writeErr(w, http.StatusConflict, err.Error(), "")
+			return
+		}
+		if !ok {
+			writeErr(w, http.StatusNotFound, "not found", "")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+	}
 }
 
 func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
@@ -455,8 +496,7 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(pools)
+	writeJSON(w, http.StatusOK, pools)
 }
 
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
@@ -532,9 +572,7 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(p)
+	writeJSON(w, http.StatusCreated, p)
 }
 
 type blockInfo struct {

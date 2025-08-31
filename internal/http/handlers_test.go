@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	stdhttp "net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -72,14 +71,12 @@ func TestPoolsHandlers_CRUD(t *testing.T) {
 		t.Fatalf("expected 2 pools, got %d", len(pools))
 	}
 
-	// update name via PATCH
+	// update name via PATCH (RESTful path)
 	child := pools[1]
-	q := url.Values{"id": []string{strconv.FormatInt(child.ID, 10)}}
-	doJSON(t, srv.mux, stdhttp.MethodPatch, "/api/v1/pools?"+q.Encode(), `{"name":"child2"}`, stdhttp.StatusOK)
+	doJSON(t, srv.mux, stdhttp.MethodPatch, "/api/v1/pools/"+strconv.FormatInt(child.ID, 10), `{"name":"child2"}`, stdhttp.StatusOK)
 
 	// delete without force should fail (has child for root)
-	q = url.Values{"id": []string{strconv.FormatInt(root.ID, 10)}}
-	req := httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/pools?"+q.Encode(), nil)
+	req := httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/pools/"+strconv.FormatInt(root.ID, 10), nil)
 	rr = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
 	if rr.Code != stdhttp.StatusConflict {
@@ -87,8 +84,7 @@ func TestPoolsHandlers_CRUD(t *testing.T) {
 	}
 
 	// delete with force
-	q.Set("force", "1")
-	doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/pools?"+q.Encode(), "", stdhttp.StatusNoContent)
+	doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/pools/"+strconv.FormatInt(root.ID, 10)+"?force=1", "", stdhttp.StatusNoContent)
 }
 
 func TestPoolsHandlers_Negative(t *testing.T) {
@@ -143,9 +139,9 @@ func TestPoolsHandlers_Negative(t *testing.T) {
 	if rr2.Code != stdhttp.StatusBadRequest {
 		t.Fatalf("expected 400 for too small prefix, got %d", rr2.Code)
 	}
-    if !strings.Contains(rr2.Body.String(), "between") && !strings.Contains(rr2.Body.String(), "invalid new_prefix_len") {
-        t.Fatalf("expected range/invalid message, got: %q", rr2.Body.String())
-    }
+	if !strings.Contains(rr2.Body.String(), "between") && !strings.Contains(rr2.Body.String(), "invalid new_prefix_len") {
+		t.Fatalf("expected range/invalid message, got: %q", rr2.Body.String())
+	}
 
 	// new_prefix_len greater than 32
 	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/pools/"+strconv.FormatInt(root.ID, 10)+"/blocks?new_prefix_len=33", nil)
@@ -154,12 +150,12 @@ func TestPoolsHandlers_Negative(t *testing.T) {
 	if rr2.Code != stdhttp.StatusBadRequest {
 		t.Fatalf("expected 400 for too large prefix, got %d", rr2.Code)
 	}
-    if !strings.Contains(rr2.Body.String(), "between") && !strings.Contains(rr2.Body.String(), "invalid new_prefix_len") {
-        t.Fatalf("expected range/invalid message, got: %q", rr2.Body.String())
-    }
+	if !strings.Contains(rr2.Body.String(), "between") && !strings.Contains(rr2.Body.String(), "invalid new_prefix_len") {
+		t.Fatalf("expected range/invalid message, got: %q", rr2.Body.String())
+	}
 
-	// delete pool invalid id
-	req = httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/pools?id=notanint", nil)
+	// delete pool invalid id (REST path)
+	req = httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/pools/notanint", nil)
 	rr2 = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr2, req)
 	if rr2.Code != stdhttp.StatusBadRequest {
@@ -173,8 +169,8 @@ func TestAccountsHandlers_Negative(t *testing.T) {
 	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":`, stdhttp.StatusBadRequest)
 	// missing required
 	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"","name":""}`, stdhttp.StatusBadRequest)
-	// delete invalid id
-	req := httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/accounts?id=bad", nil)
+	// delete invalid id (REST path)
+	req := httptest.NewRequest(stdhttp.MethodDelete, "/api/v1/accounts/bad", nil)
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
 	if rr.Code != stdhttp.StatusBadRequest {
@@ -245,10 +241,10 @@ func TestAccountsHandlers_AndBlocks(t *testing.T) {
     }
 
 	// delete account without force should fail due to referencing pools
-	rr = doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/accounts?id="+strconv.FormatInt(acc.ID, 10), "", stdhttp.StatusConflict)
+	rr = doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/accounts/"+strconv.FormatInt(acc.ID, 10), "", stdhttp.StatusConflict)
 	_ = rr
 	// with force should succeed
-	doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/accounts?id="+strconv.FormatInt(acc.ID, 10)+"&force=1", "", stdhttp.StatusNoContent)
+	doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/accounts/"+strconv.FormatInt(acc.ID, 10)+"?force=1", "", stdhttp.StatusNoContent)
 }
 
 func TestErrorEnvelope_JSON(t *testing.T) {
