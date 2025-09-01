@@ -83,3 +83,149 @@ Below is a prioritized roadmap.
 - Implement JSON error envelope and normalize REST paths for pools/accounts (Milestone 1), then update handler tests to assert error bodies and the new paths.
 - Reason: This solidifies the API contract early, reduces downstream churn, and sets a consistent pattern for subsequent work (pagination, auth, etc.).
 
+Define interface (conceptual):
+
+```go
+type Provider interface {
+    Name() string
+    Validate(ctx context.Context) error
+    // Discovery
+    ListVPCs(ctx context.Context, account AccountRef) ([]VPC, error)
+    ListSubnets(ctx context.Context, vpc VPCRef) ([]Subnet, error)
+    // Actuation
+    CreateSubnet(ctx context.Context, vpc VPCRef, cidr netip.Prefix, tags Tags) (Subnet, error)
+    DeleteSubnet(ctx context.Context, subnet SubnetRef) error
+    // Credentials & auth are provided via env/metadata (IRSA/Workload Identity) or static.
+}
+```
+
+Implementation notes:
+- AWS: Integrate with EC2/VPC APIs; optionally read AWS VPC IPAM state for awareness.
+- GCP: Use Compute Engine networks/subnetworks; region awareness and secondary ranges.
+- Rate limits & retries: exponential backoff with jitter; idempotency keys.
+
+## Reconciliation Loops
+
+- Controllers compare desired state (DB) with observed cloud state.
+- Sources: periodic polling + event subscriptions (CloudWatch Events/EventBridge, GCP Pub/Sub) where practical; fallback to polling if events not available.
+- Idempotent operations; record checkpoints to `sync_state` for incremental scans.
+- Conflict handling: mark drift items, create remediation tasks; never delete unmanaged resources unless explicitly permitted by policy.
+
+## API Design
+
+- REST/JSON with OpenAPI spec; versioned base path `/api/v1`.
+- Key endpoints: pools, prefixes, allocations, reservations, providers, accounts, recon status, events.
+- Webhooks: emit allocation/release events for integration.
+- AuthN/AuthZ: JWT/OIDC (e.g., with an OIDC provider); RBAC roles for read/write/admin.
+
+## Security & Secrets
+
+- Credentials via environment/metadata: AWS IAM Role (IRSA) and GCP Workload Identity when running in K8s; static keys only for local/dev.
+- SQLite encryption if needed: consider `sqlcipher` or rely on disk encryption.
+- Input validation and strong typing (`netip`), least privilege policies for cloud roles.
+- Audit log for all mutating operations.
+
+## Deployment
+
+- Single Docker image; multi-stage build. Healthz/readyz endpoints.
+- Kubernetes: Deployment, Service, ConfigMap/Secret, ServiceAccount with IRSA/Workload Identity; optional Helm chart.
+- Local dev: `docker-compose` or just `go run`; SQLite file persisted to volume.
+
+## Observability
+
+- Logs: structured with request IDs and actor info.
+- Metrics: Prometheus counters/histograms (allocations, failures, cloud API latency, recon lag).
+- Tracing: OpenTelemetry optional; spans around provider calls and allocators.
+
+## Testing Strategy
+
+- Unit tests: allocator/prefix tree, policy, repository methods.
+- Property‑based tests: CIDR allocations (no overlap, coverage of edge cases).
+- Contract tests: provider interface with fakes/mocks.
+- E2E (optional): against emulators (LocalStack for basic AWS VPC; limited), or sandbox accounts with CI tags; keep opt‑in.
+
+## Initial Milestones
+
+1) Bootstrap repo
+   - Go module, basic `cmd/cloudpam` server, health endpoints
+   - SQLite setup with migrations, repository scaffolding
+   - Minimal web UI shell with Alpine.js
+
+2) Core domain & allocator
+   - Entities: Pool/Prefix/Allocation/Reservation
+   - Prefix tree allocator with smallest‑fit strategy
+   - REST endpoints for pools and allocations
+
+3) Provider interface
+   - Define `Provider` interface and fakes
+   - Wire repositories + allocator to provider actions
+
+4) AWS provider (read‑only → write)
+   - Discover VPCs/Subnets and import observed state
+   - Create/Delete subnet operations with tags
+   - Reconciliation loop for subnets
+
+5) GCP provider (read‑only → write)
+   - Discover networks/subnetworks
+   - Create/Delete subnetwork and secondary ranges
+   - Reconciliation loop
+
+6) Policies & safety
+   - Overlap detection, scopes/VRFs, reservations
+   - Approvals/confirmation for destructive ops
+
+7) UI build‑out
+   - Pools, allocations, drift, events
+   - Inline create/release flows with Alpine.js
+
+8) Packaging & ops
+   - Dockerfile, Helm chart, example configs
+   - Metrics, dashboards, runbooks
+
+## Risks & Mitigations
+
+- Cloud API rate limits: batch operations, backoff, controller concurrency limits.
+- Drift and unmanaged resources: strict policies; default to safe/observe‑only.
+- SQLite concurrency: use WAL mode; connection limits; consider move to Postgres if scale requires.
+- IPv6 complexity: build with `netip` types from the start; test dual‑stack.
+
+## Open Questions
+
+- Should we integrate with AWS VPC IPAM as a source of truth or remain independent and reconcile only subnets? (Phase 2 decision.)
+- Do we need IP‑per‑pod or IPAM for Kubernetes clusters? If yes, consider CNI integrations later.
+- Multi‑tenancy boundaries: single DB with scoped RBAC vs. separate instances.
+
+---
+
+## Suggested Next Steps (Week 1)
+
+- Initialize Go module and basic HTTP server skeleton.
+- Add SQLite migrations for `pools`, `prefixes`, `allocations`, `events`.
+- Implement minimal allocator (in‑memory) and wire to endpoints.
+- Build a simple Alpine.js page to create/list pools and allocations.
+
+## Next Options (UI, Analytics, Ops)
+
+- Analytics Slices & Filters
+  - Add filters for Account ID/Name, Platform, Environment/Tier (SDLC: dev, stg, sbx, prd), Regions (multi‑select), and CIDR search/containment.
+  - Plumb account metadata into API rows (platform, environment/tier, regions) and CSV export.
+  - Support CIDR containment filter (e.g., “within 10.0.0.0/16”), not just substring.
+- Charts & Visualization
+  - Add ApexCharts (or Chart.js) dashboards in Analytics: blocks by parent pool (bar), address space by account (donut), creations over time (line).
+  - Color by account/platform and provide a legend; click‑through to filtered table.
+  - Pool view: compact IP space bar showing used blocks regardless of size; hover tooltips; filters by account and search.
+- Usability
+  - Show “why unavailable” tooltips when a block cannot be created (overlap with sibling).
+  - Toggle to hide unavailable/used blocks; status column filterable.
+- Overlap & Safety
+  - Enforce partial‑overlap protection across siblings (same parent) in create path.
+  - Future: IPv6 overlap and visualization support.
+- Accounts Metadata
+  - Extend accounts with optional fields: `platform`, `tier`, `environment`, and `regions` (multi).
+  - UI to create/edit these fields; validate tier enum (dev, stg, sbx, prd) and region formats.
+- Migrations & Versioning (proposed direction)
+  - Keep forward‑only, file‑based migrations with `schema_migrations(version, name, applied_at)`.
+  - Embed migrations with `go:embed` to avoid path issues in packaged binaries.
+  - Add `schema_info` table tracking `schema_version`, `app_version`, `min_supported_schema`, `applied_at`.
+  - On startup: run pending migrations; validate `schema_version >= min_supported_schema`.
+  - Provide `cloudpam migrate {status|up|stamp}` and a release checklist for DB changes.

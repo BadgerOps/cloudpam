@@ -6,6 +6,8 @@ import (
     "context"
     "database/sql"
     "errors"
+    "encoding/json"
+    "fmt"
     "time"
 
     _ "modernc.org/sqlite" // CGO-less SQLite driver
@@ -23,60 +25,36 @@ func New(dsn string) (*Store, error) {
     if err != nil {
         return nil, err
     }
-    if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`); err != nil {
+    if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`); err != nil {
         _ = db.Close()
         return nil, err
     }
-    if err := migrate(db); err != nil {
+    if err := runMigrations(db); err != nil {
         _ = db.Close()
         return nil, err
     }
+    // Capture schema status silently; can be surfaced via Status()
+    var _schemaVersion, _minSupported int
+    var _appVersion, _appliedAt string
+    _ = db.QueryRow(`SELECT schema_version, min_supported_schema, app_version, applied_at FROM schema_info WHERE id=1`).Scan(&_schemaVersion, &_minSupported, &_appVersion, &_appliedAt)
     return &Store{db: db}, nil
 }
 
-func migrate(db *sql.DB) error {
-    // Minimal bootstrap migration with additive column for parent_id.
-    if _, err := db.Exec(`
-CREATE TABLE IF NOT EXISTS pools (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    cidr TEXT NOT NULL,
-    parent_id INTEGER NULL,
-    account_id INTEGER NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-`); err != nil {
-        return err
-    }
-    // Ensure parent_id exists for older schemas.
-    var cnt int
-    if err := db.QueryRow(`SELECT COUNT(1) FROM pragma_table_info('pools') WHERE name='parent_id'`).Scan(&cnt); err == nil && cnt == 0 {
-        if _, err := db.Exec(`ALTER TABLE pools ADD COLUMN parent_id INTEGER NULL`); err != nil {
-            return err
-        }
-    }
-    // Ensure account_id exists.
-    cnt = 0
-    if err := db.QueryRow(`SELECT COUNT(1) FROM pragma_table_info('pools') WHERE name='account_id'`).Scan(&cnt); err == nil && cnt == 0 {
-        if _, err := db.Exec(`ALTER TABLE pools ADD COLUMN account_id INTEGER NULL`); err != nil {
-            return err
-        }
-    }
-    // Accounts table
-    if _, err := db.Exec(`
-CREATE TABLE IF NOT EXISTS accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    key TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    provider TEXT NULL,
-    external_id TEXT NULL,
-    description TEXT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-`); err != nil {
-        return err
-    }
-    return nil
+// Status returns schema_migrations and schema_info summary for the given DSN without creating a Store.
+func Status(dsn string) (string, error) {
+    db, err := sql.Open("sqlite", dsn)
+    if err != nil { return "", err }
+    defer db.Close()
+    // ensure tables may exist; do not run migrations here
+    var latest int
+    _ = db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&latest)
+    var schemaVersion, minSupported int
+    var appVersion, appliedAt string
+    _ = db.QueryRow(`SELECT schema_version, min_supported_schema, app_version, applied_at FROM schema_info WHERE id=1`).Scan(&schemaVersion, &minSupported, &appVersion, &appliedAt)
+    // Count applied
+    var count int
+    _ = db.QueryRow(`SELECT COUNT(1) FROM schema_migrations`).Scan(&count)
+    return fmt.Sprintf("schema_version=%d applied=%d latest=%d app_version=%s applied_at=%s min_supported=%d", schemaVersion, count, latest, appVersion, appliedAt, minSupported), nil
 }
 
 var _ storage.Store = (*Store)(nil)
@@ -214,7 +192,7 @@ func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
 
 // Accounts
 func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
-    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, created_at FROM accounts ORDER BY id ASC`)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at FROM accounts ORDER BY id ASC`)
     if err != nil {
         return nil, err
     }
@@ -223,8 +201,20 @@ func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
     for rows.Next() {
         var a domain.Account
         var ts string
-        if err := rows.Scan(&a.ID, &a.Key, &a.Name, &a.Provider, &a.ExternalID, &a.Description, &ts); err != nil {
+        var provider, extid, desc, platform, tier, env sql.NullString
+        var regions sql.NullString
+        if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts); err != nil {
             return nil, err
+        }
+        if provider.Valid { a.Provider = provider.String }
+        if extid.Valid { a.ExternalID = extid.String }
+        if desc.Valid { a.Description = desc.String }
+        if platform.Valid { a.Platform = platform.String }
+        if tier.Valid { a.Tier = tier.String }
+        if env.Valid { a.Environment = env.String }
+        if regions.Valid && regions.String != "" {
+            var arr []string
+            if err := json.Unmarshal([]byte(regions.String), &arr); err == nil { a.Regions = arr }
         }
         if t, e := time.Parse(time.RFC3339, ts); e == nil {
             a.CreatedAt = t
@@ -238,7 +228,9 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
     if in.Key == "" || in.Name == "" {
         return domain.Account{}, errors.New("key and name required")
     }
-    res, err := s.db.ExecContext(ctx, `INSERT INTO accounts(key, name, provider, external_id, description, created_at) VALUES(?, ?, ?, ?, ?, ?)`, in.Key, in.Name, in.Provider, in.ExternalID, in.Description, time.Now().UTC().Format(time.RFC3339))
+    var regions string
+    if len(in.Regions) > 0 { if b, e := json.Marshal(in.Regions); e == nil { regions = string(b) } }
+    res, err := s.db.ExecContext(ctx, `INSERT INTO accounts(key, name, provider, external_id, description, platform, tier, environment, regions, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, in.Key, in.Name, in.Provider, in.ExternalID, in.Description, in.Platform, in.Tier, in.Environment, regions, time.Now().UTC().Format(time.RFC3339))
     if err != nil {
         return domain.Account{}, err
     }
@@ -246,7 +238,7 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
     if err != nil {
         return domain.Account{}, err
     }
-    return domain.Account{ID: id, Key: in.Key, Name: in.Name, Provider: in.Provider, ExternalID: in.ExternalID, Description: in.Description, CreatedAt: time.Now().UTC()}, nil
+    return domain.Account{ID: id, Key: in.Key, Name: in.Name, Provider: in.Provider, ExternalID: in.ExternalID, Description: in.Description, Platform: in.Platform, Tier: in.Tier, Environment: in.Environment, Regions: append([]string(nil), in.Regions...), CreatedAt: time.Now().UTC()}, nil
 }
 
 func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {
@@ -263,19 +255,35 @@ func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool,
 
 func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
     // Fetch current
-    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, created_at FROM accounts WHERE id=?`, id)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at FROM accounts WHERE id=?`, id)
     if err != nil { return domain.Account{}, false, err }
     defer rows.Close()
     if !rows.Next() { return domain.Account{}, false, nil }
     var a domain.Account
     var ts string
-    if err := rows.Scan(&a.ID, &a.Key, &a.Name, &a.Provider, &a.ExternalID, &a.Description, &ts); err != nil { return domain.Account{}, false, err }
+    var provider, extid, desc, platform, tier, env sql.NullString
+    var regions sql.NullString
+    if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts); err != nil { return domain.Account{}, false, err }
+    if provider.Valid { a.Provider = provider.String }
+    if extid.Valid { a.ExternalID = extid.String }
+    if desc.Valid { a.Description = desc.String }
+    if platform.Valid { a.Platform = platform.String }
+    if tier.Valid { a.Tier = tier.String }
+    if env.Valid { a.Environment = env.String }
+    if regions.Valid && regions.String != "" { var arr []string; _ = json.Unmarshal([]byte(regions.String), &arr); a.Regions = arr }
     // Apply update
     if update.Name != "" { a.Name = update.Name }
     a.Provider = update.Provider
     a.ExternalID = update.ExternalID
     a.Description = update.Description
-    if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET name=?, provider=?, external_id=?, description=? WHERE id=?`, a.Name, a.Provider, a.ExternalID, a.Description, id); err != nil {
+    a.Platform = update.Platform
+    a.Tier = update.Tier
+    a.Environment = update.Environment
+    if update.Regions != nil { a.Regions = append([]string(nil), update.Regions...) }
+    // persist
+    var regionsOut *string
+    if a.Regions != nil { if b, e := json.Marshal(a.Regions); e == nil { s := string(b); regionsOut = &s } }
+    if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET name=?, provider=?, external_id=?, description=?, platform=?, tier=?, environment=?, regions=? WHERE id=?`, a.Name, a.Provider, a.ExternalID, a.Description, a.Platform, a.Tier, a.Environment, regionsOut, id); err != nil {
         return domain.Account{}, false, err
     }
     return a, true, nil
