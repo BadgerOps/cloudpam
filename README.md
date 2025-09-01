@@ -40,6 +40,26 @@ Notes
 - Project plan: `docs/PROJECT_PLAN.md`
 - Changelog: `docs/CHANGELOG.md`
 
+## Screenshots
+The `photos/` directory contains app screenshots (tracked via Git LFS). To enable LFS locally: `git lfs install`.
+
+- Pools overview: `photos/pools.png`
+  ![Pools](photos/pools.png)
+- Pool blocks with filters and tooltips: `photos/blocks.png`
+  ![Blocks](photos/blocks.png)
+- IP Space visualization bar: `photos/visualization.png`
+  ![Visualization](photos/visualization.png)
+- Bulk actions (Pools): `photos/bulk-actions-pools.png`
+  ![Bulk Pools](photos/bulk-actions-pools.png)
+- Accounts list and edit: `photos/accounts.png`
+  ![Accounts](photos/accounts.png)
+- Analytics filters and charts: `photos/analytics.png`
+  ![Analytics](photos/analytics.png)
+
+Suggested capture set (drop files into `photos/` with these names):
+- `pools.png`, `blocks.png`, `visualization.png`, `bulk-actions-pools.png`, `accounts.png`, `analytics.png`
+
+
 ## Roadmap (short)
 - Provider abstraction and fakes
 - AWS/GCP discovery and reconciliation
