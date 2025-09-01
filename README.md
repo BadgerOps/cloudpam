@@ -59,6 +59,14 @@ The `photos/` directory contains app screenshots (tracked via Git LFS). To enabl
 Suggested capture set (drop files into `photos/` with these names):
 - `pools.png`, `blocks.png`, `visualization.png`, `bulk-actions-pools.png`, `accounts.png`, `analytics.png`
 
+Automated capture (Playwright)
+- Prereqs: Node 18+, `git lfs install`, app running at `http://localhost:8080` (or set `APP_URL`).
+- From `code/cloudpam/`:
+  - `npm install`
+  - `npx playwright install chromium`
+  - `APP_URL=http://localhost:8080 npm run screenshots`
+- Outputs to `photos/` with the filenames above.
+
 
 ## Roadmap (short)
 - Provider abstraction and fakes
