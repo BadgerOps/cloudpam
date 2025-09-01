@@ -54,10 +54,75 @@ func (s *Server) RegisterRoutes() {
     s.mux.HandleFunc("/api/v1/pools", s.handlePools)
     s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
     s.mux.HandleFunc("/api/v1/accounts", s.handleAccounts)
+    s.mux.HandleFunc("/api/v1/accounts/", s.handleAccountsSubroutes)
     s.mux.HandleFunc("/api/v1/blocks", s.handleBlocksList)
     // Static index
     s.mux.HandleFunc("/", s.handleIndex)
 }
+
+// /api/v1/accounts/{id}
+func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request) {
+    path := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/")
+    idStr := strings.Trim(path, "/")
+    if idStr == "" {
+        writeErr(w, http.StatusNotFound, "not found", "")
+        return
+    }
+    id, err := strconv.ParseInt(idStr, 10, 64)
+    if err != nil {
+        writeErr(w, http.StatusBadRequest, "invalid id", "")
+        return
+    }
+    switch r.Method {
+    case http.MethodGet:
+        a, ok, err := s.store.GetAccount(r.Context(), id)
+        if err != nil {
+            writeErr(w, http.StatusBadRequest, err.Error(), "")
+            return
+        }
+        if !ok {
+            writeErr(w, http.StatusNotFound, "not found", "")
+            return
+        }
+        writeJSON(w, http.StatusOK, a)
+    case http.MethodPatch:
+        var in domain.Account
+        if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+            writeErr(w, http.StatusBadRequest, "invalid json", "")
+            return
+        }
+        a, ok, err := s.store.UpdateAccount(r.Context(), id, in)
+        if err != nil {
+            writeErr(w, http.StatusBadRequest, err.Error(), "")
+            return
+        }
+        if !ok {
+            writeErr(w, http.StatusNotFound, "not found", "")
+            return
+        }
+        writeJSON(w, http.StatusOK, a)
+    case http.MethodDelete:
+        var ok bool
+        force := strings.ToLower(r.URL.Query().Get("force"))
+        if force == "1" || force == "true" || force == "yes" {
+            ok, err = s.store.DeleteAccountCascade(r.Context(), id)
+        } else {
+            ok, err = s.store.DeleteAccount(r.Context(), id)
+        }
+        if err != nil {
+            writeErr(w, http.StatusConflict, err.Error(), "")
+            return
+        }
+        if !ok {
+            writeErr(w, http.StatusNotFound, "not found", "")
+            return
+        }
+        w.WriteHeader(http.StatusNoContent)
+    default:
+        writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+    }
+}
+
 
 // LoggingMiddleware wraps an http.Handler to log basic request info.
 func LoggingMiddleware(next http.Handler) http.Handler {
@@ -102,70 +167,13 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createPool(w, r)
 	default:
-		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete}, ", "))
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
 
 // PATCH /api/v1/pools?id=<id> with {"account_id": <int|null>}
-func (s *Server) patchPool(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	idStr := r.URL.Query().Get("id")
-	if idStr == "" {
-		writeErr(w, http.StatusBadRequest, "id required", "")
-		return
-	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		writeErr(w, http.StatusBadRequest, "invalid id", "")
-		return
-	}
-	var payload struct {
-		AccountID *int64  `json:"account_id"`
-		Name      *string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json", "")
-		return
-	}
-	p, ok, err := s.store.UpdatePoolMeta(ctx, id, payload.Name, payload.AccountID)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error(), "")
-		return
-	}
-	if !ok {
-		writeErr(w, http.StatusNotFound, "not found", "")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(p)
-}
-
-func (s *Server) deletePool(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		writeErr(w, http.StatusBadRequest, "invalid id", "")
-		return
-	}
-	var ok bool
-	force := strings.ToLower(r.URL.Query().Get("force"))
-	if force == "1" || force == "true" || force == "yes" {
-		ok, err = s.store.DeletePoolCascade(ctx, id)
-	} else {
-		ok, err = s.store.DeletePool(ctx, id)
-	}
-	if err != nil {
-		writeErr(w, http.StatusConflict, err.Error(), "")
-		return
-	}
-	if !ok {
-		writeErr(w, http.StatusNotFound, "not found", "")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
+// Legacy pool query-param endpoints are not supported; use /api/v1/pools/{id}.
 
 // Accounts: GET list, POST create
 func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +183,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.createAccount(w, r)
 	default:
-		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost, http.MethodPatch, http.MethodDelete}, ", "))
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
 		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
@@ -214,57 +222,9 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(a)
 }
 
-func (s *Server) patchAccount(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		writeErr(w, http.StatusBadRequest, "invalid id", "")
-		return
-	}
-	var in domain.Account
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json", "")
-		return
-	}
-	a, ok, err := s.store.UpdateAccount(ctx, id, in)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error(), "")
-		return
-	}
-	if !ok {
-		writeErr(w, http.StatusNotFound, "not found", "")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(a)
-}
 
-func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	idStr := r.URL.Query().Get("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 {
-		writeErr(w, http.StatusBadRequest, "invalid id", "")
-		return
-	}
-	var ok bool
-	force := strings.ToLower(r.URL.Query().Get("force"))
-	if force == "1" || force == "true" || force == "yes" {
-		ok, err = s.store.DeleteAccountCascade(ctx, id)
-	} else {
-		ok, err = s.store.DeleteAccount(ctx, id)
-	}
-	if err != nil {
-		writeErr(w, http.StatusConflict, err.Error(), "")
-		return
-	}
-	if !ok {
-		writeErr(w, http.StatusNotFound, "not found", "")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
+// Legacy account query-param endpoints are not supported; use /api/v1/accounts/{id}.
+
 
 // GET /api/v1/blocks?accounts=1,2&pools=10,11
 // Returns all assigned blocks (sub-pools), optionally filtered by account IDs and parent pool IDs.
