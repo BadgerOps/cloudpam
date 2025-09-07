@@ -23,28 +23,28 @@ type CreatePool struct {
 // Account represents a cloud account or project to which pools can be assigned.
 // It uses a generic shape to support AWS accounts, GCP projects, etc.
 type Account struct {
-    ID          int64     `json:"id"`
-    Key         string    `json:"key"` // unique key like "aws:123456789012" or "gcp:my-project"
-    Name        string    `json:"name"`
-    Provider    string    `json:"provider,omitempty"`
-    ExternalID  string    `json:"external_id,omitempty"`
-    Description string    `json:"description,omitempty"`
-    Platform    string    `json:"platform,omitempty"`
-    Tier        string    `json:"tier,omitempty"`
-    Environment string    `json:"environment,omitempty"`
-    Regions     []string  `json:"regions,omitempty"`
-    CreatedAt   time.Time `json:"created_at"`
+	ID          int64     `json:"id"`
+	Key         string    `json:"key"` // unique key like "aws:123456789012" or "gcp:my-project"
+	Name        string    `json:"name"`
+	Provider    string    `json:"provider,omitempty"`
+	ExternalID  string    `json:"external_id,omitempty"`
+	Description string    `json:"description,omitempty"`
+	Platform    string    `json:"platform,omitempty"`
+	Tier        string    `json:"tier,omitempty"`
+	Environment string    `json:"environment,omitempty"`
+	Regions     []string  `json:"regions,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // CreateAccount is the input for creating an account.
 type CreateAccount struct {
-    Key         string `json:"key"`
-    Name        string `json:"name"`
-    Provider    string `json:"provider,omitempty"`
-    ExternalID  string `json:"external_id,omitempty"`
-    Description string `json:"description,omitempty"`
-    Platform    string `json:"platform,omitempty"`
-    Tier        string `json:"tier,omitempty"`
-    Environment string `json:"environment,omitempty"`
-    Regions     []string `json:"regions,omitempty"`
+	Key         string   `json:"key"`
+	Name        string   `json:"name"`
+	Provider    string   `json:"provider,omitempty"`
+	ExternalID  string   `json:"external_id,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Platform    string   `json:"platform,omitempty"`
+	Tier        string   `json:"tier,omitempty"`
+	Environment string   `json:"environment,omitempty"`
+	Regions     []string `json:"regions,omitempty"`
 }
