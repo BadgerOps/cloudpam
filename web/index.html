@@ -212,6 +212,10 @@
               <strong>IP Space Visualization</strong>
               <input type="text" placeholder="Search name or CIDR" x-model="vizSearch" @input="computeViz()" />
               <label>Accounts
+                <div style="display:flex; align-items:center; gap:.4rem; margin-bottom:4px;">
+                  <input type="checkbox" @change="toggleVizAll($event)" :checked="vizAllSelected()" :indeterminate="vizIndeterminate()" />
+                  <span class="muted">All</span>
+                </div>
                 <select x-model="vizAccounts" multiple size="3" @change="computeViz()">
                   <template x-for="a in accounts" :key="a.id">
                     <option :value="String(a.id)" x-text="a.name"></option>
@@ -625,6 +629,10 @@
         <div x-show="filtersOpen" x-cloak style="position:absolute; top:36px; left:0; background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:12px; display:flex; gap:16px; z-index:10020;">
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Accounts</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllAccounts($event)" :checked="allAccountsSelected()" :indeterminate="indeterminateAccounts()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="a in accounts" :key="a.id">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="String(a.id)" @change="toggleInArray(selectedAccounts, String(a.id))" :checked="selectedAccounts.includes(String(a.id))" />
@@ -636,6 +644,10 @@
           </div>
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Parent Pools</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllPools($event)" :checked="allPoolsSelected()" :indeterminate="indeterminatePools()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="p in parentPools" :key="p.id">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="String(p.id)" @change="toggleInArray(selectedPools, String(p.id))" :checked="selectedPools.includes(String(p.id))" />
@@ -647,6 +659,10 @@
           </div>
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Platform</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllPlatforms($event)" :checked="allPlatformsSelected()" :indeterminate="indeterminatePlatforms()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="pl in platforms()" :key="pl">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="pl" @change="toggleInArray(fltPlatforms, pl)" :checked="fltPlatforms.includes(pl)" />
@@ -654,6 +670,10 @@
               </label>
             </template>
             <div class="muted" style="margin:.5rem 0 6px;">Environment / Tier</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllEnvs($event)" :checked="allEnvsSelected()" :indeterminate="indeterminateEnvs()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="env in environments()" :key="env">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="env" @change="toggleInArray(fltEnvs, env)" :checked="fltEnvs.includes(env)" />
@@ -663,6 +683,10 @@
           </div>
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Regions</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllRegions($event)" :checked="allRegionsSelected()" :indeterminate="indeterminateRegions()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="rg in regions()" :key="rg">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="rg" @change="toggleInArray(fltRegions, rg)" :checked="fltRegions.includes(rg)" />
@@ -822,6 +846,23 @@
             },
             clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.filtersOpen=false; this.page=1; this.load(); }
             ,
+            // Master toggles for filter lists
+            allAccountsSelected(){ return this.accounts.length>0 && this.selectedAccounts.length===this.accounts.length; },
+            indeterminateAccounts(){ return this.selectedAccounts.length>0 && this.selectedAccounts.length<this.accounts.length; },
+            toggleAllAccounts(ev){ if (ev.target.checked) { this.selectedAccounts = this.accounts.map(a=>String(a.id)); } else { this.selectedAccounts = []; } this.page=1; this.load(); },
+            allPoolsSelected(){ return this.parentPools.length>0 && this.selectedPools.length===this.parentPools.length; },
+            indeterminatePools(){ return this.selectedPools.length>0 && this.selectedPools.length<this.parentPools.length; },
+            toggleAllPools(ev){ if (ev.target.checked) { this.selectedPools = this.parentPools.map(p=>String(p.id)); } else { this.selectedPools = []; } this.page=1; this.load(); },
+            allPlatformsSelected(){ const opts=this.platforms(); return opts.length>0 && this.fltPlatforms.length===opts.length; },
+            indeterminatePlatforms(){ const opts=this.platforms(); return this.fltPlatforms.length>0 && this.fltPlatforms.length<opts.length; },
+            toggleAllPlatforms(ev){ const opts=this.platforms(); if (ev.target.checked) { this.fltPlatforms = opts.slice(); } else { this.fltPlatforms = []; } this.page=1; this.load(); },
+            allEnvsSelected(){ const opts=this.environments(); return opts.length>0 && this.fltEnvs.length===opts.length; },
+            indeterminateEnvs(){ const opts=this.environments(); return this.fltEnvs.length>0 && this.fltEnvs.length<opts.length; },
+            toggleAllEnvs(ev){ const opts=this.environments(); if (ev.target.checked) { this.fltEnvs = opts.slice(); } else { this.fltEnvs = []; } this.page=1; this.load(); },
+            allRegionsSelected(){ const opts=this.regions(); return opts.length>0 && this.fltRegions.length===opts.length; },
+            indeterminateRegions(){ const opts=this.regions(); return this.fltRegions.length>0 && this.fltRegions.length<opts.length; },
+            toggleAllRegions(ev){ const opts=this.regions(); if (ev.target.checked) { this.fltRegions = opts.slice(); } else { this.fltRegions = []; } this.page=1; this.load(); },
+            
             filtered() {
               const src = this.rawBlocks;
               let arr = src;
@@ -1403,6 +1444,10 @@
             }
             this.vizSegments = segs;
           },
+          // Master toggle for viz accounts multi-select
+          vizAllSelected(){ return this.accounts.length>0 && this.vizAccounts.length===this.accounts.length; },
+          vizIndeterminate(){ return this.vizAccounts.length>0 && this.vizAccounts.length<this.accounts.length; },
+          toggleVizAll(ev){ if (ev.target.checked) { this.vizAccounts = this.accounts.map(a=>String(a.id)); } else { this.vizAccounts = []; } this.computeViz(); },
           async createSub(b) {
             if (!this.current) return;
             const name = prompt(`Name for sub-pool ${b.cidr}`);
