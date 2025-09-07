@@ -3,7 +3,7 @@
 # If `just` is installed, Make will delegate targets to it.
 # Otherwise, Make runs the fallback recipes defined below.
 
-FALLBACK_TARGETS := dev build sqlite-build sqlite-run fmt lint test tidy
+FALLBACK_TARGETS := dev build sqlite-build sqlite-run fmt lint test test-race cover tidy
 
 .PHONY: help $(FALLBACK_TARGETS)
 
@@ -45,6 +45,16 @@ help:
 
 .fallback-test:
 	go test ./...
+
+.fallback-test-race:
+	go test -race ./...
+
+.fallback-cover:
+	set -euo pipefail; \
+	go test ./... -covermode=atomic -coverprofile=coverage.out; \
+	go tool cover -func=coverage.out | tee coverage.txt; \
+	go tool cover -html=coverage.out -o coverage.html; \
+	echo "wrote coverage.out and coverage.html"
 
 .fallback-tidy:
 	go mod tidy

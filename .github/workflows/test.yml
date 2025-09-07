@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Go Tests
+  test-race:
+    name: Go Tests (race)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -37,6 +37,49 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./... -v
+      - name: Test with -race
+        run: go test -race ./... -v
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    env:
+      COVERAGE_THRESHOLD: ${{ vars.COVERAGE_THRESHOLD || '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Run tests with coverage
+        run: |
+          set -euo pipefail
+          go test ./... -covermode=atomic -coverprofile=coverage.out -v
+          go tool cover -func=coverage.out | tee coverage.txt
+          go tool cover -html=coverage.out -o coverage.html
+          total=$(go tool cover -func=coverage.out | grep total: | awk '{print substr($3, 1, length($3)-1)}')
+          echo "total=$total" >> $GITHUB_OUTPUT
+          thr=${COVERAGE_THRESHOLD:-0}
+          awk -v t="$total" -v thr="$thr" 'BEGIN{ if (t+0 < thr+0) { printf("coverage %.2f%% is below threshold %.2f%%\n", t, thr); exit 1 } else { printf("coverage %.2f%% meets threshold %.2f%%\n", t, thr); } }'
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.txt
+            coverage.html

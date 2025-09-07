@@ -171,19 +171,19 @@ func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount
 	defer m.mu.Unlock()
 	id := m.nextAccount
 	m.nextAccount++
-    a := domain.Account{
-        ID:          id,
-        Key:         in.Key,
-        Name:        in.Name,
-        Provider:    in.Provider,
-        ExternalID:  in.ExternalID,
-        Description: in.Description,
-        Platform:    in.Platform,
-        Tier:        in.Tier,
-        Environment: in.Environment,
-        Regions:     append([]string(nil), in.Regions...),
-        CreatedAt:   time.Now().UTC(),
-    }
+	a := domain.Account{
+		ID:          id,
+		Key:         in.Key,
+		Name:        in.Name,
+		Provider:    in.Provider,
+		ExternalID:  in.ExternalID,
+		Description: in.Description,
+		Platform:    in.Platform,
+		Tier:        in.Tier,
+		Environment: in.Environment,
+		Regions:     append([]string(nil), in.Regions...),
+		CreatedAt:   time.Now().UTC(),
+	}
 	m.accounts[id] = a
 	return a, nil
 }
@@ -198,14 +198,16 @@ func (m *MemoryStore) UpdateAccount(ctx context.Context, id int64, update domain
 	if update.Name != "" {
 		a.Name = update.Name
 	}
-    // Allow empty strings to clear optional fields
-    a.Provider = update.Provider
-    a.ExternalID = update.ExternalID
-    a.Description = update.Description
-    a.Platform = update.Platform
-    a.Tier = update.Tier
-    a.Environment = update.Environment
-    if update.Regions != nil { a.Regions = append([]string(nil), update.Regions...) }
+	// Allow empty strings to clear optional fields
+	a.Provider = update.Provider
+	a.ExternalID = update.ExternalID
+	a.Description = update.Description
+	a.Platform = update.Platform
+	a.Tier = update.Tier
+	a.Environment = update.Environment
+	if update.Regions != nil {
+		a.Regions = append([]string(nil), update.Regions...)
+	}
 	m.accounts[id] = a
 	return a, true, nil
 }

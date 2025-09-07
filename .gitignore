@@ -37,4 +37,5 @@ dist/
 ._*
 Icon?
 
-
+# Coverage files
+coverage*
