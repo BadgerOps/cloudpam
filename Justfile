@@ -35,5 +35,21 @@ lint:
 test:
     go test ./...
 
+test-race:
+    go test -race ./...
+
+cover:
+    set -euo pipefail
+    go test ./... -covermode=atomic -coverprofile=coverage.out -v
+    go tool cover -func=coverage.out | tee coverage.txt
+    go tool cover -html=coverage.out -o coverage.html
+    @echo "wrote coverage.out and coverage.html"
+
+cover-threshold thr="0":
+    set -euo pipefail
+    go test ./... -covermode=atomic -coverprofile=coverage.out -v
+    total=$(go tool cover -func=coverage.out | grep total: | awk '{print substr($3, 1, length($3)-1)}')
+    awk -v t="$total" -v thr="{{thr}}" 'BEGIN{ if (t+0 < thr+0) { printf("coverage %.2f%% is below threshold %.2f%%\n", t, thr); exit 1 } else { printf("coverage %.2f%% meets threshold %.2f%%\n", t, thr); } }'
+
 tidy:
     go mod tidy
