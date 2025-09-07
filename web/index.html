@@ -852,9 +852,9 @@
             allSelected(){ const data=this.filtered(); return data.length>0 && this.selected.length===data.length; },
             indeterminate(){ const data=this.filtered(); return this.selected.length>0 && this.selected.length<data.length; },
             openBulkAssign(){ this.bulkAssignOpen=true; this.bulkAccountId=null; },
-            async performBulkAssign(){ const target=this.bulkAccountId ?? null; for (const id of this.selected){ try { await fetch(`/api/v1/pools?id=${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ account_id: target }) }); } catch{} } this.bulkAssignOpen=false; await this.load(); showToast('Assigned account'); },
+            async performBulkAssign(){ const target=this.bulkAccountId ?? null; for (const id of this.selected){ try { await fetch(`/api/v1/pools/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ account_id: target }) }); } catch{} } this.bulkAssignOpen=false; await this.load(); showToast('Assigned account'); },
             openBulkDelete(){ this.bulkDeleteOpen=true; this.bulkCascade=false; this.confirmBulkDelete=false; },
-            async performBulkDelete(){ for (const id of this.selected){ const force=this.bulkCascade?'&force=1':''; try { await fetch(`/api/v1/pools?id=${id}${force}`, { method:'DELETE' }); } catch{} } this.bulkDeleteOpen=false; this.selected=[]; await this.load(); showToast('Deleted selected'); },
+            async performBulkDelete(){ for (const id of this.selected){ const force=this.bulkCascade?'?force=1':''; try { await fetch(`/api/v1/pools/${id}${force}`, { method:'DELETE' }); } catch{} } this.bulkDeleteOpen=false; this.selected=[]; await this.load(); showToast('Deleted selected'); },
             platforms(){ const set=new Set(); for (const a of this.accounts) { const v=(a.platform||'').toLowerCase(); if (v) set.add(v); } return Array.from(set).sort(); },
             environments(){ const set=new Set(); for (const a of this.accounts) { const v=((a.environment||a.tier)||'').toLowerCase(); if (v) set.add(v); } return Array.from(set).sort(); },
             regions(){ const set=new Set(); for (const a of this.accounts) { const arr=Array.isArray(a.regions)?a.regions:[]; for (const r of arr) { const v=String(r).toLowerCase(); if (v) set.add(v); } } return Array.from(set).sort(); },
@@ -960,7 +960,7 @@
             async saveEditBlock(){
               const f=this.editForm;
               try {
-                const res = await fetch(`/api/v1/pools?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, account_id:f.account_id }) });
+                const res = await fetch(`/api/v1/pools/${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, account_id:f.account_id }) });
                 if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
                 this.editOpen=false; await this.load(); showToast('Block updated');
               } catch(e){ this.msg='Update failed'; }
@@ -983,7 +983,7 @@
               this.deleteOpen=true;
             }
             ,
-            async deleteBlock(){ const b=this.deleteTarget; if(!b) return; try{ const force=this.deleteCascade?'&force=1':''; const res=await fetch(`/api/v1/pools?id=${b.id}${force}`, {method:'DELETE'}); if(!res.ok){ this.msg=await parseError(res); showToast(this.msg,'error'); return;} this.deleteOpen=false; await this.load(); showToast('Block deleted'); } catch(e){ this.msg='Delete failed'; } }
+            async deleteBlock(){ const b=this.deleteTarget; if(!b) return; try{ const force=this.deleteCascade?'?force=1':''; const res=await fetch(`/api/v1/pools/${b.id}${force}`, {method:'DELETE'}); if(!res.ok){ this.msg=await parseError(res); showToast(this.msg,'error'); return;} this.deleteOpen=false; await this.load(); showToast('Block deleted'); } catch(e){ this.msg='Delete failed'; } }
             ,
             downloadCsv() {
               const rows = this.filtered();
@@ -1181,7 +1181,7 @@
           async performBulkAssignTop(){
             const target = this.bulkAccountId ?? null;
             for (const id of this.selectedTop){
-              try { await fetch(`/api/v1/pools?id=${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ account_id: target }) }); } catch {}
+              try { await fetch(`/api/v1/pools/${id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ account_id: target }) }); } catch {}
             }
             this.bulkAssignTopOpen=false; await this.fetchList(); if(this.current){ const cur = this.list.find(x=>x.id===this.current.id); if(cur) this.current=cur; }
             showToast('Assigned account to selected');
@@ -1190,7 +1190,7 @@
           async performBulkDeleteTop(){
             for (const id of this.selectedTop){
               const force = this.bulkCascade ? '&force=1' : '';
-              try { await fetch(`/api/v1/pools?id=${id}${force}`, { method:'DELETE' }); } catch {}
+              try { await fetch(`/api/v1/pools/${id}${force}`, { method:'DELETE' }); } catch {}
             }
             this.bulkDeleteTopOpen=false; this.selectedTop=[]; await this.fetchList(); if (this.current && !this.list.find(x=>x.id===this.current.id)) this.current=null;
             showToast('Deleted selected pools');
@@ -1205,7 +1205,7 @@
           async saveEditPool() {
             const f = this.editPoolForm;
             try {
-              const res = await fetch(`/api/v1/pools?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: f.name, account_id: f.account_id }) });
+              const res = await fetch(`/api/v1/pools/${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name: f.name, account_id: f.account_id }) });
               if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
               const updated = await res.json();
               const idx = this.list.findIndex(x => x.id === updated.id);
@@ -1234,7 +1234,7 @@
             const p = this.deletePoolTarget; if (!p) return;
             try {
               const force = this.deletePoolCascade ? '&force=1' : '';
-              const res = await fetch(`/api/v1/pools?id=${p.id}${force}`, { method:'DELETE' });
+              const res = await fetch(`/api/v1/pools/${p.id}${force}`, { method:'DELETE' });
               if (!res.ok) { this.msg = await parseError(res); showToast(this.msg,'error'); return; }
               await this.fetchList(); if (this.current && this.current.id===p.id) this.current=null; this.deletePoolOpen=false;
               showToast('Pool deleted');
