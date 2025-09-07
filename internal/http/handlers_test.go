@@ -204,6 +204,24 @@ func TestAccounts_Subroutes_CRUD(t *testing.T) {
     doJSON(t, srv.mux, stdhttp.MethodDelete, "/api/v1/accounts/"+strconv.FormatInt(acc.ID, 10)+"?force=1", "", stdhttp.StatusNoContent)
 }
 
+func TestAccounts_UpdateMetadata_Tier(t *testing.T) {
+    srv, _ := setupTestServer()
+    // Create account
+    rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:222222222222","name":"Staging"}`, stdhttp.StatusCreated)
+    var acc struct{ ID int64 `json:"id"` }
+    if err := json.Unmarshal(rr.Body.Bytes(), &acc); err != nil { t.Fatalf("unmarshal: %v", err) }
+    // PATCH tier + platform + environment
+    body := `{"platform":"aws","tier":"sbx","environment":"stg","regions":["us-west-2"]}`
+    doJSON(t, srv.mux, stdhttp.MethodPatch, "/api/v1/accounts/"+strconv.FormatInt(acc.ID,10), body, stdhttp.StatusOK)
+    // GET and verify
+    rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/accounts/"+strconv.FormatInt(acc.ID,10), "", stdhttp.StatusOK)
+    var out struct{ Platform, Tier, Environment string; Regions []string }
+    if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil { t.Fatalf("unmarshal: %v", err) }
+    if out.Platform != "aws" || out.Tier != "sbx" || out.Environment != "stg" || len(out.Regions) != 1 || out.Regions[0] != "us-west-2" {
+        t.Fatalf("metadata mismatch: %+v", out)
+    }
+}
+
 func TestPools_Overlap_SiblingsAndBlocksAnnotation(t *testing.T) {
     srv, _ := setupTestServer()
     // create parent
