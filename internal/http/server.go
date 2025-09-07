@@ -175,8 +175,8 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// PATCH /api/v1/pools?id=<id> with {"account_id": <int|null>}
-// Legacy pool query-param endpoints are not supported; use /api/v1/pools/{id}.
+// RESTful: PATCH /api/v1/pools/{id} with {"name": "...", "account_id": <int|null>}
+// Legacy query-param endpoints are not supported; use /api/v1/pools/{id}.
 
 // Accounts: GET list, POST create
 func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
