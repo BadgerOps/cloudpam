@@ -96,7 +96,8 @@
           </div>
         </div>
       </div>
-      <table>
+      <div style="overflow:auto;">
+      <table style="min-width: 960px;">
         <thead>
           <tr><th style="width:32px;"><input type="checkbox" @change="toggleSelectAllTop($event)" :checked="allTopSelected()" :indeterminate="indeterminateTop()" /></th><th>ID</th><th>Name</th><th>CIDR</th><th>Account</th><th>Created</th><th></th></tr>
         </thead>
@@ -339,12 +340,50 @@
         <input type="text" placeholder="Provider (optional)" x-model="acctForm.provider" />
         <input type="text" placeholder="External ID (optional)" x-model="acctForm.external_id" />
         <input type="text" placeholder="Description (optional)" x-model="acctForm.description" />
+        <input type="text" placeholder="Platform (optional)" x-model="acctForm.platform" />
+        <select x-model="acctForm.tier">
+          <option value="">Tier (optional)</option>
+          <option value="dev">dev</option>
+          <option value="stg">stg</option>
+          <option value="sbx">sbx</option>
+          <option value="prd">prd</option>
+        </select>
+        <input type="text" placeholder="Environment (optional)" x-model="acctForm.environment" />
+        <input type="text" placeholder="Regions (comma-separated)" x-model="acctForm.regions_text" />
         <button class="btn" @click="createAccount()">Create</button>
         <span x-text="acctMsg" class="muted"></span>
       </div>
-      <table>
+      <div class="row" style="justify-content:flex-end; margin:.4rem 0; position:relative;">
+        <div style="margin-left:auto; position:relative;" x-data="{ open:false }">
+          <button class="btn ghost" @click="open=!open">Columns ▾</button>
+          <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:10020; padding:8px 10px; min-width:220px;">
+            <div class="muted" style="margin-bottom:6px;">Toggle columns</div>
+            <template x-for="col in Object.keys(visibleCols)" :key="col">
+              <label style="display:flex; align-items:center; gap:.5rem;">
+                <input type="checkbox" :checked="visibleCols[col]" @change="visibleCols[col]=!visibleCols[col]" />
+                <span x-text="col.replace('_',' ').replace('_',' ')" style="text-transform: capitalize;"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div style="overflow-x:auto; width:100%;">
+      <table style="min-width:960px; width:100%;">
         <thead>
-          <tr><th>ID</th><th>Key</th><th>Name</th><th>Provider</th><th>External ID</th><th>Description</th><th>Created</th><th></th></tr>
+          <tr>
+            <th>ID</th>
+            <th>Key</th>
+            <th>Name</th>
+            <th x-show="visibleCols.provider">Provider</th>
+            <th x-show="visibleCols.external_id">External ID</th>
+            <th x-show="visibleCols.description">Description</th>
+            <th x-show="visibleCols.platform">Platform</th>
+            <th x-show="visibleCols.tier">Tier</th>
+            <th x-show="visibleCols.environment">Environment</th>
+            <th x-show="visibleCols.regions">Regions</th>
+            <th x-show="visibleCols.created">Created</th>
+            <th></th>
+          </tr>
         </thead>
         <tbody>
           <template x-for="a in accounts" :key="a.id">
@@ -352,10 +391,14 @@
               <td x-text="a.id"></td>
               <td x-text="a.key"></td>
               <td x-text="a.name"></td>
-              <td x-text="a.provider || '-' "></td>
-              <td x-text="a.external_id || '-' "></td>
-              <td x-text="a.description || '-' "></td>
-              <td x-text="new Date(a.created_at).toLocaleString()"></td>
+              <td x-show="visibleCols.provider" x-text="a.provider || '-' "></td>
+              <td x-show="visibleCols.external_id" x-text="a.external_id || '-' "></td>
+              <td x-show="visibleCols.description" x-text="a.description || '-' "></td>
+              <td x-show="visibleCols.platform" x-text="a.platform || '-' "></td>
+              <td x-show="visibleCols.tier" x-text="a.tier || '-' "></td>
+              <td x-show="visibleCols.environment" x-text="a.environment || '-' "></td>
+              <td x-show="visibleCols.regions" x-text="Array.isArray(a.regions) && a.regions.length ? a.regions.join(', ') : '-' "></td>
+              <td x-show="visibleCols.created" x-text="new Date(a.created_at).toLocaleString()"></td>
               <td style="position:relative; text-align:right;">
                 <button class="btn ghost" @click="open=!open">⋮</button>
                 <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow: var(--shadow); z-index:9999; min-width:140px;">
@@ -365,17 +408,25 @@
               </td>
             </tr>
           </template>
-          <tr x-show="accounts.length === 0"><td colspan="7" style="color:#999">No accounts yet</td></tr>
+          <tr x-show="accounts.length === 0"><td :colspan="accountsColumnsCount()" style="color:#999">No accounts yet</td></tr>
         </tbody>
       </table>
+      </div>
       <script>
         function accountsView() {
           return {
             accounts: [],
-            acctForm: { key:'', name:'', provider:'', external_id:'', description:'' },
+            acctForm: { key:'', name:'', provider:'', external_id:'', description:'', platform:'', tier:'', environment:'', regions_text:'' },
             acctMsg: '',
             editOpen: false,
-            editForm: { id:null, name:'', provider:'', external_id:'', description:'' },
+            editForm: { id:null, name:'', provider:'', external_id:'', description:'', platform:'', tier:'', environment:'', regions_text:'', regions:[] },
+            visibleCols: { provider:true, external_id:true, description:true, platform:true, tier:true, environment:true, regions:true, created:true },
+            accountsColumnsCount(){
+              // Always-visible: ID, Key, Name, Actions = 4
+              let count = 4;
+              for (const k in this.visibleCols) { if (this.visibleCols[k]) count++; }
+              return count;
+            },
             deleteOpen: false,
             deleteTarget: null,
             deleteChildren: [],
@@ -390,29 +441,59 @@
             async createAccount() {
               this.acctMsg = '';
               try {
+                // Basic validation: tier (if provided) must be one of dev/stg/sbx/prd
+                const allowedTiers = ['dev','stg','sbx','prd'];
+                if (this.acctForm.tier && !allowedTiers.includes(String(this.acctForm.tier).toLowerCase())) {
+                  this.acctMsg = 'Tier must be one of dev, stg, sbx, prd'; showToast(this.acctMsg,'error'); return;
+                }
+                // Parse regions from comma-separated input
+                const regions = (this.acctForm.regions_text||'').split(',').map(s=>s.trim()).filter(Boolean);
+                // Validate simple region token format
+                const bad = regions.find(r => !/^[a-z0-9-]+$/.test(r));
+                if (bad) { this.acctMsg = `Invalid region token: ${bad}`; showToast(this.acctMsg,'error'); return; }
+                const payload = {
+                  key: this.acctForm.key,
+                  name: this.acctForm.name,
+                  provider: this.acctForm.provider,
+                  external_id: this.acctForm.external_id,
+                  description: this.acctForm.description,
+                  platform: this.acctForm.platform,
+                  tier: this.acctForm.tier || '',
+                  environment: this.acctForm.environment,
+                  regions: regions,
+                };
                 const res = await fetch('/api/v1/accounts', {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(this.acctForm)
+                  body: JSON.stringify(payload)
                 });
                 if (!res.ok) { this.acctMsg = await parseError(res); showToast(this.acctMsg,'error'); return; }
-                this.acctForm = { key:'', name:'', provider:'', external_id:'', description:'' };
+                this.acctForm = { key:'', name:'', provider:'', external_id:'', description:'', platform:'', tier:'', environment:'', regions_text:'' };
                 await this.fetchAccounts();
                 this.acctMsg = 'Created'; showToast('Account created');
               } catch (e) { this.acctMsg = 'Create failed'; }
             }
             ,
             openEditAccount(a) {
-              this.editForm = { id:a.id, name:a.name, provider:a.provider||'', external_id:a.external_id||'', description:a.description||'' };
+              this.editForm = { id:a.id, name:a.name, provider:a.provider||'', external_id:a.external_id||'', description:a.description||'', platform:a.platform||'', tier:a.tier||'', environment:a.environment||'', regions:Array.isArray(a.regions)?a.regions.slice():[], regions_text:(Array.isArray(a.regions)&&a.regions.length?a.regions.join(', '):'') };
               this.editOpen = true;
             }
             ,
             async saveAccount() {
               const f = this.editForm;
               try {
-                const res = await fetch(`/api/v1/accounts?id=${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ name:f.name, provider:f.provider, external_id:f.external_id, description:f.description }) });
+                // Validate tier
+                const allowedTiers = ['dev','stg','sbx','prd'];
+                if (f.tier && !allowedTiers.includes(String(f.tier).toLowerCase())) { this.acctMsg = 'Tier must be one of dev, stg, sbx, prd'; showToast(this.acctMsg,'error'); return; }
+                const regions = (f.regions_text||'').split(',').map(s=>s.trim()).filter(Boolean);
+                const bad = regions.find(r => !/^[a-z0-9-]+$/.test(r));
+                if (bad) { this.acctMsg = `Invalid region token: ${bad}`; showToast(this.acctMsg,'error'); return; }
+                const payload = { name:f.name, provider:f.provider, external_id:f.external_id, description:f.description, platform:f.platform, tier:f.tier||'', environment:f.environment, regions: regions };
+                const res = await fetch(`/api/v1/accounts/${f.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
                 if (!res.ok) { this.acctMsg = await parseError(res); showToast(this.acctMsg,'error'); return; }
                 this.editOpen = false;
-                await this.fetchAccounts(); showToast('Account updated');
+                await this.fetchAccounts();
+                this.editOpen = false; // ensure modal closes after refresh
+                showToast('Account updated');
               } catch (e) { this.acctMsg = 'Update failed'; }
             }
             ,
@@ -441,8 +522,8 @@
               if (!a) a = this.deleteTarget;
               if (!a) return;
               try {
-                const force = this.deleteCascade ? '&force=1' : '';
-                const res = await fetch(`/api/v1/accounts?id=${a.id}${force}`, { method: 'DELETE' });
+                const force = this.deleteCascade ? '?force=1' : '';
+                const res = await fetch(`/api/v1/accounts/${a.id}${force}`, { method: 'DELETE' });
                 if (!res.ok) { this.acctMsg = await parseError(res); showToast(this.acctMsg,'error'); return; }
                 await this.fetchAccounts();
                 this.deleteOpen = false;
@@ -463,6 +544,20 @@
           <div class="row">
             <input type="text" placeholder="External ID" x-model="editForm.external_id" style="flex:1;" />
             <input type="text" placeholder="Description" x-model="editForm.description" style="flex:1;" />
+          </div>
+          <div class="row">
+            <input type="text" placeholder="Platform" x-model="editForm.platform" style="flex:1;" />
+            <select x-model="editForm.tier" style="flex:1;">
+              <option value="">Tier (optional)</option>
+              <option value="dev">dev</option>
+              <option value="stg">stg</option>
+              <option value="sbx">sbx</option>
+              <option value="prd">prd</option>
+            </select>
+          </div>
+          <div class="row">
+            <input type="text" placeholder="Environment" x-model="editForm.environment" style="flex:1;" />
+            <input type="text" placeholder="Regions (comma-separated)" x-model="editForm.regions_text" style="flex:1;" />
           </div>
           <div class="row" style="justify-content:flex-end; margin-top:1rem;">
             <button class="btn ghost" @click="editOpen=false">Cancel</button>
