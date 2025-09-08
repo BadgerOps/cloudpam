@@ -24,6 +24,13 @@ Features in the UI
 - Common tasks: `make dev | build | sqlite-build | sqlite-run | fmt | lint | test | tidy`
 - If you prefer Justfile directly: `just dev`, `just sqlite-run`, etc.
 
+## Releases
+- Release artifacts are multi-platform binaries (Linux/macOS/Windows on amd64/arm64) built with the `sqlite` tag using the CGO-less `modernc.org/sqlite` driver.
+- No system SQLite is required. Migrations are embedded and applied automatically.
+- To use SQLite, set `SQLITE_DSN` (defaults to `file:cloudpam.db?cache=shared&_fk=1` when unset in sqlite builds). Examples:
+  - Linux/macOS: `SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' ./cloudpam`
+  - Windows (PowerShell): `$env:SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1'; .\cloudpam.exe`
+
 ## CI and Linting
 - This repo includes `.golangci.yml` and a GitHub Actions workflow at `.github/workflows/lint.yml`.
 - CI pins Go `1.24.x` and golangci-lint `v2.1.6` to avoid local toolchain mismatches.
