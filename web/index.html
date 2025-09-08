@@ -1493,6 +1493,18 @@
             this.page = target;
             await this.loadBlocks();
           },
+          validateCIDR() {
+            const c = (this.form?.cidr || '').trim();
+            this.cidrError = '';
+            if (!c) { this.cidrError = 'CIDR is required'; return; }
+            const pr = prefixRange(c);
+            if (!pr) { this.cidrError = 'Invalid CIDR (use e.g., 10.0.0.0/16)'; return; }
+            // Ensure the IP is aligned to the network address for the prefix
+            const [ipStr] = c.split('/');
+            const base = ipToInt(ipStr);
+            if (base == null) { this.cidrError = 'Invalid IPv4 address'; return; }
+            if (base !== pr.start) { this.cidrError = 'CIDR must start at network address'; return; }
+          },
           async createTop() {
             this.msg = '';
             this.validateCIDR(); if (this.cidrError) { showToast(this.cidrError,'error'); return; }
@@ -1504,7 +1516,7 @@
                 body: JSON.stringify(this.form)
               });
               if (!res.ok) { this.msg = await parseError(res); showToast(this.msg, 'error'); return; }
-              this.form = { name: '', cidr: '' };
+              this.form = { name: '', cidr: '', account_id: null };
               await Promise.all([this.fetchList(), this.fetchAccounts()]);
               this.msg = 'Created';
               showToast('Pool created');
