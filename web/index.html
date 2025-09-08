@@ -1210,17 +1210,42 @@
           normalizeName(s){ return (s||'').toLowerCase().replace(/\s+/g,'_').replace(/-/g,'_'); },
           autoMapHeaders(){
             const kind = this.imp.type;
-            const known = kind==='accounts'
-              ? ['key','name','provider','external_id','description','platform','tier','environment','regions']
-              : (kind==='pools'
-                ? ['name','cidr','parent_id','account_id']
-                : ['name','cidr','parent_id','parent_name','account_id','account_name','account_key']);
             const map = {};
+            const norm = s => (s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+            const has = (s, ...subs) => subs.every(x => s.includes(x));
             for (const h of this.imp.headers){
-              const n = this.normalizeName(h);
-              if (known.includes(n)) map[h] = n;
-              else if(n==='account' || n==='acct') map[h]='account_id';
-              else map[h]='';
+              const n = norm(h);
+              let guess = '';
+              if (kind==='accounts'){
+                if (n==='key' || has(n,'account','key')) guess='key';
+                else if (n==='name') guess='name';
+                else if (n==='provider' || has(n,'cloud','provider')) guess='provider';
+                else if (n==='external id' || n==='externalid' || has(n,'external','id')) guess='external_id';
+                else if (n==='description' || n==='desc') guess='description';
+                else if (n==='platform') guess='platform';
+                else if (n==='tier') guess='tier';
+                else if (n==='environment' || n==='env') guess='environment';
+                else if (n==='region' || n==='regions' || has(n,'region')) guess='regions';
+                else guess='';
+              } else if (kind==='pools'){
+                if (n==='name' || n==='label') guess='name';
+                else if (n==='cidr' || has(n,'cidr','block') || n==='subnet' || n==='network' || n==='prefix') guess='cidr';
+                else if (n==='parent id' || n==='parentid') guess='parent_id';
+                else if (n==='account id' || n==='acct id' || has(n,'account','id')) guess='account_id';
+                else if (n==='account' || n==='acct') guess='account_id';
+                else guess='';
+              } else if (kind==='blocks'){
+                if (n==='name' || n==='label') guess='name';
+                else if (n==='cidr' || has(n,'cidr','block') || n==='subnet' || n==='network' || n==='prefix') guess='cidr';
+                else if (n==='parent id' || n==='parentid') guess='parent_id';
+                else if (n==='parent name' || n==='parent' || has(n,'parent','name')) guess='parent_name';
+                else if (n==='account id' || n==='acct id' || has(n,'account','id')) guess='account_id';
+                else if (n==='account name' || has(n,'account','name')) guess='account_name';
+                else if (n==='account key' || has(n,'account','key')) guess='account_key';
+                else if (n==='account' || n==='acct') guess='account_id';
+                else guess='';
+              }
+              map[h] = guess;
             }
             this.imp.mapping = map;
           },
@@ -1843,7 +1868,7 @@
           <div style="flex:1;">
             <h4>Import</h4>
               <label>Type
-                <select x-model="imp.type">
+                <select x-model="imp.type" @change="autoMapHeaders()">
                   <option value="accounts">Accounts</option>
                   <option value="pools">Pools</option>
                   <option value="blocks">Blocks</option>
