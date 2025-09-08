@@ -1,0 +1,111 @@
+name: Manual Builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref (branch, tag, or SHA) to build
+        required: false
+        default: master
+      go_version:
+        description: Go version to use
+        required: false
+        default: 1.24.x
+
+permissions:
+  contents: read
+
+jobs:
+  build-matrix:
+    name: Build archives
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: 0
+      APP_VERSION: manual
+
+    steps:
+      - name: Checkout ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+
+      - name: Show tree (debug)
+        run: |
+          pwd
+          ls -la
+          ls -la cmd || true
+          ls -la cmd/cloudpam || true
+
+      - name: Build (sqlite-enabled, static)
+        run: |
+          set -euo pipefail
+          BIN=cloudpam
+          EXT=""
+          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+          OUT="$BIN$EXT"
+          mkdir -p build
+          echo "Building $GOOS/$GOARCH (sqlite) -> build/$OUT"
+          ENTRY="./cmd/cloudpam"
+          if [ ! -d "$ENTRY" ]; then
+            echo "fallback: ./cmd/cloudpam not found; probing for main package under ./cmd/* or root"
+            pick=""
+            if [ -d cmd ]; then
+              pick=$(for d in cmd/*; do [ -f "$d/main.go" ] && echo "$d"; done | head -n1)
+            fi
+            if [ -z "$pick" ] && [ -f main.go ]; then pick="."; fi
+            if [ -z "$pick" ]; then echo "no entry point found"; exit 1; fi
+            ENTRY="$pick"
+            echo "using entry: $ENTRY"
+          fi
+          go build -trimpath -tags sqlite -ldflags "-s -w" -o "build/$OUT" "$ENTRY"
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          BASE="cloudpam_${{ github.sha }}_${GOOS}_${GOARCH}"
+          if [ "${GOOS}" = "windows" ]; then \
+            (cd build && zip -9 "../dist/${BASE}.zip" cloudpam.exe) ; \
+          else \
+            tar -C build -czf "dist/${BASE}.tar.gz" cloudpam ; \
+          fi
+
+      - name: Checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          if compgen -G "*.tar.gz" > /dev/null || compgen -G "*.zip" > /dev/null; then
+            sha256sum * > SHA256SUMS.txt
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ format('manual-{0}-{1}', matrix.goos, matrix.goarch) }}
+          path: dist/*
+
