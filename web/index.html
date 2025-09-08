@@ -1210,11 +1210,17 @@
           normalizeName(s){ return (s||'').toLowerCase().replace(/\s+/g,'_').replace(/-/g,'_'); },
           autoMapHeaders(){
             const kind = this.imp.type;
-            const known = kind==='accounts' ? ['key','name','provider','external_id','description','platform','tier','environment','regions'] : ['name','cidr','parent_id','account_id'];
+            const known = kind==='accounts'
+              ? ['key','name','provider','external_id','description','platform','tier','environment','regions']
+              : (kind==='pools'
+                ? ['name','cidr','parent_id','account_id']
+                : ['name','cidr','parent_id','parent_name','account_id','account_name','account_key']);
             const map = {};
             for (const h of this.imp.headers){
               const n = this.normalizeName(h);
-              if (known.includes(n)) map[h] = n; else if(n==='account' || n==='acct' || n==='account_name') map[h]='account_id'; else map[h]='';
+              if (known.includes(n)) map[h] = n;
+              else if(n==='account' || n==='acct') map[h]='account_id';
+              else map[h]='';
             }
             this.imp.mapping = map;
           },
@@ -1250,8 +1256,11 @@
             const headerIndex = {}; this.imp.headers.forEach((h,i)=>{ headerIndex[h]=i; });
             let ok=0, fail=0;
             // Load accounts for lookup if needed
-            let accounts=[];
-            if (kind==='pools') { try { const res=await fetch('/api/v1/accounts'); accounts=await res.json(); } catch{} }
+            let accounts=[]; let pools=[];
+            if (kind==='pools' || kind==='blocks') {
+              try { const res=await fetch('/api/v1/accounts'); accounts=await res.json(); } catch{}
+              try { const res=await fetch('/api/v1/pools'); pools=await res.json(); } catch{}
+            }
             for (const row of this.imp.rows){
               try {
                 if (kind==='accounts'){
@@ -1282,6 +1291,42 @@
                     const m=accounts.find(a=>a.key===accountHint || a.name===accountHint);
                     if (m) obj.account_id = m.id; else obj.account_id = null;
                   }
+                  const res = await fetch('/api/v1/pools', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
+                  if (!res.ok) { fail++; continue; }
+                  ok++;
+                } else if (kind==='blocks') {
+                  // Blocks are sub-pools; require resolving parent_id
+                  const obj={ name:'', cidr:'', parent_id:null, account_id:null };
+                  let accountHint=''; let parentHintName='';
+                  for (const [src, dst] of Object.entries(this.imp.mapping)){
+                    if (!dst) continue; const idx=headerIndex[src]; if (idx==null) continue; const v=row[idx]||'';
+                    if (dst==='name'||dst==='cidr') obj[dst]=String(v);
+                    else if (dst==='parent_id') { const n=parseInt(String(v),10); obj.parent_id= isNaN(n)? null : n; }
+                    else if (dst==='parent_name') { parentHintName = String(v); }
+                    else if (dst==='account_id') {
+                      if (/^\d+$/.test(String(v))) { const n=parseInt(String(v),10); obj.account_id = isNaN(n)? null : n; }
+                      else { accountHint = String(v); }
+                    } else if (dst==='account_name' || dst==='account_key') {
+                      accountHint = String(v);
+                    }
+                  }
+                  if (!obj.name || !obj.cidr) { fail++; continue; }
+                  // Resolve account by hint if needed
+                  if (!obj.account_id && accountHint){
+                    const m=accounts.find(a=>a.key===accountHint || a.name===accountHint);
+                    if (m) obj.account_id = m.id;
+                  }
+                  // Resolve parent by name match that contains CIDR
+                  if (!obj.parent_id) {
+                    const pr = prefixRange(obj.cidr);
+                    if (pr && parentHintName) {
+                      const candidates = pools.filter(p=>!(!p || !p.cidr) && (p.name||'')===parentHintName && p.parent_id==null);
+                      let chosen=null;
+                      for (const p of candidates){ const r=prefixRange(p.cidr); if (!r) continue; if (pr.start>=r.start && pr.end<=r.end) { chosen=p; break; } }
+                      if (chosen) obj.parent_id = chosen.id;
+                    }
+                  }
+                  if (!obj.parent_id) { fail++; continue; }
                   const res = await fetch('/api/v1/pools', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
                   if (!res.ok) { fail++; continue; }
                   ok++;
@@ -1797,12 +1842,13 @@
           </div>
           <div style="flex:1;">
             <h4>Import</h4>
-            <label>Type
-              <select x-model="imp.type">
-                <option value="accounts">Accounts</option>
-                <option value="pools">Pools</option>
-              </select>
-            </label>
+              <label>Type
+                <select x-model="imp.type">
+                  <option value="accounts">Accounts</option>
+                  <option value="pools">Pools</option>
+                  <option value="blocks">Blocks</option>
+                </select>
+              </label>
             <div style="margin:.5rem 0;">
               <input type="file" accept=".csv,text/csv" @change="onImportFile($event)" />
             </div>
@@ -1819,11 +1865,16 @@
                           <option :value="f" x-text="f"></option>
                         </template>
                       </template>
-                      <template x-if="imp.type==='pools'">
-                        <template x-for="f in ['name','cidr','parent_id','account_id']" :key="'pool-map-'+f">
-                          <option :value="f" x-text="f"></option>
+                        <template x-if="imp.type==='pools'">
+                          <template x-for="f in ['name','cidr','parent_id','account_id']" :key="'pool-map-'+f">
+                            <option :value="f" x-text="f"></option>
+                          </template>
                         </template>
-                      </template>
+                        <template x-if="imp.type==='blocks'">
+                          <template x-for="f in ['name','cidr','parent_id','parent_name','account_id','account_name','account_key']" :key="'blk-map-'+f">
+                            <option :value="f" x-text="f"></option>
+                          </template>
+                        </template>
                     </select>
                   </div>
                 </div>
