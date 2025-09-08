@@ -72,6 +72,7 @@ jobs:
             if [ -z "$pick" ] && [ -f main.go ]; then pick="."; fi
             if [ -z "$pick" ]; then
               echo "no entry point found; skipping build for $GOOS/$GOARCH"
+              mkdir -p dist
               echo "skipped: no entry point on this ref" > dist/SKIPPED_${GOOS}_${GOARCH}.txt
               exit 0
             fi
