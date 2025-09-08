@@ -146,8 +146,7 @@
 
       <!-- Bulk Assign Top Pools -->
       <div x-show="bulkAssignTopOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" style="width:420px;">
-          <h3>Assign Account to Selected</h3>
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:420px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Assign Account to Selected</h3>
           <div class="row" style="align-items:center;">
             <select x-model.number="bulkAccountId" style="min-width: 14rem;">
               <option :value="null">No Account</option>
@@ -585,9 +584,8 @@
         }
       </script>
       <!-- Edit Account Modal -->
-      <div x-show="editOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" style="width:520px;">
-          <h3>Edit Account</h3>
+      <div x-show="editOpen" x-cloak @click.self="editOpen=false" @keydown.escape.window="editOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:520px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Edit Account</h3>
           <div class="row">
             <input type="text" placeholder="Name" x-model="editForm.name" style="flex:1;" />
             <input type="text" placeholder="Provider" x-model="editForm.provider" style="flex:1;" />
@@ -618,9 +616,8 @@
       </div>
 
       <!-- Delete Account Confirm Modal -->
-      <div x-show="deleteOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" style="width:420px;">
-          <h3>Confirm Delete</h3>
+      <div x-show="deleteOpen" x-cloak @click.self="deleteOpen=false" @keydown.escape.window="deleteOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:420px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Confirm Delete</h3>
           <p>Are you sure you want to delete <strong x-text="deleteTarget?.name"></strong>?</p>
           <template x-if="deleteChildren.length">
             <div>
@@ -782,9 +779,8 @@
       </table>
       </div>
       <!-- Bulk Assign (Analytics) -->
-      <div x-show="bulkAssignOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" style="width:420px;">
-          <h3>Assign Account to Selected</h3>
+      <div x-show="bulkAssignOpen" x-cloak @click.self="bulkAssignOpen=false" @keydown.escape.window="bulkAssignOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:420px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Assign Account to Selected</h3>
           <div class="row" style="align-items:center;">
             <select x-model.number="bulkAccountId" style="min-width: 14rem;">
               <option :value="null">No Account</option>
@@ -801,9 +797,8 @@
         </div>
       </div>
       <!-- Bulk Delete (Analytics) -->
-      <div x-show="bulkDeleteOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" style="width:460px;">
-          <h3>Delete Selected Blocks</h3>
+      <div x-show="bulkDeleteOpen" x-cloak @click.self="bulkDeleteOpen=false" @keydown.escape.window="bulkDeleteOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:460px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Delete Selected Blocks</h3>
           <label style="display:flex; gap:.4rem; align-items:center;"><input type="checkbox" x-model="bulkCascade" /> Cascade delete descendants</label>
           <label style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem;"><input type="checkbox" x-model="confirmBulkDelete" /> I understand this cannot be undone</label>
           <div class="row" style="justify-content:flex-end; margin-top:1rem;">
@@ -1158,6 +1153,14 @@
 
       <script>
       // Data Import/Export modal helpers
+      function modalDrag(){
+        return {
+          dx:0, dy:0, drag:false, sx:0, sy:0,
+          start(e){ this.drag=true; this.sx=e.clientX - this.dx; this.sy=e.clientY - this.dy; },
+          move(e){ if(!this.drag) return; this.dx = e.clientX - this.sx; this.dy = e.clientY - this.sy; },
+          end(){ this.drag=false; }
+        }
+      }
       function dataIO(){
         return {
           open: false,
