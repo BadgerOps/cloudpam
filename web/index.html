@@ -1279,7 +1279,7 @@
             const kind=this.imp.type;
             if (!this.imp.rows.length){ this.msg='No rows to import'; return; }
             const headerIndex = {}; this.imp.headers.forEach((h,i)=>{ headerIndex[h]=i; });
-            let ok=0, fail=0;
+            let ok=0, fail=0, shown=0;
             // Load accounts for lookup if needed
             let accounts=[]; let pools=[];
             if (kind==='pools' || kind==='blocks') {
@@ -1295,9 +1295,9 @@
                     if (dst==='regions') obj.regions = String(v).split(/[|,;]/).map(s=>s.trim()).filter(Boolean);
                     else if (dst==='key'||dst==='name'||dst==='provider'||dst==='external_id'||dst==='description'||dst==='platform'||dst==='tier'||dst==='environment') obj[dst]=String(v);
                   }
-                  if (!obj.key || !obj.name) { fail++; continue; }
+                  if (!obj.key || !obj.name) { fail++; if (shown<5) { shown++; showToast('Import error: account requires key and name','error'); } continue; }
                   const res = await fetch('/api/v1/accounts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
-                  if (!res.ok) { fail++; continue; }
+                  if (!res.ok) { const err=await parseError(res); fail++; if (shown<5) { shown++; showToast(`Import error: ${err}`,'error'); } continue; }
                   ok++;
                 } else if (kind==='pools') {
                   const obj={ name:'', cidr:'', parent_id:null, account_id:null };
@@ -1312,13 +1312,13 @@
                     }
                   }
                   if (!obj.name) { obj.name = obj.cidr || '(unnamed)'; }
-                  if (!obj.cidr) { fail++; continue; }
+                  if (!obj.cidr) { fail++; if (shown<5) { shown++; showToast('Import error: CIDR is required','error'); } continue; }
                   if (accountHint){
                     const m=accounts.find(a=>a.key===accountHint || a.name===accountHint);
                     if (m) obj.account_id = m.id; else obj.account_id = null;
                   }
                   const res = await fetch('/api/v1/pools', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
-                  if (!res.ok) { fail++; continue; }
+                  if (!res.ok) { const err=await parseError(res); fail++; if (shown<5) { shown++; showToast(`Import error: ${err}`,'error'); } continue; }
                   ok++;
                 } else if (kind==='blocks') {
                   // Blocks are sub-pools; require resolving parent_id
@@ -1337,7 +1337,7 @@
                     }
                   }
                   if (!obj.name) { obj.name = obj.cidr || '(unnamed)'; }
-                  if (!obj.cidr) { fail++; continue; }
+                  if (!obj.cidr) { fail++; if (shown<5) { shown++; showToast('Import error: CIDR is required','error'); } continue; }
                   // Resolve account by hint if needed
                   if (!obj.account_id && accountHint){
                     const m=accounts.find(a=>a.key===accountHint || a.name===accountHint);
@@ -1353,12 +1353,12 @@
                       if (chosen) obj.parent_id = chosen.id;
                     }
                   }
-                  if (!obj.parent_id) { fail++; continue; }
+                  if (!obj.parent_id) { fail++; if (shown<5) { shown++; showToast(`Import error: Could not resolve parent for ${obj.cidr}`,'error'); } continue; }
                   const res = await fetch('/api/v1/pools', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
-                  if (!res.ok) { fail++; continue; }
+                  if (!res.ok) { const err=await parseError(res); fail++; if (shown<5) { shown++; showToast(`Import error: ${err}`,'error'); } continue; }
                   ok++;
                 }
-              } catch (e) { fail++; }
+              } catch (e) { fail++; if (shown<5) { shown++; showToast(`Import error: ${e}`,'error'); } }
             }
             showToast(`Import complete: ${ok} ok, ${fail} failed`, fail? 'error':'info');
           }
