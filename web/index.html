@@ -1167,13 +1167,6 @@
             this.$watch('tab', t => { history.replaceState(null,'','#'+t); localStorage.setItem('cp.tab', t); });
           },
           onKey(ev){
-            // "/" focuses search in current tab
-            if (ev.key === '/' && !ev.ctrlKey && !ev.metaKey) {
-              ev.preventDefault();
-              if (this.tab==='pools') this.$root.querySelector('[x-ref=poolSearch]')?.focus();
-              if (this.tab==='analytics') this.$root.querySelector('[x-ref=analyticsSearch]')?.focus();
-              return;
-            }
             // Paging shortcuts on pools blocks view
             if (this.tab==='pools') {
               const poolsCmp = this.$root.__x?.$data?.tab==='pools' ? this.$root.querySelector('section[x-data]')?.__x?.$data : null;
