@@ -36,13 +36,22 @@ jobs:
       APP_VERSION: ${{ github.event.release.tag_name }}
 
     steps:
-      - name: Checkout
+      - name: Checkout tag
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24.x'
+
+      - name: Show tree (debug)
+        run: |
+          pwd
+          ls -la
+          ls -la cmd || true
+          ls -la cmd/cloudpam || true
 
       - name: Build (sqlite-enabled, static)
         run: |
