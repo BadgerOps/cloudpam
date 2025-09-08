@@ -1,23 +1,23 @@
 package http
 
 import (
-    "archive/zip"
-    "encoding/binary"
-    "encoding/csv"
-    "encoding/json"
-    "fmt"
-    "log"
-    "net"
-    "net/http"
-    "net/netip"
-    "sort"
-    "strconv"
-    "strings"
-    "time"
+	"archive/zip"
+	"encoding/binary"
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/netip"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
-    "cloudpam/internal/domain"
-    "cloudpam/internal/storage"
-    webui "cloudpam/web"
+	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
+	webui "cloudpam/web"
 )
 
 type apiError struct {
@@ -65,246 +65,323 @@ func (s *Server) RegisterRoutes() {
 // GET /api/v1/export?datasets=accounts,pools,blocks&accounts_fields=...&pools_fields=...&blocks_fields=...&accounts=1,2&pools=3,4
 // Returns a ZIP archive containing separate CSV files per selected dataset.
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodGet {
-        writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
-        return
-    }
-    ctx := r.Context()
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	ctx := r.Context()
 
-    datasetsQ := strings.TrimSpace(r.URL.Query().Get("datasets"))
-    if datasetsQ == "" {
-        writeErr(w, http.StatusBadRequest, "datasets is required", "")
-        return
-    }
-    want := map[string]bool{}
-    for _, d := range strings.Split(datasetsQ, ",") {
-        d = strings.TrimSpace(strings.ToLower(d))
-        if d == "accounts" || d == "pools" || d == "blocks" {
-            want[d] = true
-        }
-    }
-    if len(want) == 0 {
-        writeErr(w, http.StatusBadRequest, "no valid datasets requested", "")
-        return
-    }
-    log.Printf("export: datasets=%s accounts_fields=%s pools_fields=%s blocks_fields=%s", datasetsQ, r.URL.Query().Get("accounts_fields"), r.URL.Query().Get("pools_fields"), r.URL.Query().Get("blocks_fields"))
+	datasetsQ := strings.TrimSpace(r.URL.Query().Get("datasets"))
+	if datasetsQ == "" {
+		writeErr(w, http.StatusBadRequest, "datasets is required", "")
+		return
+	}
+	want := map[string]bool{}
+	for _, d := range strings.Split(datasetsQ, ",") {
+		d = strings.TrimSpace(strings.ToLower(d))
+		if d == "accounts" || d == "pools" || d == "blocks" {
+			want[d] = true
+		}
+	}
+	if len(want) == 0 {
+		writeErr(w, http.StatusBadRequest, "no valid datasets requested", "")
+		return
+	}
+	log.Printf("export: datasets=%s accounts_fields=%s pools_fields=%s blocks_fields=%s", datasetsQ, r.URL.Query().Get("accounts_fields"), r.URL.Query().Get("pools_fields"), r.URL.Query().Get("blocks_fields"))
 
-    // Helper to parse field lists with defaults
-    parseFields := func(q, def string) []string {
-        s := strings.TrimSpace(r.URL.Query().Get(q))
-        if s == "" {
-            if def == "" { return nil }
-            s = def
-        }
-        out := []string{}
-        for _, f := range strings.Split(s, ",") {
-            f = strings.TrimSpace(f)
-            if f != "" { out = append(out, f) }
-        }
-        return out
-    }
-    // Defaults
-    accDefault := "id,key,name,provider,external_id,description,platform,tier,environment,regions,created_at"
-    poolDefault := "id,name,cidr,parent_id,account_id,created_at"
-    blkDefault := "id,name,cidr,parent_id,parent_name,account_id,account_name,account_platform,account_tier,account_environment,account_regions,created_at"
+	// Helper to parse field lists with defaults
+	parseFields := func(q, def string) []string {
+		s := strings.TrimSpace(r.URL.Query().Get(q))
+		if s == "" {
+			if def == "" {
+				return nil
+			}
+			s = def
+		}
+		out := []string{}
+		for _, f := range strings.Split(s, ",") {
+			f = strings.TrimSpace(f)
+			if f != "" {
+				out = append(out, f)
+			}
+		}
+		return out
+	}
+	// Defaults
+	accDefault := "id,key,name,provider,external_id,description,platform,tier,environment,regions,created_at"
+	poolDefault := "id,name,cidr,parent_id,account_id,created_at"
+	blkDefault := "id,name,cidr,parent_id,parent_name,account_id,account_name,account_platform,account_tier,account_environment,account_regions,created_at"
 
-    accFields := parseFields("accounts_fields", accDefault)
-    poolFields := parseFields("pools_fields", poolDefault)
-    blkFields := parseFields("blocks_fields", blkDefault)
+	accFields := parseFields("accounts_fields", accDefault)
+	poolFields := parseFields("pools_fields", poolDefault)
+	blkFields := parseFields("blocks_fields", blkDefault)
 
-    // Preload data
-    var (
-        accounts []domain.Account
-        pools    []domain.Pool
-        err      error
-    )
-    if want["accounts"] || want["blocks"] {
-        accounts, err = s.store.ListAccounts(ctx)
-        if err != nil {
-            writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
-            return
-        }
-        sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
-    }
-    if want["pools"] || want["blocks"] {
-        pools, err = s.store.ListPools(ctx)
-        if err != nil {
-            writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
-            return
-        }
-        sort.Slice(pools, func(i, j int) bool { return pools[i].ID < pools[j].ID })
-    }
+	// Preload data
+	var (
+		accounts []domain.Account
+		pools    []domain.Pool
+		err      error
+	)
+	if want["accounts"] || want["blocks"] {
+		accounts, err = s.store.ListAccounts(ctx)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+			return
+		}
+		sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
+	}
+	if want["pools"] || want["blocks"] {
+		pools, err = s.store.ListPools(ctx)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+			return
+		}
+		sort.Slice(pools, func(i, j int) bool { return pools[i].ID < pools[j].ID })
+	}
 
-    // Prepare ZIP writer
-    w.Header().Set("Content-Type", "application/zip")
-    ts := time.Now().UTC().Format("20060102-150405")
-    w.Header().Set("Content-Disposition", "attachment; filename=cloudpam-export-"+ts+".zip")
+	// Prepare ZIP writer
+	w.Header().Set("Content-Type", "application/zip")
+	ts := time.Now().UTC().Format("20060102-150405")
+	w.Header().Set("Content-Disposition", "attachment; filename=cloudpam-export-"+ts+".zip")
 
-    zw := zip.NewWriter(w)
-    defer func() { _ = zw.Close() }()
+	zw := zip.NewWriter(w)
+	defer func() { _ = zw.Close() }()
 
-    // CSV helper
-    writeCSV := func(name string, header []string, rows [][]string) error {
-        f, err := zw.Create(name)
-        if err != nil { return err }
-        cw := csv.NewWriter(f)
-        if err := cw.Write(header); err != nil { return err }
-        for _, r := range rows {
-            if err := cw.Write(r); err != nil { return err }
-        }
-        cw.Flush()
-        return cw.Error()
-    }
+	// CSV helper
+	writeCSV := func(name string, header []string, rows [][]string) error {
+		f, err := zw.Create(name)
+		if err != nil {
+			return err
+		}
+		cw := csv.NewWriter(f)
+		if err := cw.Write(header); err != nil {
+			return err
+		}
+		for _, r := range rows {
+			if err := cw.Write(r); err != nil {
+				return err
+			}
+		}
+		cw.Flush()
+		return cw.Error()
+	}
 
-    if want["accounts"] {
-        // Build header and rows
-        hdr := accFields
-        rows := make([][]string, 0, len(accounts))
-        for _, a := range accounts {
-            row := make([]string, len(hdr))
-            for i, col := range hdr {
-                switch col {
-                case "id": row[i] = strconv.FormatInt(a.ID, 10)
-                case "key": row[i] = a.Key
-                case "name": row[i] = a.Name
-                case "provider": row[i] = a.Provider
-                case "external_id": row[i] = a.ExternalID
-                case "description": row[i] = a.Description
-                case "platform": row[i] = a.Platform
-                case "tier": row[i] = a.Tier
-                case "environment": row[i] = a.Environment
-                case "regions": row[i] = strings.Join(a.Regions, "|")
-                case "created_at": row[i] = a.CreatedAt.UTC().Format(time.RFC3339)
-                default:
-                    row[i] = ""
-                }
-            }
-            rows = append(rows, row)
-        }
-        if err := writeCSV("accounts.csv", hdr, rows); err != nil {
-            writeErr(w, http.StatusInternalServerError, "failed to write accounts.csv", err.Error())
-            return
-        }
-    }
+	if want["accounts"] {
+		// Build header and rows
+		hdr := accFields
+		rows := make([][]string, 0, len(accounts))
+		for _, a := range accounts {
+			row := make([]string, len(hdr))
+			for i, col := range hdr {
+				switch col {
+				case "id":
+					row[i] = strconv.FormatInt(a.ID, 10)
+				case "key":
+					row[i] = a.Key
+				case "name":
+					row[i] = a.Name
+				case "provider":
+					row[i] = a.Provider
+				case "external_id":
+					row[i] = a.ExternalID
+				case "description":
+					row[i] = a.Description
+				case "platform":
+					row[i] = a.Platform
+				case "tier":
+					row[i] = a.Tier
+				case "environment":
+					row[i] = a.Environment
+				case "regions":
+					row[i] = strings.Join(a.Regions, "|")
+				case "created_at":
+					row[i] = a.CreatedAt.UTC().Format(time.RFC3339)
+				default:
+					row[i] = ""
+				}
+			}
+			rows = append(rows, row)
+		}
+		if err := writeCSV("accounts.csv", hdr, rows); err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to write accounts.csv", err.Error())
+			return
+		}
+	}
 
-    if want["pools"] {
-        hdr := poolFields
-        rows := make([][]string, 0, len(pools))
-        for _, p := range pools {
-            row := make([]string, len(hdr))
-            for i, col := range hdr {
-                switch col {
-                case "id": row[i] = strconv.FormatInt(p.ID, 10)
-                case "name": row[i] = p.Name
-                case "cidr": row[i] = p.CIDR
-                case "parent_id": if p.ParentID != nil { row[i] = strconv.FormatInt(*p.ParentID, 10) } else { row[i] = "" }
-                case "account_id": if p.AccountID != nil { row[i] = strconv.FormatInt(*p.AccountID, 10) } else { row[i] = "" }
-                case "created_at": row[i] = p.CreatedAt.UTC().Format(time.RFC3339)
-                default:
-                    row[i] = ""
-                }
-            }
-            rows = append(rows, row)
-        }
-        if err := writeCSV("pools.csv", hdr, rows); err != nil {
-            writeErr(w, http.StatusInternalServerError, "failed to write pools.csv", err.Error())
-            return
-        }
-    }
+	if want["pools"] {
+		hdr := poolFields
+		rows := make([][]string, 0, len(pools))
+		for _, p := range pools {
+			row := make([]string, len(hdr))
+			for i, col := range hdr {
+				switch col {
+				case "id":
+					row[i] = strconv.FormatInt(p.ID, 10)
+				case "name":
+					row[i] = p.Name
+				case "cidr":
+					row[i] = p.CIDR
+				case "parent_id":
+					if p.ParentID != nil {
+						row[i] = strconv.FormatInt(*p.ParentID, 10)
+					} else {
+						row[i] = ""
+					}
+				case "account_id":
+					if p.AccountID != nil {
+						row[i] = strconv.FormatInt(*p.AccountID, 10)
+					} else {
+						row[i] = ""
+					}
+				case "created_at":
+					row[i] = p.CreatedAt.UTC().Format(time.RFC3339)
+				default:
+					row[i] = ""
+				}
+			}
+			rows = append(rows, row)
+		}
+		if err := writeCSV("pools.csv", hdr, rows); err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to write pools.csv", err.Error())
+			return
+		}
+	}
 
-    if want["blocks"] {
-        // Reuse logic similar to handleBlocksList to assemble sub-pools
-        accName := map[int64]string{}
-        accMeta := map[int64]struct{ Platform, Tier, Environment string; Regions []string }{}
-        for _, a := range accounts {
-            accName[a.ID] = a.Name
-            accMeta[a.ID] = struct{ Platform, Tier, Environment string; Regions []string }{a.Platform, a.Tier, a.Environment, a.Regions}
-        }
-        poolName := map[int64]string{}
-        for _, p := range pools { poolName[p.ID] = p.Name }
+	if want["blocks"] {
+		// Reuse logic similar to handleBlocksList to assemble sub-pools
+		accName := map[int64]string{}
+		accMeta := map[int64]struct {
+			Platform, Tier, Environment string
+			Regions                     []string
+		}{}
+		for _, a := range accounts {
+			accName[a.ID] = a.Name
+			accMeta[a.ID] = struct {
+				Platform, Tier, Environment string
+				Regions                     []string
+			}{a.Platform, a.Tier, a.Environment, a.Regions}
+		}
+		poolName := map[int64]string{}
+		for _, p := range pools {
+			poolName[p.ID] = p.Name
+		}
 
-        type row struct {
-            ID int64
-            Name, CIDR string
-            ParentID int64
-            ParentName string
-            AccountID *int64
-            AccountName, AccountPlatform, AccountTier, AccountEnvironment string
-            AccountRegions []string
-            CreatedAt time.Time
-        }
-        // Optional filters via query to mirror /api/v1/blocks
-        parseIDs := func(s string) map[int64]struct{} {
-            set := map[int64]struct{}{}
-            if s == "" { return set }
-            for _, part := range strings.Split(s, ",") {
-                part = strings.TrimSpace(part)
-                if part == "" { continue }
-                if id, err := strconv.ParseInt(part, 10, 64); err == nil { set[id] = struct{}{} }
-            }
-            return set
-        }
-        accFilter := parseIDs(r.URL.Query().Get("accounts"))
-        poolFilter := parseIDs(r.URL.Query().Get("pools"))
+		type row struct {
+			ID                                                            int64
+			Name, CIDR                                                    string
+			ParentID                                                      int64
+			ParentName                                                    string
+			AccountID                                                     *int64
+			AccountName, AccountPlatform, AccountTier, AccountEnvironment string
+			AccountRegions                                                []string
+			CreatedAt                                                     time.Time
+		}
+		// Optional filters via query to mirror /api/v1/blocks
+		parseIDs := func(s string) map[int64]struct{} {
+			set := map[int64]struct{}{}
+			if s == "" {
+				return set
+			}
+			for _, part := range strings.Split(s, ",") {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				if id, err := strconv.ParseInt(part, 10, 64); err == nil {
+					set[id] = struct{}{}
+				}
+			}
+			return set
+		}
+		accFilter := parseIDs(r.URL.Query().Get("accounts"))
+		poolFilter := parseIDs(r.URL.Query().Get("pools"))
 
-        items := []row{}
-        for _, p := range pools {
-            if p.ParentID == nil { continue }
-            if len(poolFilter) > 0 { if _, ok := poolFilter[*p.ParentID]; !ok { continue } }
-            if len(accFilter) > 0 && p.AccountID != nil { if _, ok := accFilter[*p.AccountID]; !ok { continue } }
-            r := row{
-                ID: p.ID,
-                Name: p.Name,
-                CIDR: p.CIDR,
-                ParentID: *p.ParentID,
-                ParentName: poolName[*p.ParentID],
-                AccountID: p.AccountID,
-                CreatedAt: p.CreatedAt,
-            }
-            if p.AccountID != nil {
-                r.AccountName = accName[*p.AccountID]
-                meta := accMeta[*p.AccountID]
-                r.AccountPlatform = meta.Platform
-                r.AccountTier = meta.Tier
-                r.AccountEnvironment = meta.Environment
-                r.AccountRegions = meta.Regions
-            }
-            items = append(items, r)
-        }
-        sort.Slice(items, func(i, j int) bool {
-            if items[i].CreatedAt.Equal(items[j].CreatedAt) { return items[i].ID < items[j].ID }
-            return items[i].CreatedAt.Before(items[j].CreatedAt)
-        })
+		items := []row{}
+		for _, p := range pools {
+			if p.ParentID == nil {
+				continue
+			}
+			if len(poolFilter) > 0 {
+				if _, ok := poolFilter[*p.ParentID]; !ok {
+					continue
+				}
+			}
+			if len(accFilter) > 0 && p.AccountID != nil {
+				if _, ok := accFilter[*p.AccountID]; !ok {
+					continue
+				}
+			}
+			r := row{
+				ID:         p.ID,
+				Name:       p.Name,
+				CIDR:       p.CIDR,
+				ParentID:   *p.ParentID,
+				ParentName: poolName[*p.ParentID],
+				AccountID:  p.AccountID,
+				CreatedAt:  p.CreatedAt,
+			}
+			if p.AccountID != nil {
+				r.AccountName = accName[*p.AccountID]
+				meta := accMeta[*p.AccountID]
+				r.AccountPlatform = meta.Platform
+				r.AccountTier = meta.Tier
+				r.AccountEnvironment = meta.Environment
+				r.AccountRegions = meta.Regions
+			}
+			items = append(items, r)
+		}
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+				return items[i].ID < items[j].ID
+			}
+			return items[i].CreatedAt.Before(items[j].CreatedAt)
+		})
 
-        hdr := blkFields
-        rows := make([][]string, 0, len(items))
-        for _, it := range items {
-            rowOut := make([]string, len(hdr))
-            for i, col := range hdr {
-                switch col {
-                case "id": rowOut[i] = strconv.FormatInt(it.ID, 10)
-                case "name": rowOut[i] = it.Name
-                case "cidr": rowOut[i] = it.CIDR
-                case "parent_id": rowOut[i] = strconv.FormatInt(it.ParentID, 10)
-                case "parent_name": rowOut[i] = it.ParentName
-                case "account_id": if it.AccountID != nil { rowOut[i] = strconv.FormatInt(*it.AccountID, 10) } else { rowOut[i] = "" }
-                case "account_name": rowOut[i] = it.AccountName
-                case "account_platform": rowOut[i] = it.AccountPlatform
-                case "account_tier": rowOut[i] = it.AccountTier
-                case "account_environment": rowOut[i] = it.AccountEnvironment
-                case "account_regions": rowOut[i] = strings.Join(it.AccountRegions, "|")
-                case "created_at": rowOut[i] = it.CreatedAt.UTC().Format(time.RFC3339)
-                default:
-                    rowOut[i] = ""
-                }
-            }
-            rows = append(rows, rowOut)
-        }
-        if err := writeCSV("blocks.csv", hdr, rows); err != nil {
-            writeErr(w, http.StatusInternalServerError, "failed to write blocks.csv", err.Error())
-            return
-        }
-    }
+		hdr := blkFields
+		rows := make([][]string, 0, len(items))
+		for _, it := range items {
+			rowOut := make([]string, len(hdr))
+			for i, col := range hdr {
+				switch col {
+				case "id":
+					rowOut[i] = strconv.FormatInt(it.ID, 10)
+				case "name":
+					rowOut[i] = it.Name
+				case "cidr":
+					rowOut[i] = it.CIDR
+				case "parent_id":
+					rowOut[i] = strconv.FormatInt(it.ParentID, 10)
+				case "parent_name":
+					rowOut[i] = it.ParentName
+				case "account_id":
+					if it.AccountID != nil {
+						rowOut[i] = strconv.FormatInt(*it.AccountID, 10)
+					} else {
+						rowOut[i] = ""
+					}
+				case "account_name":
+					rowOut[i] = it.AccountName
+				case "account_platform":
+					rowOut[i] = it.AccountPlatform
+				case "account_tier":
+					rowOut[i] = it.AccountTier
+				case "account_environment":
+					rowOut[i] = it.AccountEnvironment
+				case "account_regions":
+					rowOut[i] = strings.Join(it.AccountRegions, "|")
+				case "created_at":
+					rowOut[i] = it.CreatedAt.UTC().Format(time.RFC3339)
+				default:
+					rowOut[i] = ""
+				}
+			}
+			rows = append(rows, rowOut)
+		}
+		if err := writeCSV("blocks.csv", hdr, rows); err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to write blocks.csv", err.Error())
+			return
+		}
+	}
 }
 
 // /api/v1/accounts/{id}
@@ -392,17 +469,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-    if r.URL.Path != "/" {
-        writeErr(w, http.StatusNotFound, "not found", "")
-        return
-    }
-    // Serve embedded single‑page UI to ensure release binaries include the frontend.
-    if len(webui.Index) == 0 {
-        writeErr(w, http.StatusNotFound, "not found", "index")
-        return
-    }
-    w.Header().Set("Content-Type", "text/html; charset=utf-8")
-    _, _ = w.Write(webui.Index)
+	if r.URL.Path != "/" {
+		writeErr(w, http.StatusNotFound, "not found", "")
+		return
+	}
+	// Serve embedded single‑page UI to ensure release binaries include the frontend.
+	if len(webui.Index) == 0 {
+		writeErr(w, http.StatusNotFound, "not found", "index")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(webui.Index)
 }
 
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
@@ -445,30 +522,30 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
-    ctx := r.Context()
-    var in domain.CreateAccount
-    if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-        log.Printf("accounts:create invalid json: %v", err)
-        writeErr(w, http.StatusBadRequest, "invalid json", "")
-        return
-    }
-    in.Key = strings.TrimSpace(in.Key)
-    in.Name = strings.TrimSpace(in.Name)
-    if in.Key == "" || in.Name == "" {
-        log.Printf("accounts:create missing required fields key=%q name=%q", in.Key, in.Name)
-        writeErr(w, http.StatusBadRequest, "key and name are required", "")
-        return
-    }
-    a, err := s.store.CreateAccount(ctx, in)
-    if err != nil {
-        log.Printf("accounts:create storage error key=%q name=%q err=%v", in.Key, in.Name, err)
-        writeErr(w, http.StatusBadRequest, err.Error(), "")
-        return
-    }
-    log.Printf("accounts:create ok id=%d key=%q name=%q", a.ID, a.Key, a.Name)
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(http.StatusCreated)
-    _ = json.NewEncoder(w).Encode(a)
+	ctx := r.Context()
+	var in domain.CreateAccount
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		log.Printf("accounts:create invalid json: %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid json", "")
+		return
+	}
+	in.Key = strings.TrimSpace(in.Key)
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Key == "" || in.Name == "" {
+		log.Printf("accounts:create missing required fields key=%q name=%q", in.Key, in.Name)
+		writeErr(w, http.StatusBadRequest, "key and name are required", "")
+		return
+	}
+	a, err := s.store.CreateAccount(ctx, in)
+	if err != nil {
+		log.Printf("accounts:create storage error key=%q name=%q err=%v", in.Key, in.Name, err)
+		writeErr(w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+	log.Printf("accounts:create ok id=%d key=%q name=%q", a.ID, a.Key, a.Name)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(a)
 }
 
 // Legacy account query-param endpoints are not supported; use /api/v1/accounts/{id}.
@@ -722,31 +799,31 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
-    ctx := r.Context()
-    var in domain.CreatePool
-    if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-        log.Printf("pools:create invalid json: %v", err)
-        writeErr(w, http.StatusBadRequest, "invalid json", "")
-        return
-    }
-    in.Name = strings.TrimSpace(in.Name)
-    in.CIDR = strings.TrimSpace(in.CIDR)
-    if in.Name == "" || in.CIDR == "" {
-        log.Printf("pools:create missing fields name=%q cidr=%q parent_id=%v account_id=%v", in.Name, in.CIDR, in.ParentID, in.AccountID)
-        writeErr(w, http.StatusBadRequest, "name and cidr are required", "")
-        return
-    }
-    // Validate CIDR format and IPv4
-    if !strings.Contains(in.CIDR, "/") {
-        log.Printf("pools:create invalid cidr format: %q", in.CIDR)
-        writeErr(w, http.StatusBadRequest, "cidr must be in a.b.c.d/x form", "")
-        return
-    }
-    if pfx, err := netip.ParsePrefix(in.CIDR); err != nil || !pfx.Addr().Is4() {
-        log.Printf("pools:create invalid cidr parse: %q err=%v", in.CIDR, err)
-        writeErr(w, http.StatusBadRequest, "invalid cidr", "")
-        return
-    }
+	ctx := r.Context()
+	var in domain.CreatePool
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		log.Printf("pools:create invalid json: %v", err)
+		writeErr(w, http.StatusBadRequest, "invalid json", "")
+		return
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	in.CIDR = strings.TrimSpace(in.CIDR)
+	if in.Name == "" || in.CIDR == "" {
+		log.Printf("pools:create missing fields name=%q cidr=%q parent_id=%v account_id=%v", in.Name, in.CIDR, in.ParentID, in.AccountID)
+		writeErr(w, http.StatusBadRequest, "name and cidr are required", "")
+		return
+	}
+	// Validate CIDR format and IPv4
+	if !strings.Contains(in.CIDR, "/") {
+		log.Printf("pools:create invalid cidr format: %q", in.CIDR)
+		writeErr(w, http.StatusBadRequest, "cidr must be in a.b.c.d/x form", "")
+		return
+	}
+	if pfx, err := netip.ParsePrefix(in.CIDR); err != nil || !pfx.Addr().Is4() {
+		log.Printf("pools:create invalid cidr parse: %q err=%v", in.CIDR, err)
+		writeErr(w, http.StatusBadRequest, "invalid cidr", "")
+		return
+	}
 	// If ParentID provided, ensure child CIDR is subset of parent CIDR (IPv4 only for now).
 	if in.ParentID != nil {
 		parent, ok, err := s.store.GetPool(ctx, *in.ParentID)
@@ -754,17 +831,17 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
 			return
 		}
-        if !ok {
-            log.Printf("pools:create parent not found id=%d for cidr=%q", *in.ParentID, in.CIDR)
-            writeErr(w, http.StatusBadRequest, "parent not found", "")
-            return
-        }
-        if err := validateChildCIDR(parent.CIDR, in.CIDR); err != nil {
-            log.Printf("pools:create invalid sub-pool cidr child=%q parent=%q reason=%v", in.CIDR, parent.CIDR, err)
-            writeErr(w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
-            return
-        }
-    }
+		if !ok {
+			log.Printf("pools:create parent not found id=%d for cidr=%q", *in.ParentID, in.CIDR)
+			writeErr(w, http.StatusBadRequest, "parent not found", "")
+			return
+		}
+		if err := validateChildCIDR(parent.CIDR, in.CIDR); err != nil {
+			log.Printf("pools:create invalid sub-pool cidr child=%q parent=%q reason=%v", in.CIDR, parent.CIDR, err)
+			writeErr(w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
+			return
+		}
+	}
 
 	// Overlap protection: disallow any overlapping CIDRs within the same parent scope
 	// (i.e., among pools sharing the same parent_id, or among top-level pools).
@@ -797,21 +874,21 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			if err != nil || !old.Addr().Is4() {
 				continue
 			}
-            if prefixesOverlapIPv4(old, pfxNew) {
-                log.Printf("pools:create overlap: new=%q existing id=%d cidr=%q (same parent scope)", in.CIDR, p.ID, p.CIDR)
-                writeErr(w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", p.ID, p.CIDR))
-                return
-            }
-        }
-    }
-    p, err := s.store.CreatePool(ctx, in)
-    if err != nil {
-        log.Printf("pools:create storage error name=%q cidr=%q parent_id=%v account_id=%v err=%v", in.Name, in.CIDR, in.ParentID, in.AccountID, err)
-        writeErr(w, http.StatusBadRequest, err.Error(), "")
-        return
-    }
-    log.Printf("pools:create ok id=%d name=%q cidr=%q parent_id=%v account_id=%v", p.ID, p.Name, p.CIDR, p.ParentID, p.AccountID)
-    writeJSON(w, http.StatusCreated, p)
+			if prefixesOverlapIPv4(old, pfxNew) {
+				log.Printf("pools:create overlap: new=%q existing id=%d cidr=%q (same parent scope)", in.CIDR, p.ID, p.CIDR)
+				writeErr(w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", p.ID, p.CIDR))
+				return
+			}
+		}
+	}
+	p, err := s.store.CreatePool(ctx, in)
+	if err != nil {
+		log.Printf("pools:create storage error name=%q cidr=%q parent_id=%v account_id=%v err=%v", in.Name, in.CIDR, in.ParentID, in.AccountID, err)
+		writeErr(w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+	log.Printf("pools:create ok id=%d name=%q cidr=%q parent_id=%v account_id=%v", p.ID, p.Name, p.CIDR, p.ParentID, p.AccountID)
+	writeJSON(w, http.StatusCreated, p)
 }
 
 type blockInfo struct {
