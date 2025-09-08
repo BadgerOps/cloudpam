@@ -1157,11 +1157,7 @@
     </main>
 
       <script>
-      // Data Import/Export modal (global)
-      document.addEventListener('open-data-io', () => {
-        const el = document.querySelector('#data-io-root');
-        el && (el.__x && el.__x.$data ? (el.__x.$data.open = true) : null);
-      });
+      // Data Import/Export modal helpers
       function dataIO(){
         return {
           open: false,
@@ -1770,7 +1766,7 @@
       }
     </script>
     <!-- Data Import/Export Modal Root -->
-    <div id="data-io-root" x-data="dataIO()" x-init="init()" x-show="open" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
+    <div id="data-io-root" x-data="dataIO()" x-init="init()" x-show="open" x-cloak @open-data-io.window="open=true" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
       <div class="card" style="width: 860px; max-height: 90vh; overflow:auto;">
         <div style="display:flex; align-items:center; justify-content:space-between;">
           <h3>Data Import / Export</h3>
