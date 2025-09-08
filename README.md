@@ -31,6 +31,14 @@ Features in the UI
   - Linux/macOS: `SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' ./cloudpam`
   - Windows (PowerShell): `$env:SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1'; .\cloudpam.exe`
 
+## Upgrading
+- SQLite builds run forward-only schema migrations automatically at startup; binaries embed SQL migrations.
+- View schema status: `./cloudpam -migrate status` (or `cloudpam.exe -migrate status` on Windows).
+- Backward downgrades after applying migrations are not supported; take a file backup of your DB before major upgrades.
+- Rolling upgrade (single node): stop old binary, start new; DB is reused in place.
+- Compatibility: `schema_info.min_supported_schema` guards older binaries; follow release notes if a breaking schema change occurs.
+- Optional: set `APP_VERSION` to stamp migrations (e.g., `APP_VERSION=v1.2.3 ./cloudpam`).
+
 ## CI and Linting
 - This repo includes `.golangci.yml` and a GitHub Actions workflow at `.github/workflows/lint.yml`.
 - CI pins Go `1.24.x` and golangci-lint `v2.1.6` to avoid local toolchain mismatches.
