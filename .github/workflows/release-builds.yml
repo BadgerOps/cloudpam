@@ -8,132 +8,76 @@ permissions:
   contents: write
 
 jobs:
-  build-matrix:
-    name: Build archives
+  build-and-upload:
+    name: Build and attach binaries
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
-
-    env:
-      GOOS: ${{ matrix.goos }}
-      GOARCH: ${{ matrix.goarch }}
-      CGO_ENABLED: 0
-      VERSION: ${{ github.event.release.tag_name }}
-      APP_VERSION: ${{ github.event.release.tag_name }}
-
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
     steps:
       - name: Checkout tag
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Build and upload asset
+        uses: wangyoucao577/go-release-action@v1.52
         with:
-          go-version: '1.24.x'
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goversion: '1.24.x'
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          project_path: ./cmd/cloudpam
+          binary_name: cloudpam
+          flags: -tags sqlite
+          build_flags: -trimpath
+          ldflags: -s -w
+          asset_name: cloudpam_${{ github.event.release.tag_name }}_${{ matrix.goos }}_${{ matrix.goarch }}
+          overwrite: true
 
-      - name: Show tree (debug)
-        run: |
-          pwd
-          ls -la
-          ls -la cmd || true
-          ls -la cmd/cloudpam || true
-
-      - name: Build (sqlite-enabled, static)
-        run: |
-          set -euo pipefail
-          BIN=cloudpam
-          EXT=""
-          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-          OUT="$BIN$EXT"
-          mkdir -p build
-          echo "Building $GOOS/$GOARCH (sqlite) -> build/$OUT"
-          ENTRY="./cmd/cloudpam"
-          if [ ! -d "$ENTRY" ]; then
-            echo "fallback: ./cmd/cloudpam not found; probing for main package under ./cmd/* or root"
-            pick=""
-            if [ -d cmd ]; then
-              pick=$(for d in cmd/*; do [ -f "$d/main.go" ] && echo "$d"; done | head -n1)
-            fi
-            if [ -z "$pick" ] && [ -f main.go ]; then pick="."; fi
-            if [ -z "$pick" ]; then
-              echo "no entry point found; skipping build for $GOOS/$GOARCH"
-              mkdir -p dist
-              echo "skipped: no entry point on this ref" > dist/SKIPPED_${GOOS}_${GOARCH}.txt
-              exit 0
-            fi
-            ENTRY="$pick"
-            echo "using entry: $ENTRY"
-          fi
-          go build -trimpath -tags sqlite -ldflags "-s -w" -o "build/$OUT" "$ENTRY"
-
-      - name: Package
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          BASE="cloudpam_${VERSION}_${GOOS}_${GOARCH}"
-          if [ ! -f build/cloudpam ] && [ ! -f build/cloudpam.exe ]; then
-            echo "no binary found; nothing to package"
-            exit 0
-          fi
-          if [ "${GOOS}" = "windows" ]; then \
-            (cd build && zip -9 "../dist/${BASE}.zip" cloudpam.exe) ; \
-          else \
-            tar -C build -czf "dist/${BASE}.tar.gz" cloudpam ; \
-          fi
-
-      - name: Checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd dist
-          if compgen -G "*.tar.gz" > /dev/null || compgen -G "*.zip" > /dev/null; then
-            sha256sum * > SHA256SUMS.txt
-          fi
-
-      - name: Upload artifacts (for workflow logs)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ format('artifacts-{0}-{1}', matrix.goos, matrix.goarch) }}
-          path: |
-            dist/*
-          if-no-files-found: ignore
-
-  attach-to-release:
-    name: Attach assets to release
-    needs: build-matrix
+  checksums:
+    name: Upload SHA256SUMS
     runs-on: ubuntu-latest
+    needs: build-and-upload
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Download release assets
+        uses: robinraju/release-downloader@v1.11
         with:
-          path: dist
-
-      - name: Flatten artifact directory
+          repository: ${{ github.repository }}
+          tag: ${{ github.event.release.tag_name }}
+          fileName: "cloudpam_*"
+          out-file-path: downloads
+      - name: Generate checksums
         run: |
-          shopt -s globstar nullglob
-          mkdir -p out
-          mv dist/**/dist/* out/ || true
-          ls -la out || true
-
-      - name: Upload to GitHub Release
+          cd downloads
+          sha256sum * > SHA256SUMS.txt
+          ls -la
+      - name: Upload checksum to release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            out/*
+          files: downloads/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sbom:
+    name: Upload SBOM (SPDX)
+    runs-on: ubuntu-latest
+    needs: build-and-upload
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          output-file: sbom.spdx.json
+      - name: Upload SBOM to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: sbom.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
