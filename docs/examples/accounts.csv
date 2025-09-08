@@ -1,0 +1,7 @@
+Account ID, Key, Name, Provider, Environment, Regions
+1001, aws:111111111111, Prod Core, aws, prd, us-east-1|us-west-2
+1002, aws:222222222222, Staging Core, aws, stg, us-west-2
+1003, aws:333333333333, Dev Core, aws, dev, us-east-2
+1004, gcp:proj-alpha, Alpha Project, gcp, prd, us-central1|us-east1
+1005, gcp:proj-beta, Beta Project, gcp, dev, us-west1
+1006, aws:444444444444, Shared Services, aws, prd, eu-west-1

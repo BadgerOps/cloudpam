@@ -65,9 +65,14 @@
 
     <main x-data="tabState()" x-init="init()" @keydown.window="onKey($event)">
     <div class="card" style="margin-bottom:1rem; display:flex; gap:.5rem; align-items:flex-end;">
-      <button :class="tab==='pools' ? 'btn' : 'btn ghost'" @click="tab='pools'">Pools</button>
-      <button :class="tab==='accounts' ? 'btn' : 'btn ghost'" @click="tab='accounts'">Accounts</button>
-      <button :class="tab==='analytics' ? 'btn' : 'btn ghost'" @click="tab='analytics'">Analytics</button>
+      <div style="display:flex; gap:.5rem;">
+        <button :class="tab==='pools' ? 'btn' : 'btn ghost'" @click="tab='pools'">Pools</button>
+        <button :class="tab==='accounts' ? 'btn' : 'btn ghost'" @click="tab='accounts'">Accounts</button>
+        <button :class="tab==='analytics' ? 'btn' : 'btn ghost'" @click="tab='analytics'">Analytics</button>
+      </div>
+      <div style="margin-left:auto;">
+        <button class="btn ghost" @click="$dispatch('open-data-io')">Data</button>
+      </div>
     </div>
     <template x-if="tab==='pools'">
     <section x-data="pools()" x-init="init()" class="card">
@@ -1152,6 +1157,213 @@
     </main>
 
       <script>
+      // Data Import/Export modal helpers
+      function dataIO(){
+        return {
+          open: false,
+          // Export state
+          exp: { accounts:true, pools:true, blocks:false },
+          expFields: {
+            accounts: { id:true, key:true, name:true, provider:true, external_id:true, description:true, platform:true, tier:true, environment:true, regions:true, created_at:true },
+            pools: { id:true, name:true, cidr:true, parent_id:true, account_id:true, created_at:true },
+            blocks: { id:true, name:true, cidr:true, parent_id:true, parent_name:true, account_id:true, account_name:true, account_platform:true, account_tier:true, account_environment:true, account_regions:true, created_at:true }
+          },
+          // Import state
+          imp: { type: 'accounts', file: null, headers: [], rows: [], mapping: {}, preview: [] },
+          msg: '',
+          init(){},
+          fieldsList(kind){
+            return Object.keys(this.expFields[kind]);
+          },
+          buildExportURL(){
+            const ds = [];
+            if (this.exp.accounts) ds.push('accounts');
+            if (this.exp.pools) ds.push('pools');
+            if (this.exp.blocks) ds.push('blocks');
+            const params = new URLSearchParams();
+            params.set('datasets', ds.join(','));
+            const pick = (obj)=> Object.keys(obj).filter(k=>obj[k]).join(',');
+            if (this.exp.accounts) params.set('accounts_fields', pick(this.expFields.accounts));
+            if (this.exp.pools) params.set('pools_fields', pick(this.expFields.pools));
+            if (this.exp.blocks) params.set('blocks_fields', pick(this.expFields.blocks));
+            return '/api/v1/export?' + params.toString();
+          },
+          downloadExport(){
+            const url = this.buildExportURL();
+            window.open(url, '_blank');
+          },
+          onImportFile(ev){
+            const file = ev.target.files && ev.target.files[0];
+            if (!file) return;
+            this.imp.file = file;
+            const reader = new FileReader();
+            reader.onload = () => {
+              const text = reader.result || '';
+              const { headers, rows } = this.parseCSV(String(text));
+              this.imp.headers = headers;
+              this.imp.rows = rows;
+              this.autoMapHeaders();
+              this.previewRows();
+            };
+            reader.readAsText(file);
+          },
+          normalizeName(s){ return (s||'').toLowerCase().replace(/\s+/g,'_').replace(/-/g,'_'); },
+          autoMapHeaders(){
+            const kind = this.imp.type;
+            const map = {};
+            const norm = s => (s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+            const has = (s, ...subs) => subs.every(x => s.includes(x));
+            for (const h of this.imp.headers){
+              const n = norm(h);
+              let guess = '';
+              if (kind==='accounts'){
+                if (n==='key' || has(n,'account','key')) guess='key';
+                else if (n==='name') guess='name';
+                else if (n==='provider' || has(n,'cloud','provider')) guess='provider';
+                else if (n==='external id' || n==='externalid' || has(n,'external','id')) guess='external_id';
+                else if (n==='description' || n==='desc') guess='description';
+                else if (n==='platform') guess='platform';
+                else if (n==='tier') guess='tier';
+                else if (n==='environment' || n==='env') guess='environment';
+                else if (n==='region' || n==='regions' || has(n,'region')) guess='regions';
+                else guess='';
+              } else if (kind==='pools'){
+                if (n==='name' || n==='label') guess='name';
+                else if (n==='cidr' || has(n,'cidr','block') || n==='subnet' || n==='network' || n==='prefix') guess='cidr';
+                else if (n==='parent id' || n==='parentid') guess='parent_id';
+                else if (n==='account id' || n==='acct id' || has(n,'account','id')) guess='account_id';
+                else if (n==='account' || n==='acct') guess='account_id';
+                else guess='';
+              } else if (kind==='blocks'){
+                if (n==='name' || n==='label') guess='name';
+                else if (n==='cidr' || has(n,'cidr','block') || n==='subnet' || n==='network' || n==='prefix') guess='cidr';
+                else if (n==='parent id' || n==='parentid') guess='parent_id';
+                else if (n==='parent name' || n==='parent' || has(n,'parent','name')) guess='parent_name';
+                else if (n==='account id' || n==='acct id' || has(n,'account','id')) guess='account_id';
+                else if (n==='account name' || has(n,'account','name')) guess='account_name';
+                else if (n==='account key' || has(n,'account','key')) guess='account_key';
+                else if (n==='account' || n==='acct') guess='account_id';
+                else guess='';
+              }
+              map[h] = guess;
+            }
+            this.imp.mapping = map;
+          },
+          previewRows(){ this.imp.preview = this.imp.rows.slice(0, 5); },
+          // Very simple CSV parser with quote handling for our own exports
+          parseCSV(text){
+            const lines = String(text).replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n').filter(l=>l.length>0);
+            if (lines.length === 0) return { headers: [], rows: [] };
+            const parseLine = (line)=>{
+              const out=[]; let cur=''; let inq=false;
+              for (let i=0;i<line.length;i++){
+                const ch=line[i];
+                if (inq){
+                  if (ch==='"') { if (i+1<line.length && line[i+1]==='"'){ cur+='"'; i++; } else { inq=false; } }
+                  else { cur+=ch; }
+                } else {
+                  if (ch===','){ out.push(cur); cur=''; }
+                  else if (ch==='"'){ inq=true; }
+                  else { cur+=ch; }
+                }
+              }
+              out.push(cur);
+              return out;
+            };
+            const headers = parseLine(lines[0]).map(h=>h.trim());
+            const rows = lines.slice(1).map(ln=>parseLine(ln));
+            return { headers, rows };
+          },
+          async startImport(){
+            this.msg='';
+            const kind=this.imp.type;
+            if (!this.imp.rows.length){ this.msg='No rows to import'; return; }
+            const headerIndex = {}; this.imp.headers.forEach((h,i)=>{ headerIndex[h]=i; });
+            let ok=0, fail=0, shown=0;
+            // Load accounts for lookup if needed
+            let accounts=[]; let pools=[];
+            if (kind==='pools' || kind==='blocks') {
+              try { const res=await fetch('/api/v1/accounts'); accounts=await res.json(); } catch{}
+              try { const res=await fetch('/api/v1/pools'); pools=await res.json(); } catch{}
+            }
+            for (const row of this.imp.rows){
+              try {
+                if (kind==='accounts'){
+                  const obj={ key:'', name:'', provider:'', external_id:'', description:'', platform:'', tier:'', environment:'', regions:[] };
+                  for (const [src, dst] of Object.entries(this.imp.mapping)){
+                    if (!dst) continue; const idx=headerIndex[src]; if (idx==null) continue; const v=row[idx]||'';
+                    if (dst==='regions') obj.regions = String(v).split(/[|,;]/).map(s=>s.trim()).filter(Boolean);
+                    else if (dst==='key'||dst==='name'||dst==='provider'||dst==='external_id'||dst==='description'||dst==='platform'||dst==='tier'||dst==='environment') obj[dst]=String(v);
+                  }
+                  if (!obj.key || !obj.name) { fail++; if (shown<5) { shown++; showToast('Import error: account requires key and name','error'); } continue; }
+                  const res = await fetch('/api/v1/accounts', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
+                  if (!res.ok) { const err=await parseError(res); fail++; if (shown<5) { shown++; showToast(`Import error: ${err}`,'error'); } continue; }
+                  ok++;
+                } else if (kind==='pools') {
+                  const obj={ name:'', cidr:'', parent_id:null, account_id:null };
+                  let accountHint='';
+                  for (const [src, dst] of Object.entries(this.imp.mapping)){
+                    if (!dst) continue; const idx=headerIndex[src]; if (idx==null) continue; const v=row[idx]||'';
+                    if (dst==='name'||dst==='cidr') obj[dst]=String(v);
+                    else if (dst==='parent_id') { const n=parseInt(String(v),10); obj.parent_id= isNaN(n)? null : n; }
+                    else if (dst==='account_id') {
+                      if (/^\d+$/.test(String(v))) { const n=parseInt(String(v),10); obj.account_id = isNaN(n)? null : n; }
+                      else { accountHint = String(v); }
+                    }
+                  }
+                  if (!obj.name) { obj.name = obj.cidr || '(unnamed)'; }
+                  if (!obj.cidr) { fail++; if (shown<5) { shown++; showToast('Import error: CIDR is required','error'); } continue; }
+                  if (accountHint){
+                    const m=accounts.find(a=>a.key===accountHint || a.name===accountHint);
+                    if (m) obj.account_id = m.id; else obj.account_id = null;
+                  }
+                  const res = await fetch('/api/v1/pools', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
+                  if (!res.ok) { const err=await parseError(res); fail++; if (shown<5) { shown++; showToast(`Import error: ${err}`,'error'); } continue; }
+                  ok++;
+                } else if (kind==='blocks') {
+                  // Blocks are sub-pools; require resolving parent_id
+                  const obj={ name:'', cidr:'', parent_id:null, account_id:null };
+                  let accountHint=''; let parentHintName='';
+                  for (const [src, dst] of Object.entries(this.imp.mapping)){
+                    if (!dst) continue; const idx=headerIndex[src]; if (idx==null) continue; const v=row[idx]||'';
+                    if (dst==='name'||dst==='cidr') obj[dst]=String(v);
+                    else if (dst==='parent_id') { const n=parseInt(String(v),10); obj.parent_id= isNaN(n)? null : n; }
+                    else if (dst==='parent_name') { parentHintName = String(v); }
+                    else if (dst==='account_id') {
+                      if (/^\d+$/.test(String(v))) { const n=parseInt(String(v),10); obj.account_id = isNaN(n)? null : n; }
+                      else { accountHint = String(v); }
+                    } else if (dst==='account_name' || dst==='account_key') {
+                      accountHint = String(v);
+                    }
+                  }
+                  if (!obj.name) { obj.name = obj.cidr || '(unnamed)'; }
+                  if (!obj.cidr) { fail++; if (shown<5) { shown++; showToast('Import error: CIDR is required','error'); } continue; }
+                  // Resolve account by hint if needed
+                  if (!obj.account_id && accountHint){
+                    const m=accounts.find(a=>a.key===accountHint || a.name===accountHint);
+                    if (m) obj.account_id = m.id;
+                  }
+                  // Resolve parent by name match that contains CIDR
+                  if (!obj.parent_id) {
+                    const pr = prefixRange(obj.cidr);
+                    if (pr && parentHintName) {
+                      const candidates = pools.filter(p=>!(!p || !p.cidr) && (p.name||'')===parentHintName && p.parent_id==null);
+                      let chosen=null;
+                      for (const p of candidates){ const r=prefixRange(p.cidr); if (!r) continue; if (pr.start>=r.start && pr.end<=r.end) { chosen=p; break; } }
+                      if (chosen) obj.parent_id = chosen.id;
+                    }
+                  }
+                  if (!obj.parent_id) { fail++; if (shown<5) { shown++; showToast(`Import error: Could not resolve parent for ${obj.cidr}`,'error'); } continue; }
+                  const res = await fetch('/api/v1/pools', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
+                  if (!res.ok) { const err=await parseError(res); fail++; if (shown<5) { shown++; showToast(`Import error: ${err}`,'error'); } continue; }
+                  ok++;
+                }
+              } catch (e) { fail++; if (shown<5) { shown++; showToast(`Import error: ${e}`,'error'); } }
+            }
+            showToast(`Import complete: ${ok} ok, ${fail} failed`, fail? 'error':'info');
+          }
+        }
+      }
       async function parseError(res) {
         try { const data = await res.json(); return data.error || data.detail || res.statusText || 'Request failed'; }
         catch (e) { try { return await res.text(); } catch { return res.statusText || 'Request failed'; } }
@@ -1195,6 +1407,8 @@
           }
         }
       }
+      </script>
+      <script>
       // Compute IPv4 network and broadcast for a CIDR (e.g., 10.0.1.0/24)
       function deriveIPv4Range(cidr) {
         if (!cidr || typeof cidr !== 'string' || !cidr.includes('/')) return null;
@@ -1623,5 +1837,109 @@
         }
       }
     </script>
+    <!-- Data Import/Export Modal Root -->
+    <div id="data-io-root" x-data="dataIO()" x-init="init()" x-show="open" x-cloak @open-data-io.window="open=true" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
+      <div class="card" style="width: 860px; max-height: 90vh; overflow:auto;">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <h3>Data Import / Export</h3>
+          <button class="btn ghost" @click="open=false">Close</button>
+        </div>
+        <div class="row" style="gap:2rem; align-items:flex-start;">
+          <div style="flex:1;">
+            <h4>Export</h4>
+            <label><input type="checkbox" x-model="exp.accounts" /> Accounts</label>
+            <div style="display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0 1rem 0;">
+              <template x-for="f in fieldsList('accounts')" :key="'acc-'+f">
+                <label style="min-width: 160px;"><input type="checkbox" x-model="expFields.accounts[f]" /> <span x-text="f"></span></label>
+              </template>
+            </div>
+            <label><input type="checkbox" x-model="exp.pools" /> Pools</label>
+            <div style="display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0 1rem 0;">
+              <template x-for="f in fieldsList('pools')" :key="'pool-'+f">
+                <label style="min-width: 160px;"><input type="checkbox" x-model="expFields.pools[f]" /> <span x-text="f"></span></label>
+              </template>
+            </div>
+            <label><input type="checkbox" x-model="exp.blocks" /> Blocks</label>
+            <div style="display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0 1rem 0;">
+              <template x-for="f in fieldsList('blocks')" :key="'blk-'+f">
+                <label style="min-width: 200px;"><input type="checkbox" x-model="expFields.blocks[f]" /> <span x-text="f"></span></label>
+              </template>
+            </div>
+            <button class="btn" @click="downloadExport()">Download ZIP</button>
+          </div>
+          <div style="flex:1;">
+            <h4>Import</h4>
+              <label>Type
+                <select x-model="imp.type" @change="autoMapHeaders()">
+                  <option value="accounts">Accounts</option>
+                  <option value="pools">Pools</option>
+                  <option value="blocks">Blocks</option>
+                </select>
+              </label>
+            <div style="margin:.5rem 0;">
+              <input type="file" accept=".csv,text/csv" @change="onImportFile($event)" />
+            </div>
+            <div x-show="imp.headers.length">
+              <p class="muted">Map CSV columns to fields:</p>
+              <template x-for="h in imp.headers" :key="'map-'+h">
+                <div class="row" style="align-items:center; gap:.5rem; margin:.25rem 0;">
+                  <div style="width: 40%;" x-text="h"></div>
+                  <div style="width: 60%;">
+                    <select x-model="imp.mapping[h]">
+                      <option value="">(ignore)</option>
+                      <template x-if="imp.type==='accounts'">
+                        <template x-for="f in ['key','name','provider','external_id','description','platform','tier','environment','regions']" :key="'acc-map-'+f">
+                          <option :value="f" x-text="f"></option>
+                        </template>
+                      </template>
+                        <template x-if="imp.type==='pools'">
+                          <template x-for="f in ['name','cidr','parent_id','account_id']" :key="'pool-map-'+f">
+                            <option :value="f" x-text="f"></option>
+                          </template>
+                        </template>
+                        <template x-if="imp.type==='blocks'">
+                          <template x-for="f in ['name','cidr','parent_id','parent_name','account_id','account_name','account_key']" :key="'blk-map-'+f">
+                            <option :value="f" x-text="f"></option>
+                          </template>
+                        </template>
+                    </select>
+                  </div>
+                </div>
+              </template>
+              <div style="margin-top: .5rem;">
+                <button class="btn" @click="startImport()">Start Import</button>
+              </div>
+              <div x-text="msg" class="muted" style="margin-top:.5rem;"></div>
+              <div style="margin-top:1rem;">
+                <h5>Preview</h5>
+                <div style="overflow:auto; max-height:200px; border:1px solid var(--border);">
+                  <table style="min-width:600px;">
+                    <thead>
+                      <tr>
+                        <template x-for="h in imp.headers" :key="'ph-'+h"><th x-text="h"></th></template>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="r in imp.preview" :key="r.join('-')">
+                        <tr>
+                          <template x-for="(c,i) in r" :key="i"><td x-text="c"></td></template>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div style="margin-top:1rem;">
+                <h5>Logs</h5>
+                <div class="row" style="justify-content:space-between; align-items:center;">
+                  <span class="muted" x-text="imp.logs.length + ' lines'"></span>
+                  <button class="btn ghost" @click="downloadLog()" :disabled="!imp.logs.length">Download Log</button>
+                </div>
+                <pre style="white-space:pre-wrap; background:#f9fafb; border:1px solid var(--border); padding:.5rem; max-height:180px; overflow:auto;" x-text="imp.logs.join('\n')"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
   </body>
 </html>
