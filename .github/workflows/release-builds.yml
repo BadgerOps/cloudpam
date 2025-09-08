@@ -62,7 +62,19 @@ jobs:
           OUT="$BIN$EXT"
           mkdir -p build
           echo "Building $GOOS/$GOARCH (sqlite) -> build/$OUT"
-          go build -trimpath -tags sqlite -ldflags "-s -w" -o "build/$OUT" ./cmd/cloudpam
+          ENTRY="./cmd/cloudpam"
+          if [ ! -d "$ENTRY" ]; then
+            echo "fallback: ./cmd/cloudpam not found; probing for main package under ./cmd/* or root"
+            pick=""
+            if [ -d cmd ]; then
+              pick=$(for d in cmd/*; do [ -f "$d/main.go" ] && echo "$d"; done | head -n1)
+            fi
+            if [ -z "$pick" ] && [ -f main.go ]; then pick="."; fi
+            if [ -z "$pick" ]; then echo "no entry point found"; exit 1; fi
+            ENTRY="$pick"
+            echo "using entry: $ENTRY"
+          fi
+          go build -trimpath -tags sqlite -ldflags "-s -w" -o "build/$OUT" "$ENTRY"
 
       - name: Package
         run: |
