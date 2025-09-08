@@ -1,5 +1,8 @@
 # CloudPAM
 
+[![Test](https://github.com/BadgerOps/cloudpam/actions/workflows/test.yml/badge.svg)](https://github.com/BadgerOps/cloudpam/actions/workflows/test.yml)
+[![Lint](https://github.com/BadgerOps/cloudpam/actions/workflows/lint.yml/badge.svg)](https://github.com/BadgerOps/cloudpam/actions/workflows/lint.yml)
+
 Lightweight, cloud‑native IP Address Management (IPAM) for AWS and GCP with an extensible provider model. Backend in Go, UI with Alpine.js, storage via in‑memory or SQLite.
 
 ## Quick Start (Dev)
