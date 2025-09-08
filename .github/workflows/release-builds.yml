@@ -70,7 +70,11 @@ jobs:
               pick=$(for d in cmd/*; do [ -f "$d/main.go" ] && echo "$d"; done | head -n1)
             fi
             if [ -z "$pick" ] && [ -f main.go ]; then pick="."; fi
-            if [ -z "$pick" ]; then echo "no entry point found"; exit 1; fi
+            if [ -z "$pick" ]; then
+              echo "no entry point found; skipping build for $GOOS/$GOARCH"
+              echo "skipped: no entry point on this ref" > dist/SKIPPED_${GOOS}_${GOARCH}.txt
+              exit 0
+            fi
             ENTRY="$pick"
             echo "using entry: $ENTRY"
           fi
@@ -81,6 +85,10 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           BASE="cloudpam_${VERSION}_${GOOS}_${GOARCH}"
+          if [ ! -f build/cloudpam ] && [ ! -f build/cloudpam.exe ]; then
+            echo "no binary found; nothing to package"
+            exit 0
+          fi
           if [ "${GOOS}" = "windows" ]; then \
             (cd build && zip -9 "../dist/${BASE}.zip" cloudpam.exe) ; \
           else \
@@ -102,6 +110,7 @@ jobs:
           name: ${{ format('artifacts-{0}-{1}', matrix.goos, matrix.goarch) }}
           path: |
             dist/*
+          if-no-files-found: ignore
 
   attach-to-release:
     name: Attach assets to release
