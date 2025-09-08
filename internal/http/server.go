@@ -1,23 +1,21 @@
 package http
 
 import (
-	"encoding/binary"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
-	"net"
-	"net/http"
-	"net/netip"
-	"os"
-	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
+    "encoding/binary"
+    "encoding/json"
+    "fmt"
+    "log"
+    "net"
+    "net/http"
+    "net/netip"
+    "sort"
+    "strconv"
+    "strings"
+    "time"
 
-	"cloudpam/internal/domain"
-	"cloudpam/internal/storage"
+    "cloudpam/internal/domain"
+    "cloudpam/internal/storage"
+    webui "cloudpam/web"
 )
 
 type apiError struct {
@@ -145,22 +143,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		writeErr(w, http.StatusNotFound, "not found", "")
-		return
-	}
-	// Serve web/index.html from the repo directory.
-	path := filepath.Join("web", "index.html")
-	f, err := os.Open(path)
-	if err != nil {
-		writeErr(w, http.StatusNotFound, "not found", "index")
-		return
-	}
-	defer func() { _ = f.Close() }()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("serve index error: %v", err)
-	}
+    if r.URL.Path != "/" {
+        writeErr(w, http.StatusNotFound, "not found", "")
+        return
+    }
+    // Serve embedded single‑page UI to ensure release binaries include the frontend.
+    if len(webui.Index) == 0 {
+        writeErr(w, http.StatusNotFound, "not found", "index")
+        return
+    }
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    _, _ = w.Write(webui.Index)
 }
 
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
