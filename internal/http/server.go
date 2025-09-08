@@ -87,6 +87,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
         writeErr(w, http.StatusBadRequest, "no valid datasets requested", "")
         return
     }
+    log.Printf("export: datasets=%s accounts_fields=%s pools_fields=%s blocks_fields=%s", datasetsQ, r.URL.Query().Get("accounts_fields"), r.URL.Query().Get("pools_fields"), r.URL.Query().Get("blocks_fields"))
 
     // Helper to parse field lists with defaults
     parseFields := func(q, def string) []string {
@@ -444,26 +445,30 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	var in domain.CreateAccount
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json", "")
-		return
-	}
-	in.Key = strings.TrimSpace(in.Key)
-	in.Name = strings.TrimSpace(in.Name)
-	if in.Key == "" || in.Name == "" {
-		writeErr(w, http.StatusBadRequest, "key and name are required", "")
-		return
-	}
-	a, err := s.store.CreateAccount(ctx, in)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error(), "")
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(a)
+    ctx := r.Context()
+    var in domain.CreateAccount
+    if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+        log.Printf("accounts:create invalid json: %v", err)
+        writeErr(w, http.StatusBadRequest, "invalid json", "")
+        return
+    }
+    in.Key = strings.TrimSpace(in.Key)
+    in.Name = strings.TrimSpace(in.Name)
+    if in.Key == "" || in.Name == "" {
+        log.Printf("accounts:create missing required fields key=%q name=%q", in.Key, in.Name)
+        writeErr(w, http.StatusBadRequest, "key and name are required", "")
+        return
+    }
+    a, err := s.store.CreateAccount(ctx, in)
+    if err != nil {
+        log.Printf("accounts:create storage error key=%q name=%q err=%v", in.Key, in.Name, err)
+        writeErr(w, http.StatusBadRequest, err.Error(), "")
+        return
+    }
+    log.Printf("accounts:create ok id=%d key=%q name=%q", a.ID, a.Key, a.Name)
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusCreated)
+    _ = json.NewEncoder(w).Encode(a)
 }
 
 // Legacy account query-param endpoints are not supported; use /api/v1/accounts/{id}.
@@ -717,27 +722,31 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	var in domain.CreatePool
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid json", "")
-		return
-	}
-	in.Name = strings.TrimSpace(in.Name)
-	in.CIDR = strings.TrimSpace(in.CIDR)
-	if in.Name == "" || in.CIDR == "" {
-		writeErr(w, http.StatusBadRequest, "name and cidr are required", "")
-		return
-	}
-	// Validate CIDR format and IPv4
-	if !strings.Contains(in.CIDR, "/") {
-		writeErr(w, http.StatusBadRequest, "cidr must be in a.b.c.d/x form", "")
-		return
-	}
-	if pfx, err := netip.ParsePrefix(in.CIDR); err != nil || !pfx.Addr().Is4() {
-		writeErr(w, http.StatusBadRequest, "invalid cidr", "")
-		return
-	}
+    ctx := r.Context()
+    var in domain.CreatePool
+    if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+        log.Printf("pools:create invalid json: %v", err)
+        writeErr(w, http.StatusBadRequest, "invalid json", "")
+        return
+    }
+    in.Name = strings.TrimSpace(in.Name)
+    in.CIDR = strings.TrimSpace(in.CIDR)
+    if in.Name == "" || in.CIDR == "" {
+        log.Printf("pools:create missing fields name=%q cidr=%q parent_id=%v account_id=%v", in.Name, in.CIDR, in.ParentID, in.AccountID)
+        writeErr(w, http.StatusBadRequest, "name and cidr are required", "")
+        return
+    }
+    // Validate CIDR format and IPv4
+    if !strings.Contains(in.CIDR, "/") {
+        log.Printf("pools:create invalid cidr format: %q", in.CIDR)
+        writeErr(w, http.StatusBadRequest, "cidr must be in a.b.c.d/x form", "")
+        return
+    }
+    if pfx, err := netip.ParsePrefix(in.CIDR); err != nil || !pfx.Addr().Is4() {
+        log.Printf("pools:create invalid cidr parse: %q err=%v", in.CIDR, err)
+        writeErr(w, http.StatusBadRequest, "invalid cidr", "")
+        return
+    }
 	// If ParentID provided, ensure child CIDR is subset of parent CIDR (IPv4 only for now).
 	if in.ParentID != nil {
 		parent, ok, err := s.store.GetPool(ctx, *in.ParentID)
@@ -745,15 +754,17 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
 			return
 		}
-		if !ok {
-			writeErr(w, http.StatusBadRequest, "parent not found", "")
-			return
-		}
-		if err := validateChildCIDR(parent.CIDR, in.CIDR); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
-			return
-		}
-	}
+        if !ok {
+            log.Printf("pools:create parent not found id=%d for cidr=%q", *in.ParentID, in.CIDR)
+            writeErr(w, http.StatusBadRequest, "parent not found", "")
+            return
+        }
+        if err := validateChildCIDR(parent.CIDR, in.CIDR); err != nil {
+            log.Printf("pools:create invalid sub-pool cidr child=%q parent=%q reason=%v", in.CIDR, parent.CIDR, err)
+            writeErr(w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
+            return
+        }
+    }
 
 	// Overlap protection: disallow any overlapping CIDRs within the same parent scope
 	// (i.e., among pools sharing the same parent_id, or among top-level pools).
@@ -786,18 +797,21 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			if err != nil || !old.Addr().Is4() {
 				continue
 			}
-			if prefixesOverlapIPv4(old, pfxNew) {
-				writeErr(w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", p.ID, p.CIDR))
-				return
-			}
-		}
-	}
-	p, err := s.store.CreatePool(ctx, in)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error(), "")
-		return
-	}
-	writeJSON(w, http.StatusCreated, p)
+            if prefixesOverlapIPv4(old, pfxNew) {
+                log.Printf("pools:create overlap: new=%q existing id=%d cidr=%q (same parent scope)", in.CIDR, p.ID, p.CIDR)
+                writeErr(w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", p.ID, p.CIDR))
+                return
+            }
+        }
+    }
+    p, err := s.store.CreatePool(ctx, in)
+    if err != nil {
+        log.Printf("pools:create storage error name=%q cidr=%q parent_id=%v account_id=%v err=%v", in.Name, in.CIDR, in.ParentID, in.AccountID, err)
+        writeErr(w, http.StatusBadRequest, err.Error(), "")
+        return
+    }
+    log.Printf("pools:create ok id=%d name=%q cidr=%q parent_id=%v account_id=%v", p.ID, p.Name, p.CIDR, p.ParentID, p.AccountID)
+    writeJSON(w, http.StatusCreated, p)
 }
 
 type blockInfo struct {

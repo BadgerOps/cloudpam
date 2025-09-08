@@ -1311,7 +1311,8 @@
                       else { accountHint = String(v); }
                     }
                   }
-                  if (!obj.name || !obj.cidr) { fail++; continue; }
+                  if (!obj.name) { obj.name = obj.cidr || '(unnamed)'; }
+                  if (!obj.cidr) { fail++; continue; }
                   if (accountHint){
                     const m=accounts.find(a=>a.key===accountHint || a.name===accountHint);
                     if (m) obj.account_id = m.id; else obj.account_id = null;
@@ -1335,7 +1336,8 @@
                       accountHint = String(v);
                     }
                   }
-                  if (!obj.name || !obj.cidr) { fail++; continue; }
+                  if (!obj.name) { obj.name = obj.cidr || '(unnamed)'; }
+                  if (!obj.cidr) { fail++; continue; }
                   // Resolve account by hint if needed
                   if (!obj.account_id && accountHint){
                     const m=accounts.find(a=>a.key===accountHint || a.name===accountHint);
@@ -1356,7 +1358,7 @@
                   if (!res.ok) { fail++; continue; }
                   ok++;
                 }
-              } catch { fail++; }
+              } catch (e) { fail++; }
             }
             showToast(`Import complete: ${ok} ok, ${fail} failed`, fail? 'error':'info');
           }
@@ -1926,6 +1928,14 @@
                     </tbody>
                   </table>
                 </div>
+              </div>
+              <div style="margin-top:1rem;">
+                <h5>Logs</h5>
+                <div class="row" style="justify-content:space-between; align-items:center;">
+                  <span class="muted" x-text="imp.logs.length + ' lines'"></span>
+                  <button class="btn ghost" @click="downloadLog()" :disabled="!imp.logs.length">Download Log</button>
+                </div>
+                <pre style="white-space:pre-wrap; background:#f9fafb; border:1px solid var(--border); padding:.5rem; max-height:180px; overflow:auto;" x-text="imp.logs.join('\n')"></pre>
               </div>
             </div>
           </div>
