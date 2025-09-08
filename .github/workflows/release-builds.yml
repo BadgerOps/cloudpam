@@ -8,6 +8,9 @@ permissions:
   contents: write
 
 jobs:
+  # NOTE: This job re-implements the behavior of 'go-release-action' in-line
+  # (derived from wangyoucao577/go-release-action) to build and attach
+  # per-OS/arch binaries directly to the GitHub Release.
   build-and-upload:
     name: Build and attach binaries
     runs-on: ubuntu-latest
@@ -16,26 +19,53 @@ jobs:
       matrix:
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: 0
+      VERSION: ${{ github.event.release.tag_name }}
     steps:
       - name: Checkout tag
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
 
-      - name: Build and upload asset
-        uses: wangyoucao577/go-release-action@v1.52
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          goversion: '1.24.x'
-          goos: ${{ matrix.goos }}
-          goarch: ${{ matrix.goarch }}
-          project_path: ./cmd/cloudpam
-          binary_name: cloudpam
-          flags: -tags sqlite
-          build_flags: -trimpath
-          ldflags: -s -w
-          asset_name: cloudpam_${{ github.event.release.tag_name }}_${{ matrix.goos }}_${{ matrix.goarch }}
-          overwrite: true
+          go-version: '1.24.x'
+
+      - name: Build binary (-tags sqlite)
+        run: |
+          set -euxo pipefail
+          ENTRY=./cmd/cloudpam
+          test -d "$ENTRY" || { echo "entrypoint $ENTRY not found"; exit 1; }
+          BIN=cloudpam
+          EXT=""; [ "$GOOS" = "windows" ] && EXT=".exe"
+          OUT="$BIN$EXT"
+          mkdir -p build
+          echo "Building ${GOOS}/${GOARCH} -> build/${OUT}"
+          go build -trimpath -tags sqlite -ldflags "-s -w" -o "build/${OUT}" "$ENTRY"
+
+      - name: Package archive
+        run: |
+          set -euxo pipefail
+          ASSET_BASE="cloudpam_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p dist
+          if [ "$GOOS" = "windows" ]; then
+            (cd build && zip -9 "../dist/${ASSET_BASE}.zip" cloudpam.exe)
+          else
+            tar -C build -czf "dist/${ASSET_BASE}.tar.gz" cloudpam
+          fi
+
+      - name: Attach asset to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   checksums:
     name: Upload SHA256SUMS
