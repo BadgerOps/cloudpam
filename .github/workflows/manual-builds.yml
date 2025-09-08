@@ -109,3 +109,39 @@ jobs:
           name: ${{ format('manual-{0}-{1}', matrix.goos, matrix.goarch) }}
           path: dist/*
 
+  smoke-linux:
+    name: Smoke test (linux/amd64)
+    runs-on: ubuntu-latest
+    needs: build-matrix
+    steps:
+      - name: Download linux/amd64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: manual-linux-amd64
+          path: dist
+      - name: Extract binary
+        run: |
+          set -euo pipefail
+          ls -la dist
+          tar -xzf dist/*.tar.gz
+          ls -la
+      - name: Run server and probe /healthz
+        run: |
+          set -euo pipefail
+          chmod +x ./cloudpam
+          (./cloudpam > server.log 2>&1 & echo $! > server.pid)
+          for i in $(seq 1 30); do
+            if curl -sSf http://127.0.0.1:8080/healthz >/dev/null; then echo "server up"; break; fi
+            sleep 1
+          done
+          curl -sSf http://127.0.0.1:8080/healthz | tee health.json
+          kill $(cat server.pid) || true
+          sleep 1
+          tail -n +1 server.log || true
+      - name: Upload smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-linux-amd64
+          path: |
+            server.log
+            health.json
