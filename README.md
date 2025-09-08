@@ -1,5 +1,8 @@
 # CloudPAM
 
+[![Test](https://github.com/BadgerOps/cloudpam/actions/workflows/test.yml/badge.svg)](https://github.com/BadgerOps/cloudpam/actions/workflows/test.yml)
+[![Lint](https://github.com/BadgerOps/cloudpam/actions/workflows/lint.yml/badge.svg)](https://github.com/BadgerOps/cloudpam/actions/workflows/lint.yml)
+
 Lightweight, cloud‑native IP Address Management (IPAM) for AWS and GCP with an extensible provider model. Backend in Go, UI with Alpine.js, storage via in‑memory or SQLite.
 
 ## Quick Start (Dev)
@@ -20,6 +23,21 @@ Features in the UI
 - Makefile delegates to `just` if installed; otherwise runs built-in fallbacks.
 - Common tasks: `make dev | build | sqlite-build | sqlite-run | fmt | lint | test | tidy`
 - If you prefer Justfile directly: `just dev`, `just sqlite-run`, etc.
+
+## Releases
+- Release artifacts are multi-platform binaries (Linux/macOS/Windows on amd64/arm64) built with the `sqlite` tag using the CGO-less `modernc.org/sqlite` driver.
+- No system SQLite is required. Migrations are embedded and applied automatically.
+- To use SQLite, set `SQLITE_DSN` (defaults to `file:cloudpam.db?cache=shared&_fk=1` when unset in sqlite builds). Examples:
+  - Linux/macOS: `SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' ./cloudpam`
+  - Windows (PowerShell): `$env:SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1'; .\cloudpam.exe`
+
+## Upgrading
+- SQLite builds run forward-only schema migrations automatically at startup; binaries embed SQL migrations.
+- View schema status: `./cloudpam -migrate status` (or `cloudpam.exe -migrate status` on Windows).
+- Backward downgrades after applying migrations are not supported; take a file backup of your DB before major upgrades.
+- Rolling upgrade (single node): stop old binary, start new; DB is reused in place.
+- Compatibility: `schema_info.min_supported_schema` guards older binaries; follow release notes if a breaking schema change occurs.
+- Optional: set `APP_VERSION` to stamp migrations (e.g., `APP_VERSION=v1.2.3 ./cloudpam`).
 
 ## CI and Linting
 - This repo includes `.golangci.yml` and a GitHub Actions workflow at `.github/workflows/lint.yml`.

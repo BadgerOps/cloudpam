@@ -5,7 +5,10 @@
 
 FALLBACK_TARGETS := dev build sqlite-build sqlite-run fmt lint test test-race cover tidy
 
-.PHONY: help $(FALLBACK_TARGETS)
+# Mark only help and fallback targets as phony. Do not mark
+# the top-level targets themselves as phony, so the catch‑all
+# pattern rule (%:) can delegate to Just or fallback recipes.
+.PHONY: help $(addprefix .fallback-,$(FALLBACK_TARGETS))
 
 help:
 	@echo "Targets: $(FALLBACK_TARGETS)"

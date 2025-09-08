@@ -36,6 +36,12 @@
       table { border-collapse: collapse; width: 100%; margin-top: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: visible; }
       th, td { border-bottom: 1px solid var(--border); padding: 10px 12px; }
       th { background: #fafafa; text-align: left; font-weight: 600; }
+      thead th.sticky { position: sticky; top: 0; z-index: 1; }
+      .spinner { width:14px; height:14px; border:2px solid #c7d2fe; border-top-color:#4f46e5; border-radius:50%; display:inline-block; animation: spin .7s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .copy-btn { border:none; background:transparent; color: var(--primary); cursor:pointer; padding:0 4px; }
+      .chip { display:inline-flex; align-items:center; gap:.35rem; padding:2px 8px; border-radius:999px; background:#eef2ff; border:1px solid var(--border); cursor:pointer; }
+      .chip.active { background:#dbeafe; border-color:#bfdbfe; }
       .row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
       .status-used { color: var(--danger); font-weight: 600; }
       .status-free { color: var(--success); font-weight: 600; }
@@ -57,7 +63,7 @@
       <span class="muted">Lightweight Cloud IPAM (AWS/GCP)</span>
     </header>
 
-    <main x-data="tabState()" x-init="init()">
+    <main x-data="tabState()" x-init="init()" @keydown.window="onKey($event)">
     <div class="card" style="margin-bottom:1rem; display:flex; gap:.5rem; align-items:flex-end;">
       <button :class="tab==='pools' ? 'btn' : 'btn ghost'" @click="tab='pools'">Pools</button>
       <button :class="tab==='accounts' ? 'btn' : 'btn ghost'" @click="tab='accounts'">Accounts</button>
@@ -68,18 +74,24 @@
       <h2>Top-level Pools</h2>
       <div class="row">
         <input type="text" placeholder="Name" x-model="form.name" />
-        <input type="text" placeholder="CIDR (e.g., 10.0.0.0/16)" x-model="form.cidr" />
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <input type="text" placeholder="CIDR (e.g., 10.0.0.0/16)" x-model="form.cidr" @blur="validateCIDR()" :style="cidrError ? 'border-color:#dc2626' : ''" />
+          <small class="muted" style="color:#dc2626" x-show="cidrError" x-text="cidrError"></small>
+        </div>
         <select x-model.number="form.account_id">
           <option :value="null">No Account</option>
           <template x-for="a in accounts" :key="a.id">
             <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
           </template>
         </select>
-        <button class="btn" @click="createTop()">Create</button>
+        <button class="btn" @click="createTop()" :disabled="creating || !!cidrError">
+          <span x-show="creating" class="spinner"></span>
+          <span x-text="creating ? 'Creating…' : 'Create'"></span>
+        </button>
         <span x-text="msg" class="muted"></span>
       </div>
       <div class="row" style="margin-top:1rem; align-items:center; gap:.75rem;">
-        <input type="text" placeholder="Search..." x-model="search" style="flex:1; max-width:300px;" />
+        <input type="text" placeholder="Search..." x-model="search" x-ref="poolSearch" style="flex:1; max-width:300px;" />
         <label>Page size
           <select x-model="pageSize" @change="page=1; load()">
             <option value="25">25</option>
@@ -99,10 +111,18 @@
       <div style="overflow:auto;">
       <table style="min-width: 960px;">
         <thead>
-          <tr><th style="width:32px;"><input type="checkbox" @change="toggleSelectAllTop($event)" :checked="allTopSelected()" :indeterminate="indeterminateTop()" /></th><th>ID</th><th>Name</th><th>CIDR</th><th>Account</th><th>Created</th><th></th></tr>
+          <tr>
+            <th class="sticky" style="width:32px;"><input type="checkbox" @change="toggleSelectAllTop($event)" :checked="allTopSelected()" :indeterminate="indeterminateTop()" /></th>
+            <th class="sticky"><a href="#" @click.prevent="sortTop('id')">ID <span x-text="sortTopKey==='id'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"><a href="#" @click.prevent="sortTop('name')">Name <span x-text="sortTopKey==='name'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"><a href="#" @click.prevent="sortTop('cidr')">CIDR <span x-text="sortTopKey==='cidr'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"><a href="#" @click.prevent="sortTop('account')">Account <span x-text="sortTopKey==='account'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"><a href="#" @click.prevent="sortTop('created')">Created <span x-text="sortTopKey==='created'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"></th>
+          </tr>
         </thead>
         <tbody>
-          <template x-for="p in topLevel" :key="p.id">
+          <template x-for="p in sortedTop()" :key="p.id">
             <tr>
               <td><input type="checkbox" :value="p.id" @change="toggleSelectTop(p.id)" :checked="selectedTop.includes(p.id)" /></td>
               <td x-text="p.id"></td>
@@ -174,7 +194,7 @@
           </div>
           <div class="row" style="margin: 0.5rem 0; align-items:center;">
             <label>Block size (prefix):</label>
-            <input type="number" :min="currentPrefixBits ? currentPrefixBits+1 : 16" max="32" x-model.number="blockPrefix" @change="if (currentPrefixBits!=null && blockPrefix <= currentPrefixBits) blockPrefix = Math.min(32, currentPrefixBits+1)" style="width:6rem" />
+            <input type="number" :min="currentPrefixBits ? currentPrefixBits+1 : 16" max="32" x-model.number="blockPrefix" @change="onBlockPrefixChange()" style="width:6rem" />
             <label>Per page:</label>
             <select x-model="pageSize" @change="onPageSize()">
               <option value="10">10</option>
@@ -182,7 +202,7 @@
               <option value="100">100</option>
               <option value="all">All</option>
             </select>
-            <button class="btn" @click="loadBlocks()">List Blocks</button>
+            <button class="btn" @click="loadBlocks()" :disabled="loadingBlocks"><span x-show="loadingBlocks" class="spinner"></span> <span x-text="loadingBlocks?'Loading…':'List Blocks'"></span></button>
             <span x-text="subMsg" class="muted"></span>
           </div>
           <div class="row" style="margin: 0.5rem 0; align-items:center;">
@@ -208,10 +228,14 @@
           </div>
 
           <div class="card" style="margin: .5rem 0; padding:.75rem;">
-            <div class="row" style="align-items:center; gap:.75rem;">
+            <div class="row" style="align-items:center; gap:.75rem; flex-wrap:wrap;">
               <strong>IP Space Visualization</strong>
               <input type="text" placeholder="Search name or CIDR" x-model="vizSearch" @input="computeViz()" />
               <label>Accounts
+                <div style="display:flex; align-items:center; gap:.4rem; margin-bottom:4px;">
+                  <input type="checkbox" @change="toggleVizAll($event)" :checked="vizAllSelected()" :indeterminate="vizIndeterminate()" />
+                  <span class="muted">All</span>
+                </div>
                 <select x-model="vizAccounts" multiple size="3" @change="computeViz()">
                   <template x-for="a in accounts" :key="a.id">
                     <option :value="String(a.id)" x-text="a.name"></option>
@@ -227,19 +251,31 @@
             <div class="muted" style="margin-top:.4rem;">
               <span x-text="vizSegments.length"></span> block(s) displayed
             </div>
+            <div class="row" style="gap:.5rem; margin-top:.5rem; align-items:center; flex-wrap:wrap;">
+              <span class="muted">Legend:</span>
+              <template x-for="chip in vizLegend()" :key="chip.key">
+                <span :class="'chip ' + (vizAccounts.length===0 || vizAccounts.includes(chip.key) ? 'active' : '')" @click="toggleVizChip(chip.key)" :title="chip.label" :style="`background:${chip.color}22; border-color:${chip.color}55`">
+                  <span :style="`width:10px;height:10px;border-radius:50%;background:${chip.color};display:inline-block;`"></span>
+                  <span x-text="chip.label"></span>
+                </span>
+              </template>
+              <button class="btn ghost" @click="vizSelectAll()">All</button>
+              <button class="btn ghost" @click="vizClearAll()">None</button>
+            </div>
           </div>
 
-          <table>
+          <div style="max-height:420px; overflow:auto;">
+          <table style="min-width:920px;">
             <thead>
               <tr>
-                <th>Prefix</th>
-                <th>Hosts</th>
-                <th>Status</th>
+                <th class="sticky"><a href="#" @click.prevent="sortBlocks('cidr')">Prefix <span x-text="sortBlockKey==='cidr'? (sortBlockDir==='asc'?'▲':'▼') : ''"></span></a></th>
+                <th class="sticky"><a href="#" @click.prevent="sortBlocks('hosts')">Hosts <span x-text="sortBlockKey==='hosts'? (sortBlockDir==='asc'?'▲':'▼') : ''"></span></a></th>
+                <th class="sticky"><a href="#" @click.prevent="sortBlocks('status')">Status <span x-text="sortBlockKey==='status'? (sortBlockDir==='asc'?'▲':'▼') : ''"></span></a></th>
                 <th>Assigned Name</th>
-                <th>Assigned Account</th>
-                <th>Network IP</th>
-                <th>Broadcast IP</th>
-                <th>Action</th>
+                <th class="sticky"><a href="#" @click.prevent="sortBlocks('account')">Assigned Account <span x-text="sortBlockKey==='account'? (sortBlockDir==='asc'?'▲':'▼') : ''"></span></a></th>
+                <th class="sticky">Network IP</th>
+                <th class="sticky">Broadcast IP</th>
+                <th class="sticky">Action</th>
               </tr>
               <tr>
                 <!-- No filter for Prefix (IP range) and Assigned Name -->
@@ -256,7 +292,10 @@
             <tbody>
               <template x-for="b in blocks" :key="b.cidr">
                 <tr>
-                  <td x-text="b.cidr"></td>
+                  <td>
+                    <span x-text="b.cidr"></span>
+                    <button class="copy-btn" @click="copy(b.cidr)" title="Copy CIDR">⎘</button>
+                  </td>
                   <td x-text="b.hosts"></td>
                   <td>
                     <span :class="(b.used||blockUnavailable(b.cidr)) ? 'status-used' : 'status-free'"
@@ -272,16 +311,23 @@
                     </template>
                   </td>
                   <td x-text="b.assigned_account_name || accountName(b.assigned_account_id) || '-' "></td>
-                  <td x-text="b.network_ip || '-' "></td>
-                  <td x-text="b.broadcast_ip || '-' "></td>
                   <td>
-                    <button class="btn" :disabled="b.used || blockUnavailable(b.cidr)" :title="blockUnavailableReason(b.cidr) || 'Create a sub-pool in this block'" @click="createSub(b)">Create Sub-pool</button>
+                    <span x-text="b.network_ip || '-' "></span>
+                    <button class="copy-btn" x-show="b.network_ip" @click="copy(b.network_ip)" title="Copy Network">⎘</button>
+                  </td>
+                  <td>
+                    <span x-text="b.broadcast_ip || '-' "></span>
+                    <button class="copy-btn" x-show="b.broadcast_ip" @click="copy(b.broadcast_ip)" title="Copy Broadcast">⎘</button>
+                  </td>
+                  <td>
+                    <button class="btn" :disabled="creatingSub || b.used || blockUnavailable(b.cidr)" :title="blockUnavailableReason(b.cidr) || 'Create a sub-pool in this block'" @click="createSub(b)"><span x-show="creatingSub" class="spinner"></span> Create Sub-pool</button>
                   </td>
               </tr>
               </template>
               <tr x-show="blocks.length === 0"><td colspan="8" style="color:#999">No blocks yet</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
       </template>
 
@@ -611,8 +657,9 @@
       </div>
       <div class="row" style="align-items:center; gap:1rem; position:relative;">
         <button class="btn" @click="filtersOpen=!filtersOpen">Filters ▾</button>
-        <button class="btn ghost" @click="load()">Refresh</button>
+        <button class="btn ghost" @click="load()" :disabled="loading"><span x-show="loading" class="spinner"></span> Refresh</button>
         <button class="btn ghost" @click="clearFilters()">Clear</button>
+        <input type="text" placeholder="Search..." x-model="search" x-ref="analyticsSearch" style="flex:1; max-width:280px;" />
         <span class="muted" x-text="summary()"></span>
         <span class="muted" x-text="msg"></span>
         <div style="margin-left:auto; position:relative;">
@@ -625,6 +672,10 @@
         <div x-show="filtersOpen" x-cloak style="position:absolute; top:36px; left:0; background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:12px; display:flex; gap:16px; z-index:10020;">
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Accounts</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllAccounts($event)" :checked="allAccountsSelected()" :indeterminate="indeterminateAccounts()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="a in accounts" :key="a.id">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="String(a.id)" @change="toggleInArray(selectedAccounts, String(a.id))" :checked="selectedAccounts.includes(String(a.id))" />
@@ -636,6 +687,10 @@
           </div>
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Parent Pools</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllPools($event)" :checked="allPoolsSelected()" :indeterminate="indeterminatePools()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="p in parentPools" :key="p.id">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="String(p.id)" @change="toggleInArray(selectedPools, String(p.id))" :checked="selectedPools.includes(String(p.id))" />
@@ -647,6 +702,10 @@
           </div>
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Platform</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllPlatforms($event)" :checked="allPlatformsSelected()" :indeterminate="indeterminatePlatforms()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="pl in platforms()" :key="pl">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="pl" @change="toggleInArray(fltPlatforms, pl)" :checked="fltPlatforms.includes(pl)" />
@@ -654,6 +713,10 @@
               </label>
             </template>
             <div class="muted" style="margin:.5rem 0 6px;">Environment / Tier</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllEnvs($event)" :checked="allEnvsSelected()" :indeterminate="indeterminateEnvs()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="env in environments()" :key="env">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="env" @change="toggleInArray(fltEnvs, env)" :checked="fltEnvs.includes(env)" />
@@ -663,6 +726,10 @@
           </div>
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Regions</div>
+            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
+              <input type="checkbox" @change="toggleAllRegions($event)" :checked="allRegionsSelected()" :indeterminate="indeterminateRegions()" />
+              <span class="muted">All</span>
+            </div>
             <template x-for="rg in regions()" :key="rg">
               <label style="display:flex; align-items:center; gap:.5rem;">
                 <input type="checkbox" :value="rg" @change="toggleInArray(fltRegions, rg)" :checked="fltRegions.includes(rg)" />
@@ -676,9 +743,20 @@
           </div>
         </div>
       </div>
-      <table>
+      <div style="max-height:420px; overflow:auto;">
+      <table style="min-width:960px;">
         <thead>
-          <tr><th style="width:32px;"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected()" :indeterminate="indeterminate()" /></th><th>ID</th><th>Name</th><th>CIDR</th><th>Parent Pool</th><th>Account</th><th>Network IP</th><th>Broadcast IP</th><th>Created</th></tr>
+          <tr>
+            <th class="sticky" style="width:32px;"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected()" :indeterminate="indeterminate()" /></th>
+            <th class="sticky"><a href="#" @click.prevent="sortAnal('id')">ID <span x-text="sortAnalKey==='id'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"><a href="#" @click.prevent="sortAnal('name')">Name <span x-text="sortAnalKey==='name'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"><a href="#" @click.prevent="sortAnal('cidr')">CIDR <span x-text="sortAnalKey==='cidr'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"><a href="#" @click.prevent="sortAnal('parent')">Parent Pool <span x-text="sortAnalKey==='parent'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky"><a href="#" @click.prevent="sortAnal('account')">Account <span x-text="sortAnalKey==='account'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
+            <th class="sticky">Network IP</th>
+            <th class="sticky">Broadcast IP</th>
+            <th class="sticky"><a href="#" @click.prevent="sortAnal('created')">Created <span x-text="sortAnalKey==='created'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
+          </tr>
         </thead>
         <tbody>
           <template x-for="b in filtered()" :key="b.id">
@@ -697,6 +775,7 @@
           <tr x-show="filtered().length === 0"><td colspan="9" style="color:#999">No assigned blocks match filters</td></tr>
         </tbody>
       </table>
+      </div>
       <!-- Bulk Assign (Analytics) -->
       <div x-show="bulkAssignOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
         <div class="card" style="width:420px;">
@@ -781,6 +860,7 @@
             confirmBulkDelete: false,
             async init() {
               await Promise.all([this.fetchAccounts(), this.fetchParentPools()]);
+              this.restoreFilters();
               await this.load();
               this.renderCharts();
             },
@@ -795,6 +875,7 @@
             async load() {
               this.msg = '';
               try {
+                this.loading = true;
                 const q = new URLSearchParams();
                 if (this.selectedAccounts.length) q.set('accounts', this.selectedAccounts.join(','));
                 if (this.selectedPools.length) q.set('pools', this.selectedPools.join(','));
@@ -819,9 +900,27 @@
               this.selected = this.selected.filter(id=>curIds.has(id));
               this.renderCharts();
             } catch (e) { this.msg = 'Failed to load blocks'; }
+            finally { this.loading = false; this.persistFilters(); }
             },
-            clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.filtersOpen=false; this.page=1; this.load(); }
+            clearFilters() { this.selectedAccounts = []; this.selectedPools = []; this.fltAccountName=''; this.fltCIDR=''; this.fltPlatforms=[]; this.fltEnvs=[]; this.fltRegions=[]; this.filtersOpen=false; this.page=1; this.load(); }
             ,
+            // Master toggles for filter lists
+            allAccountsSelected(){ return this.accounts.length>0 && this.selectedAccounts.length===this.accounts.length; },
+            indeterminateAccounts(){ return this.selectedAccounts.length>0 && this.selectedAccounts.length<this.accounts.length; },
+            toggleAllAccounts(ev){ if (ev.target.checked) { this.selectedAccounts = this.accounts.map(a=>String(a.id)); } else { this.selectedAccounts = []; } this.page=1; this.load(); },
+            allPoolsSelected(){ return this.parentPools.length>0 && this.selectedPools.length===this.parentPools.length; },
+            indeterminatePools(){ return this.selectedPools.length>0 && this.selectedPools.length<this.parentPools.length; },
+            toggleAllPools(ev){ if (ev.target.checked) { this.selectedPools = this.parentPools.map(p=>String(p.id)); } else { this.selectedPools = []; } this.page=1; this.load(); },
+            allPlatformsSelected(){ const opts=this.platforms(); return opts.length>0 && this.fltPlatforms.length===opts.length; },
+            indeterminatePlatforms(){ const opts=this.platforms(); return this.fltPlatforms.length>0 && this.fltPlatforms.length<opts.length; },
+            toggleAllPlatforms(ev){ const opts=this.platforms(); if (ev.target.checked) { this.fltPlatforms = opts.slice(); } else { this.fltPlatforms = []; } this.page=1; this.load(); },
+            allEnvsSelected(){ const opts=this.environments(); return opts.length>0 && this.fltEnvs.length===opts.length; },
+            indeterminateEnvs(){ const opts=this.environments(); return this.fltEnvs.length>0 && this.fltEnvs.length<opts.length; },
+            toggleAllEnvs(ev){ const opts=this.environments(); if (ev.target.checked) { this.fltEnvs = opts.slice(); } else { this.fltEnvs = []; } this.page=1; this.load(); },
+            allRegionsSelected(){ const opts=this.regions(); return opts.length>0 && this.fltRegions.length===opts.length; },
+            indeterminateRegions(){ const opts=this.regions(); return this.fltRegions.length>0 && this.fltRegions.length<opts.length; },
+            toggleAllRegions(ev){ const opts=this.regions(); if (ev.target.checked) { this.fltRegions = opts.slice(); } else { this.fltRegions = []; } this.page=1; this.load(); },
+            
             filtered() {
               const src = this.rawBlocks;
               let arr = src;
@@ -844,9 +943,15 @@
               }
               const q = (this.search||'').toLowerCase();
               if (q) arr = arr.filter(b => String(b.id).includes(q) || (b.name||'').toLowerCase().includes(q) || (b.cidr||'').toLowerCase().includes(q) || (b.parent_name||'').toLowerCase().includes(q) || (b.account_name||'').toLowerCase().includes(q));
+              const key=this.sortAnalKey, dir=this.sortAnalDir==='asc'?1:-1;
+              const get=(b)=> key==='id'? b.id : key==='name'? (b.name||'') : key==='cidr'? (b.cidr||'') : key==='parent'? (b.parent_name||'') : key==='account'? (b.account_name||'') : (b.created_at||'');
+              arr.sort((a,b)=> { const av=get(a), bv=get(b); return av>bv?dir: av<bv? -dir: 0; });
               return arr;
             }
             ,
+            sortAnal(k){ this.sortAnalDir = (this.sortAnalKey===k && this.sortAnalDir==='asc') ? 'desc' : 'asc'; this.sortAnalKey = k; this.blocks = this.filtered(); },
+            persistFilters(){ const obj={ a:this.selectedAccounts, p:this.selectedPools, an:this.fltAccountName, c:this.fltCIDR, pl:this.fltPlatforms, e:this.fltEnvs, r:this.fltRegions, ps:this.pageSize }; localStorage.setItem('cp.analytics.filters', JSON.stringify(obj)); },
+            restoreFilters(){ try{ const raw = localStorage.getItem('cp.analytics.filters'); if(!raw) return; const o=JSON.parse(raw); this.selectedAccounts=o.a||[]; this.selectedPools=o.p||[]; this.fltAccountName=o.an||''; this.fltCIDR=o.c||''; this.fltPlatforms=o.pl||[]; this.fltEnvs=o.e||[]; this.fltRegions=o.r||[]; if (o.ps) this.pageSize=o.ps; }catch{} },
             toggleSelect(id){ const i=this.selected.indexOf(id); if(i>=0) this.selected.splice(i,1); else this.selected.push(id); },
             toggleSelectAll(ev){ if (ev.target.checked){ this.selected = this.filtered().map(b=>b.id); } else { this.selected = []; } },
             allSelected(){ const data=this.filtered(); return data.length>0 && this.selected.length===data.length; },
@@ -1056,8 +1161,28 @@
           tab: 'pools',
           init(){
             const h = (location.hash||'').replace('#','');
+            const saved = localStorage.getItem('cp.tab');
             if (['pools','accounts','analytics'].includes(h)) this.tab = h;
-            this.$watch('tab', t => { history.replaceState(null,'','#'+t); });
+            else if (['pools','accounts','analytics'].includes(saved)) this.tab = saved;
+            this.$watch('tab', t => { history.replaceState(null,'','#'+t); localStorage.setItem('cp.tab', t); });
+          },
+          onKey(ev){
+            // "/" focuses search in current tab
+            if (ev.key === '/' && !ev.ctrlKey && !ev.metaKey) {
+              ev.preventDefault();
+              if (this.tab==='pools') this.$root.querySelector('[x-ref=poolSearch]')?.focus();
+              if (this.tab==='analytics') this.$root.querySelector('[x-ref=analyticsSearch]')?.focus();
+              return;
+            }
+            // Paging shortcuts on pools blocks view
+            if (this.tab==='pools') {
+              const poolsCmp = this.$root.__x?.$data?.tab==='pools' ? this.$root.querySelector('section[x-data]')?.__x?.$data : null;
+              if (!poolsCmp) return;
+              if (ev.key==='j') { poolsCmp.nextPage?.(); }
+              if (ev.key==='k') { poolsCmp.prevPage?.(); }
+              if (ev.key==='g' && !ev.shiftKey) { poolsCmp.firstPage?.(); }
+              if (ev.key==='G') { poolsCmp.lastPage?.(); }
+            }
           }
         }
       }
@@ -1115,6 +1240,8 @@
           accounts: [],
           form: { name: '', cidr: '', account_id: null},
           msg: '',
+          cidrError: '',
+          creating: false,
           selectedTop: [],
           bulkOpen: false,
           current: null,
@@ -1134,8 +1261,11 @@
           confirmPoolDelete: false,
           blockPrefix: 24,
           currentPrefixBits: null,
+          search: '',
           blocks: [],
           rawBlocks: [],
+          loadingBlocks: false,
+          creatingSub: false,
           showOnlyUsed: false,
           hideUnavailable: false,
           blockFilters: { hosts:'', status:'', account:'', network:'', broadcast:'' },
@@ -1150,8 +1280,19 @@
           totalPages: 1,
           fromItem: 0,
           toItem: 0,
+          sortTopKey: 'created',
+          sortTopDir: 'desc',
+          sortBlockKey: 'cidr',
+          sortBlockDir: 'asc',
           async init() {
             await Promise.all([this.fetchAccounts(), this.fetchList()]);
+            // restore persisted state
+            const pfx = localStorage.getItem('cp.pool.blockPrefix'); if (pfx) this.blockPrefix = parseInt(pfx,10)||this.blockPrefix;
+            const psz = localStorage.getItem('cp.pool.pageSize'); if (psz) this.pageSize = psz;
+            const curId = localStorage.getItem('cp.pool.currentId');
+            if (curId) { const p = this.list.find(x=>String(x.id)===curId); if (p) this.selectPool(p); }
+            const only = localStorage.getItem('cp.pool.showOnlyUsed'); if (only) this.showOnlyUsed = only==='1';
+            const hide = localStorage.getItem('cp.pool.hideUnavailable'); if (hide) this.hideUnavailable = hide==='1';
           },
           async fetchAccounts() {
             try {
@@ -1177,6 +1318,15 @@
           toggleSelectAllTop(ev){ if (ev.target.checked){ this.selectedTop = this.topLevel.map(p=>p.id); } else { this.selectedTop = []; } },
           allTopSelected(){ return this.topLevel.length>0 && this.selectedTop.length===this.topLevel.length; },
           indeterminateTop(){ return this.selectedTop.length>0 && this.selectedTop.length<this.topLevel.length; },
+          sortedTop(){
+            const q = (this.search||'').toLowerCase();
+            let arr = this.topLevel.filter(p => !q || (String(p.id).includes(q) || (p.name||'').toLowerCase().includes(q) || (p.cidr||'').toLowerCase().includes(q) || (this.accountName(p.account_id)||'').toLowerCase().includes(q)));
+            const key = this.sortTopKey, dir = this.sortTopDir==='asc'?1:-1;
+            const get = (p)=> key==='id'? p.id : key==='name'? (p.name||'') : key==='cidr'? (p.cidr||'') : key==='account'? (this.accountName(p.account_id)||'') : (p.created_at||'');
+            arr.sort((a,b)=> { const av=get(a), bv=get(b); return av>bv?dir: av<bv? -dir: 0; });
+            return arr;
+          },
+          sortTop(k){ this.sortTopDir = (this.sortTopKey===k && this.sortTopDir==='asc') ? 'desc' : 'asc'; this.sortTopKey = k; },
           openBulkAssignTop(){ this.bulkAssignTopOpen=true; this.bulkAccountId=null; },
           async performBulkAssignTop(){
             const target = this.bulkAccountId ?? null;
@@ -1200,7 +1350,7 @@
             const a = this.accounts.find(a => a.id === id);
             return a ? a.name : `#${id}`;
           },
-          selectPool(p) { this.current = p; this.currentAccountId = p.account_id || null; this.blocks = []; this.subMsg=''; this.page=1; this.pageInput=1; this.total=0; this.totalPages=1; this.updateMsg=''; this.currentPrefixBits = this.cidrBits(p.cidr); if (this.currentPrefixBits!=null && (this.blockPrefix <= this.currentPrefixBits)) { this.blockPrefix = Math.min(32, this.currentPrefixBits+1); } this.computeViz(); },
+          selectPool(p) { this.current = p; localStorage.setItem('cp.pool.currentId', String(p.id)); this.currentAccountId = p.account_id || null; this.blocks = []; this.subMsg=''; this.page=1; this.pageInput=1; this.total=0; this.totalPages=1; this.updateMsg=''; this.currentPrefixBits = this.cidrBits(p.cidr); if (this.currentPrefixBits!=null && (this.blockPrefix <= this.currentPrefixBits)) { this.blockPrefix = Math.min(32, this.currentPrefixBits+1); } this.computeViz(); },
           openEditPool(p) { this.editPoolForm = { id: p.id, name: p.name, account_id: p.account_id||null }; this.editPoolOpen = true; },
           async saveEditPool() {
             const f = this.editPoolForm;
@@ -1240,11 +1390,13 @@
               showToast('Pool deleted');
             } catch (e) { this.msg='Delete failed'; }
           },
-          onPageSize() { this.page = 1; this.loadBlocks(); },
+          onPageSize() { this.page = 1; localStorage.setItem('cp.pool.pageSize', this.pageSize); this.loadBlocks(); },
+          onBlockPrefixChange(){ if (this.currentPrefixBits!=null && this.blockPrefix <= this.currentPrefixBits) this.blockPrefix = Math.min(32, this.currentPrefixBits+1); localStorage.setItem('cp.pool.blockPrefix', String(this.blockPrefix)); },
           async loadBlocks() {
             if (!this.current) return;
             this.subMsg = '';
             try {
+              this.loadingBlocks = true;
               const q = new URLSearchParams();
               q.set('new_prefix_len', this.blockPrefix);
               if (this.pageSize !== 'all') { q.set('page_size', this.pageSize); q.set('page', this.page); }
@@ -1273,6 +1425,7 @@
                 this.filterBlocks();
               }
             } catch (e) { this.subMsg = 'Failed to load blocks'; }
+            finally { this.loadingBlocks = false; }
           },
           filterBlocks() {
             const f = this.blockFilters;
@@ -1287,8 +1440,18 @@
             let arr = this.rawBlocks;
             if (this.showOnlyUsed) arr = arr.filter(b => b.used);
             if (this.hideUnavailable) arr = arr.filter(b => !(b.used || this.blockUnavailable(b.cidr)));
-            this.blocks = arr.filter(b => hostsMatch(b) && statusMatch(b) && accountMatch(b) && networkMatch(b) && broadcastMatch(b));
+            localStorage.setItem('cp.pool.showOnlyUsed', this.showOnlyUsed?'1':'0');
+            localStorage.setItem('cp.pool.hideUnavailable', this.hideUnavailable?'1':'0');
+            arr = arr.filter(b => hostsMatch(b) && statusMatch(b) && accountMatch(b) && networkMatch(b) && broadcastMatch(b));
+            // sorting
+            const key = this.sortBlockKey, dir = this.sortBlockDir==='asc'?1:-1;
+            const statusVal = (b)=> b.used?2 : (this.blockUnavailable(b.cidr)?1:0);
+            const get = (b)=> key==='cidr'? (b.cidr||'') : key==='hosts'? (b.hosts||0) : key==='status'? statusVal(b) : key==='account'? (acct(b)||'') : (b.cidr||'');
+            arr.sort((a,b)=> { const av=get(a), bv=get(b); return av>bv?dir: av<bv? -dir: 0; });
+            this.blocks = arr;
           },
+          sortBlocks(k){ this.sortBlockDir = (this.sortBlockKey===k && this.sortBlockDir==='asc') ? 'desc' : 'asc'; this.sortBlockKey = k; this.filterBlocks(); },
+          copy(text){ if (!text) return; navigator.clipboard?.writeText(String(text)).then(()=>showToast('Copied')).catch(()=>{}); },
           blockUnavailable(cidr) {
             if (!this.current || !cidr) return false;
             // A block is unavailable if it overlaps any existing direct child of current
@@ -1339,7 +1502,9 @@
           },
           async createTop() {
             this.msg = '';
+            this.validateCIDR(); if (this.cidrError) { showToast(this.cidrError,'error'); return; }
             try {
+              this.creating = true;
               const res = await fetch('/api/v1/pools', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1353,7 +1518,7 @@
             } catch (e) {
               this.msg = 'Network error';
               showToast(this.msg, 'error');
-            }
+            } finally { this.creating = false; }
           },
           async updateCurrentPoolAccount() {
             if (!this.current) return;
@@ -1399,10 +1564,34 @@
               }
               const left = ((pr.start - base) / total) * 100;
               const width = (Math.max(1, (pr.end - pr.start + 1)) / total) * 100;
-              segs.push({ id:p.id, left, width, title:`${p.name||'-'} (${p.cidr})`, color:'#93c5fd' });
+              const color = this.colorForAccount(p.account_id);
+              segs.push({ id:p.id, left, width, title:`${p.name||'-'} (${p.cidr})`, color });
             }
             this.vizSegments = segs;
           },
+          vizLegend(){
+            const ids = new Set();
+            for (const p of this.list) { if (p.parent_id && this.current && p.cidr && prefixRange(p.cidr)) { if (this.current && prefixRange(this.current.cidr)) { const pr = prefixRange(p.cidr), cr = prefixRange(this.current.cidr); if (pr && cr && pr.start>=cr.start && pr.end<=cr.end) { if (p.account_id!=null) ids.add(String(p.account_id)); } } } }
+            const out = [];
+            for (const id of ids) {
+              const a = this.accounts.find(x=>String(x.id)===id);
+              out.push({ key: id, label: a? a.name : ('#'+id), color: this.colorForAccount(parseInt(id,10)) });
+            }
+            return out.sort((a,b)=> a.label.localeCompare(b.label));
+          },
+          toggleVizChip(key){ const i=this.vizAccounts.indexOf(key); if(i>=0) this.vizAccounts.splice(i,1); else this.vizAccounts.push(key); this.computeViz(); },
+          vizSelectAll(){ this.vizAccounts = this.accounts.map(a=>String(a.id)); this.computeViz(); },
+          vizClearAll(){ this.vizAccounts = []; this.computeViz(); },
+          colorForAccount(id){
+            if (!id) return '#93c5fd';
+            const colors = ['#93c5fd','#86efac','#fca5a5','#fbbf24','#a5b4fc','#67e8f9','#f9a8d4','#c4b5fd'];
+            const i = Math.abs(parseInt(id,10)||0) % colors.length;
+            return colors[i];
+          },
+          // Master toggle for viz accounts multi-select
+          vizAllSelected(){ return this.accounts.length>0 && this.vizAccounts.length===this.accounts.length; },
+          vizIndeterminate(){ return this.vizAccounts.length>0 && this.vizAccounts.length<this.accounts.length; },
+          toggleVizAll(ev){ if (ev.target.checked) { this.vizAccounts = this.accounts.map(a=>String(a.id)); } else { this.vizAccounts = []; } this.computeViz(); },
           async createSub(b) {
             if (!this.current) return;
             const name = prompt(`Name for sub-pool ${b.cidr}`);
