@@ -671,7 +671,9 @@
             <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="bulkOpen=false; openBulkDelete()">Delete…</button>
           </div>
         </div>
-        <div x-show="filtersOpen" x-cloak style="position:absolute; top:36px; left:0; background:#fff; border:1px solid var(--border); border-radius:10px; box-shadow:var(--shadow); padding:12px; display:flex; gap:16px; z-index:10020;">
+        <div x-show="filtersOpen" x-cloak @click.self="filtersOpen=false" @keydown.escape.window="filtersOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
+          <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'max-width: 90vw; transform: translate(' + dx + 'px,' + dy + 'px)'; display:' + 'flex' + '; gap:16px; padding:12px;" >
+            <h3 style="cursor:move; margin-top:0;">Filters</h3>
           <div style="min-width:220px; max-height:260px; overflow:auto;">
             <div class="muted" style="margin-bottom:6px;">Accounts</div>
             <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
@@ -742,6 +744,7 @@
           <div style="display:flex; flex-direction:column; gap:.5rem; align-items:flex-end;">
             <button class="btn" @click="filtersOpen=false; page=1; load()">Apply</button>
             <button class="btn ghost" @click="clearFilters()">Clear</button>
+          </div>
           </div>
         </div>
       </div>
