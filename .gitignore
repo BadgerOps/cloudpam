@@ -12,6 +12,7 @@ bin/
 # Ignore only the root-level binary, not cmd/cloudpam/
 /cloudpam
 /cloudpam.exe
+tmp/
 .gocache/
 .gopath/
 .gopath/**

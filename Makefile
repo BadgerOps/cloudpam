@@ -3,12 +3,16 @@
 # If `just` is installed, Make will delegate targets to it.
 # Otherwise, Make runs the fallback recipes defined below.
 
+GO_CACHE_DIR := $(CURDIR)/tmp/go-cache
+export GOCACHE := $(GO_CACHE_DIR)
+
 FALLBACK_TARGETS := dev build sqlite-build sqlite-run fmt lint test test-race cover tidy
 
 # Mark only help and fallback targets as phony. Do not mark
 # the top-level targets themselves as phony, so the catch‑all
 # pattern rule (%:) can delegate to Just or fallback recipes.
 .PHONY: help $(addprefix .fallback-,$(FALLBACK_TARGETS))
+.PHONY: .go-cache-dir
 
 help:
 	@echo "Targets: $(FALLBACK_TARGETS)"
@@ -22,19 +26,22 @@ help:
 		$(MAKE) .fallback-$@; \
 	fi
 
-.fallback-dev:
+.go-cache-dir:
+	@mkdir -p $(GO_CACHE_DIR)
+
+.fallback-dev: .go-cache-dir
 	go run ./cmd/cloudpam
 
-.fallback-build:
+.fallback-build: .go-cache-dir
 	go build -o cloudpam ./cmd/cloudpam
 
-.fallback-sqlite-build:
+.fallback-sqlite-build: .go-cache-dir
 	go build -tags sqlite -o cloudpam ./cmd/cloudpam
 
 .fallback-sqlite-run: .fallback-sqlite-build
 	SQLITE_DSN="file:cloudpam.db?cache=shared&_fk=1" ./cloudpam
 
-.fallback-fmt:
+.fallback-fmt: .go-cache-dir
 	go fmt ./...
 
 .fallback-lint:
@@ -46,18 +53,18 @@ help:
 	fi
 	golangci-lint run
 
-.fallback-test:
+.fallback-test: .go-cache-dir
 	go test ./...
 
-.fallback-test-race:
+.fallback-test-race: .go-cache-dir
 	go test -race ./...
 
-.fallback-cover:
+.fallback-cover: .go-cache-dir
 	set -euo pipefail; \
 	go test ./... -covermode=atomic -coverprofile=coverage.out; \
 	go tool cover -func=coverage.out | tee coverage.txt; \
 	go tool cover -html=coverage.out -o coverage.html; \
 	echo "wrote coverage.out and coverage.html"
 
-.fallback-tidy:
+.fallback-tidy: .go-cache-dir
 	go mod tidy
