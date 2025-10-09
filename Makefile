@@ -2,11 +2,14 @@
 
 # If `just` is installed, Make will delegate targets to it.
 # Otherwise, Make runs the fallback recipes defined below.
-
 GO_CACHE_DIR := $(CURDIR)/tmp/go-cache
 export GOCACHE := $(GO_CACHE_DIR)
 
-FALLBACK_TARGETS := dev build sqlite-build sqlite-run fmt lint test test-race cover tidy
+OPENAPI_GENERATOR ?= openapi-generator-cli
+OPENAPI_SPEC := $(CURDIR)/docs/openapi.yaml
+OPENAPI_HTML_DIR := $(CURDIR)/docs/openapi-html
+
+FALLBACK_TARGETS := dev build sqlite-build sqlite-run fmt lint test test-race cover tidy openapi-validate openapi-html
 
 # Mark only help and fallback targets as phony. Do not mark
 # the top-level targets themselves as phony, so the catch‑all
@@ -68,3 +71,14 @@ help:
 
 .fallback-tidy: .go-cache-dir
 	go mod tidy
+
+.fallback-openapi-validate:
+	ruby $(CURDIR)/scripts/openapi_validate.rb $(OPENAPI_SPEC)
+
+.fallback-openapi-html:
+	@command -v $(OPENAPI_GENERATOR) >/dev/null || { \
+		echo "openapi-generator-cli not found. Install via https://openapi-generator.tech/docs/installation/"; \
+		exit 1; \
+	}
+	rm -rf $(OPENAPI_HTML_DIR)
+	$(OPENAPI_GENERATOR) generate -g html2 -i $(OPENAPI_SPEC) -o $(OPENAPI_HTML_DIR)
