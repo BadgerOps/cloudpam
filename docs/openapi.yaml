@@ -1,0 +1,551 @@
+openapi: 3.1.0
+info:
+  title: CloudPAM API
+  version: "0.1.0"
+  description: |
+    REST API for managing CloudPAM pools, accounts, blocks, and data exports.
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      tags: [System]
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v1/pools:
+    get:
+      summary: List pools
+      tags: [Pools]
+      responses:
+        "200":
+          description: Pools returned successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Pool"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create pool
+      tags: [Pools]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePool"
+      responses:
+        "201":
+          description: Pool created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pool"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/pools/{poolId}:
+    parameters:
+      - $ref: "#/components/parameters/PoolId"
+    get:
+      summary: Get pool
+      tags: [Pools]
+      responses:
+        "200":
+          description: Pool found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pool"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      summary: Update pool metadata
+      tags: [Pools]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePool"
+      responses:
+        "200":
+          description: Pool updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pool"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete pool
+      tags: [Pools]
+      parameters:
+        - $ref: "#/components/parameters/ForceFlag"
+      responses:
+        "204":
+          description: Pool deleted
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/pools/{poolId}/blocks:
+    parameters:
+      - $ref: "#/components/parameters/PoolId"
+    get:
+      summary: Enumerate candidate blocks within a pool CIDR
+      tags: [Pools]
+      parameters:
+        - $ref: "#/components/parameters/NewPrefixLen"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Blocks listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlocksResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/accounts:
+    get:
+      summary: List accounts
+      tags: [Accounts]
+      responses:
+        "200":
+          description: Accounts returned successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Account"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create account
+      tags: [Accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAccount"
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/accounts/{accountId}:
+    parameters:
+      - $ref: "#/components/parameters/AccountId"
+    get:
+      summary: Get account
+      tags: [Accounts]
+      responses:
+        "200":
+          description: Account found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      summary: Update account
+      tags: [Accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccountUpdate"
+      responses:
+        "200":
+          description: Account updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Account"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete account
+      tags: [Accounts]
+      parameters:
+        - $ref: "#/components/parameters/ForceFlag"
+      responses:
+        "204":
+          description: Account deleted
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/blocks:
+    get:
+      summary: List assigned sub-pools
+      tags: [Blocks]
+      parameters:
+        - $ref: "#/components/parameters/AccountsFilter"
+        - $ref: "#/components/parameters/PoolsFilter"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Assigned blocks listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssignedBlocksResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/export:
+    get:
+      summary: Export datasets as CSV inside ZIP archive
+      tags: [Export]
+      parameters:
+        - name: datasets
+          in: query
+          description: Comma-separated datasets to include (accounts, pools, blocks)
+          required: true
+          schema:
+            type: string
+        - name: accounts_fields
+          in: query
+          description: Comma-separated account columns to include
+          schema:
+            type: string
+        - name: pools_fields
+          in: query
+          description: Comma-separated pool columns to include
+          schema:
+            type: string
+        - name: blocks_fields
+          in: query
+          description: Comma-separated block columns to include
+          schema:
+            type: string
+        - $ref: "#/components/parameters/AccountsFilter"
+        - $ref: "#/components/parameters/PoolsFilter"
+      responses:
+        "200":
+          description: ZIP archive streaming response
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: "#/components/responses/Error"
+components:
+  parameters:
+    PoolId:
+      name: poolId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Pool identifier
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+      description: Account identifier
+    ForceFlag:
+      name: force
+      in: query
+      description: Force cascading delete (1, true, yes)
+      schema:
+        type: string
+    NewPrefixLen:
+      name: new_prefix_len
+      in: query
+      required: true
+      description: Desired prefix length for generated blocks
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 32
+    Page:
+      name: page
+      in: query
+      description: Page number (1-indexed)
+      schema:
+        type: integer
+        minimum: 1
+    PageSize:
+      name: page_size
+      in: query
+      description: Number of items per page; specify "all" to disable pagination
+      schema:
+        oneOf:
+          - type: integer
+            minimum: 0
+          - type: string
+            enum: ["all"]
+    AccountsFilter:
+      name: accounts
+      in: query
+      description: Comma-separated account IDs to filter by
+      schema:
+        type: string
+        example: "1,2"
+    PoolsFilter:
+      name: pools
+      in: query
+      description: Comma-separated parent pool IDs to filter by
+      schema:
+        type: string
+        example: "10,11"
+  responses:
+    Error:
+      description: Error response
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+      required: [status]
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        detail:
+          type: string
+      required: [error]
+    Pool:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        cidr:
+          type: string
+        parent_id:
+          type: integer
+          format: int64
+          nullable: true
+        account_id:
+          type: integer
+          format: int64
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, cidr, created_at]
+    CreatePool:
+      type: object
+      properties:
+        name:
+          type: string
+        cidr:
+          type: string
+        parent_id:
+          type: integer
+          format: int64
+          nullable: true
+        account_id:
+          type: integer
+          format: int64
+          nullable: true
+      required: [name, cidr]
+    UpdatePool:
+      type: object
+      properties:
+        name:
+          type: string
+          nullable: true
+        account_id:
+          type: integer
+          format: int64
+          nullable: true
+    BlockInfo:
+      type: object
+      properties:
+        cidr:
+          type: string
+        prefix_len:
+          type: integer
+        hosts:
+          type: integer
+          format: int64
+        used:
+          type: boolean
+        assigned_id:
+          type: integer
+          format: int64
+        assigned_name:
+          type: string
+        assigned_account_id:
+          type: integer
+          format: int64
+        assigned_account_name:
+          type: string
+        exists_elsewhere:
+          type: boolean
+        exists_elsewhere_id:
+          type: integer
+          format: int64
+        exists_elsewhere_name:
+          type: string
+      required: [cidr, prefix_len, hosts, used]
+    BlocksResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BlockInfo"
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+      required: [items, total, page, page_size]
+    Account:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        key:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+        external_id:
+          type: string
+        description:
+          type: string
+        platform:
+          type: string
+        tier:
+          type: string
+        environment:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, key, name, created_at]
+    CreateAccount:
+      type: object
+      properties:
+        key:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+        external_id:
+          type: string
+        description:
+          type: string
+        platform:
+          type: string
+        tier:
+          type: string
+        environment:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+      required: [key, name]
+    AccountUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        provider:
+          type: string
+        external_id:
+          type: string
+        description:
+          type: string
+        platform:
+          type: string
+        tier:
+          type: string
+        environment:
+          type: string
+        regions:
+          type: array
+          items:
+            type: string
+    AssignedBlock:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        cidr:
+          type: string
+        parent_id:
+          type: integer
+          format: int64
+        parent_name:
+          type: string
+        account_id:
+          type: integer
+          format: int64
+          nullable: true
+        account_name:
+          type: string
+        account_platform:
+          type: string
+        account_tier:
+          type: string
+        account_environment:
+          type: string
+        account_regions:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, cidr, parent_id, parent_name, created_at]
+    AssignedBlocksResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssignedBlock"
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+      required: [items, total, page, page_size]

@@ -578,3 +578,31 @@ func TestPoolsHandlers_OverlapProtection(t *testing.T) {
 
 	// Additional cross-tree global tests are constrained by strict subset rules.
 }
+
+func TestOpenAPISpecEndpoint(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/openapi.yaml", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if got := rr.Header().Get("Content-Type"); got != "application/yaml" {
+		t.Fatalf("unexpected content-type: %q", got)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "openapi: 3.1.0") {
+		if len(body) > 80 {
+			body = body[:80]
+		}
+		t.Fatalf("spec body missing openapi version, got: %q", body)
+	}
+
+	req = httptest.NewRequest(stdhttp.MethodPost, "/openapi.yaml", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for non-GET, got %d", rr.Code)
+	}
+}

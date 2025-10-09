@@ -1,5 +1,9 @@
 set shell := ["bash", "-cu"]
 
+openapi_generator := "openapi-generator-cli"
+openapi_spec := justfile_directory() + "/docs/openapi.yaml"
+openapi_html_dir := justfile_directory() + "/docs/openapi-html"
+
 default:
     @just --list
 
@@ -53,3 +57,14 @@ cover-threshold thr="0":
 
 tidy:
     go mod tidy
+
+openapi-validate:
+    ruby "{{justfile_directory()}}/scripts/openapi_validate.rb" "{{openapi_spec}}"
+
+openapi-html:
+    if ! command -v {{openapi_generator}} >/dev/null 2>&1; then \
+      echo "openapi-generator-cli not found. Install: https://openapi-generator.tech/docs/installation/"; \
+      exit 1; \
+    fi
+    rm -rf "{{openapi_html_dir}}"
+    {{openapi_generator}} generate -g html2 -i "{{openapi_spec}}" -o "{{openapi_html_dir}}"
