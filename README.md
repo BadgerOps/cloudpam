@@ -47,16 +47,41 @@ Notes
 - Without the `sqlite` build tag, the server uses an in‑memory store and logs a hint if `SQLITE_DSN` is set.
 - Current CIDR tools and validation target IPv4. IPv6 support is planned.
 
-## API Endpoints (early)
-- `GET /healthz`: health check
-- `GET /api/v1/pools`: list pools
-- `POST /api/v1/pools`: create pool `{name, cidr, parent_id?}`
-- `GET /api/v1/pools/{id}/blocks?new_prefix_len=24&page_size=50&page=1`: paged block listing with hosts and Used/Free flags
-- `GET /api/v1/blocks?accounts=1,2&pools=10,11&page_size=50&page=1`: paginated list of assigned sub-pools across all parents (envelope: `{items,total,page,page_size}`).
+## API Reference
+The REST contract is captured in `docs/openapi.yaml` (OpenAPI 3.1). Preview it locally with your preferred viewer or import it into Postman/Insomnia.
+
+Common requests:
+
+```bash
+# Liveness probe
+curl http://localhost:8080/healthz
+
+# List pools
+curl http://localhost:8080/api/v1/pools
+
+# Create a /24 child pool under parent 1
+curl -X POST http://localhost:8080/api/v1/pools \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Prod-1","cidr":"10.0.1.0/24","parent_id":1}'
+
+# Enumerate candidate /26 blocks for pool 1
+curl "http://localhost:8080/api/v1/pools/1/blocks?new_prefix_len=26&page_size=50&page=1"
+
+# List assigned blocks filtered by account IDs
+curl "http://localhost:8080/api/v1/blocks?accounts=12,14&page_size=50&page=1"
+```
+
+Errors use the JSON envelope `{"error":"message","detail":"optional context"}`. The live server also serves the spec at `http://localhost:8080/openapi.yaml` for tooling consumption.
+
+### OpenAPI tooling
+- Validate the spec (Ruby/Psych sanity check): `just openapi-validate`
+- Generate HTML docs (writes to `docs/openapi-html/`): `just openapi-html`
+- Example client generation: `openapi-generator-cli generate -i docs/openapi.yaml -g typescript-fetch -o clients/ts`
 
 ## Documentation
 - Project plan: `docs/PROJECT_PLAN.md`
 - Changelog: `docs/CHANGELOG.md`
+- OpenAPI spec: `docs/openapi.yaml`
 
 ## Screenshots
 The `photos/` directory contains app screenshots (tracked via Git LFS). To enable LFS locally: `git lfs install`.

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	apidocs "cloudpam/docs"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 	webui "cloudpam/web"
@@ -50,6 +51,7 @@ func NewServer(mux *http.ServeMux, store storage.Store) *Server {
 }
 
 func (s *Server) RegisterRoutes() {
+	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
 	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
@@ -60,6 +62,16 @@ func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/api/v1/export", s.handleExport)
 	// Static index
 	s.mux.HandleFunc("/", s.handleIndex)
+}
+
+func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(apidocs.OpenAPISpec)
 }
 
 // GET /api/v1/export?datasets=accounts,pools,blocks&accounts_fields=...&pools_fields=...&blocks_fields=...&accounts=1,2&pools=3,4

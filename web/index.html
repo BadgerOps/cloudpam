@@ -105,11 +105,11 @@
             <option value="all">All</option>
           </select>
         </label>
-        <div style="margin-left:auto; position:relative;">
-          <button class="btn ghost" @click="bulkOpen=!bulkOpen" :disabled="!selectedTop.length" :title="selectedTop.length ? (selectedTop.length + ' selected') : 'Select rows to enable actions'">⋮</button>
-          <div x-show="bulkOpen" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:9999; min-width:180px;">
-            <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="bulkOpen=false; openBulkAssignTop()">Assign Account…</button>
-            <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="bulkOpen=false; openBulkDeleteTop()">Delete…</button>
+        <div style="margin-left:auto; position:relative;" x-data="{ bulkMenuOpen:false }" @click.outside="bulkMenuOpen=false">
+          <button class="btn ghost" @click="bulkMenuOpen=!bulkMenuOpen" :disabled="!selectedTop.length" :title="selectedTop.length ? (selectedTop.length + ' selected') : 'Select rows to enable actions'">⋮</button>
+          <div x-show="bulkMenuOpen" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:9999; min-width:180px;">
+            <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="bulkMenuOpen=false; openBulkAssignTop()">Assign Account…</button>
+            <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="bulkMenuOpen=false; openBulkDeleteTop()">Delete…</button>
           </div>
         </div>
       </div>
@@ -145,7 +145,7 @@
       </table>
 
       <!-- Bulk Assign Top Pools -->
-      <div x-show="bulkAssignTopOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+      <div x-show="bulkAssignTopOpen" x-cloak @click.self="bulkAssignTopOpen=false" @keydown.escape.window="bulkAssignTopOpen && (bulkAssignTopOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
         <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:420px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Assign Account to Selected</h3>
           <div class="row" style="align-items:center;">
             <select x-model.number="bulkAccountId" style="min-width: 14rem;">
@@ -164,7 +164,7 @@
       </div>
 
       <!-- Bulk Delete Top Pools -->
-      <div x-show="bulkDeleteTopOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+      <div x-show="bulkDeleteTopOpen" x-cloak @click.self="bulkDeleteTopOpen=false" @keydown.escape.window="bulkDeleteTopOpen && (bulkDeleteTopOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
         <div class="card" style="width:460px;">
           <h3>Delete Selected Pools</h3>
           <p class="muted">This action can delete multiple pools. You may enable cascade to delete their descendants.</p>
@@ -336,7 +336,7 @@
       </template>
 
       <!-- Edit Pool Modal -->
-      <div x-show="editPoolOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+      <div x-show="editPoolOpen" x-cloak @click.self="editPoolOpen=false" @keydown.escape.window="editPoolOpen && (editPoolOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
         <div class="card" style="width:480px;">
           <h3>Edit Pool</h3>
           <div class="row">
@@ -356,7 +356,7 @@
       </div>
 
       <!-- Delete Pool Confirm Modal -->
-      <div x-show="deletePoolOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+      <div x-show="deletePoolOpen" x-cloak @click.self="deletePoolOpen=false" @keydown.escape.window="deletePoolOpen && (deletePoolOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
         <div class="card" style="width:420px;">
           <h3>Confirm Delete</h3>
           <p>Are you sure you want to delete <strong x-text="deletePoolTarget?.name"></strong>?</p>
@@ -404,7 +404,7 @@
         <span x-text="acctMsg" class="muted"></span>
       </div>
       <div class="row" style="justify-content:flex-end; margin:.4rem 0; position:relative;">
-        <div style="margin-left:auto; position:relative;" x-data="{ open:false }">
+        <div style="margin-left:auto; position:relative;" x-data="{ open:false }" @click.outside="open=false">
           <button class="btn ghost" @click="open=!open">Columns ▾</button>
           <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:10020; padding:8px 10px; min-width:220px;">
             <div class="muted" style="margin-bottom:6px;">Toggle columns</div>
@@ -664,11 +664,11 @@
         <input type="text" placeholder="Search..." x-model="search" x-ref="analyticsSearch" style="flex:1; max-width:280px;" />
         <span class="muted" x-text="summary()"></span>
         <span class="muted" x-text="msg"></span>
-        <div style="margin-left:auto; position:relative;">
-          <button class="btn ghost" @click="bulkOpen=!bulkOpen" :disabled="!selected.length" :title="selected.length ? (selected.length + ' selected') : 'Select rows to enable actions'">⋮</button>
-          <div x-show="bulkOpen" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:9999; min-width:180px;">
-            <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="bulkOpen=false; openBulkAssign()">Assign Account…</button>
-            <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="bulkOpen=false; openBulkDelete()">Delete…</button>
+        <div style="margin-left:auto; position:relative;" x-data="{ analyticsBulkMenuOpen:false }" @click.outside="analyticsBulkMenuOpen=false">
+          <button class="btn ghost" @click="analyticsBulkMenuOpen=!analyticsBulkMenuOpen" :disabled="!selected.length" :title="selected.length ? (selected.length + ' selected') : 'Select rows to enable actions'">⋮</button>
+          <div x-show="analyticsBulkMenuOpen" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:9999; min-width:180px;">
+            <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="analyticsBulkMenuOpen=false; openBulkAssign()">Assign Account…</button>
+            <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="analyticsBulkMenuOpen=false; openBulkDelete()">Delete…</button>
           </div>
         </div>
         <div x-show="filtersOpen" x-cloak @click.self="filtersOpen=false" @keydown.escape.window="filtersOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
@@ -1109,7 +1109,7 @@
         }
       </script>
       <!-- Edit Block Modal -->
-      <div x-show="editOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+      <div x-show="editOpen" x-cloak @click.self="editOpen=false" @keydown.escape.window="editOpen && (editOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
         <div class="card" style="width:520px;">
           <h3>Edit Block</h3>
           <div class="row">
@@ -1128,7 +1128,7 @@
         </div>
       </div>
       <!-- Delete Block Confirm Modal -->
-      <div x-show="deleteOpen" x-cloak style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+      <div x-show="deleteOpen" x-cloak @click.self="deleteOpen=false" @keydown.escape.window="deleteOpen && (deleteOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
         <div class="card" style="width:420px;">
           <h3>Confirm Delete</h3>
           <p>Are you sure you want to delete <strong x-text="deleteTarget?.name"></strong>?</p>
@@ -1159,9 +1159,18 @@
       function modalDrag(){
         return {
           dx:0, dy:0, drag:false, sx:0, sy:0,
-          start(e){ this.drag=true; this.sx=e.clientX - this.dx; this.sy=e.clientY - this.dy; },
-          move(e){ if(!this.drag) return; this.dx = e.clientX - this.sx; this.dy = e.clientY - this.sy; },
-          end(){ this.drag=false; }
+          start(e){
+            this.drag=true;
+            this.sx=e.clientX - this.dx;
+            this.sy=e.clientY - this.dy;
+          },
+          move(e){
+            if(!this.drag) return;
+            this.dx = e.clientX - this.sx;
+            this.dy = e.clientY - this.sy;
+          },
+          end(){ this.drag=false; },
+          reset(){ this.dx=0; this.dy=0; }
         }
       }
       function dataIO(){
@@ -1844,7 +1853,7 @@
       }
     </script>
     <!-- Data Import/Export Modal Root -->
-    <div id="data-io-root" x-data="dataIO()" x-init="init()" x-show="open" x-cloak @open-data-io.window="open=true" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
+    <div id="data-io-root" x-data="dataIO()" x-init="init()" x-show="open" x-cloak @open-data-io.window="open=true" @click.self="open=false" @keydown.escape.window="open && (open=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
       <div class="card" style="width: 860px; max-height: 90vh; overflow:auto;">
         <div style="display:flex; align-items:center; justify-content:space-between;">
           <h3>Data Import / Export</h3>
