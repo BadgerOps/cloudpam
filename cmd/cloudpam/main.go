@@ -49,11 +49,6 @@ func main() {
 
 	// Select storage based on build tags and env (see store_*.go in this package).
 	store := selectStore()
-	defer func() {
-		if err := store.Close(); err != nil {
-			log.Printf("error closing store: %v", err)
-		}
-	}()
 
 	mux := http.NewServeMux()
 	srv := ih.NewServer(mux, store)
@@ -73,6 +68,9 @@ func main() {
 	log.Printf("cloudpam listening on %s", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("server error: %v", err)
+		if err := store.Close(); err != nil {
+			log.Printf("error closing store: %v", err)
+		}
 		if sentryEnabled {
 			sentry.Flush(2 * time.Second)
 		}
@@ -80,6 +78,9 @@ func main() {
 	}
 
 	// Graceful shutdown path (not usually reached in ListenAndServe example)
+	if err := store.Close(); err != nil {
+		log.Printf("error closing store: %v", err)
+	}
 	if sentryEnabled {
 		sentry.Flush(2 * time.Second)
 	}
