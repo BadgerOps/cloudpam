@@ -46,6 +46,43 @@
       .status-used { color: var(--danger); font-weight: 600; }
       .status-free { color: var(--success); font-weight: 600; }
     </style>
+    <!-- Sentry Browser SDK -->
+    <script src="https://browser.sentry-cdn.com/8.0.0/bundle.min.js" crossorigin="anonymous"></script>
+    <script>
+      // Initialize Sentry for frontend error tracking
+      // Meta tag is injected by backend before this script runs
+      (function initSentry() {
+        const sentryDSN = document.querySelector('meta[name="sentry-dsn"]')?.content;
+        if (!sentryDSN) {
+          console.log('Sentry DSN not configured');
+          return;
+        }
+        if (!window.Sentry) {
+          console.error('Sentry SDK failed to load');
+          return;
+        }
+        try {
+          window.Sentry.init({
+            dsn: sentryDSN,
+            integrations: [
+              window.Sentry.browserTracingIntegration(),
+              window.Sentry.replayIntegration({
+                maskAllText: false,
+                blockAllMedia: false,
+              }),
+            ],
+            // Performance Monitoring
+            tracesSampleRate: 1.0, // Capture 100% of transactions
+            // Session Replay
+            replaysSessionSampleRate: 0.1, // 10% of sessions
+            replaysOnErrorSampleRate: 1.0, // 100% of sessions with errors
+          });
+          console.log('Sentry frontend initialized with DSN:', sentryDSN.substring(0, 30) + '...');
+        } catch (err) {
+          console.error('Failed to initialize Sentry:', err);
+        }
+      })();
+    </script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
   </head>
@@ -61,7 +98,29 @@
     <header>
       <h1>CloudPAM</h1>
       <span class="muted">Lightweight Cloud IPAM (AWS/GCP)</span>
+      <div style="margin-left:auto; display:flex; gap:.5rem; align-items:center;">
+        <button class="btn ghost" @click="window.testSentryFrontend()" style="font-size:.85rem; padding:.25rem .5rem;">Test Sentry</button>
+      </div>
     </header>
+    <script>
+      // Sentry test function for frontend
+      window.testSentryFrontend = function() {
+        if (!window.Sentry) {
+          alert('Sentry is not loaded');
+          return;
+        }
+        const choice = prompt('Test Sentry: 1=message, 2=error, 3=exception');
+        if (choice === '1') {
+          window.Sentry.captureMessage('Frontend test message from CloudPAM');
+          alert('Message sent to Sentry (check console and Sentry dashboard)');
+        } else if (choice === '2') {
+          window.Sentry.captureException(new Error('Frontend test error'));
+          alert('Error sent to Sentry (check console and Sentry dashboard)');
+        } else if (choice === '3') {
+          throw new Error('Frontend test exception - should be captured by Sentry');
+        }
+      };
+    </script>
 
     <main x-data="tabState()" x-init="init()" @keydown.window="onKey($event)">
     <div class="card" style="margin-bottom:1rem; display:flex; gap:.5rem; align-items:flex-end;">
@@ -1184,7 +1243,7 @@
             blocks: { id:true, name:true, cidr:true, parent_id:true, parent_name:true, account_id:true, account_name:true, account_platform:true, account_tier:true, account_environment:true, account_regions:true, created_at:true }
           },
           // Import state
-          imp: { type: 'accounts', file: null, headers: [], rows: [], mapping: {}, preview: [] },
+          imp: { type: 'accounts', file: null, headers: [], rows: [], mapping: {}, preview: [], logs: [], unmapped: [], showUnmappedModal: false },
           msg: '',
           init(){},
           fieldsList(kind){
@@ -1232,27 +1291,32 @@
               const n = norm(h);
               let guess = '';
               if (kind==='accounts'){
+                // Match variations from example CSV: "Account ID, Key, Name, Provider, Environment, Regions"
                 if (n==='key' || has(n,'account','key')) guess='key';
-                else if (n==='name') guess='name';
+                else if (n==='name' || has(n,'account','name')) guess='name';
                 else if (n==='provider' || has(n,'cloud','provider')) guess='provider';
                 else if (n==='external id' || n==='externalid' || has(n,'external','id')) guess='external_id';
-                else if (n==='description' || n==='desc') guess='description';
+                else if (n==='description' || n==='desc' || n==='notes' || n==='note') guess='description';
                 else if (n==='platform') guess='platform';
                 else if (n==='tier') guess='tier';
                 else if (n==='environment' || n==='env') guess='environment';
                 else if (n==='region' || n==='regions' || has(n,'region')) guess='regions';
+                // Note: "Account ID" is intentionally not mapped as IDs are auto-generated
                 else guess='';
               } else if (kind==='pools'){
-                if (n==='name' || n==='label') guess='name';
-                else if (n==='cidr' || has(n,'cidr','block') || n==='subnet' || n==='network' || n==='prefix') guess='cidr';
-                else if (n==='parent id' || n==='parentid') guess='parent_id';
+                // Match variations from example CSV: "CIDR Block, Platform, Environment, Region, Account ID, Notes"
+                if (n==='name' || n==='label' || n==='pool name') guess='name';
+                else if (n==='cidr' || n==='cidr block' || has(n,'cidr','block') || n==='subnet' || n==='network' || n==='prefix') guess='cidr';
+                else if (n==='parent id' || n==='parentid' || has(n,'parent','id')) guess='parent_id';
+                else if (n==='parent' || n==='parent name' || n==='parent pool') guess='parent_id';
                 else if (n==='account id' || n==='acct id' || has(n,'account','id')) guess='account_id';
-                else if (n==='account' || n==='acct') guess='account_id';
+                else if (n==='account' || n==='acct' || n==='account name' || n==='account key') guess='account_id';
+                // Note: Platform, Environment, Region, Notes in example CSV don't directly map to pool fields
                 else guess='';
               } else if (kind==='blocks'){
                 if (n==='name' || n==='label') guess='name';
-                else if (n==='cidr' || has(n,'cidr','block') || n==='subnet' || n==='network' || n==='prefix') guess='cidr';
-                else if (n==='parent id' || n==='parentid') guess='parent_id';
+                else if (n==='cidr' || n==='cidr block' || has(n,'cidr','block') || n==='subnet' || n==='network' || n==='prefix') guess='cidr';
+                else if (n==='parent id' || n==='parentid' || has(n,'parent','id')) guess='parent_id';
                 else if (n==='parent name' || n==='parent' || has(n,'parent','name')) guess='parent_name';
                 else if (n==='account id' || n==='acct id' || has(n,'account','id')) guess='account_id';
                 else if (n==='account name' || has(n,'account','name')) guess='account_name';
@@ -1263,6 +1327,40 @@
               map[h] = guess;
             }
             this.imp.mapping = map;
+            // After auto-mapping, check if there are unmapped columns and show review modal
+            this.checkUnmappedColumns(true);
+          },
+          checkUnmappedColumns(autoShow = false){
+            const unmapped = [];
+            for (const [header, field] of Object.entries(this.imp.mapping)){
+              if (!field) unmapped.push(header);
+            }
+            this.imp.unmapped = unmapped;
+            // Show modal automatically on initial load
+            if (autoShow) {
+              this.imp.showUnmappedModal = true;
+            }
+          },
+          closeUnmappedModal(){
+            this.imp.showUnmappedModal = false;
+          },
+          getAvailableFields(){
+            const kind = this.imp.type;
+            if (kind === 'accounts') {
+              return ['key', 'name', 'provider', 'external_id', 'description', 'platform', 'tier', 'environment', 'regions'];
+            } else if (kind === 'pools') {
+              return ['name', 'cidr', 'parent_id', 'account_id'];
+            } else if (kind === 'blocks') {
+              return ['name', 'cidr', 'parent_id', 'parent_name', 'account_id', 'account_name', 'account_key'];
+            }
+            return [];
+          },
+          getMappedColumns(){
+            return Object.entries(this.imp.mapping).filter(([h, f]) => f !== '').map(([h, f]) => ({ header: h, field: f }));
+          },
+          applyUnmappedChanges(){
+            // Just close the modal, changes are already applied via x-model
+            this.closeUnmappedModal();
           },
           previewRows(){ this.imp.preview = this.imp.rows.slice(0, 5); },
           // Very simple CSV parser with quote handling for our own exports
@@ -1895,33 +1993,16 @@
               <input type="file" accept=".csv,text/csv" @change="onImportFile($event)" />
             </div>
             <div x-show="imp.headers.length">
-              <p class="muted">Map CSV columns to fields:</p>
-              <template x-for="h in imp.headers" :key="'map-'+h">
-                <div class="row" style="align-items:center; gap:.5rem; margin:.25rem 0;">
-                  <div style="width: 40%;" x-text="h"></div>
-                  <div style="width: 60%;">
-                    <select x-model="imp.mapping[h]">
-                      <option value="">(ignore)</option>
-                      <template x-if="imp.type==='accounts'">
-                        <template x-for="f in ['key','name','provider','external_id','description','platform','tier','environment','regions']" :key="'acc-map-'+f">
-                          <option :value="f" x-text="f"></option>
-                        </template>
-                      </template>
-                        <template x-if="imp.type==='pools'">
-                          <template x-for="f in ['name','cidr','parent_id','account_id']" :key="'pool-map-'+f">
-                            <option :value="f" x-text="f"></option>
-                          </template>
-                        </template>
-                        <template x-if="imp.type==='blocks'">
-                          <template x-for="f in ['name','cidr','parent_id','parent_name','account_id','account_name','account_key']" :key="'blk-map-'+f">
-                            <option :value="f" x-text="f"></option>
-                          </template>
-                        </template>
-                    </select>
-                  </div>
+              <div style="background:#f9fafb; border:1px solid var(--border); border-radius:4px; padding:.75rem; margin:.75rem 0;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem;">
+                  <span style="font-weight:500; font-size:.9rem;">Column Mapping</span>
+                  <button class="btn ghost" @click="imp.showUnmappedModal=true" style="font-size:.85rem; padding:.25rem .5rem;">Review / Adjust</button>
                 </div>
-              </template>
-              <div style="margin-top: .5rem;">
+                <div style="font-size:.85rem; color:#666;">
+                  <div><span x-text="getMappedColumns().length"></span> mapped, <span x-text="imp.unmapped.length"></span> unmapped</div>
+                </div>
+              </div>
+              <div style="margin-top: .75rem;">
                 <button class="btn" @click="startImport()">Start Import</button>
               </div>
               <div x-text="msg" class="muted" style="margin-top:.5rem;"></div>
@@ -1956,5 +2037,57 @@
           </div>
         </div>
       </div>
+
+      <!-- Column Mapping Review Modal -->
+      <div x-show="imp.showUnmappedModal" x-cloak @click.self="closeUnmappedModal()" @keydown.escape.window="imp.showUnmappedModal && closeUnmappedModal()" style="position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:10030;">
+        <div class="card" style="width: 600px; max-width: 90vw; max-height: 90vh; overflow:auto;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+            <h3>Review Column Mappings</h3>
+            <button @click="closeUnmappedModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; padding:0; line-height:1;">&times;</button>
+          </div>
+
+          <!-- Mapped columns -->
+          <div x-show="getMappedColumns().length > 0" style="margin-bottom:1.5rem;">
+            <h4 style="font-size:1rem; margin-bottom:.5rem; color:#059669;">✓ Automatically Mapped (<span x-text="getMappedColumns().length"></span>)</h4>
+            <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:4px; padding:.75rem;">
+              <template x-for="m in getMappedColumns()" :key="'mapped-'+m.header">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:.25rem 0; font-size:.9rem;">
+                  <span style="color:#666; flex:1;" x-text="m.header"></span>
+                  <span style="color:#059669; font-weight:500;">→</span>
+                  <code style="background:#dcfce7; padding:.125rem .375rem; border-radius:3px; flex:1; text-align:right; font-size:.85rem;" x-text="m.field"></code>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Unmapped columns -->
+          <div x-show="imp.unmapped.length > 0">
+            <h4 style="font-size:1rem; margin-bottom:.5rem; color:#dc2626;">⚠️ Unmapped Columns (<span x-text="imp.unmapped.length"></span>)</h4>
+            <p class="muted" style="margin-bottom:.75rem; font-size:.9rem;">Map these columns or leave them as "(ignore)" to skip them during import:</p>
+            <div style="background:#fef2f2; border:1px solid #fca5a5; border-radius:4px; padding:.75rem;">
+              <template x-for="col in imp.unmapped" :key="'unmapped-map-'+col">
+                <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.5rem;">
+                  <div style="flex:1; color:#666; font-size:.9rem;" x-text="col"></div>
+                  <select x-model="imp.mapping[col]" @change="checkUnmappedColumns()" style="flex:1; font-size:.9rem;">
+                    <option value="">(ignore)</option>
+                    <template x-for="f in getAvailableFields()" :key="'field-opt-'+f">
+                      <option :value="f" x-text="f"></option>
+                    </template>
+                  </select>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div x-show="imp.unmapped.length === 0" style="margin-top:1rem;">
+            <p style="color:#059669; font-weight:500;">✓ All columns mapped successfully!</p>
+          </div>
+
+          <div style="display:flex; gap:.5rem; justify-content:flex-end; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
+            <button class="btn" @click="applyUnmappedChanges()">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
