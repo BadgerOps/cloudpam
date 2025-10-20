@@ -49,6 +49,11 @@ func main() {
 
 	// Select storage based on build tags and env (see store_*.go in this package).
 	store := selectStore()
+	defer func() {
+		if err := store.Close(); err != nil {
+			log.Printf("error closing store: %v", err)
+		}
+	}()
 
 	mux := http.NewServeMux()
 	srv := ih.NewServer(mux, store)

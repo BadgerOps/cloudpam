@@ -25,6 +25,8 @@ type Store interface {
 	DeleteAccount(ctx context.Context, id int64) (bool, error)
 	DeleteAccountCascade(ctx context.Context, id int64) (bool, error)
 	GetAccount(ctx context.Context, id int64) (domain.Account, bool, error)
+	// Close releases resources held by the store
+	Close() error
 }
 
 // MemoryStore is an in-memory implementation for quick start and tests.
@@ -267,4 +269,9 @@ func (m *MemoryStore) GetAccount(ctx context.Context, id int64) (domain.Account,
 	defer m.mu.RUnlock()
 	a, ok := m.accounts[id]
 	return a, ok, nil
+}
+
+// Close is a no-op for MemoryStore as it holds no external resources.
+func (m *MemoryStore) Close() error {
+	return nil
 }
