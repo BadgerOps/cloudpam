@@ -59,6 +59,14 @@ func Status(dsn string) (string, error) {
 
 var _ storage.Store = (*Store)(nil)
 
+// Close closes the underlying database connection and releases resources.
+func (s *Store) Close() error {
+    if s.db != nil {
+        return s.db.Close()
+    }
+    return nil
+}
+
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
     rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, created_at FROM pools ORDER BY id ASC`)
     if err != nil {
