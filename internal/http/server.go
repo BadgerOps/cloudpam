@@ -10,10 +10,13 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/getsentry/sentry-go"
 
 	apidocs "cloudpam/docs"
 	"cloudpam/internal/domain"
@@ -38,6 +41,10 @@ func writeErr(w http.ResponseWriter, code int, msg string, detail string) {
 	} else {
 		log.Printf("http %d error: %s", code, msg)
 	}
+	// Report 5xx errors to Sentry
+	if code >= 500 {
+		sentry.CaptureMessage(fmt.Sprintf("HTTP %d: %s (detail: %s)", code, msg, detail))
+	}
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
 }
 
@@ -53,6 +60,7 @@ func NewServer(mux *http.ServeMux, store storage.Store) *Server {
 func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
+	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
 	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
 	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
 	s.mux.HandleFunc("/api/v1/accounts", s.handleAccounts)
@@ -459,12 +467,53 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// LoggingMiddleware wraps an http.Handler to log basic request info.
+// LoggingMiddleware wraps an http.Handler to log basic request info and capture Sentry performance traces.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Start Sentry transaction for performance monitoring
+		ctx := r.Context()
+		hub := sentry.GetHubFromContext(ctx)
+		if hub == nil {
+			hub = sentry.CurrentHub().Clone()
+			ctx = sentry.SetHubOnContext(ctx, hub)
+		}
+
+		options := []sentry.SpanOption{
+			sentry.WithOpName("http.server"),
+			sentry.ContinueFromRequest(r),
+			sentry.WithTransactionSource(sentry.SourceURL),
+		}
+		transaction := sentry.StartTransaction(ctx,
+			fmt.Sprintf("%s %s", r.Method, r.URL.Path),
+			options...,
+		)
+		defer transaction.Finish()
+
+		// Update request context with transaction
+		r = r.WithContext(transaction.Context())
+
+		// Set user context if available (add your auth logic here)
+		hub.Scope().SetRequest(r)
+		hub.Scope().SetContext("request", map[string]interface{}{
+			"url":    r.URL.String(),
+			"method": r.Method,
+		})
+
 		start := time.Now()
 		sr := &statusRecorder{ResponseWriter: w, status: 200}
+
+		// Capture panics
+		defer func() {
+			if err := recover(); err != nil {
+				hub.RecoverWithContext(ctx, err)
+				log.Printf("panic recovered: %v", err)
+				writeErr(sr, http.StatusInternalServerError, "internal server error", fmt.Sprintf("%v", err))
+			}
+		}()
+
 		next.ServeHTTP(sr, r)
+
+		transaction.Status = sentry.HTTPtoSpanStatus(sr.status)
 		log.Printf("%s %s -> %d in %s", r.Method, r.URL.Path, sr.status, time.Since(start))
 	})
 }
@@ -480,6 +529,30 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleTestSentry(w http.ResponseWriter, r *http.Request) {
+	// Test endpoint to verify Sentry is working
+	testType := r.URL.Query().Get("type")
+
+	switch testType {
+	case "message":
+		// Test message capture
+		sentry.CaptureMessage("Sentry test message from CloudPAM")
+		sentry.Flush(2 * time.Second)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "message sent to Sentry"})
+	case "error":
+		// Test error capture with 500 status
+		writeErr(w, http.StatusInternalServerError, "test error for Sentry", "this is a test error to verify Sentry integration")
+	case "panic":
+		// Test panic recovery
+		panic("test panic for Sentry")
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{
+			"message": "Sentry test endpoint",
+			"usage":   "?type=message|error|panic",
+		})
+	}
+}
+
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		writeErr(w, http.StatusNotFound, "not found", "")
@@ -490,8 +563,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found", "index")
 		return
 	}
+
+	// Inject Sentry frontend DSN if configured
+	html := string(webui.Index)
+	if frontendDSN := os.Getenv("SENTRY_FRONTEND_DSN"); frontendDSN != "" {
+		// Inject meta tag before the Sentry script so it's available when the script runs
+		metaTag := fmt.Sprintf(`<meta name="sentry-dsn" content="%s">
+    `, frontendDSN)
+		html = strings.Replace(html, "<!-- Sentry Browser SDK -->", metaTag+"<!-- Sentry Browser SDK -->", 1)
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(webui.Index)
+	_, _ = w.Write([]byte(html))
 }
 
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {

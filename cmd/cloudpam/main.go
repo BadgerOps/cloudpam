@@ -8,6 +8,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+
 	ih "cloudpam/internal/http"
 )
 
@@ -19,6 +21,25 @@ func main() {
 	flag.StringVar(&addr, "addr", addr, "listen address (host:port)")
 	migrate := flag.String("migrate", "", "run migrations: 'up' to apply, 'status' to show status (sqlite builds only)")
 	flag.Parse()
+
+	// Initialize Sentry if DSN is provided
+	sentryDSN := os.Getenv("SENTRY_DSN")
+	sentryEnabled := false
+	if sentryDSN != "" {
+		err := sentry.Init(sentry.ClientOptions{
+			Dsn:              sentryDSN,
+			Environment:      envOr("SENTRY_ENVIRONMENT", "production"),
+			Release:          envOr("APP_VERSION", "dev"),
+			TracesSampleRate: 1.0, // Capture 100% of transactions for performance monitoring
+			AttachStacktrace: true,
+		})
+		if err != nil {
+			log.Printf("sentry initialization failed: %v", err)
+		} else {
+			log.Printf("sentry initialized (env=%s, release=%s)", envOr("SENTRY_ENVIRONMENT", "production"), envOr("APP_VERSION", "dev"))
+			sentryEnabled = true
+		}
+	}
 
 	// Handle migrations CLI before starting server
 	if *migrate != "" {
@@ -46,10 +67,17 @@ func main() {
 
 	log.Printf("cloudpam listening on %s", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
+		log.Printf("server error: %v", err)
+		if sentryEnabled {
+			sentry.Flush(2 * time.Second)
+		}
+		os.Exit(1)
 	}
 
 	// Graceful shutdown path (not usually reached in ListenAndServe example)
+	if sentryEnabled {
+		sentry.Flush(2 * time.Second)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)

@@ -8,25 +8,23 @@ CloudPAM is a lightweight, cloud-native IP Address Management (IPAM) system for 
 
 ## Build System & Commands
 
-The project uses both Make and Just. Make delegates to Just if installed; otherwise runs fallback recipes.
+The project uses [Just](https://github.com/casey/just) as its command runner. Install: `cargo install just` or see installation options at https://github.com/casey/just#installation.
 
 ### Development
 ```bash
-make dev              # Run server on :8080 (in-memory store)
-just dev              # Same as above
-go run ./cmd/cloudpam # Direct Go command
+just dev              # Run server on :8080 (in-memory store)
+go run ./cmd/cloudpam # Direct Go command (alternative)
 ```
 
 ### Building
 ```bash
-make build            # Build binary without SQLite
-make sqlite-build     # Build with SQLite support (-tags sqlite)
-just sqlite-build     # Same as above
+just build            # Build binary without SQLite
+just sqlite-build     # Build with SQLite support (-tags sqlite)
 ```
 
 ### SQLite Mode
 ```bash
-make sqlite-run                                      # Build and run with SQLite
+just sqlite-run                                      # Build and run with SQLite
 SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' ./cloudpam  # Run with custom DSN
 ./cloudpam -migrate status                           # Check migration status
 ./cloudpam -migrate up                               # Apply migrations
@@ -34,19 +32,17 @@ SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' ./cloudpam  # Run with custom D
 
 ### Testing
 ```bash
-make test             # Run all tests
-make test-race        # Run tests with race detector
-just test-race        # Same as above
-make cover            # Generate coverage report (coverage.out, coverage.html)
+just test             # Run all tests
+just test-race        # Run tests with race detector
+just cover            # Generate coverage report (coverage.out, coverage.html)
 just cover-threshold thr=80  # Check coverage meets threshold
 ```
 
 ### Linting & Formatting
 ```bash
-make fmt              # Format code with go fmt
-make lint             # Run golangci-lint (requires v1.61.0+ for Go 1.24)
-just lint             # Same as above
-make tidy             # Run go mod tidy
+just fmt              # Format code with go fmt
+just lint             # Run golangci-lint (requires v1.61.0+ for Go 1.24)
+just tidy             # Run go mod tidy
 ```
 
 ### OpenAPI Tooling
@@ -140,7 +136,7 @@ The HTTP server (`internal/http/server.go`) implements IPv4 CIDR logic:
 - Tests use Go's standard `testing` package
 - Tests live alongside code as `*_test.go`
 - Use `httptest` helpers for API testing (see `internal/http/handlers_test.go`)
-- Run tests with `make test` before committing
+- Run tests with `just test` before committing
 
 ### Storage Development
 
@@ -149,7 +145,7 @@ When modifying storage:
 - Update the `Store` interface in `internal/storage/store.go`
 - Implement methods in both `MemoryStore` (same file) and SQLite store (`internal/storage/sqlite/sqlite.go`)
 - For SQLite schema changes: add new migration file to `migrations/` with sequential prefix (e.g., `0003_description.sql`)
-- Test both storage backends: run `make test` (in-memory) and `make sqlite-build && make test` (SQLite)
+- Test both storage backends: run `just test` (in-memory) and `just sqlite-build && just test` (SQLite)
 
 ### HTTP API Development
 
@@ -173,7 +169,10 @@ When adding endpoints:
 
 - `ADDR` or `PORT`: listen address (default `:8080`)
 - `SQLITE_DSN`: SQLite connection string (default `file:cloudpam.db?cache=shared&_fk=1`)
-- `APP_VERSION`: optional version stamp for migrations
+- `APP_VERSION`: optional version stamp for migrations and Sentry release tracking
+- `SENTRY_DSN`: Sentry DSN for backend error tracking (optional)
+- `SENTRY_FRONTEND_DSN`: Sentry DSN for frontend error tracking (optional, can be different from backend DSN)
+- `SENTRY_ENVIRONMENT`: Sentry environment name (default: `production`)
 
 ## API Contract
 
@@ -190,8 +189,8 @@ Common workflows:
 
 CloudPAM's architecture allows the same test suite to run against both storage implementations:
 
-1. Run without SQLite: `make test` (tests use in-memory store)
-2. Run with SQLite: `make sqlite-build && make test` (tests use SQLite store if available)
+1. Run without SQLite: `just test` (tests use in-memory store)
+2. Run with SQLite: `just sqlite-build && just test` (tests use SQLite store if available)
 
 When writing tests, avoid assumptions about storage persistence or specific implementation details.
 
@@ -200,6 +199,53 @@ When writing tests, avoid assumptions about storage persistence or specific impl
 - GitHub Actions: `.github/workflows/test.yml` and `.github/workflows/lint.yml`
 - CI pins Go `1.24.x` and golangci-lint `v2.1.6`
 - Tests run with `-race` flag in CI
+
+## Error Tracking with Sentry
+
+CloudPAM integrates with Sentry for error tracking and performance monitoring:
+
+### Backend Integration
+- Captures HTTP errors (5xx status codes)
+- Panic recovery with stack traces
+- Performance monitoring for all HTTP requests
+- Automatic request context capture
+
+### Frontend Integration
+- JavaScript error tracking
+- Performance monitoring
+- Session replay (10% of sessions, 100% of sessions with errors)
+- Breadcrumb tracking for user actions
+
+### Setup Instructions
+
+1. Create Sentry projects:
+   - One for the backend (Go)
+   - One for the frontend (JavaScript) - optional, can use same DSN
+
+2. Set environment variables:
+   ```bash
+   export SENTRY_DSN="https://your-backend-dsn@sentry.io/project-id"
+   export SENTRY_FRONTEND_DSN="https://your-frontend-dsn@sentry.io/project-id"
+   export SENTRY_ENVIRONMENT="production"  # or staging, dev, etc.
+   export APP_VERSION="v1.0.0"  # used as release identifier
+   ```
+
+3. Run the application:
+   ```bash
+   just dev  # or just build && ./cloudpam
+   ```
+
+4. Sentry will automatically:
+   - Initialize on startup (backend logs confirmation)
+   - Capture panics and 5xx errors
+   - Track HTTP performance
+   - Report frontend errors and replays
+
+### Notes
+- If `SENTRY_DSN` is not set, Sentry integration is disabled (no overhead)
+- Frontend DSN is injected into HTML at runtime via meta tag
+- TracesSampleRate is set to 1.0 (100%) - adjust in `cmd/cloudpam/main.go` for high-traffic environments
+- Session replay samples 10% of sessions by default - adjust in `web/index.html` if needed
 
 ## Roadmap Context
 
