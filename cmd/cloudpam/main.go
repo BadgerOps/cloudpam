@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/getsentry/sentry-go"
@@ -65,28 +67,52 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("cloudpam listening on %s", addr)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Printf("server error: %v", err)
-		if err := store.Close(); err != nil {
-			log.Printf("error closing store: %v", err)
+	// Setup signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Run server in goroutine
+	serverErrors := make(chan error, 1)
+	go func() {
+		log.Printf("cloudpam listening on %s", addr)
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	// Wait for interrupt signal or server error
+	select {
+	case err := <-serverErrors:
+		if err != nil {
+			log.Printf("server error: %v", err)
 		}
-		if sentryEnabled {
-			sentry.Flush(2 * time.Second)
-		}
-		os.Exit(1)
+	case sig := <-sigChan:
+		log.Printf("received signal %v, initiating graceful shutdown", sig)
 	}
 
-	// Graceful shutdown path (not usually reached in ListenAndServe example)
+	// Graceful shutdown with 15-second timeout
+	log.Println("shutting down server...")
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("server shutdown error: %v", err)
+	} else {
+		log.Println("server stopped gracefully")
+	}
+
+	// Close database connection
 	if err := store.Close(); err != nil {
 		log.Printf("error closing store: %v", err)
+	} else {
+		log.Println("database connection closed")
 	}
+
+	// Flush Sentry events
 	if sentryEnabled {
+		log.Println("flushing sentry events...")
 		sentry.Flush(2 * time.Second)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = server.Shutdown(ctx)
+
+	log.Println("shutdown complete")
 }
 
 func envOr(k, def string) string {
