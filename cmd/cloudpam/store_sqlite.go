@@ -3,7 +3,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"os"
 
 	"cloudpam/internal/storage"
@@ -12,17 +12,20 @@ import (
 
 // selectStore returns a SQLite-backed store when built with the 'sqlite' tag.
 // Configure with env var SQLITE_DSN (e.g., file:cloudpam.db?cache=shared&_fk=1)
-func selectStore() storage.Store {
+func selectStore(logger *slog.Logger) storage.Store {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	dsn := os.Getenv("SQLITE_DSN")
 	if dsn == "" {
 		dsn = "file:cloudpam.db?cache=shared&_fk=1"
 	}
 	st, err := sqlitestore.New(dsn)
 	if err != nil {
-		log.Printf("sqlite init failed (%v), falling back to memory store", err)
+		logger.Error("sqlite init failed; falling back to memory store", "error", err)
 		return storage.NewMemoryStore()
 	}
-	log.Printf("using sqlite store: %s", dsn)
+	logger.Info("using sqlite store", "dsn", dsn)
 	return st
 }
 

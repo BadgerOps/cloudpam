@@ -2,6 +2,8 @@ package http
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"strconv"
@@ -22,7 +24,8 @@ type poolDTO struct {
 func setupTestServer() (*Server, *storage.MemoryStore) {
 	st := storage.NewMemoryStore()
 	mux := stdhttp.NewServeMux()
-	srv := NewServer(mux, st)
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+	srv := NewServer(mux, st, logger)
 	srv.RegisterRoutes()
 	return srv, st
 }

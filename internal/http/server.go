@@ -2,11 +2,12 @@ package http
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/binary"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -35,26 +36,54 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func writeErr(w http.ResponseWriter, code int, msg string, detail string) {
-	if detail != "" {
-		log.Printf("http %d error: %s detail=%s", code, msg, detail)
-	} else {
-		log.Printf("http %d error: %s", code, msg)
+type Server struct {
+	mux    *http.ServeMux
+	store  storage.Store
+	logger *slog.Logger
+}
+
+func NewServer(mux *http.ServeMux, store storage.Store, logger *slog.Logger) *Server {
+	return &Server{mux: mux, store: store, logger: logger}
+}
+
+func (s *Server) loggerOrDefault() *slog.Logger {
+	if s.logger != nil {
+		return s.logger
 	}
-	// Report 5xx errors to Sentry
+	return slog.Default()
+}
+
+func valueOrNil[T any](ptr *T) any {
+	if ptr == nil {
+		return nil
+	}
+	return *ptr
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, msg string, detail string) {
+	fields := []any{
+		"status", code,
+		"error", msg,
+	}
+	if detail != "" {
+		fields = append(fields, "detail", detail)
+	}
+	fields = appendRequestID(ctx, fields)
+	logger := s.loggerOrDefault()
 	if code >= 500 {
+		logger.ErrorContext(ctx, "request failed", fields...)
 		sentry.CaptureMessage(fmt.Sprintf("HTTP %d: %s (detail: %s)", code, msg, detail))
+	} else {
+		logger.WarnContext(ctx, "request failed", fields...)
 	}
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
-}
-
-type Server struct {
-	mux   *http.ServeMux
-	store storage.Store
-}
-
-func NewServer(mux *http.ServeMux, store storage.Store) *Server {
-	return &Server{mux: mux, store: store}
 }
 
 func (s *Server) RegisterRoutes() {
@@ -74,7 +103,7 @@ func (s *Server) RegisterRoutes() {
 
 func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
 	}
 	w.Header().Set("Content-Type", "application/yaml")
@@ -86,14 +115,14 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 // Returns a ZIP archive containing separate CSV files per selected dataset.
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
 	}
 	ctx := r.Context()
 
 	datasetsQ := strings.TrimSpace(r.URL.Query().Get("datasets"))
 	if datasetsQ == "" {
-		writeErr(w, http.StatusBadRequest, "datasets is required", "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "datasets is required", "")
 		return
 	}
 	want := map[string]bool{}
@@ -104,10 +133,17 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(want) == 0 {
-		writeErr(w, http.StatusBadRequest, "no valid datasets requested", "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "no valid datasets requested", "")
 		return
 	}
-	log.Printf("export: datasets=%s accounts_fields=%s pools_fields=%s blocks_fields=%s", datasetsQ, r.URL.Query().Get("accounts_fields"), r.URL.Query().Get("pools_fields"), r.URL.Query().Get("blocks_fields"))
+	fields := []any{
+		"datasets", datasetsQ,
+		"accounts_fields", r.URL.Query().Get("accounts_fields"),
+		"pools_fields", r.URL.Query().Get("pools_fields"),
+		"blocks_fields", r.URL.Query().Get("blocks_fields"),
+	}
+	fields = appendRequestID(ctx, fields)
+	s.loggerOrDefault().InfoContext(ctx, "export requested", fields...)
 
 	// Helper to parse field lists with defaults
 	parseFields := func(q, def string) []string {
@@ -145,7 +181,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if want["accounts"] || want["blocks"] {
 		accounts, err = s.store.ListAccounts(ctx)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+			s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 			return
 		}
 		sort.Slice(accounts, func(i, j int) bool { return accounts[i].ID < accounts[j].ID })
@@ -153,7 +189,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if want["pools"] || want["blocks"] {
 		pools, err = s.store.ListPools(ctx)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+			s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 			return
 		}
 		sort.Slice(pools, func(i, j int) bool { return pools[i].ID < pools[j].ID })
@@ -223,7 +259,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row)
 		}
 		if err := writeCSV("accounts.csv", hdr, rows); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to write accounts.csv", err.Error())
+			s.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to write accounts.csv", err.Error())
 			return
 		}
 	}
@@ -262,7 +298,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row)
 		}
 		if err := writeCSV("pools.csv", hdr, rows); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to write pools.csv", err.Error())
+			s.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to write pools.csv", err.Error())
 			return
 		}
 	}
@@ -398,7 +434,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, rowOut)
 		}
 		if err := writeCSV("blocks.csv", hdr, rows); err != nil {
-			writeErr(w, http.StatusInternalServerError, "failed to write blocks.csv", err.Error())
+			s.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to write blocks.csv", err.Error())
 			return
 		}
 	}
@@ -409,39 +445,39 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/")
 	idStr := strings.Trim(path, "/")
 	if idStr == "" {
-		writeErr(w, http.StatusNotFound, "not found", "")
+		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 		return
 	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid id", "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid id", "")
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		a, ok, err := s.store.GetAccount(r.Context(), id)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error(), "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 		if !ok {
-			writeErr(w, http.StatusNotFound, "not found", "")
+			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
 		writeJSON(w, http.StatusOK, a)
 	case http.MethodPatch:
 		var in domain.Account
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid json", "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
 			return
 		}
 		a, ok, err := s.store.UpdateAccount(r.Context(), id, in)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error(), "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 		if !ok {
-			writeErr(w, http.StatusNotFound, "not found", "")
+			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
 		writeJSON(w, http.StatusOK, a)
@@ -454,68 +490,17 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 			ok, err = s.store.DeleteAccount(r.Context(), id)
 		}
 		if err != nil {
-			writeErr(w, http.StatusConflict, err.Error(), "")
+			s.writeErr(r.Context(), w, http.StatusConflict, err.Error(), "")
 			return
 		}
 		if !ok {
-			writeErr(w, http.StatusNotFound, "not found", "")
+			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
-}
-
-// LoggingMiddleware wraps an http.Handler to log basic request info and capture Sentry performance traces.
-func LoggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Start Sentry transaction for performance monitoring
-		ctx := r.Context()
-		hub := sentry.GetHubFromContext(ctx)
-		if hub == nil {
-			hub = sentry.CurrentHub().Clone()
-			ctx = sentry.SetHubOnContext(ctx, hub)
-		}
-
-		options := []sentry.SpanOption{
-			sentry.WithOpName("http.server"),
-			sentry.ContinueFromRequest(r),
-			sentry.WithTransactionSource(sentry.SourceURL),
-		}
-		transaction := sentry.StartTransaction(ctx,
-			fmt.Sprintf("%s %s", r.Method, r.URL.Path),
-			options...,
-		)
-		defer transaction.Finish()
-
-		// Update request context with transaction
-		r = r.WithContext(transaction.Context())
-
-		// Set user context if available (add your auth logic here)
-		hub.Scope().SetRequest(r)
-		hub.Scope().SetContext("request", map[string]interface{}{
-			"url":    r.URL.String(),
-			"method": r.Method,
-		})
-
-		start := time.Now()
-		sr := &statusRecorder{ResponseWriter: w, status: 200}
-
-		// Capture panics
-		defer func() {
-			if err := recover(); err != nil {
-				hub.RecoverWithContext(ctx, err)
-				log.Printf("panic recovered: %v", err)
-				writeErr(sr, http.StatusInternalServerError, "internal server error", fmt.Sprintf("%v", err))
-			}
-		}()
-
-		next.ServeHTTP(sr, r)
-
-		transaction.Status = sentry.HTTPtoSpanStatus(sr.status)
-		log.Printf("%s %s -> %d in %s", r.Method, r.URL.Path, sr.status, time.Since(start))
-	})
 }
 
 type statusRecorder struct {
@@ -541,7 +526,7 @@ func (s *Server) handleTestSentry(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "message sent to Sentry"})
 	case "error":
 		// Test error capture with 500 status
-		writeErr(w, http.StatusInternalServerError, "test error for Sentry", "this is a test error to verify Sentry integration")
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "test error for Sentry", "this is a test error to verify Sentry integration")
 	case "panic":
 		// Test panic recovery
 		panic("test panic for Sentry")
@@ -555,12 +540,12 @@ func (s *Server) handleTestSentry(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
-		writeErr(w, http.StatusNotFound, "not found", "")
+		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 		return
 	}
 	// Serve embedded single‑page UI to ensure release binaries include the frontend.
 	if len(webui.Index) == 0 {
-		writeErr(w, http.StatusNotFound, "not found", "index")
+		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "index")
 		return
 	}
 
@@ -585,7 +570,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) {
 		s.createPool(w, r)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
 
@@ -601,7 +586,7 @@ func (s *Server) handleAccounts(w http.ResponseWriter, r *http.Request) {
 		s.createAccount(w, r)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
 
@@ -609,7 +594,7 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	accs, err := s.store.ListAccounts(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -620,24 +605,39 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var in domain.CreateAccount
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		log.Printf("accounts:create invalid json: %v", err)
-		writeErr(w, http.StatusBadRequest, "invalid json", "")
+		fields := appendRequestID(ctx, []any{"reason", err.Error()})
+		s.loggerOrDefault().WarnContext(ctx, "accounts:create invalid json", fields...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
 		return
 	}
 	in.Key = strings.TrimSpace(in.Key)
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Key == "" || in.Name == "" {
-		log.Printf("accounts:create missing required fields key=%q name=%q", in.Key, in.Name)
-		writeErr(w, http.StatusBadRequest, "key and name are required", "")
+		fields := appendRequestID(ctx, []any{
+			"key_blank", in.Key == "",
+			"name_blank", in.Name == "",
+		})
+		s.loggerOrDefault().WarnContext(ctx, "accounts:create missing required fields", fields...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "key and name are required", "")
 		return
 	}
 	a, err := s.store.CreateAccount(ctx, in)
 	if err != nil {
-		log.Printf("accounts:create storage error key=%q name=%q err=%v", in.Key, in.Name, err)
-		writeErr(w, http.StatusBadRequest, err.Error(), "")
+		fields := appendRequestID(ctx, []any{
+			"key", in.Key,
+			"name", in.Name,
+			"error", err.Error(),
+		})
+		s.loggerOrDefault().WarnContext(ctx, "accounts:create storage error", fields...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
-	log.Printf("accounts:create ok id=%d key=%q name=%q", a.ID, a.Key, a.Name)
+	fields := appendRequestID(ctx, []any{
+		"id", a.ID,
+		"key", a.Key,
+		"name", a.Name,
+	})
+	s.loggerOrDefault().InfoContext(ctx, "accounts:create success", fields...)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(a)
@@ -651,12 +651,12 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	ps, err := s.store.ListPools(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	accs, err := s.store.ListAccounts(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	// Build lookups
@@ -705,7 +705,7 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 	} else if pageSizeStr != "" {
 		psn, err := strconv.Atoi(pageSizeStr)
 		if err != nil || psn < 0 {
-			writeErr(w, http.StatusBadRequest, "invalid page_size", "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid page_size", "")
 			return
 		}
 		pageSize = psn
@@ -718,7 +718,7 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 	if pageStr != "" {
 		p, err := strconv.Atoi(pageStr)
 		if err != nil || p <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid page", "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid page", "")
 			return
 		}
 		page = p
@@ -813,17 +813,17 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/pools/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
-		writeErr(w, http.StatusNotFound, "not found", "")
+		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 		return
 	}
 	id64, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid pool id", "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool id", "")
 		return
 	}
 	if len(parts) >= 2 && parts[1] == "blocks" {
 		if r.Method != http.MethodGet {
-			writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+			s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 			return
 		}
 		s.blocksForPool(w, r, id64)
@@ -834,11 +834,11 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		p, ok, err := s.store.GetPool(r.Context(), id64)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error(), "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 		if !ok {
-			writeErr(w, http.StatusNotFound, "not found", "")
+			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
 		writeJSON(w, http.StatusOK, p)
@@ -848,16 +848,16 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 			Name      *string `json:"name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			writeErr(w, http.StatusBadRequest, "invalid json", "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
 			return
 		}
 		p, ok, err := s.store.UpdatePoolMeta(r.Context(), id64, payload.Name, payload.AccountID)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, err.Error(), "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 		if !ok {
-			writeErr(w, http.StatusNotFound, "not found", "")
+			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
 		writeJSON(w, http.StatusOK, p)
@@ -870,16 +870,16 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 			ok, err = s.store.DeletePool(r.Context(), id64)
 		}
 		if err != nil {
-			writeErr(w, http.StatusConflict, err.Error(), "")
+			s.writeErr(r.Context(), w, http.StatusConflict, err.Error(), "")
 			return
 		}
 		if !ok {
-			writeErr(w, http.StatusNotFound, "not found", "")
+			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		writeErr(w, http.StatusMethodNotAllowed, "method not allowed", "")
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
 
@@ -887,7 +887,7 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	pools, err := s.store.ListPools(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, pools)
@@ -895,45 +895,61 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	logger := s.loggerOrDefault()
 	var in domain.CreatePool
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		log.Printf("pools:create invalid json: %v", err)
-		writeErr(w, http.StatusBadRequest, "invalid json", "")
+		logger.WarnContext(ctx, "pools:create invalid json", appendRequestID(ctx, []any{"reason", err.Error()})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
 		return
 	}
 	in.Name = strings.TrimSpace(in.Name)
 	in.CIDR = strings.TrimSpace(in.CIDR)
 	if in.Name == "" || in.CIDR == "" {
-		log.Printf("pools:create missing fields name=%q cidr=%q parent_id=%v account_id=%v", in.Name, in.CIDR, in.ParentID, in.AccountID)
-		writeErr(w, http.StatusBadRequest, "name and cidr are required", "")
+		logger.WarnContext(ctx, "pools:create missing required fields", appendRequestID(ctx, []any{
+			"name_blank", in.Name == "",
+			"cidr_blank", in.CIDR == "",
+			"parent_id", valueOrNil(in.ParentID),
+			"account_id", valueOrNil(in.AccountID),
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "name and cidr are required", "")
 		return
 	}
 	// Validate CIDR format and IPv4
 	if !strings.Contains(in.CIDR, "/") {
-		log.Printf("pools:create invalid cidr format: %q", in.CIDR)
-		writeErr(w, http.StatusBadRequest, "cidr must be in a.b.c.d/x form", "")
+		logger.WarnContext(ctx, "pools:create cidr missing prefix", appendRequestID(ctx, []any{"cidr", in.CIDR})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "cidr must be in a.b.c.d/x form", "")
 		return
 	}
 	if pfx, err := netip.ParsePrefix(in.CIDR); err != nil || !pfx.Addr().Is4() {
-		log.Printf("pools:create invalid cidr parse: %q err=%v", in.CIDR, err)
-		writeErr(w, http.StatusBadRequest, "invalid cidr", "")
+		logger.WarnContext(ctx, "pools:create invalid cidr", appendRequestID(ctx, []any{
+			"cidr", in.CIDR,
+			"reason", errString(err),
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid cidr", "")
 		return
 	}
 	// If ParentID provided, ensure child CIDR is subset of parent CIDR (IPv4 only for now).
 	if in.ParentID != nil {
 		parent, ok, err := s.store.GetPool(ctx, *in.ParentID)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+			s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 			return
 		}
 		if !ok {
-			log.Printf("pools:create parent not found id=%d for cidr=%q", *in.ParentID, in.CIDR)
-			writeErr(w, http.StatusBadRequest, "parent not found", "")
+			logger.WarnContext(ctx, "pools:create parent not found", appendRequestID(ctx, []any{
+				"parent_id", *in.ParentID,
+				"cidr", in.CIDR,
+			})...)
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "parent not found", "")
 			return
 		}
 		if err := validateChildCIDR(parent.CIDR, in.CIDR); err != nil {
-			log.Printf("pools:create invalid sub-pool cidr child=%q parent=%q reason=%v", in.CIDR, parent.CIDR, err)
-			writeErr(w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
+			logger.WarnContext(ctx, "pools:create invalid sub-pool cidr", appendRequestID(ctx, []any{
+				"child_cidr", in.CIDR,
+				"parent_cidr", parent.CIDR,
+				"reason", err.Error(),
+			})...)
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
 			return
 		}
 	}
@@ -943,12 +959,12 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	{
 		pfxNew, _ := netip.ParsePrefix(in.CIDR)
 		if !pfxNew.Addr().Is4() {
-			writeErr(w, http.StatusBadRequest, "only ipv4 supported for now", "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "only ipv4 supported for now", "")
 			return
 		}
 		all, err := s.store.ListPools(ctx)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+			s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 			return
 		}
 		for _, p := range all {
@@ -970,19 +986,35 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if prefixesOverlapIPv4(old, pfxNew) {
-				log.Printf("pools:create overlap: new=%q existing id=%d cidr=%q (same parent scope)", in.CIDR, p.ID, p.CIDR)
-				writeErr(w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", p.ID, p.CIDR))
+				logger.WarnContext(ctx, "pools:create cidr overlap", appendRequestID(ctx, []any{
+					"candidate_cidr", in.CIDR,
+					"existing_pool_id", p.ID,
+					"existing_cidr", p.CIDR,
+				})...)
+				s.writeErr(r.Context(), w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", p.ID, p.CIDR))
 				return
 			}
 		}
 	}
 	p, err := s.store.CreatePool(ctx, in)
 	if err != nil {
-		log.Printf("pools:create storage error name=%q cidr=%q parent_id=%v account_id=%v err=%v", in.Name, in.CIDR, in.ParentID, in.AccountID, err)
-		writeErr(w, http.StatusBadRequest, err.Error(), "")
+		logger.WarnContext(ctx, "pools:create storage error", appendRequestID(ctx, []any{
+			"name", in.Name,
+			"cidr", in.CIDR,
+			"parent_id", valueOrNil(in.ParentID),
+			"account_id", valueOrNil(in.AccountID),
+			"error", err.Error(),
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
-	log.Printf("pools:create ok id=%d name=%q cidr=%q parent_id=%v account_id=%v", p.ID, p.Name, p.CIDR, p.ParentID, p.AccountID)
+	logger.InfoContext(ctx, "pools:create success", appendRequestID(ctx, []any{
+		"id", p.ID,
+		"name", p.Name,
+		"cidr", p.CIDR,
+		"parent_id", valueOrNil(p.ParentID),
+		"account_id", valueOrNil(p.AccountID),
+	})...)
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -1004,21 +1036,21 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 	ctx := r.Context()
 	pool, ok, err := s.store.GetPool(ctx, id)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not found", "pool")
+		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "pool")
 		return
 	}
 	nplStr := r.URL.Query().Get("new_prefix_len")
 	if nplStr == "" {
-		writeErr(w, http.StatusBadRequest, "new_prefix_len is required", "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "new_prefix_len is required", "")
 		return
 	}
 	npl, err := strconv.Atoi(nplStr)
 	if err != nil || npl <= 0 || npl > 32 {
-		writeErr(w, http.StatusBadRequest, "invalid new_prefix_len", "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid new_prefix_len", "")
 		return
 	}
 	// Pagination params
@@ -1030,7 +1062,7 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 	} else if pageSizeStr != "" {
 		ps, err := strconv.Atoi(pageSizeStr)
 		if err != nil || ps < 0 {
-			writeErr(w, http.StatusBadRequest, "invalid page_size", "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid page_size", "")
 			return
 		}
 		pageSize = ps
@@ -1039,7 +1071,7 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 	if pageStr != "" {
 		p, err := strconv.Atoi(pageStr)
 		if err != nil || p <= 0 {
-			writeErr(w, http.StatusBadRequest, "invalid page", "")
+			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid page", "")
 			return
 		}
 		page = p
@@ -1053,13 +1085,13 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 	}
 	blocks, hosts, total, err := computeSubnetsIPv4Window(pool.CIDR, npl, offset, limit)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error(), "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
 	// Determine used blocks: exists child pool with exact CIDR match.
 	all, err := s.store.ListPools(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	type usedInfo struct {
@@ -1088,7 +1120,7 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 	// Account id -> name map
 	accs, err := s.store.ListAccounts(ctx)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	accName := map[int64]string{}

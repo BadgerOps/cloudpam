@@ -3,7 +3,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"os"
 
 	"cloudpam/internal/storage"
@@ -11,9 +11,12 @@ import (
 
 // selectStore returns the default storage when built without the 'sqlite' tag.
 // If SQLITE_DSN is set, we log a hint to rebuild with -tags sqlite.
-func selectStore() storage.Store {
+func selectStore(logger *slog.Logger) storage.Store {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	if os.Getenv("SQLITE_DSN") != "" {
-		log.Printf("SQLITE_DSN set, but binary not built with -tags sqlite; using in-memory store")
+		logger.Warn("SQLITE_DSN set but binary not built with -tags sqlite; using in-memory store")
 	}
 	return storage.NewMemoryStore()
 }
