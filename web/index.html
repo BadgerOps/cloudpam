@@ -658,97 +658,266 @@
     </template>
     
     <template x-if="tab==='accounts'">
-    <section x-data="accountsView()" x-init="fetchAccounts()" class="card">
-      <h2>Accounts</h2>
-      <div class="row">
-        <input type="text" placeholder="Key (e.g., aws:123, gcp:proj)" x-model="acctForm.key" />
-        <input type="text" placeholder="Name" x-model="acctForm.name" />
-        <input type="text" placeholder="Provider (optional)" x-model="acctForm.provider" />
-        <input type="text" placeholder="External ID (optional)" x-model="acctForm.external_id" />
-        <input type="text" placeholder="Description (optional)" x-model="acctForm.description" />
-        <input type="text" placeholder="Platform (optional)" x-model="acctForm.platform" />
-        <select x-model="acctForm.tier">
-          <option value="">Tier (optional)</option>
-          <option value="dev">dev</option>
-          <option value="stg">stg</option>
-          <option value="sbx">sbx</option>
-          <option value="prd">prd</option>
-        </select>
-        <input type="text" placeholder="Environment (optional)" x-model="acctForm.environment" />
-        <input type="text" placeholder="Regions (comma-separated)" x-model="acctForm.regions_text" />
-        <button class="btn" @click="createAccount()">Create</button>
-        <span x-text="acctMsg" class="muted"></span>
-      </div>
-      <div class="row" style="justify-content:flex-end; margin:.4rem 0; position:relative;">
-        <div style="margin-left:auto; position:relative;" x-data="{ open:false }" @click.outside="open=false">
-          <button class="btn ghost" @click="open=!open">Columns ▾</button>
-          <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:10020; padding:8px 10px; min-width:220px;">
-            <div class="muted" style="margin-bottom:6px;">Toggle columns</div>
-            <template x-for="col in Object.keys(visibleCols)" :key="col">
-              <label style="display:flex; align-items:center; gap:.5rem;">
-                <input type="checkbox" :checked="visibleCols[col]" @change="visibleCols[col]=!visibleCols[col]" />
-                <span x-text="col.replace('_',' ').replace('_',' ')" style="text-transform: capitalize;"></span>
-              </label>
-            </template>
-          </div>
+    <section x-data="accountsView()" x-init="fetchAccounts()">
+      <!-- Page Header -->
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Accounts</h1>
+          <p class="page-subtitle">Manage cloud accounts and projects</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn" @click="showCreateForm = !showCreateForm">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Account
+          </button>
         </div>
       </div>
-      <div style="overflow-x:auto; width:100%;">
-      <table style="min-width:960px; width:100%;">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Key</th>
-            <th>Name</th>
-            <th x-show="visibleCols.provider">Provider</th>
-            <th x-show="visibleCols.external_id">External ID</th>
-            <th x-show="visibleCols.description">Description</th>
-            <th x-show="visibleCols.platform">Platform</th>
-            <th x-show="visibleCols.tier">Tier</th>
-            <th x-show="visibleCols.environment">Environment</th>
-            <th x-show="visibleCols.regions">Regions</th>
-            <th x-show="visibleCols.created">Created</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <template x-for="a in accounts" :key="a.id">
-            <tr x-data="{ open:false }" @click.outside="open=false">
-              <td x-text="a.id"></td>
-              <td x-text="a.key"></td>
-              <td x-text="a.name"></td>
-              <td x-show="visibleCols.provider" x-text="a.provider || '-' "></td>
-              <td x-show="visibleCols.external_id" x-text="a.external_id || '-' "></td>
-              <td x-show="visibleCols.description" x-text="a.description || '-' "></td>
-              <td x-show="visibleCols.platform" x-text="a.platform || '-' "></td>
-              <td x-show="visibleCols.tier" x-text="a.tier || '-' "></td>
-              <td x-show="visibleCols.environment" x-text="a.environment || '-' "></td>
-              <td x-show="visibleCols.regions" x-text="Array.isArray(a.regions) && a.regions.length ? a.regions.join(', ') : '-' "></td>
-              <td x-show="visibleCols.created" x-text="new Date(a.created_at).toLocaleString()"></td>
-              <td style="position:relative; text-align:right;">
-                <button class="btn ghost" @click="open=!open">⋮</button>
-                <div x-show="open" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow: var(--shadow); z-index:9999; min-width:140px;">
-                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; openEditAccount(a)">Edit</button>
-                  <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="open=false; confirmDeleteAccount(a)">Delete</button>
+
+      <!-- Stats Row -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value" x-text="accounts.length"></div>
+          <div class="stat-label">Total Accounts</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="accounts.filter(a => a.provider === 'aws' || a.key?.startsWith('aws:')).length"></div>
+          <div class="stat-label">AWS Accounts</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="accounts.filter(a => a.provider === 'gcp' || a.key?.startsWith('gcp:')).length"></div>
+          <div class="stat-label">GCP Projects</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="accounts.filter(a => a.tier === 'prd').length"></div>
+          <div class="stat-label">Production</div>
+        </div>
+      </div>
+
+      <!-- Create Form (collapsible) -->
+      <div x-show="showCreateForm" x-cloak class="card" style="margin-bottom: 1rem;">
+        <div class="card-header">
+          <h3 class="card-title">Create New Account</h3>
+          <button class="btn ghost btn-sm" @click="showCreateForm = false">×</button>
+        </div>
+        <div class="card-body">
+          <div class="row" style="align-items: flex-start; gap: 1rem; margin-bottom: 1rem;">
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label">Key *</label>
+              <input type="text" placeholder="e.g., aws:123456789012" x-model="acctForm.key" />
+              <span class="form-hint">Unique identifier (aws:id or gcp:project)</span>
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label">Name *</label>
+              <input type="text" placeholder="e.g., Production AWS" x-model="acctForm.name" />
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 140px;">
+              <label class="form-label">Provider</label>
+              <select x-model="acctForm.provider">
+                <option value="">Select...</option>
+                <option value="aws">AWS</option>
+                <option value="gcp">GCP</option>
+                <option value="azure">Azure</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 140px;">
+              <label class="form-label">Tier</label>
+              <select x-model="acctForm.tier">
+                <option value="">Select...</option>
+                <option value="prd">Production</option>
+                <option value="stg">Staging</option>
+                <option value="dev">Development</option>
+                <option value="sbx">Sandbox</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="align-items: flex-start; gap: 1rem; margin-bottom: 1rem;">
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label">External ID</label>
+              <input type="text" placeholder="e.g., 123456789012" x-model="acctForm.external_id" />
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label">Platform</label>
+              <input type="text" placeholder="e.g., kubernetes, serverless" x-model="acctForm.platform" />
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 140px;">
+              <label class="form-label">Environment</label>
+              <input type="text" placeholder="e.g., production" x-model="acctForm.environment" />
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 200px;">
+              <label class="form-label">Regions</label>
+              <input type="text" placeholder="e.g., us-east-1, us-west-2" x-model="acctForm.regions_text" />
+              <span class="form-hint">Comma-separated list</span>
+            </div>
+          </div>
+          <div class="row" style="align-items: flex-start; gap: 1rem;">
+            <div class="form-group" style="flex: 2; min-width: 300px;">
+              <label class="form-label">Description</label>
+              <input type="text" placeholder="Optional description" x-model="acctForm.description" style="width: 100%;" />
+            </div>
+            <div class="form-group" style="justify-content: flex-end; padding-top: 1.5rem;">
+              <button class="btn" @click="createAccount()" :disabled="creating">
+                <span x-show="creating" class="spinner"></span>
+                <span x-text="creating ? 'Creating…' : 'Create Account'"></span>
+              </button>
+            </div>
+          </div>
+          <span x-text="acctMsg" class="muted text-sm"></span>
+        </div>
+      </div>
+
+      <!-- Accounts Table Card -->
+      <div class="card">
+        <!-- Toolbar -->
+        <div class="toolbar">
+          <input type="text" class="toolbar-search" placeholder="Search accounts..." x-model="search" />
+          <div class="toolbar-divider"></div>
+          <div class="toolbar-group">
+            <span class="toolbar-label">Provider:</span>
+            <select x-model="filterProvider" style="width: 100px;">
+              <option value="">All</option>
+              <option value="aws">AWS</option>
+              <option value="gcp">GCP</option>
+              <option value="azure">Azure</option>
+            </select>
+          </div>
+          <div class="toolbar-group">
+            <span class="toolbar-label">Tier:</span>
+            <select x-model="filterTier" style="width: 100px;">
+              <option value="">All</option>
+              <option value="prd">Production</option>
+              <option value="stg">Staging</option>
+              <option value="dev">Development</option>
+              <option value="sbx">Sandbox</option>
+            </select>
+          </div>
+          <div class="toolbar-group ml-auto" x-data="{ colsOpen: false }" @click.outside="colsOpen=false">
+            <div style="position: relative;">
+              <button class="btn ghost btn-sm" @click="colsOpen=!colsOpen">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                Columns
+              </button>
+              <div x-show="colsOpen" x-cloak style="position:absolute; right:0; top: 100%; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow-lg); z-index:10020; padding:12px; min-width:200px; margin-top: 4px;">
+                <div class="text-sm" style="font-weight: 600; margin-bottom: 8px; color: var(--text-secondary);">Toggle columns</div>
+                <template x-for="col in Object.keys(visibleCols)" :key="col">
+                  <label style="display:flex; align-items:center; gap:.5rem; padding: 4px 0;">
+                    <input type="checkbox" :checked="visibleCols[col]" @change="visibleCols[col]=!visibleCols[col]" />
+                    <span x-text="colLabels[col] || col" style="font-size: 13px;"></span>
+                  </label>
+                </template>
+              </div>
+            </div>
+          </div>
+          <div class="toolbar-group" x-data="{ bulkMenuOpen:false }" @click.outside="bulkMenuOpen=false">
+            <span class="text-sm muted" x-show="selectedAccounts.length" x-text="selectedAccounts.length + ' selected'"></span>
+            <div style="position: relative;">
+              <button class="btn ghost btn-sm" @click="bulkMenuOpen=!bulkMenuOpen" :disabled="!selectedAccounts.length" title="Bulk actions">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+              </button>
+              <div x-show="bulkMenuOpen" x-cloak style="position:absolute; right:0; top: 100%; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow-lg); z-index:9999; min-width:160px; margin-top: 4px;">
+                <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger); border-radius: 8px;" @click="bulkMenuOpen=false; openBulkDelete()">Delete Selected…</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="table-wrapper">
+        <table style="min-width: 900px;">
+          <thead>
+            <tr>
+              <th class="sticky" style="width:40px;"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected()" :indeterminate="indeterminate()" /></th>
+              <th class="sticky"><a href="#" @click.prevent="sortBy('name')" style="text-decoration: none; color: inherit;">Name <span x-text="sortKey==='name'? (sortDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky"><a href="#" @click.prevent="sortBy('key')" style="text-decoration: none; color: inherit;">Key <span x-text="sortKey==='key'? (sortDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky" x-show="visibleCols.provider">Provider</th>
+              <th class="sticky" x-show="visibleCols.tier">Tier</th>
+              <th class="sticky" x-show="visibleCols.platform">Platform</th>
+              <th class="sticky" x-show="visibleCols.environment">Environment</th>
+              <th class="sticky" x-show="visibleCols.regions">Regions</th>
+              <th class="sticky" x-show="visibleCols.external_id">External ID</th>
+              <th class="sticky" x-show="visibleCols.description">Description</th>
+              <th class="sticky" x-show="visibleCols.created"><a href="#" @click.prevent="sortBy('created')" style="text-decoration: none; color: inherit;">Created <span x-text="sortKey==='created'? (sortDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky" style="width: 80px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="a in filteredAccounts()" :key="a.id">
+              <tr x-data="{ menuOpen:false }" @click.outside="menuOpen=false">
+                <td><input type="checkbox" :value="a.id" @change="toggleSelect(a.id)" :checked="selectedAccounts.includes(a.id)" /></td>
+                <td><strong x-text="a.name"></strong></td>
+                <td><code class="font-mono text-sm" x-text="a.key"></code></td>
+                <td x-show="visibleCols.provider">
+                  <span x-show="a.provider" :class="'badge ' + (a.provider==='aws' ? 'badge-warning' : a.provider==='gcp' ? 'badge-success' : 'badge-muted')" x-text="(a.provider || '').toUpperCase()"></span>
+                  <span x-show="!a.provider" class="muted">—</span>
+                </td>
+                <td x-show="visibleCols.tier">
+                  <span x-show="a.tier" :class="'badge ' + (a.tier==='prd' ? 'badge-danger' : a.tier==='stg' ? 'badge-warning' : 'badge-muted')" x-text="a.tier"></span>
+                  <span x-show="!a.tier" class="muted">—</span>
+                </td>
+                <td x-show="visibleCols.platform" x-text="a.platform || '—'" :class="!a.platform ? 'muted' : ''"></td>
+                <td x-show="visibleCols.environment" x-text="a.environment || '—'" :class="!a.environment ? 'muted' : ''"></td>
+                <td x-show="visibleCols.regions">
+                  <span x-show="Array.isArray(a.regions) && a.regions.length" class="text-sm" x-text="a.regions.slice(0,2).join(', ') + (a.regions.length > 2 ? ' +' + (a.regions.length - 2) : '')"></span>
+                  <span x-show="!a.regions || !a.regions.length" class="muted">—</span>
+                </td>
+                <td x-show="visibleCols.external_id"><code class="font-mono text-sm" x-text="a.external_id || '—'" :class="!a.external_id ? 'muted' : ''"></code></td>
+                <td x-show="visibleCols.description" class="text-sm" x-text="a.description || '—'" :class="!a.description ? 'muted' : ''" style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></td>
+                <td x-show="visibleCols.created" class="text-sm muted" x-text="new Date(a.created_at).toLocaleDateString()"></td>
+                <td style="position:relative; text-align:right;">
+                  <button class="btn ghost btn-sm" @click="menuOpen=!menuOpen">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                  </button>
+                  <div x-show="menuOpen" x-cloak style="position:absolute; right:0; top: 100%; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow: var(--shadow-lg); z-index:9999; min-width:120px;">
+                    <button class="btn ghost" style="display:block; width:100%; text-align:left; border-radius: 8px 8px 0 0;" @click="menuOpen=false; openEditAccount(a)">Edit</button>
+                    <button class="btn ghost" style="display:block; width:100%; text-align:left; color: var(--danger); border-radius: 0 0 8px 8px;" @click="menuOpen=false; confirmDeleteAccount(a)">Delete</button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="filteredAccounts().length === 0">
+              <td :colspan="accountsColumnsCount()" style="text-align: center; padding: 3rem;">
+                <div style="color: var(--muted);">
+                  <div style="font-size: 48px; margin-bottom: 1rem;">🏢</div>
+                  <div style="font-size: 16px; font-weight: 500; margin-bottom: 0.5rem;" x-text="accounts.length === 0 ? 'No accounts yet' : 'No accounts match filters'"></div>
+                  <div class="text-sm" x-text="accounts.length === 0 ? 'Create your first account to get started' : 'Try adjusting your search or filters'"></div>
+                  <button x-show="accounts.length === 0" class="btn" style="margin-top: 1rem;" @click="showCreateForm = true">Create Account</button>
                 </div>
               </td>
             </tr>
-          </template>
-          <tr x-show="accounts.length === 0"><td :colspan="accountsColumnsCount()" style="color:#999">No accounts yet</td></tr>
-        </tbody>
-      </table>
-      </div>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination">
+          <span class="pagination-info">
+            <span x-show="filteredAccounts().length > 0">Showing <strong x-text="filteredAccounts().length"></strong> of <strong x-text="accounts.length"></strong> accounts</span>
+            <span x-show="filteredAccounts().length === 0 && accounts.length > 0">No matches</span>
+          </span>
+        </div>
+      </div><!-- end card -->
       <script>
         function accountsView() {
           return {
             accounts: [],
             acctForm: { key:'', name:'', provider:'', external_id:'', description:'', platform:'', tier:'', environment:'', regions_text:'' },
             acctMsg: '',
+            creating: false,
+            showCreateForm: false,
+            search: '',
+            filterProvider: '',
+            filterTier: '',
+            sortKey: 'name',
+            sortDir: 'asc',
+            selectedAccounts: [],
+            bulkDeleteOpen: false,
+            bulkCascade: false,
+            confirmBulkDelete: false,
             editOpen: false,
             editForm: { id:null, name:'', provider:'', external_id:'', description:'', platform:'', tier:'', environment:'', regions_text:'', regions:[] },
-            visibleCols: { provider:true, external_id:true, description:true, platform:true, tier:true, environment:true, regions:true, created:true },
+            visibleCols: { provider:true, tier:true, platform:true, environment:true, regions:true, external_id:false, description:false, created:true },
+            colLabels: { provider:'Provider', tier:'Tier', platform:'Platform', environment:'Environment', regions:'Regions', external_id:'External ID', description:'Description', created:'Created' },
             accountsColumnsCount(){
-              // Always-visible: ID, Key, Name, Actions = 4
+              // Always-visible: checkbox, Name, Key, Actions = 4
               let count = 4;
               for (const k in this.visibleCols) { if (this.visibleCols[k]) count++; }
               return count;
@@ -758,6 +927,87 @@
             deleteChildren: [],
             deleteCascade: false,
             confirmAccountDelete: false,
+            // Sorting
+            sortBy(key) {
+              if (this.sortKey === key) { this.sortDir = this.sortDir === 'asc' ? 'desc' : 'asc'; }
+              else { this.sortKey = key; this.sortDir = 'asc'; }
+            },
+            // Filtering and sorting
+            filteredAccounts() {
+              let arr = this.accounts.slice();
+              // Search filter
+              if (this.search) {
+                const q = this.search.toLowerCase();
+                arr = arr.filter(a =>
+                  (a.name||'').toLowerCase().includes(q) ||
+                  (a.key||'').toLowerCase().includes(q) ||
+                  (a.provider||'').toLowerCase().includes(q) ||
+                  (a.description||'').toLowerCase().includes(q) ||
+                  (a.platform||'').toLowerCase().includes(q)
+                );
+              }
+              // Provider filter
+              if (this.filterProvider) {
+                arr = arr.filter(a => (a.provider||'').toLowerCase() === this.filterProvider || (a.key||'').startsWith(this.filterProvider + ':'));
+              }
+              // Tier filter
+              if (this.filterTier) {
+                arr = arr.filter(a => (a.tier||'').toLowerCase() === this.filterTier);
+              }
+              // Sorting
+              const dir = this.sortDir === 'asc' ? 1 : -1;
+              arr.sort((x, y) => {
+                let va, vb;
+                if (this.sortKey === 'created') { va = new Date(x.created_at); vb = new Date(y.created_at); }
+                else { va = (x[this.sortKey]||'').toLowerCase(); vb = (y[this.sortKey]||'').toLowerCase(); }
+                if (va < vb) return -dir;
+                if (va > vb) return dir;
+                return 0;
+              });
+              return arr;
+            },
+            // Selection
+            toggleSelect(id) {
+              const idx = this.selectedAccounts.indexOf(id);
+              if (idx === -1) this.selectedAccounts.push(id);
+              else this.selectedAccounts.splice(idx, 1);
+            },
+            toggleSelectAll(ev) {
+              if (ev.target.checked) {
+                this.selectedAccounts = this.filteredAccounts().map(a => a.id);
+              } else {
+                this.selectedAccounts = [];
+              }
+            },
+            allSelected() {
+              const filtered = this.filteredAccounts();
+              return filtered.length > 0 && this.selectedAccounts.length === filtered.length;
+            },
+            indeterminate() {
+              const filtered = this.filteredAccounts();
+              return this.selectedAccounts.length > 0 && this.selectedAccounts.length < filtered.length;
+            },
+            // Bulk delete
+            openBulkDelete() {
+              this.bulkCascade = false;
+              this.confirmBulkDelete = false;
+              this.bulkDeleteOpen = true;
+            },
+            async performBulkDelete() {
+              const force = this.bulkCascade ? '?force=1' : '';
+              let failed = 0;
+              for (const id of this.selectedAccounts) {
+                try {
+                  const res = await fetch(`/api/v1/accounts/${id}${force}`, { method: 'DELETE' });
+                  if (!res.ok) failed++;
+                } catch (e) { failed++; }
+              }
+              this.bulkDeleteOpen = false;
+              this.selectedAccounts = [];
+              await this.fetchAccounts();
+              if (failed > 0) showToast(`Deleted with ${failed} error(s)`, 'error');
+              else showToast('Accounts deleted');
+            },
             async fetchAccounts() {
               try {
                 const res = await fetch('/api/v1/accounts');
@@ -766,17 +1016,18 @@
             },
             async createAccount() {
               this.acctMsg = '';
+              this.creating = true;
               try {
                 // Basic validation: tier (if provided) must be one of dev/stg/sbx/prd
                 const allowedTiers = ['dev','stg','sbx','prd'];
                 if (this.acctForm.tier && !allowedTiers.includes(String(this.acctForm.tier).toLowerCase())) {
-                  this.acctMsg = 'Tier must be one of dev, stg, sbx, prd'; showToast(this.acctMsg,'error'); return;
+                  this.acctMsg = 'Tier must be one of dev, stg, sbx, prd'; showToast(this.acctMsg,'error'); this.creating = false; return;
                 }
                 // Parse regions from comma-separated input
                 const regions = (this.acctForm.regions_text||'').split(',').map(s=>s.trim()).filter(Boolean);
                 // Validate simple region token format
                 const bad = regions.find(r => !/^[a-z0-9-]+$/.test(r));
-                if (bad) { this.acctMsg = `Invalid region token: ${bad}`; showToast(this.acctMsg,'error'); return; }
+                if (bad) { this.acctMsg = `Invalid region token: ${bad}`; showToast(this.acctMsg,'error'); this.creating = false; return; }
                 const payload = {
                   key: this.acctForm.key,
                   name: this.acctForm.name,
@@ -792,11 +1043,13 @@
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(payload)
                 });
-                if (!res.ok) { this.acctMsg = await parseError(res); showToast(this.acctMsg,'error'); return; }
+                if (!res.ok) { this.acctMsg = await parseError(res); showToast(this.acctMsg,'error'); this.creating = false; return; }
                 this.acctForm = { key:'', name:'', provider:'', external_id:'', description:'', platform:'', tier:'', environment:'', regions_text:'' };
                 await this.fetchAccounts();
-                this.acctMsg = 'Created'; showToast('Account created');
+                this.showCreateForm = false;
+                showToast('Account created');
               } catch (e) { this.acctMsg = 'Create failed'; }
+              finally { this.creating = false; }
             }
             ,
             openEditAccount(a) {
@@ -860,56 +1113,130 @@
         }
       </script>
       <!-- Edit Account Modal -->
-      <div x-show="editOpen" x-cloak @click.self="editOpen=false" @keydown.escape.window="editOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:520px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Edit Account</h3>
-          <div class="row">
-            <input type="text" placeholder="Name" x-model="editForm.name" style="flex:1;" />
-            <input type="text" placeholder="Provider" x-model="editForm.provider" style="flex:1;" />
+      <div x-show="editOpen" x-cloak @click.self="editOpen=false" @keydown.escape.window="editOpen && (editOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:560px; transform: translate(' + dx + 'px,' + dy + 'px)'">
+          <div class="card-header" style="cursor:move" @mousedown.prevent="start($event)">
+            <h3 class="card-title">Edit Account</h3>
+            <button class="btn ghost btn-sm" @click="editOpen=false">×</button>
           </div>
-          <div class="row">
-            <input type="text" placeholder="External ID" x-model="editForm.external_id" style="flex:1;" />
-            <input type="text" placeholder="Description" x-model="editForm.description" style="flex:1;" />
-          </div>
-          <div class="row">
-            <input type="text" placeholder="Platform" x-model="editForm.platform" style="flex:1;" />
-            <select x-model="editForm.tier" style="flex:1;">
-              <option value="">Tier (optional)</option>
-              <option value="dev">dev</option>
-              <option value="stg">stg</option>
-              <option value="sbx">sbx</option>
-              <option value="prd">prd</option>
-            </select>
-          </div>
-          <div class="row">
-            <input type="text" placeholder="Environment" x-model="editForm.environment" style="flex:1;" />
-            <input type="text" placeholder="Regions (comma-separated)" x-model="editForm.regions_text" style="flex:1;" />
-          </div>
-          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
-            <button class="btn ghost" @click="editOpen=false">Cancel</button>
-            <button class="btn" @click="saveAccount()">Save</button>
+          <div class="card-body">
+            <div class="row" style="gap: 1rem; margin-bottom: 1rem;">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Name</label>
+                <input type="text" placeholder="Account name" x-model="editForm.name" style="width: 100%;" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Provider</label>
+                <select x-model="editForm.provider" style="width: 100%;">
+                  <option value="">Select...</option>
+                  <option value="aws">AWS</option>
+                  <option value="gcp">GCP</option>
+                  <option value="azure">Azure</option>
+                </select>
+              </div>
+            </div>
+            <div class="row" style="gap: 1rem; margin-bottom: 1rem;">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">External ID</label>
+                <input type="text" placeholder="e.g., 123456789012" x-model="editForm.external_id" style="width: 100%;" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Tier</label>
+                <select x-model="editForm.tier" style="width: 100%;">
+                  <option value="">Select...</option>
+                  <option value="prd">Production</option>
+                  <option value="stg">Staging</option>
+                  <option value="dev">Development</option>
+                  <option value="sbx">Sandbox</option>
+                </select>
+              </div>
+            </div>
+            <div class="row" style="gap: 1rem; margin-bottom: 1rem;">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Platform</label>
+                <input type="text" placeholder="e.g., kubernetes" x-model="editForm.platform" style="width: 100%;" />
+              </div>
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Environment</label>
+                <input type="text" placeholder="e.g., production" x-model="editForm.environment" style="width: 100%;" />
+              </div>
+            </div>
+            <div class="row" style="gap: 1rem; margin-bottom: 1rem;">
+              <div class="form-group" style="flex:1;">
+                <label class="form-label">Regions</label>
+                <input type="text" placeholder="e.g., us-east-1, us-west-2" x-model="editForm.regions_text" style="width: 100%;" />
+                <span class="form-hint">Comma-separated list</span>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label">Description</label>
+              <input type="text" placeholder="Optional description" x-model="editForm.description" style="width: 100%;" />
+            </div>
+            <div class="row" style="justify-content:flex-end; gap: 0.5rem;">
+              <button class="btn btn-secondary" @click="editOpen=false">Cancel</button>
+              <button class="btn" @click="saveAccount()">Save Changes</button>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- Delete Account Confirm Modal -->
-      <div x-show="deleteOpen" x-cloak @click.self="deleteOpen=false" @keydown.escape.window="deleteOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:420px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Confirm Delete</h3>
-          <p>Are you sure you want to delete <strong x-text="deleteTarget?.name"></strong>?</p>
-          <template x-if="deleteChildren.length">
-            <div>
-              <p class="muted">The following pools (and their descendants) are associated and will be deleted:</p>
-              <ul>
-                <template x-for="p in deleteChildren" :key="p.id">
-                  <li x-text="p.name + ' ('+p.cidr+')'"></li>
-                </template>
-              </ul>
-              <label><input type="checkbox" x-model="deleteCascade" /> Delete all associated pools</label>
+      <div x-show="deleteOpen" x-cloak @click.self="deleteOpen=false" @keydown.escape.window="deleteOpen && (deleteOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:480px; transform: translate(' + dx + 'px,' + dy + 'px)'">
+          <div class="card-header" style="cursor:move" @mousedown.prevent="start($event)">
+            <h3 class="card-title">Delete Account</h3>
+            <button class="btn ghost btn-sm" @click="deleteOpen=false">×</button>
+          </div>
+          <div class="card-body">
+            <p style="margin-bottom: 1rem;">Are you sure you want to delete <strong x-text="deleteTarget?.name"></strong>?</p>
+            <template x-if="deleteChildren.length">
+              <div style="background: var(--danger-light); border: 1px solid var(--danger); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
+                <p class="text-sm" style="color: var(--danger); font-weight: 500; margin-bottom: 0.5rem;">Warning: Associated pools will be affected</p>
+                <ul style="margin: 0.5rem 0; padding-left: 1.25rem; font-size: 13px;">
+                  <template x-for="p in deleteChildren.slice(0,5)" :key="p.id">
+                    <li x-text="p.name + ' (' + p.cidr + ')'"></li>
+                  </template>
+                  <li x-show="deleteChildren.length > 5" class="muted" x-text="'...and ' + (deleteChildren.length - 5) + ' more'"></li>
+                </ul>
+                <label style="display:flex; align-items:center; gap:.5rem; margin-top: 0.75rem; font-size: 13px;">
+                  <input type="checkbox" x-model="deleteCascade" />
+                  <span>Delete all associated pools</span>
+                </label>
+              </div>
+            </template>
+            <label style="display:flex; align-items:center; gap:.5rem; margin-bottom: 1rem; font-size: 13px;">
+              <input type="checkbox" x-model="confirmAccountDelete" />
+              <span>I understand this action cannot be undone</span>
+            </label>
+            <div class="row" style="justify-content:flex-end; gap: 0.5rem;">
+              <button class="btn btn-secondary" @click="deleteOpen=false">Cancel</button>
+              <button class="btn btn-danger" :disabled="(!confirmAccountDelete) || (deleteChildren.length && !deleteCascade)" @click="deleteAccount()">Delete Account</button>
             </div>
-          </template>
-          <div class="row" style="justify-content:space-between; align-items:center; margin-top:1rem;">
-            <label style="display:flex; align-items:center; gap:.4rem;"><input type="checkbox" x-model="confirmAccountDelete" /> I understand this action cannot be undone</label>
-            <button class="btn ghost" @click="deleteOpen=false">Cancel</button>
-            <button class="btn" :disabled="(!confirmAccountDelete) || (deleteChildren.length && !deleteCascade)" @click="deleteAccount()">Delete</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bulk Delete Accounts Modal -->
+      <div x-show="bulkDeleteOpen" x-cloak @click.self="bulkDeleteOpen=false" @keydown.escape.window="bulkDeleteOpen && (bulkDeleteOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:460px; transform: translate(' + dx + 'px,' + dy + 'px)'">
+          <div class="card-header" style="cursor:move" @mousedown.prevent="start($event)">
+            <h3 class="card-title">Delete Selected Accounts</h3>
+            <button class="btn ghost btn-sm" @click="bulkDeleteOpen=false">×</button>
+          </div>
+          <div class="card-body">
+            <p style="margin-bottom: 1rem;">You are about to delete <strong x-text="selectedAccounts.length"></strong> account(s).</p>
+            <label style="display:flex; align-items:center; gap:.5rem; margin-bottom: 0.75rem; font-size: 13px;">
+              <input type="checkbox" x-model="bulkCascade" />
+              <span>Cascade delete associated pools</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:.5rem; margin-bottom: 1rem; font-size: 13px;">
+              <input type="checkbox" x-model="confirmBulkDelete" />
+              <span>I understand this cannot be undone</span>
+            </label>
+            <div class="row" style="justify-content:flex-end; gap: 0.5rem;">
+              <button class="btn btn-secondary" @click="bulkDeleteOpen=false">Cancel</button>
+              <button class="btn btn-danger" :disabled="!confirmBulkDelete" @click="performBulkDelete()">Delete Accounts</button>
+            </div>
           </div>
         </div>
       </div>
@@ -917,183 +1244,326 @@
     </template>
 
     <template x-if="tab==='analytics'">
-    <section x-data="allBlocksView()" x-init="init()" class="card">
-      <h2>All Assigned Blocks</h2>
-      <div class="row" style="gap:1rem; align-items:stretch; margin-bottom:.5rem;">
-        <div class="card" style="flex:1; min-width:280px;">
-          <div style="font-weight:600; margin-bottom:.25rem;">Blocks by Parent Pool</div>
-          <div id="chart-parent" x-ref="chartParent"></div>
+    <section x-data="allBlocksView()" x-init="init()">
+      <!-- Page Header -->
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Analytics</h1>
+          <p class="page-subtitle">View and analyze IP address allocations across your infrastructure</p>
         </div>
-        <div class="card" style="flex:1; min-width:280px;">
-          <div style="font-weight:600; margin-bottom:.25rem;">Address Space by Account</div>
-          <div id="chart-account" x-ref="chartAccount"></div>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary" @click="load()" :disabled="loading">
+            <span x-show="loading" class="spinner"></span>
+            <svg x-show="!loading" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <span x-text="loading ? 'Loading…' : 'Refresh'"></span>
+          </button>
         </div>
       </div>
-      <div class="card" style="margin-bottom:.5rem;">
-        <div style="font-weight:600; margin-bottom:.25rem;">Creations Over Time</div>
-        <div id="chart-time" x-ref="chartTime"></div>
+
+      <!-- Stats Row -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value" x-text="total || 0"></div>
+          <div class="stat-label">Total Blocks</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="parentPools.length"></div>
+          <div class="stat-label">Parent Pools</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="accounts.length"></div>
+          <div class="stat-label">Accounts</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="selected.length"></div>
+          <div class="stat-label">Selected</div>
+        </div>
       </div>
-      <div class="row" style="align-items:center; gap:1rem; position:relative;">
-        <button class="btn" @click="filtersOpen=!filtersOpen">Filters ▾</button>
-        <button class="btn ghost" @click="load()" :disabled="loading"><span x-show="loading" class="spinner"></span> Refresh</button>
-        <button class="btn ghost" @click="clearFilters()">Clear</button>
-        <input type="text" placeholder="Search..." x-model="search" x-ref="analyticsSearch" style="flex:1; max-width:280px;" />
-        <span class="muted" x-text="summary()"></span>
-        <span class="muted" x-text="msg"></span>
-        <div style="margin-left:auto; position:relative;" x-data="{ analyticsBulkMenuOpen:false }" @click.outside="analyticsBulkMenuOpen=false">
-          <button class="btn ghost" @click="analyticsBulkMenuOpen=!analyticsBulkMenuOpen" :disabled="!selected.length" :title="selected.length ? (selected.length + ' selected') : 'Select rows to enable actions'">⋮</button>
-          <div x-show="analyticsBulkMenuOpen" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:9999; min-width:180px;">
-            <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="analyticsBulkMenuOpen=false; openBulkAssign()">Assign Account…</button>
-            <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="analyticsBulkMenuOpen=false; openBulkDelete()">Delete…</button>
+
+      <!-- Charts Row -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Blocks by Parent Pool</h3>
+          </div>
+          <div class="card-body" style="padding: 1rem;">
+            <div id="chart-parent" x-ref="chartParent" style="min-height: 200px;"></div>
           </div>
         </div>
-        <div x-show="filtersOpen" x-cloak @click.self="filtersOpen=false" @keydown.escape.window="filtersOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
-          <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'max-width: 90vw; transform: translate(' + dx + 'px,' + dy + 'px)'; display:' + 'flex' + '; gap:16px; padding:12px;" >
-            <h3 style="cursor:move; margin-top:0;">Filters</h3>
-          <div style="min-width:220px; max-height:260px; overflow:auto;">
-            <div class="muted" style="margin-bottom:6px;">Accounts</div>
-            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
-              <input type="checkbox" @change="toggleAllAccounts($event)" :checked="allAccountsSelected()" :indeterminate="indeterminateAccounts()" />
-              <span class="muted">All</span>
-            </div>
-            <template x-for="a in accounts" :key="a.id">
-              <label style="display:flex; align-items:center; gap:.5rem;">
-                <input type="checkbox" :value="String(a.id)" @change="toggleInArray(selectedAccounts, String(a.id))" :checked="selectedAccounts.includes(String(a.id))" />
-                <span x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></span>
-              </label>
-            </template>
-            <div class="muted" style="margin-top:.5rem;">Account name contains</div>
-            <input type="text" placeholder="e.g., prod" x-model="fltAccountName" @input="load()" style="width:100%;" />
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Address Space by Account</h3>
           </div>
-          <div style="min-width:220px; max-height:260px; overflow:auto;">
-            <div class="muted" style="margin-bottom:6px;">Parent Pools</div>
-            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
-              <input type="checkbox" @change="toggleAllPools($event)" :checked="allPoolsSelected()" :indeterminate="indeterminatePools()" />
-              <span class="muted">All</span>
-            </div>
-            <template x-for="p in parentPools" :key="p.id">
-              <label style="display:flex; align-items:center; gap:.5rem;">
-                <input type="checkbox" :value="String(p.id)" @change="toggleInArray(selectedPools, String(p.id))" :checked="selectedPools.includes(String(p.id))" />
-                <span x-text="p.name + ' ('+p.cidr+')'"></span>
-              </label>
-            </template>
-            <div class="muted" style="margin-top:.5rem;">CIDR contains</div>
-            <input type="text" placeholder="e.g., 10.0.1." x-model="fltCIDR" @input="load()" style="width:100%;" />
-          </div>
-          <div style="min-width:220px; max-height:260px; overflow:auto;">
-            <div class="muted" style="margin-bottom:6px;">Platform</div>
-            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
-              <input type="checkbox" @change="toggleAllPlatforms($event)" :checked="allPlatformsSelected()" :indeterminate="indeterminatePlatforms()" />
-              <span class="muted">All</span>
-            </div>
-            <template x-for="pl in platforms()" :key="pl">
-              <label style="display:flex; align-items:center; gap:.5rem;">
-                <input type="checkbox" :value="pl" @change="toggleInArray(fltPlatforms, pl)" :checked="fltPlatforms.includes(pl)" />
-                <span x-text="pl"></span>
-              </label>
-            </template>
-            <div class="muted" style="margin:.5rem 0 6px;">Environment / Tier</div>
-            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
-              <input type="checkbox" @change="toggleAllEnvs($event)" :checked="allEnvsSelected()" :indeterminate="indeterminateEnvs()" />
-              <span class="muted">All</span>
-            </div>
-            <template x-for="env in environments()" :key="env">
-              <label style="display:flex; align-items:center; gap:.5rem;">
-                <input type="checkbox" :value="env" @change="toggleInArray(fltEnvs, env)" :checked="fltEnvs.includes(env)" />
-                <span x-text="env"></span>
-              </label>
-            </template>
-          </div>
-          <div style="min-width:220px; max-height:260px; overflow:auto;">
-            <div class="muted" style="margin-bottom:6px;">Regions</div>
-            <div style="display:flex; align-items:center; gap:.4rem; margin:4px 0 6px;">
-              <input type="checkbox" @change="toggleAllRegions($event)" :checked="allRegionsSelected()" :indeterminate="indeterminateRegions()" />
-              <span class="muted">All</span>
-            </div>
-            <template x-for="rg in regions()" :key="rg">
-              <label style="display:flex; align-items:center; gap:.5rem;">
-                <input type="checkbox" :value="rg" @change="toggleInArray(fltRegions, rg)" :checked="fltRegions.includes(rg)" />
-                <span x-text="rg"></span>
-              </label>
-            </template>
-          </div>
-          <div style="display:flex; flex-direction:column; gap:.5rem; align-items:flex-end;">
-            <button class="btn" @click="filtersOpen=false; page=1; load()">Apply</button>
-            <button class="btn ghost" @click="clearFilters()">Clear</button>
-          </div>
+          <div class="card-body" style="padding: 1rem;">
+            <div id="chart-account" x-ref="chartAccount" style="min-height: 200px;"></div>
           </div>
         </div>
       </div>
-      <div style="max-height:420px; overflow:auto;">
-      <table style="min-width:960px;">
-        <thead>
-          <tr>
-            <th class="sticky" style="width:32px;"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected()" :indeterminate="indeterminate()" /></th>
-            <th class="sticky"><a href="#" @click.prevent="sortAnal('id')">ID <span x-text="sortAnalKey==='id'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"><a href="#" @click.prevent="sortAnal('name')">Name <span x-text="sortAnalKey==='name'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"><a href="#" @click.prevent="sortAnal('cidr')">CIDR <span x-text="sortAnalKey==='cidr'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"><a href="#" @click.prevent="sortAnal('parent')">Parent Pool <span x-text="sortAnalKey==='parent'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"><a href="#" @click.prevent="sortAnal('account')">Account <span x-text="sortAnalKey==='account'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky">Network IP</th>
-            <th class="sticky">Broadcast IP</th>
-            <th class="sticky"><a href="#" @click.prevent="sortAnal('created')">Created <span x-text="sortAnalKey==='created'? (sortAnalDir==='asc'?'▲':'▼') : ''"></span></a></th>
-          </tr>
-        </thead>
-        <tbody>
-          <template x-for="b in filtered()" :key="b.id">
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <div class="card-header">
+          <h3 class="card-title">Allocations Over Time</h3>
+        </div>
+        <div class="card-body" style="padding: 1rem;">
+          <div id="chart-time" x-ref="chartTime" style="min-height: 180px;"></div>
+        </div>
+      </div>
+
+      <!-- Blocks Table Card -->
+      <div class="card">
+        <!-- Toolbar -->
+        <div class="toolbar">
+          <input type="text" class="toolbar-search" placeholder="Search blocks..." x-model="search" x-ref="analyticsSearch" />
+          <div class="toolbar-divider"></div>
+          <button class="btn btn-secondary btn-sm" @click="filtersOpen=!filtersOpen">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            Filters
+            <span x-show="hasActiveFilters()" class="badge badge-success" style="margin-left: 4px; padding: 2px 6px;" x-text="activeFilterCount()"></span>
+          </button>
+          <button class="btn ghost btn-sm" @click="clearFilters()" x-show="hasActiveFilters()">Clear Filters</button>
+          <div class="toolbar-group">
+            <span class="toolbar-label">Show:</span>
+            <select x-model="pageSize" @change="page=1; load()" style="width: 80px;">
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <span class="muted text-sm" x-text="msg"></span>
+          <div class="toolbar-group ml-auto" x-data="{ analyticsBulkMenuOpen:false }" @click.outside="analyticsBulkMenuOpen=false">
+            <span class="text-sm muted" x-show="selected.length" x-text="selected.length + ' selected'"></span>
+            <div style="position: relative;">
+              <button class="btn ghost btn-sm" @click="analyticsBulkMenuOpen=!analyticsBulkMenuOpen" :disabled="!selected.length" title="Bulk actions">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+              </button>
+              <div x-show="analyticsBulkMenuOpen" x-cloak style="position:absolute; right:0; top: 100%; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow-lg); z-index:9999; min-width:160px; margin-top: 4px;">
+                <button class="btn ghost" style="display:block; width:100%; text-align:left; border-radius: 8px 8px 0 0;" @click="analyticsBulkMenuOpen=false; openBulkAssign()">Assign Account…</button>
+                <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger); border-radius: 0 0 8px 8px;" @click="analyticsBulkMenuOpen=false; openBulkDelete()">Delete…</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="table-wrapper" style="max-height: 500px; overflow: auto;">
+        <table style="min-width: 1000px;">
+          <thead>
             <tr>
-              <td><input type="checkbox" :value="b.id" @change="toggleSelect(b.id)" :checked="selected.includes(b.id)" /></td>
-              <td x-text="b.id"></td>
-              <td x-text="b.name"></td>
-              <td x-text="b.cidr"></td>
-              <td x-text="b.parent_name"></td>
-              <td x-text="b.account_name || '-' "></td>
-              <td x-text="b.network_ip || '-' "></td>
-              <td x-text="b.broadcast_ip || '-' "></td>
-              <td x-text="new Date(b.created_at).toLocaleString()"></td>
+              <th class="sticky" style="width:40px;"><input type="checkbox" @change="toggleSelectAll($event)" :checked="allSelected()" :indeterminate="indeterminate()" /></th>
+              <th class="sticky"><a href="#" @click.prevent="sortAnal('name')" style="text-decoration: none; color: inherit;">Name <span x-text="sortAnalKey==='name'? (sortAnalDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky"><a href="#" @click.prevent="sortAnal('cidr')" style="text-decoration: none; color: inherit;">CIDR <span x-text="sortAnalKey==='cidr'? (sortAnalDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky"><a href="#" @click.prevent="sortAnal('parent')" style="text-decoration: none; color: inherit;">Parent Pool <span x-text="sortAnalKey==='parent'? (sortAnalDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky"><a href="#" @click.prevent="sortAnal('account')" style="text-decoration: none; color: inherit;">Account <span x-text="sortAnalKey==='account'? (sortAnalDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky">Network IP</th>
+              <th class="sticky">Broadcast IP</th>
+              <th class="sticky"><a href="#" @click.prevent="sortAnal('created')" style="text-decoration: none; color: inherit;">Created <span x-text="sortAnalKey==='created'? (sortAnalDir==='asc'?'↑':'↓') : ''"></span></a></th>
             </tr>
-          </template>
-          <tr x-show="filtered().length === 0"><td colspan="9" style="color:#999">No assigned blocks match filters</td></tr>
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            <template x-for="b in filtered()" :key="b.id">
+              <tr>
+                <td><input type="checkbox" :value="b.id" @change="toggleSelect(b.id)" :checked="selected.includes(b.id)" /></td>
+                <td><strong x-text="b.name"></strong></td>
+                <td><code class="font-mono" x-text="b.cidr"></code></td>
+                <td>
+                  <span class="chip" x-text="b.parent_name"></span>
+                </td>
+                <td>
+                  <span x-show="b.account_name" class="chip active" x-text="b.account_name"></span>
+                  <span x-show="!b.account_name" class="muted">—</span>
+                </td>
+                <td class="font-mono text-sm" x-text="b.network_ip || '—'" :class="!b.network_ip ? 'muted' : ''"></td>
+                <td class="font-mono text-sm" x-text="b.broadcast_ip || '—'" :class="!b.broadcast_ip ? 'muted' : ''"></td>
+                <td class="text-sm muted" x-text="new Date(b.created_at).toLocaleDateString()"></td>
+              </tr>
+            </template>
+            <tr x-show="filtered().length === 0">
+              <td colspan="8" style="text-align: center; padding: 3rem;">
+                <div style="color: var(--muted);">
+                  <div style="font-size: 48px; margin-bottom: 1rem;">📊</div>
+                  <div style="font-size: 16px; font-weight: 500; margin-bottom: 0.5rem;" x-text="total === 0 ? 'No blocks allocated' : 'No blocks match filters'"></div>
+                  <div class="text-sm" x-text="total === 0 ? 'Allocate blocks from your pools to see them here' : 'Try adjusting your search or filters'"></div>
+                  <button x-show="hasActiveFilters()" class="btn btn-secondary" style="margin-top: 1rem;" @click="clearFilters()">Clear Filters</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination">
+          <span class="pagination-info">
+            <span x-show="total > 0">Showing <strong x-text="fromItem"></strong>-<strong x-text="toItem"></strong> of <strong x-text="total"></strong> blocks</span>
+            <span x-show="total === 0">No blocks</span>
+          </span>
+          <div class="pagination-controls">
+            <button class="btn ghost btn-sm" @click="firstPage()" :disabled="page<=1">«</button>
+            <button class="btn ghost btn-sm" @click="prevPage()" :disabled="page<=1">‹</button>
+            <span class="text-sm" style="padding: 0 0.5rem;">Page <strong x-text="page"></strong> of <strong x-text="totalPages"></strong></span>
+            <button class="btn ghost btn-sm" @click="nextPage()" :disabled="page>=totalPages">›</button>
+            <button class="btn ghost btn-sm" @click="lastPage()" :disabled="page>=totalPages">»</button>
+          </div>
+        </div>
+      </div><!-- end card -->
+
+      <!-- Filters Modal -->
+      <div x-show="filtersOpen" x-cloak @click.self="filtersOpen=false" @keydown.escape.window="filtersOpen && (filtersOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width: 800px; max-width: 95vw; transform: translate(' + dx + 'px,' + dy + 'px)'">
+          <div class="card-header" style="cursor:move" @mousedown.prevent="start($event)">
+            <h3 class="card-title">Filter Blocks</h3>
+            <button class="btn ghost btn-sm" @click="filtersOpen=false">×</button>
+          </div>
+          <div class="card-body">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1.5rem;">
+              <!-- Accounts Filter -->
+              <div>
+                <div class="form-label" style="margin-bottom: 0.5rem;">Accounts</div>
+                <div style="max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem;">
+                  <label style="display:flex; align-items:center; gap:.5rem; padding: 4px 0; border-bottom: 1px solid var(--border-light); margin-bottom: 4px;">
+                    <input type="checkbox" @change="toggleAllAccounts($event)" :checked="allAccountsSelected()" :indeterminate="indeterminateAccounts()" />
+                    <span class="text-sm" style="font-weight: 500;">Select All</span>
+                  </label>
+                  <template x-for="a in accounts" :key="a.id">
+                    <label style="display:flex; align-items:center; gap:.5rem; padding: 3px 0;">
+                      <input type="checkbox" :value="String(a.id)" @change="toggleInArray(selectedAccounts, String(a.id))" :checked="selectedAccounts.includes(String(a.id))" />
+                      <span class="text-sm" x-text="a.name"></span>
+                    </label>
+                  </template>
+                </div>
+                <div class="form-group" style="margin-top: 0.5rem;">
+                  <input type="text" placeholder="Filter by name..." x-model="fltAccountName" style="width: 100%; font-size: 13px;" />
+                </div>
+              </div>
+
+              <!-- Parent Pools Filter -->
+              <div>
+                <div class="form-label" style="margin-bottom: 0.5rem;">Parent Pools</div>
+                <div style="max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem;">
+                  <label style="display:flex; align-items:center; gap:.5rem; padding: 4px 0; border-bottom: 1px solid var(--border-light); margin-bottom: 4px;">
+                    <input type="checkbox" @change="toggleAllPools($event)" :checked="allPoolsSelected()" :indeterminate="indeterminatePools()" />
+                    <span class="text-sm" style="font-weight: 500;">Select All</span>
+                  </label>
+                  <template x-for="p in parentPools" :key="p.id">
+                    <label style="display:flex; align-items:center; gap:.5rem; padding: 3px 0;">
+                      <input type="checkbox" :value="String(p.id)" @change="toggleInArray(selectedPools, String(p.id))" :checked="selectedPools.includes(String(p.id))" />
+                      <span class="text-sm" x-text="p.name + ' (' + p.cidr + ')'"></span>
+                    </label>
+                  </template>
+                </div>
+                <div class="form-group" style="margin-top: 0.5rem;">
+                  <input type="text" placeholder="Filter by CIDR..." x-model="fltCIDR" style="width: 100%; font-size: 13px;" />
+                </div>
+              </div>
+
+              <!-- Platform Filter -->
+              <div>
+                <div class="form-label" style="margin-bottom: 0.5rem;">Platform</div>
+                <div style="max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem;">
+                  <label style="display:flex; align-items:center; gap:.5rem; padding: 4px 0; border-bottom: 1px solid var(--border-light); margin-bottom: 4px;">
+                    <input type="checkbox" @change="toggleAllPlatforms($event)" :checked="allPlatformsSelected()" :indeterminate="indeterminatePlatforms()" />
+                    <span class="text-sm" style="font-weight: 500;">Select All</span>
+                  </label>
+                  <template x-for="pl in platforms()" :key="pl">
+                    <label style="display:flex; align-items:center; gap:.5rem; padding: 3px 0;">
+                      <input type="checkbox" :value="pl" @change="toggleInArray(fltPlatforms, pl)" :checked="fltPlatforms.includes(pl)" />
+                      <span class="text-sm" x-text="pl"></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Environment/Tier Filter -->
+              <div>
+                <div class="form-label" style="margin-bottom: 0.5rem;">Environment / Tier</div>
+                <div style="max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem;">
+                  <label style="display:flex; align-items:center; gap:.5rem; padding: 4px 0; border-bottom: 1px solid var(--border-light); margin-bottom: 4px;">
+                    <input type="checkbox" @change="toggleAllEnvs($event)" :checked="allEnvsSelected()" :indeterminate="indeterminateEnvs()" />
+                    <span class="text-sm" style="font-weight: 500;">Select All</span>
+                  </label>
+                  <template x-for="env in environments()" :key="env">
+                    <label style="display:flex; align-items:center; gap:.5rem; padding: 3px 0;">
+                      <input type="checkbox" :value="env" @change="toggleInArray(fltEnvs, env)" :checked="fltEnvs.includes(env)" />
+                      <span class="text-sm" x-text="env"></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <!-- Regions Filter (full width) -->
+            <div style="margin-top: 1rem;">
+              <div class="form-label" style="margin-bottom: 0.5rem;">Regions</div>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; max-height: 120px; overflow-y: auto;">
+                <label style="display:flex; align-items:center; gap:.5rem; padding: 4px 8px; background: var(--border-light); border-radius: var(--radius);">
+                  <input type="checkbox" @change="toggleAllRegions($event)" :checked="allRegionsSelected()" :indeterminate="indeterminateRegions()" />
+                  <span class="text-sm" style="font-weight: 500;">All</span>
+                </label>
+                <template x-for="rg in regions()" :key="rg">
+                  <label style="display:flex; align-items:center; gap:.5rem; padding: 4px 8px; background: var(--border-light); border-radius: var(--radius);">
+                    <input type="checkbox" :value="rg" @change="toggleInArray(fltRegions, rg)" :checked="fltRegions.includes(rg)" />
+                    <span class="text-sm" x-text="rg"></span>
+                  </label>
+                </template>
+              </div>
+            </div>
+
+            <div class="row" style="justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem;">
+              <button class="btn ghost" @click="clearFilters()">Clear All</button>
+              <button class="btn btn-secondary" @click="filtersOpen=false">Cancel</button>
+              <button class="btn" @click="filtersOpen=false; page=1; load()">Apply Filters</button>
+            </div>
+          </div>
+        </div>
       </div>
       <!-- Bulk Assign (Analytics) -->
-      <div x-show="bulkAssignOpen" x-cloak @click.self="bulkAssignOpen=false" @keydown.escape.window="bulkAssignOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:420px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Assign Account to Selected</h3>
-          <div class="row" style="align-items:center;">
-            <select x-model.number="bulkAccountId" style="min-width: 14rem;">
-              <option :value="null">No Account</option>
-              <template x-for="a in accounts" :key="a.id">
-                <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
-              </template>
-            </select>
-            <span class="muted" x-text="selected.length + ' item(s)'" />
+      <div x-show="bulkAssignOpen" x-cloak @click.self="bulkAssignOpen=false" @keydown.escape.window="bulkAssignOpen && (bulkAssignOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:420px; transform: translate(' + dx + 'px,' + dy + 'px)'">
+          <div class="card-header" style="cursor:move" @mousedown.prevent="start($event)">
+            <h3 class="card-title">Assign Account</h3>
+            <button class="btn ghost btn-sm" @click="bulkAssignOpen=false">×</button>
           </div>
-          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
-            <button class="btn ghost" @click="bulkAssignOpen=false">Cancel</button>
-            <button class="btn" @click="performBulkAssign()">Apply</button>
+          <div class="card-body">
+            <p class="text-sm muted" style="margin-bottom: 1rem;">Assign an account to <strong x-text="selected.length"></strong> selected block(s).</p>
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label class="form-label">Account</label>
+              <select x-model.number="bulkAccountId" style="width: 100%;">
+                <option :value="null">No Account</option>
+                <template x-for="a in accounts" :key="a.id">
+                  <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+                </template>
+              </select>
+            </div>
+            <div class="row" style="justify-content:flex-end; gap: 0.5rem;">
+              <button class="btn btn-secondary" @click="bulkAssignOpen=false">Cancel</button>
+              <button class="btn" @click="performBulkAssign()">Apply</button>
+            </div>
           </div>
         </div>
       </div>
+
       <!-- Bulk Delete (Analytics) -->
-      <div x-show="bulkDeleteOpen" x-cloak @click.self="bulkDeleteOpen=false" @keydown.escape.window="bulkDeleteOpen=false" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
-        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:460px; transform: translate(' + dx + 'px,' + dy + 'px)'"><h3 style="cursor:move" @mousedown.prevent="start($event)">Delete Selected Blocks</h3>
-          <label style="display:flex; gap:.4rem; align-items:center;"><input type="checkbox" x-model="bulkCascade" /> Cascade delete descendants</label>
-          <label style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem;"><input type="checkbox" x-model="confirmBulkDelete" /> I understand this cannot be undone</label>
-          <div class="row" style="justify-content:flex-end; margin-top:1rem;">
-            <button class="btn ghost" @click="bulkDeleteOpen=false">Cancel</button>
-            <button class="btn" :disabled="!confirmBulkDelete" @click="performBulkDelete()">Delete</button>
+      <div x-show="bulkDeleteOpen" x-cloak @click.self="bulkDeleteOpen=false" @keydown.escape.window="bulkDeleteOpen && (bulkDeleteOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
+        <div class="card" x-data="modalDrag()" @mousemove.window="move($event)" @mouseup.window="end()" :style="'width:460px; transform: translate(' + dx + 'px,' + dy + 'px)'">
+          <div class="card-header" style="cursor:move" @mousedown.prevent="start($event)">
+            <h3 class="card-title">Delete Selected Blocks</h3>
+            <button class="btn ghost btn-sm" @click="bulkDeleteOpen=false">×</button>
           </div>
-        </div>
-      </div>
-      <div class="row" style="justify-content:space-between; align-items:center; margin-top:.5rem;">
-        <div class="muted" x-text="total ? `Showing ${fromItem}-${toItem} of ${total}` : ''"></div>
-        <div class="row" style="align-items:center; gap:.5rem;">
-          <button class="btn ghost" @click="firstPage()" :disabled="page<=1">« First</button>
-          <button class="btn ghost" @click="prevPage()" :disabled="page<=1">‹ Prev</button>
-          <div>Page <input type="number" min="1" x-model.number="pageInput" style="width:64px;" @keydown.enter.prevent="goToPage()" /> of <span x-text="totalPages"></span></div>
-          <button class="btn ghost" @click="nextPage()" :disabled="page>=totalPages">Next ›</button>
-          <button class="btn ghost" @click="lastPage()" :disabled="page>=totalPages">Last »</button>
+          <div class="card-body">
+            <p style="margin-bottom: 1rem;">You are about to delete <strong x-text="selected.length"></strong> block(s).</p>
+            <label style="display:flex; align-items:center; gap:.5rem; margin-bottom: 0.75rem; font-size: 13px;">
+              <input type="checkbox" x-model="bulkCascade" />
+              <span>Cascade delete descendants</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:.5rem; margin-bottom: 1rem; font-size: 13px;">
+              <input type="checkbox" x-model="confirmBulkDelete" />
+              <span>I understand this cannot be undone</span>
+            </label>
+            <div class="row" style="justify-content:flex-end; gap: 0.5rem;">
+              <button class="btn btn-secondary" @click="bulkDeleteOpen=false">Cancel</button>
+              <button class="btn btn-danger" :disabled="!confirmBulkDelete" @click="performBulkDelete()">Delete Blocks</button>
+            </div>
+          </div>
         </div>
       </div>
       <script>
@@ -1137,6 +1607,29 @@
             bulkAccountId: null,
             bulkCascade: false,
             confirmBulkDelete: false,
+            sortAnalKey: 'created',
+            sortAnalDir: 'desc',
+            // Filter helper methods
+            hasActiveFilters() {
+              return this.selectedAccounts.length > 0 ||
+                     this.selectedPools.length > 0 ||
+                     this.fltAccountName !== '' ||
+                     this.fltCIDR !== '' ||
+                     this.fltPlatforms.length > 0 ||
+                     this.fltEnvs.length > 0 ||
+                     this.fltRegions.length > 0;
+            },
+            activeFilterCount() {
+              let count = 0;
+              if (this.selectedAccounts.length > 0) count++;
+              if (this.selectedPools.length > 0) count++;
+              if (this.fltAccountName !== '') count++;
+              if (this.fltCIDR !== '') count++;
+              if (this.fltPlatforms.length > 0) count++;
+              if (this.fltEnvs.length > 0) count++;
+              if (this.fltRegions.length > 0) count++;
+              return count;
+            },
             async init() {
               await Promise.all([this.fetchAccounts(), this.fetchParentPools()]);
               this.restoreFilters();
@@ -2171,86 +2664,174 @@
     </script>
     <!-- Data Import/Export Modal Root -->
     <div id="data-io-root" x-data="dataIO()" x-init="init()" x-show="open" x-cloak @open-data-io.window="open=true" @click.self="open=false" @keydown.escape.window="open && (open=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10020;">
-      <div class="card" style="width: 860px; max-height: 90vh; overflow:auto;">
-        <div style="display:flex; align-items:center; justify-content:space-between;">
-          <h3>Data Import / Export</h3>
-          <button class="btn ghost" @click="open=false">Close</button>
-        </div>
-        <div class="row" style="gap:2rem; align-items:flex-start;">
-          <div style="flex:1;">
-            <h4>Export</h4>
-            <label><input type="checkbox" x-model="exp.accounts" /> Accounts</label>
-            <div style="display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0 1rem 0;">
-              <template x-for="f in fieldsList('accounts')" :key="'acc-'+f">
-                <label style="min-width: 160px;"><input type="checkbox" x-model="expFields.accounts[f]" /> <span x-text="f"></span></label>
-              </template>
-            </div>
-            <label><input type="checkbox" x-model="exp.pools" /> Pools</label>
-            <div style="display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0 1rem 0;">
-              <template x-for="f in fieldsList('pools')" :key="'pool-'+f">
-                <label style="min-width: 160px;"><input type="checkbox" x-model="expFields.pools[f]" /> <span x-text="f"></span></label>
-              </template>
-            </div>
-            <label><input type="checkbox" x-model="exp.blocks" /> Blocks</label>
-            <div style="display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0 1rem 0;">
-              <template x-for="f in fieldsList('blocks')" :key="'blk-'+f">
-                <label style="min-width: 200px;"><input type="checkbox" x-model="expFields.blocks[f]" /> <span x-text="f"></span></label>
-              </template>
-            </div>
-            <button class="btn" @click="downloadExport()">Download ZIP</button>
+      <div class="card" style="width: 960px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column;">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title">Data Import / Export</h3>
+            <p class="text-sm muted" style="margin: 0;">Transfer data between CloudPAM and external systems</p>
           </div>
-          <div style="flex:1;">
-            <h4>Import</h4>
-              <label>Type
-                <select x-model="imp.type" @change="autoMapHeaders()">
-                  <option value="accounts">Accounts</option>
-                  <option value="pools">Pools</option>
-                  <option value="blocks">Blocks</option>
-                </select>
-              </label>
-            <div style="margin:.5rem 0;">
-              <input type="file" accept=".csv,text/csv" @change="onImportFile($event)" />
+          <button class="btn ghost btn-sm" @click="open=false">×</button>
+        </div>
+        <div class="card-body" style="overflow-y: auto; flex: 1;">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
+            <!-- Export Section -->
+            <div>
+              <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <h4 style="margin: 0; font-size: 16px;">Export Data</h4>
+              </div>
+
+              <!-- Accounts Export -->
+              <div style="background: var(--border-light); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 500; margin-bottom: 0.75rem;">
+                  <input type="checkbox" x-model="exp.accounts" />
+                  <span>Accounts</span>
+                  <span class="badge badge-muted" x-text="Object.keys(expFields.accounts).filter(f => expFields.accounts[f]).length + ' fields'"></span>
+                </label>
+                <div x-show="exp.accounts" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.25rem 1rem; margin-left: 1.5rem;">
+                  <template x-for="f in fieldsList('accounts')" :key="'acc-'+f">
+                    <label style="display: flex; align-items: center; gap: 0.375rem; font-size: 13px;">
+                      <input type="checkbox" x-model="expFields.accounts[f]" />
+                      <span x-text="f"></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Pools Export -->
+              <div style="background: var(--border-light); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 500; margin-bottom: 0.75rem;">
+                  <input type="checkbox" x-model="exp.pools" />
+                  <span>Pools</span>
+                  <span class="badge badge-muted" x-text="Object.keys(expFields.pools).filter(f => expFields.pools[f]).length + ' fields'"></span>
+                </label>
+                <div x-show="exp.pools" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.25rem 1rem; margin-left: 1.5rem;">
+                  <template x-for="f in fieldsList('pools')" :key="'pool-'+f">
+                    <label style="display: flex; align-items: center; gap: 0.375rem; font-size: 13px;">
+                      <input type="checkbox" x-model="expFields.pools[f]" />
+                      <span x-text="f"></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Blocks Export -->
+              <div style="background: var(--border-light); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 500; margin-bottom: 0.75rem;">
+                  <input type="checkbox" x-model="exp.blocks" />
+                  <span>Blocks</span>
+                  <span class="badge badge-muted" x-text="Object.keys(expFields.blocks).filter(f => expFields.blocks[f]).length + ' fields'"></span>
+                </label>
+                <div x-show="exp.blocks" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.25rem 1rem; margin-left: 1.5rem;">
+                  <template x-for="f in fieldsList('blocks')" :key="'blk-'+f">
+                    <label style="display: flex; align-items: center; gap: 0.375rem; font-size: 13px;">
+                      <input type="checkbox" x-model="expFields.blocks[f]" />
+                      <span x-text="f"></span>
+                    </label>
+                  </template>
+                </div>
+              </div>
+
+              <button class="btn" @click="downloadExport()" :disabled="!exp.accounts && !exp.pools && !exp.blocks">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download ZIP
+              </button>
             </div>
-            <div x-show="imp.headers.length">
-              <div style="background:#f9fafb; border:1px solid var(--border); border-radius:4px; padding:.75rem; margin:.75rem 0;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem;">
-                  <span style="font-weight:500; font-size:.9rem;">Column Mapping</span>
-                  <button class="btn ghost" @click="imp.showUnmappedModal=true" style="font-size:.85rem; padding:.25rem .5rem;">Review / Adjust</button>
+
+            <!-- Import Section -->
+            <div>
+              <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <h4 style="margin: 0; font-size: 16px;">Import Data</h4>
+              </div>
+
+              <div style="background: var(--border-light); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
+                <div class="form-group" style="margin-bottom: 1rem;">
+                  <label class="form-label">Data Type</label>
+                  <select x-model="imp.type" @change="autoMapHeaders()" style="width: 100%;">
+                    <option value="accounts">Accounts</option>
+                    <option value="pools">Pools</option>
+                    <option value="blocks">Blocks</option>
+                  </select>
                 </div>
-                <div style="font-size:.85rem; color:#666;">
-                  <div><span x-text="getMappedColumns().length"></span> mapped, <span x-text="imp.unmapped.length"></span> unmapped</div>
+
+                <div class="form-group">
+                  <label class="form-label">CSV File</label>
+                  <div style="border: 2px dashed var(--border); border-radius: var(--radius); padding: 1.5rem; text-align: center; background: var(--card);">
+                    <input type="file" accept=".csv,text/csv" @change="onImportFile($event)" style="display: none;" x-ref="fileInput" />
+                    <button class="btn btn-secondary" @click="$refs.fileInput.click()">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                      Choose File
+                    </button>
+                    <p class="text-sm muted" style="margin: 0.5rem 0 0 0;">or drag and drop a CSV file</p>
+                  </div>
                 </div>
               </div>
-              <div style="margin-top: .75rem;">
-                <button class="btn" @click="startImport()">Start Import</button>
-              </div>
-              <div x-text="msg" class="muted" style="margin-top:.5rem;"></div>
-              <div style="margin-top:1rem;">
-                <h5>Preview</h5>
-                <div style="overflow:auto; max-height:200px; border:1px solid var(--border);">
-                  <table style="min-width:600px;">
-                    <thead>
-                      <tr>
-                        <template x-for="h in imp.headers" :key="'ph-'+h"><th x-text="h"></th></template>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <template x-for="r in imp.preview" :key="r.join('-')">
+
+              <!-- Import Details (shown after file selection) -->
+              <div x-show="imp.headers.length">
+                <!-- Column Mapping Status -->
+                <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <span style="font-weight: 500;">Column Mapping</span>
+                    <button class="btn ghost btn-sm" @click="imp.showUnmappedModal=true">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      Adjust
+                    </button>
+                  </div>
+                  <div style="display: flex; gap: 1rem;">
+                    <div style="display: flex; align-items: center; gap: 0.375rem;">
+                      <span class="badge badge-success" x-text="getMappedColumns().length"></span>
+                      <span class="text-sm">mapped</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.375rem;">
+                      <span class="badge" :class="imp.unmapped.length > 0 ? 'badge-warning' : 'badge-muted'" x-text="imp.unmapped.length"></span>
+                      <span class="text-sm">unmapped</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                  <button class="btn" @click="startImport()" :disabled="getMappedColumns().length === 0">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Start Import
+                  </button>
+                  <span x-text="msg" class="muted text-sm" style="display: flex; align-items: center;"></span>
+                </div>
+
+                <!-- Preview -->
+                <div style="margin-bottom: 1rem;">
+                  <div class="form-label" style="margin-bottom: 0.5rem;">Preview (first 5 rows)</div>
+                  <div class="table-wrapper" style="max-height: 180px; border: 1px solid var(--border); border-radius: var(--radius);">
+                    <table style="font-size: 12px;">
+                      <thead>
                         <tr>
-                          <template x-for="(c,i) in r" :key="i"><td x-text="c"></td></template>
+                          <template x-for="h in imp.headers" :key="'ph-'+h">
+                            <th style="padding: 0.5rem; white-space: nowrap;" x-text="h"></th>
+                          </template>
                         </tr>
-                      </template>
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        <template x-for="r in imp.preview" :key="r.join('-')">
+                          <tr>
+                            <template x-for="(c,i) in r" :key="i">
+                              <td style="padding: 0.5rem; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" x-text="c"></td>
+                            </template>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
-              <div style="margin-top:1rem;">
-                <h5>Logs</h5>
-                <div class="row" style="justify-content:space-between; align-items:center;">
-                  <span class="muted" x-text="imp.logs.length + ' lines'"></span>
-                  <button class="btn ghost" @click="downloadLog()" :disabled="!imp.logs.length">Download Log</button>
+
+                <!-- Logs -->
+                <div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <span class="form-label" style="margin: 0;">Import Log</span>
+                    <button class="btn ghost btn-sm" @click="downloadLog()" :disabled="!imp.logs.length">Download</button>
+                  </div>
+                  <pre style="white-space: pre-wrap; background: var(--border-light); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; max-height: 120px; overflow: auto; font-size: 12px; margin: 0;" x-text="imp.logs.length ? imp.logs.join('\n') : 'No logs yet'"></pre>
                 </div>
-                <pre style="white-space:pre-wrap; background:#f9fafb; border:1px solid var(--border); padding:.5rem; max-height:180px; overflow:auto;" x-text="imp.logs.join('\n')"></pre>
               </div>
             </div>
           </div>
@@ -2259,51 +2840,60 @@
 
       <!-- Column Mapping Review Modal -->
       <div x-show="imp.showUnmappedModal" x-cloak @click.self="closeUnmappedModal()" @keydown.escape.window="imp.showUnmappedModal && closeUnmappedModal()" style="position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:10030;">
-        <div class="card" style="width: 600px; max-width: 90vw; max-height: 90vh; overflow:auto;">
-          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
-            <h3>Review Column Mappings</h3>
-            <button @click="closeUnmappedModal()" style="background:none; border:none; font-size:1.5rem; cursor:pointer; padding:0; line-height:1;">&times;</button>
+        <div class="card" style="width: 600px; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column;">
+          <div class="card-header">
+            <h3 class="card-title">Column Mapping</h3>
+            <button class="btn ghost btn-sm" @click="closeUnmappedModal()">×</button>
           </div>
-
-          <!-- Mapped columns -->
-          <div x-show="getMappedColumns().length > 0" style="margin-bottom:1.5rem;">
-            <h4 style="font-size:1rem; margin-bottom:.5rem; color:#059669;">✓ Automatically Mapped (<span x-text="getMappedColumns().length"></span>)</h4>
-            <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:4px; padding:.75rem;">
-              <template x-for="m in getMappedColumns()" :key="'mapped-'+m.header">
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:.25rem 0; font-size:.9rem;">
-                  <span style="color:#666; flex:1;" x-text="m.header"></span>
-                  <span style="color:#059669; font-weight:500;">→</span>
-                  <code style="background:#dcfce7; padding:.125rem .375rem; border-radius:3px; flex:1; text-align:right; font-size:.85rem;" x-text="m.field"></code>
-                </div>
-              </template>
+          <div class="card-body" style="overflow-y: auto;">
+            <!-- Mapped columns -->
+            <div x-show="getMappedColumns().length > 0" style="margin-bottom: 1.5rem;">
+              <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                <span style="font-weight: 500; color: var(--success);">Mapped Columns (<span x-text="getMappedColumns().length"></span>)</span>
+              </div>
+              <div style="background: var(--success-light); border: 1px solid var(--success); border-radius: var(--radius); padding: 0.75rem;">
+                <template x-for="m in getMappedColumns()" :key="'mapped-'+m.header">
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.375rem 0; font-size: 13px;">
+                    <span style="color: var(--text-secondary);" x-text="m.header"></span>
+                    <span style="color: var(--success); padding: 0 0.5rem;">→</span>
+                    <code style="background: var(--card); padding: 0.125rem 0.5rem; border-radius: var(--radius); font-size: 12px;" x-text="m.field"></code>
+                  </div>
+                </template>
+              </div>
             </div>
-          </div>
 
-          <!-- Unmapped columns -->
-          <div x-show="imp.unmapped.length > 0">
-            <h4 style="font-size:1rem; margin-bottom:.5rem; color:#dc2626;">⚠️ Unmapped Columns (<span x-text="imp.unmapped.length"></span>)</h4>
-            <p class="muted" style="margin-bottom:.75rem; font-size:.9rem;">Map these columns or leave them as "(ignore)" to skip them during import:</p>
-            <div style="background:#fef2f2; border:1px solid #fca5a5; border-radius:4px; padding:.75rem;">
-              <template x-for="col in imp.unmapped" :key="'unmapped-map-'+col">
-                <div style="display:flex; align-items:center; gap:.5rem; margin-bottom:.5rem;">
-                  <div style="flex:1; color:#666; font-size:.9rem;" x-text="col"></div>
-                  <select x-model="imp.mapping[col]" @change="checkUnmappedColumns()" style="flex:1; font-size:.9rem;">
-                    <option value="">(ignore)</option>
-                    <template x-for="f in getAvailableFields()" :key="'field-opt-'+f">
-                      <option :value="f" x-text="f"></option>
-                    </template>
-                  </select>
-                </div>
-              </template>
+            <!-- Unmapped columns -->
+            <div x-show="imp.unmapped.length > 0">
+              <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span style="font-weight: 500; color: var(--warning);">Unmapped Columns (<span x-text="imp.unmapped.length"></span>)</span>
+              </div>
+              <p class="text-sm muted" style="margin-bottom: 0.75rem;">Select a target field or leave as "(ignore)" to skip:</p>
+              <div style="background: var(--warning-light); border: 1px solid var(--warning); border-radius: var(--radius); padding: 0.75rem;">
+                <template x-for="col in imp.unmapped" :key="'unmapped-map-'+col">
+                  <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem;">
+                    <div style="flex: 1; font-size: 13px; color: var(--text-secondary);" x-text="col"></div>
+                    <select x-model="imp.mapping[col]" @change="checkUnmappedColumns()" style="flex: 1; font-size: 13px;">
+                      <option value="">(ignore)</option>
+                      <template x-for="f in getAvailableFields()" :key="'field-opt-'+f">
+                        <option :value="f" x-text="f"></option>
+                      </template>
+                    </select>
+                  </div>
+                </template>
+              </div>
             </div>
-          </div>
 
-          <div x-show="imp.unmapped.length === 0" style="margin-top:1rem;">
-            <p style="color:#059669; font-weight:500;">✓ All columns mapped successfully!</p>
-          </div>
+            <div x-show="imp.unmapped.length === 0 && getMappedColumns().length > 0" style="margin-top: 1rem; text-align: center;">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" style="margin-bottom: 0.5rem;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <p style="color: var(--success); font-weight: 500; margin: 0;">All columns mapped successfully!</p>
+            </div>
 
-          <div style="display:flex; gap:.5rem; justify-content:flex-end; margin-top:1.5rem; padding-top:1rem; border-top:1px solid var(--border);">
-            <button class="btn" @click="applyUnmappedChanges()">Continue</button>
+            <div class="row" style="justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+              <button class="btn btn-secondary" @click="closeUnmappedModal()">Cancel</button>
+              <button class="btn" @click="applyUnmappedChanges()">Apply Mapping</button>
+            </div>
           </div>
         </div>
       </div>
