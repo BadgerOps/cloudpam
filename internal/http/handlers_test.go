@@ -323,12 +323,12 @@ func TestBlocks_PaginationWindow(t *testing.T) {
 func TestAnalytics_MetadataInBlocks(t *testing.T) {
 	srv, _ := setupTestServer()
 	// create two accounts with different metadata
-	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:111","name":"Prod"}`, stdhttp.StatusCreated)
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:111111111111","name":"Prod"}`, stdhttp.StatusCreated)
 	var a1 struct {
 		ID int64 `json:"id"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &a1)
-	rr = doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"gcp:proj","name":"Dev"}`, stdhttp.StatusCreated)
+	rr = doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"gcp:my-project-dev","name":"Dev"}`, stdhttp.StatusCreated)
 	var a2 struct {
 		ID int64 `json:"id"`
 	}
@@ -450,7 +450,7 @@ func TestAccountsHandlers_AndBlocks(t *testing.T) {
 	srv, _ := setupTestServer()
 
 	// create account
-	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:123","name":"Prod"}`, stdhttp.StatusCreated)
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:123456789012","name":"Prod"}`, stdhttp.StatusCreated)
 	var acc struct {
 		ID int64 `json:"id"`
 	}

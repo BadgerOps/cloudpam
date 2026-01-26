@@ -22,6 +22,7 @@ import (
 	apidocs "cloudpam/docs"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
+	"cloudpam/internal/validation"
 	webui "cloudpam/web"
 )
 
@@ -58,13 +59,6 @@ func valueOrNil[T any](ptr *T) any {
 		return nil
 	}
 	return *ptr
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
 
 func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, msg string, detail string) {
@@ -471,6 +465,14 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
 			return
 		}
+		// Validate name if provided
+		in.Name = strings.TrimSpace(in.Name)
+		if in.Name != "" {
+			if err := validation.ValidateName(in.Name); err != nil {
+				s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+				return
+			}
+		}
 		a, ok, err := s.store.UpdateAccount(r.Context(), id, in)
 		if err != nil {
 			s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
@@ -612,15 +614,23 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Key = strings.TrimSpace(in.Key)
 	in.Name = strings.TrimSpace(in.Name)
-	if in.Key == "" || in.Name == "" {
-		fields := appendRequestID(ctx, []any{
-			"key_blank", in.Key == "",
-			"name_blank", in.Name == "",
-		})
-		s.loggerOrDefault().WarnContext(ctx, "accounts:create missing required fields", fields...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "key and name are required", "")
+
+	// Validate account key format
+	if err := validation.ValidateAccountKey(in.Key); err != nil {
+		fields := appendRequestID(ctx, []any{"key", in.Key, "reason", err.Error()})
+		s.loggerOrDefault().WarnContext(ctx, "accounts:create invalid key", fields...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
+
+	// Validate account name
+	if err := validation.ValidateName(in.Name); err != nil {
+		fields := appendRequestID(ctx, []any{"name", in.Name, "reason", err.Error()})
+		s.loggerOrDefault().WarnContext(ctx, "accounts:create invalid name", fields...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+
 	a, err := s.store.CreateAccount(ctx, in)
 	if err != nil {
 		fields := appendRequestID(ctx, []any{
@@ -851,6 +861,15 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
 			return
 		}
+		// Validate name if provided
+		if payload.Name != nil {
+			trimmed := strings.TrimSpace(*payload.Name)
+			payload.Name = &trimmed
+			if err := validation.ValidateName(*payload.Name); err != nil {
+				s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+				return
+			}
+		}
 		p, ok, err := s.store.UpdatePoolMeta(r.Context(), id64, payload.Name, payload.AccountID)
 		if err != nil {
 			s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
@@ -904,30 +923,27 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Name = strings.TrimSpace(in.Name)
 	in.CIDR = strings.TrimSpace(in.CIDR)
-	if in.Name == "" || in.CIDR == "" {
-		logger.WarnContext(ctx, "pools:create missing required fields", appendRequestID(ctx, []any{
-			"name_blank", in.Name == "",
-			"cidr_blank", in.CIDR == "",
-			"parent_id", valueOrNil(in.ParentID),
-			"account_id", valueOrNil(in.AccountID),
+
+	// Validate pool name
+	if err := validation.ValidateName(in.Name); err != nil {
+		logger.WarnContext(ctx, "pools:create invalid name", appendRequestID(ctx, []any{
+			"name", in.Name,
+			"reason", err.Error(),
 		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "name and cidr are required", "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
-	// Validate CIDR format and IPv4
-	if !strings.Contains(in.CIDR, "/") {
-		logger.WarnContext(ctx, "pools:create cidr missing prefix", appendRequestID(ctx, []any{"cidr", in.CIDR})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "cidr must be in a.b.c.d/x form", "")
-		return
-	}
-	if pfx, err := netip.ParsePrefix(in.CIDR); err != nil || !pfx.Addr().Is4() {
+
+	// Validate CIDR format, IPv4, reserved ranges, and prefix bounds
+	if err := validation.ValidateCIDR(in.CIDR); err != nil {
 		logger.WarnContext(ctx, "pools:create invalid cidr", appendRequestID(ctx, []any{
 			"cidr", in.CIDR,
-			"reason", errString(err),
+			"reason", err.Error(),
 		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid cidr", "")
+		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
+
 	// If ParentID provided, ensure child CIDR is subset of parent CIDR (IPv4 only for now).
 	if in.ParentID != nil {
 		parent, ok, err := s.store.GetPool(ctx, *in.ParentID)

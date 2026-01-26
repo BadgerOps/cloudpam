@@ -1,0 +1,15 @@
+id,name,cidr,parent_id,parent_name,account_id,account_name,account_platform,account_tier,account_environment,account_regions,created_at
+1,Prod VPC main,10.0.0.0/16,,,1001,Prod Core,aws,,prd,us-east-1|us-west-2,2024-01-15T10:00:00Z
+2,Prod web tier,10.0.1.0/24,1,Prod VPC main,1001,Prod Core,aws,,prd,us-east-1|us-west-2,2024-01-15T10:05:00Z
+3,Prod app tier,10.0.2.0/24,1,Prod VPC main,1001,Prod Core,aws,,prd,us-east-1|us-west-2,2024-01-15T10:10:00Z
+4,Prod db tier,10.0.3.0/24,1,Prod VPC main,1001,Prod Core,aws,,prd,us-east-1|us-west-2,2024-01-15T10:15:00Z
+5,Staging VPC,10.10.0.0/16,,,1002,Staging Core,aws,,stg,us-west-2,2024-01-16T09:00:00Z
+6,Staging app,10.10.1.0/24,5,Staging VPC,1002,Staging Core,aws,,stg,us-west-2,2024-01-16T09:05:00Z
+7,Dev VPC,10.20.0.0/16,,,1003,Dev Core,aws,,dev,us-east-2,2024-01-17T08:00:00Z
+8,Dev team A,10.20.1.0/24,7,Dev VPC,1003,Dev Core,aws,,dev,us-east-2,2024-01-17T08:05:00Z
+9,Dev team B,10.20.2.0/24,7,Dev VPC,1003,Dev Core,aws,,dev,us-east-2,2024-01-17T08:10:00Z
+10,Prod GCP network,10.50.0.0/16,,,1004,Alpha Project,gcp,,prd,us-central1|us-east1,2024-01-18T11:00:00Z
+11,Prod services,10.50.1.0/24,10,Prod GCP network,1004,Alpha Project,gcp,,prd,us-central1|us-east1,2024-01-18T11:05:00Z
+12,Dev GCP network,10.60.0.0/16,,,1005,Beta Project,gcp,,dev,us-west1,2024-01-19T14:00:00Z
+13,Dev services,10.60.1.0/24,12,Dev GCP network,1005,Beta Project,gcp,,dev,us-west1,2024-01-19T14:05:00Z
+14,Shared services,10.80.0.0/24,,,1006,Shared Services,aws,,prd,eu-west-1,2024-01-20T16:00:00Z
