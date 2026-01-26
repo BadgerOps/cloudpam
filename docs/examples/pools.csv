@@ -1,15 +1,15 @@
-CIDR Block, Platform, Environment, Region, Account ID, Notes
-10.0.0.0/16, aws, prd, us-east-1, 1001, Prod VPC main
-10.0.1.0/24, aws, prd, us-east-1, 1001, Prod web tier
-10.0.2.0/24, aws, prd, us-east-1, 1001, Prod app tier
-10.0.3.0/24, aws, prd, us-east-1, 1001, Prod db tier
-10.10.0.0/16, aws, stg, us-west-2, 1002, Staging VPC
-10.10.1.0/24, aws, stg, us-west-2, 1002, Staging app
-10.20.0.0/16, aws, dev, us-east-2, 1003, Dev VPC
-10.20.1.0/24, aws, dev, us-east-2, 1003, Dev team A
-10.20.2.0/24, aws, dev, us-east-2, 1003, Dev team B
-10.50.0.0/16, gcp, prd, us-central1, 1004, Prod GCP network
-10.50.1.0/24, gcp, prd, us-central1, 1004, Prod services
-10.60.0.0/16, gcp, dev, us-west1, 1005, Dev GCP network
-10.60.1.0/24, gcp, dev, us-west1, 1005, Dev services
-10.80.0.0/24, aws, prd, eu-west-1, 1006, Shared services
+CIDR Block,Platform,Environment,Region,Account ID,Notes
+10.0.0.0/16,aws,prd,us-east-1,1001,Prod VPC main
+10.0.1.0/24,aws,prd,us-east-1,1001,Prod web tier
+10.0.2.0/24,aws,prd,us-east-1,1001,Prod app tier
+10.0.3.0/24,aws,prd,us-east-1,1001,Prod db tier
+10.10.0.0/16,aws,stg,us-west-2,1002,Staging VPC
+10.10.1.0/24,aws,stg,us-west-2,1002,Staging app
+10.20.0.0/16,aws,dev,us-east-2,1003,Dev VPC
+10.20.1.0/24,aws,dev,us-east-2,1003,Dev team A
+10.20.2.0/24,aws,dev,us-east-2,1003,Dev team B
+10.50.0.0/16,gcp,prd,us-central1,1004,Prod GCP network
+10.50.1.0/24,gcp,prd,us-central1,1004,Prod services
+10.60.0.0/16,gcp,dev,us-west1,1005,Dev GCP network
+10.60.1.0/24,gcp,dev,us-west1,1005,Dev services
+10.80.0.0/24,aws,prd,eu-west-1,1006,Shared services
