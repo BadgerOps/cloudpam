@@ -71,11 +71,13 @@ The storage layer uses build tags to switch between implementations:
 - **Storage Interface**: `internal/storage/store.go` defines the `Store` interface
   - `MemoryStore`: in-memory implementation in same file
   - SQLite implementation: `internal/storage/sqlite/sqlite.go`
+  - All stores must implement `Close() error` to release resources on shutdown
 
 - **Migration System**: SQLite builds embed SQL migrations from `migrations/` directory
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
+  - Current migrations: `0001_init.sql`, `0002_accounts_meta.sql`
 
 ### HTTP Layer
 
@@ -84,15 +86,29 @@ The storage layer uses build tags to switch between implementations:
 - **Server struct**: wraps `http.ServeMux` and `storage.Store`
 - **Route registration**: `RegisterRoutes()` sets up all endpoints
 - **API endpoints**:
+  - `/healthz` - health check endpoint
   - `/api/v1/pools` - pool CRUD
+  - `/api/v1/pools/{id}` - single pool GET/PATCH/DELETE
   - `/api/v1/pools/{id}/blocks` - enumerate candidate subnets for a pool
   - `/api/v1/accounts` - account CRUD
+  - `/api/v1/accounts/{id}` - single account GET/PATCH/DELETE
   - `/api/v1/blocks` - list assigned blocks (sub-pools with filters)
   - `/api/v1/export` - data export as CSV in ZIP
+  - `/api/v1/test-sentry` - Sentry integration test endpoint (use `?type=message|error|panic`)
   - `/openapi.yaml` - OpenAPI spec served from embedded `docs/spec_embed.go`
   - `/` - serves embedded UI from `web/embed.go`
-- **Middleware**: `LoggingMiddleware` logs requests
-- **Error handling**: uses `apiError` struct with `error` and `detail` fields
+- **Middleware**: `LoggingMiddleware` logs requests and captures Sentry performance traces
+- **Error handling**: uses `apiError` struct with `error` and `detail` fields; 5xx errors are reported to Sentry
+
+### Graceful Shutdown
+
+The server (`cmd/cloudpam/main.go`) implements graceful shutdown:
+
+- Listens for `SIGINT` and `SIGTERM` signals
+- Initiates graceful HTTP server shutdown with 15-second timeout
+- Closes the storage backend via `store.Close()` to release database connections
+- Flushes Sentry events before exit
+- Logs shutdown progress at each stage
 
 ### Domain Model
 
@@ -118,16 +134,19 @@ The HTTP server (`internal/http/server.go`) implements IPv4 CIDR logic:
 `cmd/cloudpam/main.go`:
 
 - Parses flags: `-addr`, `-migrate`
+- Initializes Sentry if `SENTRY_DSN` is set
 - Calls `selectStore()` to get storage implementation (defined in build-tag files)
-- Sets up HTTP server with timeouts
+- Sets up HTTP server with timeouts (read: 10s, write: 15s, idle: 60s)
 - Handles migration CLI commands before starting server
+- Implements graceful shutdown with signal handling
 
 ## Development Guidelines
 
 ### Code Style
 
-- Go 1.24+ required
+- Go 1.23+ required (toolchain 1.24.x)
 - Use `go fmt` and pass `golangci-lint` (see `.golangci.yml` for enabled linters)
+- Linters enabled: `govet`, `staticcheck`, `ineffassign`, `errcheck`, `gocritic`, `misspell`
 - Keep errors lowercase and actionable
 - Prefer small, focused files
 
@@ -144,6 +163,7 @@ When modifying storage:
 
 - Update the `Store` interface in `internal/storage/store.go`
 - Implement methods in both `MemoryStore` (same file) and SQLite store (`internal/storage/sqlite/sqlite.go`)
+- Ensure the `Close() error` method is implemented to release resources
 - For SQLite schema changes: add new migration file to `migrations/` with sequential prefix (e.g., `0003_description.sql`)
 - Test both storage backends: run `just test` (in-memory) and `just sqlite-build && just test` (SQLite)
 
@@ -181,9 +201,17 @@ The REST API contract is captured in `docs/openapi.yaml` (OpenAPI 3.1). The spec
 Common workflows:
 - Health check: `GET /healthz`
 - List pools: `GET /api/v1/pools`
+- Get single pool: `GET /api/v1/pools/{id}`
 - Create pool: `POST /api/v1/pools` with JSON body `{"name":"...", "cidr":"...", "parent_id":..., "account_id":...}`
+- Update pool: `PATCH /api/v1/pools/{id}` with JSON body `{"name":"...", "account_id":...}`
+- Delete pool: `DELETE /api/v1/pools/{id}` (add `?force=true` for cascade delete)
 - Enumerate blocks: `GET /api/v1/pools/{id}/blocks?new_prefix_len=26&page_size=50&page=1`
+- List accounts: `GET /api/v1/accounts`
+- Create account: `POST /api/v1/accounts` with JSON body `{"key":"...", "name":"...", ...}`
+- Delete account: `DELETE /api/v1/accounts/{id}` (add `?force=true` for cascade delete)
 - List assigned blocks: `GET /api/v1/blocks?accounts=1,2&pools=10,11&page_size=50&page=1`
+- Export data: `GET /api/v1/export?datasets=accounts,pools,blocks`
+- Test Sentry: `GET /api/v1/test-sentry?type=message|error|panic`
 
 ## Testing Across Storage Backends
 
@@ -196,9 +224,33 @@ When writing tests, avoid assumptions about storage persistence or specific impl
 
 ## CI Configuration
 
-- GitHub Actions: `.github/workflows/test.yml` and `.github/workflows/lint.yml`
-- CI pins Go `1.24.x` and golangci-lint `v2.1.6`
-- Tests run with `-race` flag in CI
+GitHub Actions workflows in `.github/workflows/`:
+
+- **test.yml**: Runs on all branches
+  - `test-race` job: builds and runs tests with `-race` flag
+  - `coverage` job: generates coverage report with optional threshold via `COVERAGE_THRESHOLD` repository variable
+  - Uploads coverage artifacts (coverage.out, coverage.txt, coverage.html)
+
+- **lint.yml**: Runs on main/master and PRs
+  - Uses golangci-lint-action v8 with golangci-lint v2.1.6
+  - 5-minute timeout
+
+- **release-builds.yml**: Triggered on release publish
+  - Builds multi-platform binaries (linux/darwin/windows on amd64/arm64)
+  - Uses `-tags sqlite` for SQLite support
+  - Attaches archives (.tar.gz/.zip) to the GitHub Release
+  - Generates SHA256SUMS.txt checksums
+  - Generates SBOM (SPDX JSON format)
+
+- **manual-builds.yml**: Manual workflow dispatch
+  - Builds the same matrix as release-builds
+  - Configurable git ref and Go version
+  - Includes smoke test (runs server, probes /healthz)
+  - Uploads build artifacts
+
+CI pins:
+- Go `1.24.x`
+- golangci-lint `v2.1.6`
 
 ## Error Tracking with Sentry
 
@@ -241,11 +293,60 @@ CloudPAM integrates with Sentry for error tracking and performance monitoring:
    - Track HTTP performance
    - Report frontend errors and replays
 
+5. Test Sentry integration:
+   ```bash
+   curl "http://localhost:8080/api/v1/test-sentry?type=message"  # Send test message
+   curl "http://localhost:8080/api/v1/test-sentry?type=error"    # Trigger 500 error
+   curl "http://localhost:8080/api/v1/test-sentry?type=panic"    # Trigger panic
+   ```
+
 ### Notes
 - If `SENTRY_DSN` is not set, Sentry integration is disabled (no overhead)
 - Frontend DSN is injected into HTML at runtime via meta tag
 - TracesSampleRate is set to 1.0 (100%) - adjust in `cmd/cloudpam/main.go` for high-traffic environments
 - Session replay samples 10% of sessions by default - adjust in `web/index.html` if needed
+
+## Project Structure
+
+```
+cloudpam/
+├── cmd/cloudpam/           # Main entrypoint and storage selection
+│   ├── main.go             # Server startup, flags, graceful shutdown
+│   ├── store_default.go    # In-memory store selection (default build)
+│   └── store_sqlite.go     # SQLite store selection (-tags sqlite)
+├── internal/
+│   ├── domain/             # Core types (Pool, Account)
+│   │   └── types.go
+│   ├── http/               # HTTP server, routes, handlers
+│   │   ├── server.go       # Server implementation and all handlers
+│   │   ├── server_test.go
+│   │   └── handlers_test.go
+│   └── storage/            # Storage interface and implementations
+│       ├── store.go        # Store interface and MemoryStore
+│       ├── store_test.go
+│       └── sqlite/         # SQLite implementation
+│           ├── sqlite.go
+│           └── migrator.go
+├── migrations/             # SQL migrations (embedded in SQLite builds)
+│   ├── embed.go
+│   ├── 0001_init.sql
+│   └── 0002_accounts_meta.sql
+├── web/                    # Frontend (Alpine.js SPA)
+│   ├── embed.go            # Embeds index.html at build time
+│   └── index.html
+├── docs/                   # Documentation
+│   ├── openapi.yaml        # OpenAPI 3.1 spec
+│   ├── spec_embed.go       # Embeds OpenAPI spec
+│   ├── PROJECT_PLAN.md     # Roadmap and project plan
+│   └── CHANGELOG.md        # Version history
+├── scripts/                # Utility scripts
+├── photos/                 # Screenshots (Git LFS tracked)
+├── .github/workflows/      # CI/CD workflows
+├── Justfile                # Task runner commands
+├── .golangci.yml           # Linter configuration
+├── go.mod / go.sum         # Go module files
+└── CLAUDE.md               # This file
+```
 
 ## Roadmap Context
 
