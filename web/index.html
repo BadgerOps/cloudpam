@@ -6,45 +6,154 @@
     <title>CloudPAM</title>
     <style>
       :root {
-        --bg: #f6f7fb;
+        --bg: #f8fafc;
         --card: #ffffff;
-        --muted: #6b7280;
+        --muted: #64748b;
         --text: #0f172a;
-        --border: #e5e7eb;
+        --text-secondary: #475569;
+        --border: #e2e8f0;
+        --border-light: #f1f5f9;
         --primary: #2563eb;
-        --primary-600: #1d4ed8;
+        --primary-hover: #1d4ed8;
+        --primary-light: #dbeafe;
+        --primary-subtle: #eff6ff;
         --success: #059669;
+        --success-light: #d1fae5;
         --danger: #dc2626;
-        --radius: 12px;
-        --shadow: 0 6px 20px rgba(0,0,0,0.08);
+        --danger-light: #fee2e2;
+        --warning: #d97706;
+        --warning-light: #fef3c7;
+        --radius: 8px;
+        --radius-lg: 12px;
+        --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+        --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+        --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
       }
-      /* Hide cloaked elements until Alpine initializes */
+      * { box-sizing: border-box; }
       [x-cloak] { display: none !important; }
-      body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; }
-      header { display:flex; align-items:center; gap:1rem; padding: 1.25rem 2rem; background: var(--card); box-shadow: var(--shadow); position: sticky; top: 0; z-index: 10; }
-      header h1 { margin: 0; font-size: 20px; }
+      body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; margin: 0; font-size: 14px; line-height: 1.5; }
+
+      /* Header */
+      .header { background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; }
+      .header-inner { max-width: 1400px; margin: 0 auto; padding: 0 1.5rem; display: flex; align-items: center; height: 60px; gap: 2rem; }
+      .logo { display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 18px; color: var(--text); text-decoration: none; }
+      .logo-icon { width: 32px; height: 32px; background: linear-gradient(135deg, var(--primary) 0%, #7c3aed 100%); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600; }
+      .nav { display: flex; gap: 0.25rem; }
+      .nav-item { padding: 0.5rem 1rem; border-radius: var(--radius); color: var(--text-secondary); text-decoration: none; font-weight: 500; font-size: 14px; transition: all 0.15s ease; cursor: pointer; border: none; background: none; }
+      .nav-item:hover { background: var(--border-light); color: var(--text); }
+      .nav-item.active { background: var(--primary-subtle); color: var(--primary); }
+      .header-actions { margin-left: auto; display: flex; align-items: center; gap: 0.75rem; }
+
+      /* Main Content */
       .muted { color: var(--muted); }
-      main { padding: 2rem; max-width: 1000px; margin: 0 auto; }
-      .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1rem 1.25rem; }
-      input, select { padding: 0.5rem 0.6rem; font-size: 14px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--text); outline: none; }
-      input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15); }
-      .btn { border: 1px solid var(--primary); color: #fff; background: var(--primary); padding: 0.5rem 0.8rem; border-radius: 8px; cursor: pointer; transition: background 0.15s ease, transform 0.04s ease; font-size: 14px; }
-      .btn:hover { background: var(--primary-600); }
-      .btn:active { transform: translateY(1px); }
-      .btn.ghost { background: transparent; color: var(--primary); border-color: var(--primary); }
-      .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-      table { border-collapse: collapse; width: 100%; margin-top: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: visible; }
-      th, td { border-bottom: 1px solid var(--border); padding: 10px 12px; }
-      th { background: #fafafa; text-align: left; font-weight: 600; }
+      main { max-width: 1400px; margin: 0 auto; padding: 1.5rem; }
+      .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+      .page-title { font-size: 24px; font-weight: 600; margin: 0; }
+      .page-subtitle { color: var(--muted); margin: 0.25rem 0 0 0; font-size: 14px; }
+
+      /* Cards */
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+      .card-header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+      .card-title { font-size: 15px; font-weight: 600; margin: 0; }
+      .card-body { padding: 1.25rem; }
+      .card-padded { padding: 1rem 1.25rem; }
+
+      /* Form Elements */
+      input, select { padding: 0.5rem 0.75rem; font-size: 14px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--card); color: var(--text); outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+      input:focus, select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+      input::placeholder { color: var(--muted); }
+      .form-group { display: flex; flex-direction: column; gap: 0.375rem; }
+      .form-label { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+      .form-hint { font-size: 12px; color: var(--muted); }
+
+      /* Buttons */
+      .btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.5rem 1rem; font-size: 14px; font-weight: 500; border-radius: var(--radius); border: 1px solid transparent; cursor: pointer; transition: all 0.15s ease; text-decoration: none; }
+      .btn:hover { transform: translateY(-1px); }
+      .btn:active { transform: translateY(0); }
+      .btn:not(.ghost) { background: var(--primary); color: white; border-color: var(--primary); }
+      .btn:not(.ghost):hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+      .btn.ghost { background: transparent; color: var(--primary); border-color: var(--border); }
+      .btn.ghost:hover { background: var(--border-light); border-color: var(--border); }
+      .btn.btn-secondary { background: var(--card); color: var(--text); border-color: var(--border); }
+      .btn.btn-secondary:hover { background: var(--border-light); }
+      .btn.btn-danger { background: var(--danger); border-color: var(--danger); color: white; }
+      .btn.btn-sm { padding: 0.375rem 0.75rem; font-size: 13px; }
+      .btn[disabled] { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+      /* Tables */
+      table { border-collapse: collapse; width: 100%; }
+      th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+      th { background: var(--border-light); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
       thead th.sticky { position: sticky; top: 0; z-index: 1; }
+      tbody tr:hover { background: var(--border-light); }
+      tbody tr:nth-child(even) { background: rgba(248, 250, 252, 0.5); }
+      tbody tr:nth-child(even):hover { background: var(--border-light); }
+      .table-wrapper { overflow-x: auto; }
+
+      /* Toolbar */
+      .toolbar { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+      .toolbar-search { flex: 1; min-width: 200px; max-width: 300px; }
+      .toolbar-divider { width: 1px; height: 24px; background: var(--border); }
+      .toolbar-group { display: flex; align-items: center; gap: 0.5rem; }
+      .toolbar-label { font-size: 13px; color: var(--muted); }
+
+      /* Pagination */
+      .pagination { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1.25rem; border-top: 1px solid var(--border); background: var(--border-light); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+      .pagination-info { font-size: 13px; color: var(--muted); }
+      .pagination-controls { display: flex; align-items: center; gap: 0.25rem; }
+
+      /* Badges */
+      .badge { display: inline-flex; align-items: center; padding: 0.25rem 0.625rem; font-size: 12px; font-weight: 500; border-radius: 9999px; }
+      .badge-success { background: var(--success-light); color: var(--success); }
+      .badge-danger { background: var(--danger-light); color: var(--danger); }
+      .badge-warning { background: var(--warning-light); color: var(--warning); }
+      .badge-muted { background: var(--border-light); color: var(--muted); }
+
+      /* Stats Row */
+      .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+      .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; }
+      .stat-value { font-size: 24px; font-weight: 700; color: var(--text); }
+      .stat-label { font-size: 12px; color: var(--muted); margin-top: 0.25rem; }
+
+      /* Visualization Bar */
+      .viz-bar { height: 40px; background: var(--border-light); border-radius: var(--radius); overflow: hidden; display: flex; position: relative; border: 1px solid var(--border); }
+      .viz-segment { height: 100%; transition: all 0.2s ease; cursor: pointer; position: absolute; top: 0; }
+      .viz-segment:hover { opacity: 0.85; }
+      .viz-legend { display: flex; gap: 1.5rem; margin-top: 0.75rem; }
+      .viz-legend-item { display: flex; align-items: center; gap: 0.5rem; font-size: 13px; color: var(--text-secondary); }
+      .viz-legend-dot { width: 12px; height: 12px; border-radius: 3px; }
+
+      /* Slide-out Panel */
+      .detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 150; }
+      .detail-panel { position: fixed; top: 0; right: 0; width: 100%; max-width: 900px; height: 100vh; background: var(--card); box-shadow: -4px 0 20px rgba(0,0,0,0.15); z-index: 200; display: flex; flex-direction: column; }
+      .detail-header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 1rem; }
+      .detail-close { padding: 0.5rem; border: none; background: none; cursor: pointer; color: var(--muted); border-radius: var(--radius); display: flex; align-items: center; justify-content: center; }
+      .detail-close:hover { background: var(--border-light); color: var(--text); }
+      .detail-title { font-size: 18px; font-weight: 600; margin: 0; }
+      .detail-subtitle { font-size: 13px; color: var(--muted); }
+      .detail-body { flex: 1; overflow-y: auto; padding: 1.5rem; }
+      .detail-section { margin-bottom: 1.5rem; }
+      .detail-section-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.75rem; }
+
+      /* Legacy support */
       .spinner { width:14px; height:14px; border:2px solid #c7d2fe; border-top-color:#4f46e5; border-radius:50%; display:inline-block; animation: spin .7s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
       .copy-btn { border:none; background:transparent; color: var(--primary); cursor:pointer; padding:0 4px; }
-      .chip { display:inline-flex; align-items:center; gap:.35rem; padding:2px 8px; border-radius:999px; background:#eef2ff; border:1px solid var(--border); cursor:pointer; }
-      .chip.active { background:#dbeafe; border-color:#bfdbfe; }
+      .chip { display:inline-flex; align-items:center; gap:.35rem; padding:2px 8px; border-radius:999px; background:#eef2ff; border:1px solid var(--border); cursor:pointer; transition: all 0.15s ease; }
+      .chip:hover { background: var(--primary-light); border-color: var(--primary-light); }
+      .chip.active { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
       .row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
       .status-used { color: var(--danger); font-weight: 600; }
       .status-free { color: var(--success); font-weight: 600; }
+
+      /* Utilities */
+      .font-mono { font-family: 'SF Mono', Monaco, 'Cascadia Code', Consolas, monospace; }
+      .text-sm { font-size: 13px; }
+      .ml-auto { margin-left: auto; }
+      .flex { display: flex; }
+      .items-center { align-items: center; }
+      .gap-2 { gap: 0.5rem; }
+      .gap-3 { gap: 0.75rem; }
     </style>
     <!-- Sentry Browser SDK -->
     <script src="https://browser.sentry-cdn.com/8.0.0/bundle.min.js" crossorigin="anonymous"></script>
@@ -95,11 +204,24 @@
         </div>
       </template>
     </div>
-    <header>
-      <h1>CloudPAM</h1>
-      <span class="muted">Lightweight Cloud IPAM (AWS/GCP)</span>
-      <div style="margin-left:auto; display:flex; gap:.5rem; align-items:center;">
-        <button class="btn ghost" @click="window.testSentryFrontend()" style="font-size:.85rem; padding:.25rem .5rem;">Test Sentry</button>
+    <div x-data="tabState()" x-init="init()" @keydown.window="onKey($event)">
+    <header class="header">
+      <div class="header-inner">
+        <a href="#" class="logo" @click.prevent="tab='pools'">
+          <div class="logo-icon">IP</div>
+          <span>CloudPAM</span>
+        </a>
+        <nav class="nav">
+          <button :class="'nav-item' + (tab==='pools' ? ' active' : '')" @click="tab='pools'">Pools</button>
+          <button :class="'nav-item' + (tab==='accounts' ? ' active' : '')" @click="tab='accounts'">Accounts</button>
+          <button :class="'nav-item' + (tab==='analytics' ? ' active' : '')" @click="tab='analytics'">Analytics</button>
+        </nav>
+        <div class="header-actions">
+          <button class="btn btn-secondary btn-sm" @click="$dispatch('open-data-io')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Data
+          </button>
+        </div>
       </div>
     </header>
     <script>
@@ -122,86 +244,155 @@
       };
     </script>
 
-    <main x-data="tabState()" x-init="init()" @keydown.window="onKey($event)">
-    <div class="card" style="margin-bottom:1rem; display:flex; gap:.5rem; align-items:flex-end;">
-      <div style="display:flex; gap:.5rem;">
-        <button :class="tab==='pools' ? 'btn' : 'btn ghost'" @click="tab='pools'">Pools</button>
-        <button :class="tab==='accounts' ? 'btn' : 'btn ghost'" @click="tab='accounts'">Accounts</button>
-        <button :class="tab==='analytics' ? 'btn' : 'btn ghost'" @click="tab='analytics'">Analytics</button>
-      </div>
-      <div style="margin-left:auto;">
-        <button class="btn ghost" @click="$dispatch('open-data-io')">Data</button>
-      </div>
-    </div>
+    <main>
     <template x-if="tab==='pools'">
-    <section x-data="pools()" x-init="init()" class="card">
-      <h2>Top-level Pools</h2>
-      <div class="row">
-        <input type="text" placeholder="Name" x-model="form.name" />
-        <div style="display:flex; flex-direction:column; gap:4px;">
-          <input type="text" placeholder="CIDR (e.g., 10.0.0.0/16)" x-model="form.cidr" @blur="validateCIDR()" :style="cidrError ? 'border-color:#dc2626' : ''" />
-          <small class="muted" style="color:#dc2626" x-show="cidrError" x-text="cidrError"></small>
+    <section x-data="pools()" x-init="init()">
+      <!-- Page Header -->
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">IP Pools</h1>
+          <p class="page-subtitle">Manage your IP address pools and allocations</p>
         </div>
-        <select x-model.number="form.account_id">
-          <option :value="null">No Account</option>
-          <template x-for="a in accounts" :key="a.id">
-            <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
-          </template>
-        </select>
-        <button class="btn" @click="createTop()" :disabled="creating || !!cidrError">
-          <span x-show="creating" class="spinner"></span>
-          <span x-text="creating ? 'Creating…' : 'Create'"></span>
-        </button>
-        <span x-text="msg" class="muted"></span>
+        <div class="flex gap-2">
+          <button class="btn" @click="showCreateForm = !showCreateForm">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Pool
+          </button>
+        </div>
       </div>
-      <div class="row" style="margin-top:1rem; align-items:center; gap:.75rem;">
-        <input type="text" placeholder="Search..." x-model="search" x-ref="poolSearch" style="flex:1; max-width:300px;" />
-        <label>Page size
-          <select x-model="pageSize" @change="page=1; load()">
-            <option value="25">25</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-            <option value="all">All</option>
-          </select>
-        </label>
-        <div style="margin-left:auto; position:relative;" x-data="{ bulkMenuOpen:false }" @click.outside="bulkMenuOpen=false">
-          <button class="btn ghost" @click="bulkMenuOpen=!bulkMenuOpen" :disabled="!selectedTop.length" :title="selectedTop.length ? (selectedTop.length + ' selected') : 'Select rows to enable actions'">⋮</button>
-          <div x-show="bulkMenuOpen" x-cloak style="position:absolute; right:0; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow); z-index:9999; min-width:180px;">
-            <button class="btn ghost" style="display:block; width:100%; text-align:left;" @click="bulkMenuOpen=false; openBulkAssignTop()">Assign Account…</button>
-            <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger);" @click="bulkMenuOpen=false; openBulkDeleteTop()">Delete…</button>
+
+      <!-- Stats Row -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value" x-text="topLevel.length"></div>
+          <div class="stat-label">Total Pools</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="list.filter(p => p.parent_id).length"></div>
+          <div class="stat-label">Sub-Allocations</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" x-text="accounts.length"></div>
+          <div class="stat-label">Accounts</div>
+        </div>
+      </div>
+
+      <!-- Create Form (collapsible) -->
+      <div x-show="showCreateForm" x-cloak class="card" style="margin-bottom: 1rem;">
+        <div class="card-header">
+          <h3 class="card-title">Create New Pool</h3>
+          <button class="btn ghost btn-sm" @click="showCreateForm = false">×</button>
+        </div>
+        <div class="card-body">
+          <div class="row" style="align-items: flex-start;">
+            <div class="form-group" style="flex: 1; min-width: 150px;">
+              <label class="form-label">Name</label>
+              <input type="text" placeholder="e.g., Production VPC" x-model="form.name" />
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label">CIDR Block</label>
+              <input type="text" placeholder="e.g., 10.0.0.0/16" x-model="form.cidr" @blur="validateCIDR()" :style="cidrError ? 'border-color: var(--danger)' : ''" />
+              <span class="form-hint" style="color: var(--danger);" x-show="cidrError" x-text="cidrError"></span>
+            </div>
+            <div class="form-group" style="flex: 1; min-width: 180px;">
+              <label class="form-label">Account (optional)</label>
+              <select x-model.number="form.account_id">
+                <option :value="null">No Account</option>
+                <template x-for="a in accounts" :key="a.id">
+                  <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+                </template>
+              </select>
+            </div>
+            <div class="form-group" style="justify-content: flex-end; padding-top: 1.5rem;">
+              <button class="btn" @click="createTop()" :disabled="creating || !!cidrError">
+                <span x-show="creating" class="spinner"></span>
+                <span x-text="creating ? 'Creating…' : 'Create Pool'"></span>
+              </button>
+            </div>
+          </div>
+          <span x-text="msg" class="muted text-sm"></span>
+        </div>
+      </div>
+
+      <!-- Pools Table Card -->
+      <div class="card">
+        <!-- Toolbar -->
+        <div class="toolbar">
+          <input type="text" class="toolbar-search" placeholder="Search pools..." x-model="search" x-ref="poolSearch" />
+          <div class="toolbar-divider"></div>
+          <div class="toolbar-group">
+            <span class="toolbar-label">Show:</span>
+            <select x-model="pageSize" @change="page=1; load()" style="width: 80px;">
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="all">All</option>
+            </select>
+          </div>
+          <div class="toolbar-group ml-auto" x-data="{ bulkMenuOpen:false }" @click.outside="bulkMenuOpen=false">
+            <span class="text-sm muted" x-show="selectedTop.length" x-text="selectedTop.length + ' selected'"></span>
+            <div style="position: relative;">
+              <button class="btn ghost btn-sm" @click="bulkMenuOpen=!bulkMenuOpen" :disabled="!selectedTop.length" title="Bulk actions">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+              </button>
+              <div x-show="bulkMenuOpen" x-cloak style="position:absolute; right:0; top: 100%; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:var(--shadow-lg); z-index:9999; min-width:180px; margin-top: 4px;">
+                <button class="btn ghost" style="display:block; width:100%; text-align:left; border-radius: 8px 8px 0 0;" @click="bulkMenuOpen=false; openBulkAssignTop()">Assign Account…</button>
+                <button class="btn ghost" style="display:block; width:100%; text-align:left; color:var(--danger); border-radius: 0 0 8px 8px;" @click="bulkMenuOpen=false; openBulkDeleteTop()">Delete…</button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-      <div style="overflow:auto;">
-      <table style="min-width: 960px;">
-        <thead>
-          <tr>
-            <th class="sticky" style="width:32px;"><input type="checkbox" @change="toggleSelectAllTop($event)" :checked="allTopSelected()" :indeterminate="indeterminateTop()" /></th>
-            <th class="sticky"><a href="#" @click.prevent="sortTop('id')">ID <span x-text="sortTopKey==='id'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"><a href="#" @click.prevent="sortTop('name')">Name <span x-text="sortTopKey==='name'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"><a href="#" @click.prevent="sortTop('cidr')">CIDR <span x-text="sortTopKey==='cidr'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"><a href="#" @click.prevent="sortTop('account')">Account <span x-text="sortTopKey==='account'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"><a href="#" @click.prevent="sortTop('created')">Created <span x-text="sortTopKey==='created'? (sortTopDir==='asc'?'▲':'▼') : ''"></span></a></th>
-            <th class="sticky"></th>
-          </tr>
-        </thead>
-        <tbody>
-          <template x-for="p in sortedTop()" :key="p.id">
+
+        <!-- Table -->
+        <div class="table-wrapper">
+        <table style="min-width: 800px;">
+          <thead>
             <tr>
-              <td><input type="checkbox" :value="p.id" @change="toggleSelectTop(p.id)" :checked="selectedTop.includes(p.id)" /></td>
-              <td x-text="p.id"></td>
-              <td x-text="p.name"></td>
-              <td x-text="p.cidr"></td>
-              <td x-text="accountName(p.account_id)"></td>
-              <td x-text="new Date(p.created_at).toLocaleString()"></td>
-              <td style="text-align:right; position:relative;">
-                <button class="btn ghost" @click="selectPool(p)">View</button>
+              <th class="sticky" style="width:40px;"><input type="checkbox" @change="toggleSelectAllTop($event)" :checked="allTopSelected()" :indeterminate="indeterminateTop()" /></th>
+              <th class="sticky"><a href="#" @click.prevent="sortTop('name')" style="text-decoration: none; color: inherit;">Name <span x-text="sortTopKey==='name'? (sortTopDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky"><a href="#" @click.prevent="sortTop('cidr')" style="text-decoration: none; color: inherit;">CIDR <span x-text="sortTopKey==='cidr'? (sortTopDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky"><a href="#" @click.prevent="sortTop('account')" style="text-decoration: none; color: inherit;">Account <span x-text="sortTopKey==='account'? (sortTopDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky"><a href="#" @click.prevent="sortTop('created')" style="text-decoration: none; color: inherit;">Created <span x-text="sortTopKey==='created'? (sortTopDir==='asc'?'↑':'↓') : ''"></span></a></th>
+              <th class="sticky" style="width: 100px;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="p in sortedTop()" :key="p.id">
+              <tr>
+                <td><input type="checkbox" :value="p.id" @change="toggleSelectTop(p.id)" :checked="selectedTop.includes(p.id)" /></td>
+                <td><strong x-text="p.name"></strong></td>
+                <td><code class="font-mono" x-text="p.cidr"></code></td>
+                <td>
+                  <span x-show="p.account_id" class="chip active" x-text="accountName(p.account_id)"></span>
+                  <span x-show="!p.account_id" class="muted">—</span>
+                </td>
+                <td class="text-sm muted" x-text="new Date(p.created_at).toLocaleDateString()"></td>
+                  <button class="btn ghost btn-sm" @click="selectPool(p)">View →</button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="topLevel.length === 0">
+              <td colspan="6" style="text-align: center; padding: 3rem;">
+                <div style="color: var(--muted);">
+                  <div style="font-size: 48px; margin-bottom: 1rem;">📦</div>
+                  <div style="font-size: 16px; font-weight: 500; margin-bottom: 0.5rem;">No pools yet</div>
+                  <div class="text-sm">Create your first IP pool to get started</div>
+                  <button class="btn" style="margin-top: 1rem;" @click="showCreateForm = true">Create Pool</button>
+                </div>
               </td>
             </tr>
-          </template>
-          <tr x-show="topLevel.length === 0"><td colspan="5" style="color:#999">No pools yet</td></tr>
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination">
+          <span class="pagination-info">
+            <span x-show="topLevel.length > 0">Showing <strong x-text="sortedTop().length"></strong> of <strong x-text="topLevel.length"></strong> pools</span>
+            <span x-show="topLevel.length === 0">No pools</span>
+          </span>
+        </div>
+      </div><!-- end card -->
 
       <!-- Bulk Assign Top Pools -->
       <div x-show="bulkAssignTopOpen" x-cloak @click.self="bulkAssignTopOpen=false" @keydown.escape.window="bulkAssignTopOpen && (bulkAssignTopOpen=false)" style="position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:10010;">
@@ -236,161 +427,187 @@
         </div>
       </div>
 
+      <!-- Pool Detail Slide-out Panel -->
       <template x-if="current">
-        <div style="margin-top: 2rem;" class="card">
-          <h3>
-            <span x-text="`Pool #${current.id}: ${current.name} (${current.cidr})`"></span>
-            <span class="muted" x-show="current.account_id"> · Account:
-              <strong x-text="accountName(current.account_id)"></strong>
-            </span>
-          </h3>
-          <div class="row" style="margin: 0.25rem 0; align-items:center;">
-            <label>Assign account:</label>
-            <select x-model.number="currentAccountId" style="min-width: 14rem;">
-              <option :value="null">No Account</option>
-              <template x-for="a in accounts" :key="a.id">
-                <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
-              </template>
-            </select>
-            <button class="btn ghost" @click="updateCurrentPoolAccount()">Update</button>
-            <span class="muted" x-text="updateMsg"></span>
-          </div>
-          <div class="row" style="margin: 0.5rem 0; align-items:center;">
-            <label>Block size (prefix):</label>
-            <input type="number" :min="currentPrefixBits ? currentPrefixBits+1 : 16" max="32" x-model.number="blockPrefix" @change="onBlockPrefixChange()" style="width:6rem" />
-            <label>Per page:</label>
-            <select x-model="pageSize" @change="onPageSize()">
-              <option value="10">10</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-              <option value="all">All</option>
-            </select>
-            <button class="btn" @click="loadBlocks()" :disabled="loadingBlocks"><span x-show="loadingBlocks" class="spinner"></span> <span x-text="loadingBlocks?'Loading…':'List Blocks'"></span></button>
-            <span x-text="subMsg" class="muted"></span>
-          </div>
-          <div class="row" style="margin: 0.5rem 0; align-items:center;">
-            <button class="btn ghost" @click="firstPage()" :disabled="page<=1 || pageSize==='all'">First</button>
-            <button class="btn ghost" @click="prevPage()" :disabled="page<=1 || pageSize==='all'">Prev</button>
-            <span>Page</span>
-            <input type="number" min="1" :max="totalPages" x-model.number="pageInput" style="width:5rem" />
-            <button class="btn ghost" @click="goToPage()" :disabled="pageSize==='all'">Go</button>
-            <span>of <strong x-text="totalPages"></strong></span>
-            <button class="btn ghost" @click="nextPage()" :disabled="page>=totalPages || pageSize==='all'">Next</button>
-            <button class="btn ghost" @click="lastPage()" :disabled="page>=totalPages || pageSize==='all'">Last</button>
-            <span class="muted" x-show="total>0">Showing <strong x-text="fromItem"></strong>–<strong x-text="toItem"></strong> of <strong x-text="total"></strong></span>
-            <div style="margin-left:auto; display:flex; gap:1rem; align-items:center;">
-              <label style="display:flex; gap:.35rem; align-items:center;">
-                <input type="checkbox" x-model="showOnlyUsed" @change="filterBlocks()" />
-                Show only used
-              </label>
-              <label style="display:flex; gap:.35rem; align-items:center;">
-                <input type="checkbox" x-model="hideUnavailable" @change="filterBlocks()" />
-                Hide unavailable
-              </label>
-            </div>
-          </div>
-
-          <div class="card" style="margin: .5rem 0; padding:.75rem;">
-            <div class="row" style="align-items:center; gap:.75rem; flex-wrap:wrap;">
-              <strong>IP Space Visualization</strong>
-              <input type="text" placeholder="Search name or CIDR" x-model="vizSearch" @input="computeViz()" />
-              <label>Accounts
-                <div style="display:flex; align-items:center; gap:.4rem; margin-bottom:4px;">
-                  <input type="checkbox" @change="toggleVizAll($event)" :checked="vizAllSelected()" :indeterminate="vizIndeterminate()" />
-                  <span class="muted">All</span>
-                </div>
-                <select x-model="vizAccounts" multiple size="3" @change="computeViz()">
-                  <template x-for="a in accounts" :key="a.id">
-                    <option :value="String(a.id)" x-text="a.name"></option>
-                  </template>
-                </select>
-              </label>
-            </div>
-            <div style="position:relative; height:16px; background:#eef2ff; border:1px solid var(--border); border-radius:6px; margin-top:.5rem; overflow:hidden;">
-              <template x-for="seg in vizSegments" :key="seg.id">
-                <div :title="seg.title" :style="`position:absolute; left:${seg.left}%; width:${seg.width}%; top:0; bottom:0; background:${seg.color}; opacity:.85;`"></div>
-              </template>
-            </div>
-            <div class="muted" style="margin-top:.4rem;">
-              <span x-text="vizSegments.length"></span> block(s) displayed
-            </div>
-            <div class="row" style="gap:.5rem; margin-top:.5rem; align-items:center; flex-wrap:wrap;">
-              <span class="muted">Legend:</span>
-              <template x-for="chip in vizLegend()" :key="chip.key">
-                <span :class="'chip ' + (vizAccounts.length===0 || vizAccounts.includes(chip.key) ? 'active' : '')" @click="toggleVizChip(chip.key)" :title="chip.label" :style="`background:${chip.color}22; border-color:${chip.color}55`">
-                  <span :style="`width:10px;height:10px;border-radius:50%;background:${chip.color};display:inline-block;`"></span>
-                  <span x-text="chip.label"></span>
+        <div>
+          <!-- Overlay -->
+          <div class="detail-overlay" @click="current = null"></div>
+          <!-- Panel -->
+          <aside class="detail-panel">
+            <div class="detail-header">
+              <button class="detail-close" @click="current = null" title="Close">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+              <div style="flex: 1;">
+                <h2 class="detail-title" x-text="current.name"></h2>
+                <span class="detail-subtitle">
+                  <code class="font-mono" x-text="current.cidr"></code>
+                  <span x-show="current.account_id"> · <span x-text="accountName(current.account_id)"></span></span>
                 </span>
-              </template>
-              <button class="btn ghost" @click="vizSelectAll()">All</button>
-              <button class="btn ghost" @click="vizClearAll()">None</button>
+              </div>
+              <div class="flex gap-2">
+                <button class="btn btn-sm" @click="loadBlocks()" :disabled="loadingBlocks">
+                  <span x-show="loadingBlocks" class="spinner"></span>
+                  <span x-text="loadingBlocks ? 'Loading…' : 'Refresh'"></span>
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div style="max-height:420px; overflow:auto;">
-          <table style="min-width:920px;">
-            <thead>
-              <tr>
-                <th class="sticky"><a href="#" @click.prevent="sortBlocks('cidr')">Prefix <span x-text="sortBlockKey==='cidr'? (sortBlockDir==='asc'?'▲':'▼') : ''"></span></a></th>
-                <th class="sticky"><a href="#" @click.prevent="sortBlocks('hosts')">Hosts <span x-text="sortBlockKey==='hosts'? (sortBlockDir==='asc'?'▲':'▼') : ''"></span></a></th>
-                <th class="sticky"><a href="#" @click.prevent="sortBlocks('status')">Status <span x-text="sortBlockKey==='status'? (sortBlockDir==='asc'?'▲':'▼') : ''"></span></a></th>
-                <th>Assigned Name</th>
-                <th class="sticky"><a href="#" @click.prevent="sortBlocks('account')">Assigned Account <span x-text="sortBlockKey==='account'? (sortBlockDir==='asc'?'▲':'▼') : ''"></span></a></th>
-                <th class="sticky">Network IP</th>
-                <th class="sticky">Broadcast IP</th>
-                <th class="sticky">Action</th>
-              </tr>
-              <tr>
-                <!-- No filter for Prefix (IP range) and Assigned Name -->
-                <th></th>
-                <th><input type="text" placeholder="Filter" x-model="blockFilters.hosts" @input="filterBlocks()" style="width:100%;" /></th>
-                <th><input type="text" placeholder="used/free/unavailable" x-model="blockFilters.status" @input="filterBlocks()" style="width:100%;" /></th>
-                <th></th>
-                <th><input type="text" placeholder="Account" x-model="blockFilters.account" @input="filterBlocks()" style="width:100%;" /></th>
-                <th><input type="text" placeholder="Network IP" x-model="blockFilters.network" @input="filterBlocks()" style="width:100%;" /></th>
-                <th><input type="text" placeholder="Broadcast IP" x-model="blockFilters.broadcast" @input="filterBlocks()" style="width:100%;" /></th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              <template x-for="b in blocks" :key="b.cidr">
-                <tr>
-                  <td>
-                    <span x-text="b.cidr"></span>
-                    <button class="copy-btn" @click="copy(b.cidr)" title="Copy CIDR">⎘</button>
-                  </td>
-                  <td x-text="b.hosts"></td>
-                  <td>
-                    <span :class="(b.used||blockUnavailable(b.cidr)) ? 'status-used' : 'status-free'"
-                          :title="blockUnavailableReason(b.cidr)"
-                          x-text="b.used ? 'Used' : (blockUnavailable(b.cidr) ? 'Unavailable' : 'Free')"></span>
-                  </td>
-                  <td>
-                    <template x-if="b.assigned_id">
-                      <a href="#" @click.prevent="selectPoolById(b.assigned_id)" x-text="b.assigned_name"></a>
-                    </template>
-                    <template x-if="!b.assigned_id">
-                      <span>-</span>
-                    </template>
-                  </td>
-                  <td x-text="b.assigned_account_name || accountName(b.assigned_account_id) || '-' "></td>
-                  <td>
-                    <span x-text="b.network_ip || '-' "></span>
-                    <button class="copy-btn" x-show="b.network_ip" @click="copy(b.network_ip)" title="Copy Network">⎘</button>
-                  </td>
-                  <td>
-                    <span x-text="b.broadcast_ip || '-' "></span>
-                    <button class="copy-btn" x-show="b.broadcast_ip" @click="copy(b.broadcast_ip)" title="Copy Broadcast">⎘</button>
-                  </td>
-                  <td>
-                    <button class="btn" :disabled="creatingSub || b.used || blockUnavailable(b.cidr)" :title="blockUnavailableReason(b.cidr) || 'Create a sub-pool in this block'" @click="createSub(b)"><span x-show="creatingSub" class="spinner"></span> Create Sub-pool</button>
-                  </td>
-              </tr>
-              </template>
-              <tr x-show="blocks.length === 0"><td colspan="8" style="color:#999">No blocks yet</td></tr>
-            </tbody>
-          </table>
-          </div>
+            <div class="detail-body">
+              <!-- Pool Settings -->
+              <div class="detail-section">
+                <div class="detail-section-title">Pool Settings</div>
+                <div class="row" style="align-items: flex-end; gap: 1rem;">
+                  <div class="form-group" style="min-width: 180px;">
+                    <label class="form-label">Account</label>
+                    <select x-model.number="currentAccountId" style="width: 100%;">
+                      <option :value="null">No Account</option>
+                      <template x-for="a in accounts" :key="a.id">
+                        <option :value="a.id" x-text="a.name + (a.provider ? ' ('+a.provider+')' : '')"></option>
+                      </template>
+                    </select>
+                  </div>
+                  <button class="btn btn-secondary btn-sm" @click="updateCurrentPoolAccount()">Update</button>
+                  <span class="muted text-sm" x-text="updateMsg"></span>
+                </div>
+              </div>
+
+              <!-- IP Space Visualization -->
+              <div class="detail-section">
+                <div class="detail-section-title">IP Space Utilization</div>
+                <div class="viz-bar">
+                  <template x-for="seg in vizSegments" :key="seg.id">
+                    <div class="viz-segment" :title="seg.title" :style="`left:${seg.left}%; width:${seg.width}%; background:${seg.color};`"></div>
+                  </template>
+                </div>
+                <div class="viz-legend">
+                  <template x-for="chip in vizLegend()" :key="chip.key">
+                    <div class="viz-legend-item" @click="toggleVizChip(chip.key)" style="cursor: pointer;">
+                      <div class="viz-legend-dot" :style="`background:${chip.color};`"></div>
+                      <span x-text="chip.label"></span>
+                    </div>
+                  </template>
+                  <div class="viz-legend-item" x-show="vizSegments.length === 0">
+                    <span class="muted">No allocations yet</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Blocks Filters -->
+              <div class="detail-section">
+                <div class="toolbar" style="padding: 0.75rem 0; border: none; border-bottom: 1px solid var(--border); margin: 0 -1.5rem; padding-left: 1.5rem; padding-right: 1.5rem;">
+                  <div class="toolbar-group">
+                    <span class="toolbar-label">Prefix:</span>
+                    <select x-model.number="blockPrefix" @change="onBlockPrefixChange(); loadBlocks();" style="width: 80px;">
+                      <template x-for="p in Array.from({length: 32 - (currentPrefixBits || 8)}, (_, i) => (currentPrefixBits || 8) + i + 1)" :key="p">
+                        <option :value="p" x-text="'/' + p"></option>
+                      </template>
+                    </select>
+                  </div>
+                  <div class="toolbar-divider"></div>
+                  <div class="toolbar-group">
+                    <span class="toolbar-label">Per page:</span>
+                    <select x-model="pageSize" @change="onPageSize()" style="width: 80px;">
+                      <option value="10">10</option>
+                      <option value="50">50</option>
+                      <option value="100">100</option>
+                      <option value="all">All</option>
+                    </select>
+                  </div>
+                  <div class="toolbar-divider"></div>
+                  <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" x-model="showOnlyUsed" @change="filterBlocks()" /> Used only
+                  </label>
+                  <label class="flex items-center gap-2 text-sm">
+                    <input type="checkbox" x-model="hideUnavailable" @change="filterBlocks()" /> Hide N/A
+                  </label>
+                  <span x-text="subMsg" class="muted text-sm ml-auto"></span>
+                </div>
+              </div>
+
+              <!-- Blocks Table -->
+              <div class="detail-section">
+                <div class="table-wrapper" style="border: 1px solid var(--border); border-radius: var(--radius); max-height: calc(100vh - 420px); overflow: auto;">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th class="sticky"><a href="#" @click.prevent="sortBlocks('cidr')" style="text-decoration: none; color: inherit;">CIDR <span x-text="sortBlockKey==='cidr'? (sortBlockDir==='asc'?'↑':'↓') : ''"></span></a></th>
+                        <th class="sticky">Status</th>
+                        <th class="sticky">Name</th>
+                        <th class="sticky">Account</th>
+                        <th class="sticky">Network</th>
+                        <th class="sticky">Broadcast</th>
+                        <th class="sticky"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="b in blocks" :key="b.cidr">
+                        <tr>
+                          <td>
+                            <code class="font-mono" x-text="b.cidr"></code>
+                            <button class="copy-btn" @click="copy(b.cidr)" title="Copy CIDR">⎘</button>
+                          </td>
+                          <td>
+                            <span x-show="b.used" class="badge badge-danger">Used</span>
+                            <span x-show="!b.used && blockUnavailable(b.cidr)" class="badge badge-muted" :title="blockUnavailableReason(b.cidr)">N/A</span>
+                            <span x-show="!b.used && !blockUnavailable(b.cidr)" class="badge badge-success">Free</span>
+                          </td>
+                          <td>
+                            <template x-if="b.assigned_id">
+                              <a href="#" @click.prevent="selectPoolById(b.assigned_id)" x-text="b.assigned_name"></a>
+                            </template>
+                            <template x-if="!b.assigned_id">
+                              <span class="muted">—</span>
+                            </template>
+                          </td>
+                          <td>
+                            <span x-show="b.assigned_account_name || b.assigned_account_id" x-text="b.assigned_account_name || accountName(b.assigned_account_id)"></span>
+                            <span x-show="!b.assigned_account_name && !b.assigned_account_id" class="muted">—</span>
+                          </td>
+                          <td class="font-mono text-sm muted">
+                            <span x-text="b.network_ip || '—'"></span>
+                            <button class="copy-btn" x-show="b.network_ip" @click="copy(b.network_ip)" title="Copy">⎘</button>
+                          </td>
+                          <td class="font-mono text-sm muted">
+                            <span x-text="b.broadcast_ip || '—'"></span>
+                            <button class="copy-btn" x-show="b.broadcast_ip" @click="copy(b.broadcast_ip)" title="Copy">⎘</button>
+                          </td>
+                          <td>
+                            <button class="btn btn-sm" x-show="!b.used && !blockUnavailable(b.cidr)" :disabled="creatingSub" @click="createSub(b)">
+                              <span x-show="creatingSub" class="spinner"></span> Allocate
+                            </button>
+                            <span x-show="b.used" class="muted text-sm">—</span>
+                          </td>
+                        </tr>
+                      </template>
+                      <tr x-show="blocks.length === 0">
+                        <td colspan="7" style="text-align: center; padding: 2rem;">
+                          <div class="muted">
+                            <div>No blocks loaded</div>
+                            <button class="btn btn-sm" style="margin-top: 0.5rem;" @click="loadBlocks()">Load Blocks</button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="pagination" style="background: transparent; border: none; padding: 0.75rem 0; justify-content: space-between;">
+                  <span class="pagination-info" x-show="total > 0">
+                    Showing <strong x-text="fromItem"></strong>–<strong x-text="toItem"></strong> of <strong x-text="total"></strong> blocks
+                  </span>
+                  <div class="pagination-controls" x-show="totalPages > 1 && pageSize !== 'all'">
+                    <button class="btn ghost btn-sm" @click="firstPage()" :disabled="page <= 1">«</button>
+                    <button class="btn ghost btn-sm" @click="prevPage()" :disabled="page <= 1">‹</button>
+                    <span class="text-sm" style="padding: 0 0.5rem;">Page <strong x-text="page"></strong> of <strong x-text="totalPages"></strong></span>
+                    <button class="btn ghost btn-sm" @click="nextPage()" :disabled="page >= totalPages">›</button>
+                    <button class="btn ghost btn-sm" @click="lastPage()" :disabled="page >= totalPages">»</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
       </template>
 
@@ -1212,6 +1429,7 @@
     </section>
     </template>
     </main>
+    </div><!-- end tabState wrapper -->
 
       <script>
       // Data Import/Export modal helpers
@@ -1562,6 +1780,7 @@
           msg: '',
           cidrError: '',
           creating: false,
+          showCreateForm: false,
           selectedTop: [],
           bulkOpen: false,
           current: null,
