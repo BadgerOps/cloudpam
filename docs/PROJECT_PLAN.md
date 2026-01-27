@@ -340,6 +340,26 @@ type AuditEntry struct {
     Changes     string     // JSON diff
     RequestID   string
 }
+
+// FUTURE: Address/Host tracking (see "Host/Address Tracking" section)
+type Address struct {
+    ID           int64
+    PoolID       int64      // Parent subnet
+    IP           string     // Single IP address (e.g., "10.1.2.45")
+    Type         string     // "private" | "public" | "elastic"
+    Status       string     // "allocated" | "reserved" | "available"
+
+    // Host information (if allocated)
+    HostType     string     // "ec2" | "eni" | "rds" | "elb" | "lambda" | "gce" | etc.
+    HostID       string     // Cloud resource ID (i-xxx, eni-xxx, etc.)
+    HostName     string     // Name tag or resource name
+
+    // Metadata
+    ExternalID   string     // ENI ID or network interface ID
+    Tags         string     // JSON tags from cloud
+    LastSyncAt   *time.Time
+    CreatedAt    time.Time
+}
 ```
 
 ### Provider Interface
@@ -371,6 +391,13 @@ type Registry struct {
 
 func (r *Registry) Register(p Provider) { r.providers[p.Name()] = p }
 func (r *Registry) Get(name string) (Provider, bool) { ... }
+
+// FUTURE: Host discovery extension (see "Host/Address Tracking" section)
+type HostDiscoveryProvider interface {
+    Provider
+    // DiscoverHosts returns all network interfaces/IPs in specified subnets
+    DiscoverHosts(ctx context.Context, opts DiscoveryOptions) ([]DiscoveredHost, error)
+}
 ```
 
 ### New API Endpoints
@@ -431,6 +458,175 @@ type Store interface {
 
 ---
 
+## Architecture: Host/Address Tracking (Future)
+
+### Overview
+
+Host/Address tracking extends CloudPAM from subnet-level IPAM to individual IP address management. This is a **separate feature track** that builds on the subnet discovery foundation.
+
+**Key distinction:**
+- **Subnet tracking** (M1): "What CIDRs exist?" → Thousands of records, rarely change
+- **Host tracking** (M7+): "What IPs are in use?" → Potentially millions of records, frequent changes
+
+### Data Available from Cloud APIs
+
+#### AWS: `ec2:DescribeNetworkInterfaces`
+
+| Data | Description | Use Case |
+|------|-------------|----------|
+| Private IPs | Primary + secondary IPs per ENI | Utilization tracking |
+| Elastic IPs | Associated EIPs | Public IP inventory |
+| Instance ID | Attached EC2 instance | "What's using this IP?" |
+| Interface type | `ec2`, `lambda`, `nat_gateway`, `efa`, etc. | Resource categorization |
+| Security groups | Attached SGs | Security analysis |
+| Availability zone | ENI placement | Capacity by AZ |
+| Status | `in-use`, `available` | Orphan detection |
+
+**Additional AWS permissions required:**
+```json
+{
+  "Action": [
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeInstances",
+    "ec2:DescribeAddresses",
+    "rds:DescribeDBInstances",
+    "elasticloadbalancing:DescribeLoadBalancers"
+  ],
+  "Resource": "*"
+}
+```
+
+#### GCP: `compute.instances.list` + `compute.addresses.list`
+
+| Data | Description | Use Case |
+|------|-------------|----------|
+| Internal IPs | Per network interface | Utilization tracking |
+| External IPs | Static + ephemeral | Public IP inventory |
+| Instance name | VM identifier | "What's using this IP?" |
+| Machine type | `n2-standard-4`, etc. | Capacity planning |
+| Network tags | Firewall groupings | Security analysis |
+| Zone | Instance placement | Capacity by zone |
+| Status | `RUNNING`, `TERMINATED`, etc. | State tracking |
+
+**Additional GCP permissions required:**
+```yaml
+includedPermissions:
+  - compute.instances.list
+  - compute.instances.get
+  - compute.addresses.list
+  - compute.addresses.get
+  - compute.forwardingRules.list
+```
+
+### Why Separate Feature Track?
+
+| Factor | Subnet Discovery | Host Discovery |
+|--------|-----------------|----------------|
+| **Scale** | ~1K-10K records | ~100K-1M records |
+| **Change rate** | Days/weeks | Hours/minutes |
+| **Permissions** | 3-5 per cloud | 10-15 per cloud |
+| **Storage** | KB-MB | MB-GB |
+| **Sync frequency** | Daily | Hourly or real-time |
+| **Query patterns** | Hierarchical browse | Search/lookup |
+| **Complexity** | Moderate | High (many resource types) |
+
+### Value Proposition
+
+1. **Subnet utilization** - "10.1.2.0/24 is 78% full (198/254 IPs used)"
+2. **Capacity forecasting** - "At current growth rate, subnet exhausts in 47 days"
+3. **IP lookup** - "Who owns 10.1.2.45?" → "prod-api-server-3 (i-0abc123) in aws:123456789012"
+4. **Orphan detection** - ENIs/IPs allocated but not attached to running resources
+5. **Compliance reporting** - "List all IPs in PCI-scope subnets with their workloads"
+6. **Cost attribution** - Map IP consumption to teams/applications via tags
+
+### Architectural Foundations (Build Now)
+
+To enable host tracking in the future without rework, M1-M4 should include:
+
+1. **Pool.ID as stable foreign key**
+   - Addresses will reference `pool_id`
+   - Pool deletion must consider address references
+
+2. **Provider interface extensibility**
+   ```go
+   // Base interface for subnet discovery (M1)
+   type Provider interface { ... }
+
+   // Extended interface for host discovery (M7+)
+   type HostDiscoveryProvider interface {
+       Provider
+       DiscoverHosts(ctx context.Context, opts DiscoveryOptions) ([]DiscoveredHost, error)
+   }
+   ```
+
+3. **Collector capability flags**
+   ```json
+   {
+     "collector_id": "aws-prod-1",
+     "capabilities": ["subnets"],  // Future: ["subnets", "hosts"]
+     "version": "1.0.0"
+   }
+   ```
+
+4. **API namespace reservation**
+   - `/api/v1/addresses` - reserved for host/IP endpoints
+   - `/api/v1/pools/{id}/addresses` - addresses within a subnet
+
+5. **Storage schema design**
+   - Separate `addresses` table (not embedded in pools)
+   - Indexed by `pool_id`, `ip`, `host_id`, `external_id`
+   - Partitioning consideration for scale
+
+6. **Discovery payload versioning**
+   ```go
+   type DiscoveryPayload struct {
+       Version   string             // "1.0" = subnets only, "2.0" = + hosts
+       Subnets   []DiscoveredSubnet
+       Hosts     []DiscoveredHost   // Optional, v2.0+
+   }
+   ```
+
+### Implementation Approach (M7+)
+
+**Phase 1: Read-only host inventory**
+- Discover ENIs/instances and store in `addresses` table
+- Display in UI: pool detail → addresses tab
+- Search: "find IP 10.1.2.45"
+
+**Phase 2: Utilization metrics**
+- Calculate: `pool.used_ips` / `pool.total_ips`
+- Dashboard: utilization heatmap by pool
+- Alerts: "Pool X is 90% full"
+
+**Phase 3: Change tracking**
+- Detect new/removed hosts between syncs
+- Timeline: "10.1.2.45 allocated to i-abc123 on 2024-01-15"
+- Audit: who/what created this instance?
+
+**Phase 4: Forecasting**
+- Trend analysis on utilization over time
+- Predict exhaustion dates
+- Recommend pool expansions
+
+### Resource Type Coverage
+
+| Provider | Resource Type | API | Priority |
+|----------|--------------|-----|----------|
+| AWS | EC2 instances | DescribeInstances | P1 |
+| AWS | ENIs (all types) | DescribeNetworkInterfaces | P1 |
+| AWS | Elastic IPs | DescribeAddresses | P1 |
+| AWS | RDS instances | DescribeDBInstances | P2 |
+| AWS | ELB/ALB/NLB | DescribeLoadBalancers | P2 |
+| AWS | Lambda (VPC) | ListFunctions | P3 |
+| AWS | ECS tasks | DescribeTasks | P3 |
+| GCP | Compute instances | instances.list | P1 |
+| GCP | Reserved addresses | addresses.list | P1 |
+| GCP | Cloud SQL | instances.list | P2 |
+| GCP | Load balancers | forwardingRules.list | P2 |
+| GCP | GKE pods | (via k8s API) | P3 |
+
+---
+
 ## Feature Gap Analysis
 
 ### Must Have (v1.0)
@@ -461,7 +657,11 @@ type Store interface {
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
-| Live network scanning | Not started | P3 | Discover actual host usage |
+| **Host/Address tracking** | Not started | P2 | Individual IP inventory from ENIs/instances |
+| **Subnet utilization** | Not started | P2 | % used based on discovered hosts |
+| **IP lookup** | Not started | P2 | "What's using 10.1.2.45?" |
+| **Capacity forecasting** | Not started | P3 | Predict subnet exhaustion |
+| Live network scanning | Not started | P3 | Discover hosts via ICMP/ARP (on-prem) |
 | Approval workflows | Not started | P3 | Require approval for production allocations |
 | Terraform provider | Not started | P3 | IaC integration |
 | Cloud provisioning | Not started | P3 | Create subnets via CloudPAM |
@@ -647,6 +847,71 @@ type Store interface {
    - Allow overlapping CIDRs in different VRFs
    - Scope all operations to VRF
 
+### M7: Host/Address Tracking (4-6 weeks)
+
+**Goal:** Track individual IP addresses and their associated cloud resources.
+
+**Prerequisites:** M1 (Cloud Discovery), M2 (PostgreSQL)
+
+**Deliverables:**
+1. Address domain model and storage
+   - `addresses` table with pool_id foreign key
+   - Indexes for IP lookup, host_id, external_id
+   - Consider partitioning for scale
+
+2. Extended provider interface
+   - `HostDiscoveryProvider` interface
+   - AWS implementation: DescribeNetworkInterfaces, DescribeInstances
+   - GCP implementation: instances.list, addresses.list
+
+3. Discovery collector extension
+   - `--enable-hosts` flag for collectors
+   - Incremental sync (only changed hosts)
+   - Configurable sync frequency
+
+4. API endpoints
+   - `GET /api/v1/addresses` - list with filters
+   - `GET /api/v1/addresses/{ip}` - lookup single IP
+   - `GET /api/v1/pools/{id}/addresses` - addresses in subnet
+   - `GET /api/v1/pools/{id}/utilization` - usage metrics
+
+5. UI enhancements
+   - Pool detail: Addresses tab with host list
+   - Global IP search in header
+   - Utilization bar on pool cards
+
+6. Utilization metrics
+   - Calculate used/total per pool
+   - Aggregate to parent pools
+   - Dashboard utilization heatmap
+
+**Acceptance Criteria:**
+- [ ] Discover all ENIs from AWS test account
+- [ ] Discover all VM network interfaces from GCP test project
+- [ ] "Find IP 10.1.2.45" returns host details
+- [ ] Pool shows "198/254 IPs used (78%)"
+- [ ] Sync handles 10k+ addresses without timeout
+
+**Additional Permissions Required:**
+
+AWS:
+```json
+{
+  "Action": [
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeInstances"
+  ],
+  "Resource": "*"
+}
+```
+
+GCP:
+```yaml
+includedPermissions:
+  - compute.instances.list
+  - compute.instances.get
+```
+
 ---
 
 ## Technical Decisions
@@ -708,12 +973,47 @@ type Store interface {
    - Multi-tenant would need org/tenant scoping
    - Deferred based on deployment model needs
 
+5. **Host tracking: How frequently to sync?**
+   - Option A: Same schedule as subnets (daily)
+   - Option B: More frequent (hourly) for accurate utilization
+   - Option C: Event-driven via CloudWatch Events / Pub/Sub
+   - Recommendation: Start with hourly, evaluate event-driven for v2
+
+6. **Host tracking: Which resource types to include?**
+   - Core: EC2/GCE instances, ENIs, reserved IPs
+   - Extended: RDS, ELB, Lambda, ECS, Cloud SQL, GKE
+   - Recommendation: Core for M7, Extended as opt-in modules
+
+7. **Host tracking: How to handle ephemeral IPs?**
+   - Kubernetes pods, Lambda, Fargate tasks get short-lived IPs
+   - Option A: Track all (high volume, noisy)
+   - Option B: Track only "stable" resources (instances, ENIs, reserved)
+   - Option C: Configurable per resource type
+   - Recommendation: Option B for M7, Option C for later
+
+8. **Host tracking: Storage strategy for scale?**
+   - Could reach millions of address records
+   - Option A: Single `addresses` table with indexes
+   - Option B: Partitioned by account or pool
+   - Option C: Time-series DB for historical data
+   - Recommendation: Option A with archival for historical (>90 days)
+
 ---
 
 ## References
 
+**Cloud APIs:**
 - [AWS EC2 IAM Permissions](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-policies-ec2-console.html)
+- [AWS DescribeNetworkInterfaces](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeNetworkInterfaces.html)
+- [AWS Elastic Network Interfaces](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-eni.html)
 - [GCP Compute IAM Roles](https://cloud.google.com/compute/docs/access/iam)
+- [GCP View Network Properties](https://cloud.google.com/compute/docs/instances/view-network-properties)
+- [GCP IP Addresses](https://cloud.google.com/compute/docs/ip-addresses)
+
+**Database & Sync:**
 - [PostgreSQL Bi-Directional Replication](https://severalnines.com/blog/postgresql-bi-directional-logical-replication-deep-dive/)
+
+**IPAM Tools:**
 - [NetBox IPAM Features](https://netbox.readthedocs.io/en/stable/features/ipam/)
 - [phpIPAM Documentation](https://phpipam.net/documents/)
+- [NetBox vs phpIPAM Comparison](https://www.saashub.com/compare-netbox-vs-phpipam)
