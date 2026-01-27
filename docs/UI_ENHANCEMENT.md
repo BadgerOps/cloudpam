@@ -175,9 +175,28 @@ User allocates (or requests approval) → Provisioned automatically
 > - Account
 > - Tier (dev/staging/prod)
 
+**Q: Mockup feedback - utilization display?**
+> Create HTML mockups for each option to evaluate visually.
+
+**Q: Mockup feedback - allocation flow?**
+> Expand on the allocation request flow with more detail.
+
+**Q: Search interface details?**
+> Pin for now - note to flesh out later.
+
+**Q: Performance expectations?**
+> - Current scale: Hundreds of pools
+> - Future scale: Could expand significantly, especially with individual IPs
+> - Acceptable latency: 1-2 seconds is fine
+> - Note: Need to plan for performance as scale increases
+
 ---
 
 ## UI Mockups
+
+### HTML Mockups
+
+See `docs/mockups/utilization-options.html` for interactive HTML mockups of all utilization display options (A-E) with pros/cons analysis.
 
 ### Utilization Display Options
 
@@ -345,6 +364,254 @@ Step 3: Confirmation
 │ You'll receive an email when approved.                          │
 │                                                                 │
 │ [View Request] [Back to Pools]                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Expanded Allocation Flow: Request/Approve with RBAC Guardrails
+
+#### Flow Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    ALLOCATION REQUEST WORKFLOW                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ┌─────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────┐ │
+│  │ SELECT  │───▶│   DETAILS   │───▶│   APPROVAL   │───▶│ ACTIVE  │ │
+│  │  BLOCK  │    │  & SUBMIT   │    │   (if req)   │    │         │ │
+│  └─────────┘    └─────────────┘    └──────────────┘    └─────────┘ │
+│       │                                   │                  │      │
+│       ▼                                   ▼                  ▼      │
+│  Guardrails:                        Approval Rules:    Provisioned: │
+│  • Allowed pools                    • Tier = prod      • Pool created│
+│  • Max size per tier                • Size > /26       • Audit logged│
+│  • Account scope                    • Cross-account    • Notified    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### RBAC Guardrails (Pre-Request)
+
+Before a user can even start a request, the system enforces guardrails:
+
+| Guardrail | Description | Example |
+|-----------|-------------|---------|
+| **Allowed Parent Pools** | Users can only allocate from pools they have access to | Team "Payments" can only allocate from `payments-vpc` |
+| **Account Scope** | Users can only allocate to accounts they're authorized for | User can only target `aws:prod-123` or `aws:dev-456` |
+| **Max Subnet Size** | Limit maximum allocation size by tier | Dev: max /24, Prod: max /22 |
+| **Tier Restrictions** | Some users can't request production at all | Junior devs can only request dev/staging |
+| **Region Restrictions** | Limit allocations to approved regions | Only us-east-1 and eu-west-1 allowed |
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ REQUEST NEW SUBNET                                              │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ Parent Pool:    [Select a pool...                        ▼]    │
+│                 ┌────────────────────────────────────────┐     │
+│                 │ ✓ payments-vpc (10.0.0.0/16)           │     │
+│                 │ ✓ payments-dev (10.1.0.0/16)           │     │
+│                 │ ✗ core-infra (no access)        🔒     │     │
+│                 │ ✗ security-vpc (no access)      🔒     │     │
+│                 └────────────────────────────────────────┘     │
+│                                                                 │
+│ ℹ️  You have access to 2 of 4 pools based on your team         │
+│     membership (payments-team).                                 │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Approval Rules Engine
+
+Approval requirements are configurable per organization:
+
+```yaml
+# Example approval rules configuration
+approval_rules:
+  - name: "Production requires network team approval"
+    conditions:
+      - field: tier
+        operator: equals
+        value: production
+    approvers:
+      - group: network-admins
+        required: 1
+
+  - name: "Large subnets require manager approval"
+    conditions:
+      - field: prefix_length
+        operator: less_than
+        value: 26  # /25 or larger
+    approvers:
+      - group: network-admins
+        required: 1
+      - group: cost-approvers
+        required: 1
+
+  - name: "Cross-account requires security review"
+    conditions:
+      - field: crosses_account_boundary
+        operator: equals
+        value: true
+    approvers:
+      - group: security-team
+        required: 1
+
+  # Auto-approve rules
+  - name: "Dev allocations auto-approved"
+    conditions:
+      - field: tier
+        operator: equals
+        value: development
+      - field: prefix_length
+        operator: greater_than_or_equal
+        value: 26  # /26 or smaller
+    auto_approve: true
+```
+
+#### Request States
+
+```
+┌──────────┐     ┌───────────┐     ┌──────────┐     ┌────────┐
+│  DRAFT   │────▶│  PENDING  │────▶│ APPROVED │────▶│ ACTIVE │
+└──────────┘     └───────────┘     └──────────┘     └────────┘
+     │                │                  │
+     │                ▼                  │
+     │          ┌──────────┐             │
+     └─────────▶│ REJECTED │◀────────────┘
+                └──────────┘
+                     │
+                     ▼
+                ┌──────────┐
+                │ EXPIRED  │ (after 7 days)
+                └──────────┘
+```
+
+| State | Description | Actions Available |
+|-------|-------------|-------------------|
+| **Draft** | User started but hasn't submitted | Edit, Submit, Delete |
+| **Pending** | Awaiting approval | Approve, Reject, Comment, Cancel |
+| **Approved** | All approvals received | Provision, Cancel |
+| **Rejected** | An approver rejected | Clone as new request, View feedback |
+| **Active** | Subnet provisioned and in use | View details, Request decommission |
+| **Expired** | Pending too long (7 days) | Clone as new request |
+
+#### Approval Interface (For Approvers)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ PENDING APPROVALS                                    [3 pending]│
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ REQ-2024-0142 • payment-service-subnet                      │ │
+│ │ ───────────────────────────────────────────────────────────│ │
+│ │ Requester: jane.doe@company.com (Payments Team)             │ │
+│ │ Submitted: 2 hours ago                                      │ │
+│ │                                                             │ │
+│ │ Block:     10.0.9.0/24 (254 hosts)                         │ │
+│ │ Parent:    prod-vpc-primary                                 │ │
+│ │ Account:   aws:123456789012 (prod)                         │ │
+│ │ Tier:      Production                                       │ │
+│ │ Purpose:   Production payment processing API                │ │
+│ │                                                             │ │
+│ │ ⚠️  Approval required because:                              │ │
+│ │    • Tier is Production                                     │ │
+│ │    • Size > /26                                             │ │
+│ │                                                             │ │
+│ │ Approvals:                                                  │ │
+│ │    ✓ @alice (network-admin) - Approved 1 hour ago          │ │
+│ │    ○ @bob (network-admin) - Pending (you)                  │ │
+│ │                                                             │ │
+│ │ [View Full Details]                                         │ │
+│ │                                                             │ │
+│ │ Comment (optional):                                         │ │
+│ │ ┌───────────────────────────────────────────────────────┐  │ │
+│ │ │                                                       │  │ │
+│ │ └───────────────────────────────────────────────────────┘  │ │
+│ │                                                             │ │
+│ │ [Approve ✓]  [Reject ✗]  [Request Changes]                 │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ REQ-2024-0143 • analytics-staging-subnet         [Expand ▶] │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ REQ-2024-0144 • ml-training-large               [Expand ▶]  │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Notifications
+
+| Event | Notify | Channel |
+|-------|--------|---------|
+| Request submitted | Approvers | Email, Slack, In-app |
+| Approval received | Requester, other approvers | Email, In-app |
+| Request approved (all) | Requester | Email, Slack, In-app |
+| Request rejected | Requester | Email, Slack, In-app |
+| Request expiring (24h warning) | Requester, approvers | Email |
+| Subnet provisioned | Requester, team | Email, Slack |
+
+#### Edge Cases & Error States
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ ⚠️  CONFLICT DETECTED                                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ The block you selected (10.0.9.0/24) was allocated while       │
+│ your request was pending.                                       │
+│                                                                 │
+│ Allocated by: REQ-2024-0140 (build-service-subnet)             │
+│ Allocated at: 10 minutes ago                                    │
+│                                                                 │
+│ Options:                                                        │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ ○ Select next available block: 10.0.10.0/24                 │ │
+│ │ ○ Choose a different block manually                         │ │
+│ │ ○ Cancel this request                                       │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ [Continue with 10.0.10.0/24]  [Choose Manually]  [Cancel]      │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Other edge cases to handle:**
+
+| Scenario | Handling |
+|----------|----------|
+| Block allocated during approval | Offer next available or re-select |
+| Approver no longer has permission | Skip to next approver, notify admin |
+| Parent pool deleted | Reject request, notify requester |
+| Account deactivated | Reject request, notify requester |
+| Requester leaves company | Reassign to manager or cancel |
+| All approvers unavailable | Escalate to admin, extend timeout |
+
+#### Audit Trail
+
+Every action is logged:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ AUDIT LOG: REQ-2024-0142                                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│ 2024-01-15 14:32:01  jane.doe      Created request              │
+│ 2024-01-15 14:32:01  system        Selected block 10.0.9.0/24   │
+│ 2024-01-15 14:32:15  jane.doe      Submitted for approval       │
+│ 2024-01-15 14:32:15  system        Notified @alice, @bob        │
+│ 2024-01-15 15:15:42  alice         Approved                     │
+│                                    Comment: "Looks good, valid  │
+│                                    use case for payment team"   │
+│ 2024-01-15 16:45:33  bob           Approved                     │
+│ 2024-01-15 16:45:33  system        All approvals received       │
+│ 2024-01-15 16:45:34  system        Provisioned pool             │
+│ 2024-01-15 16:45:34  system        Notified jane.doe            │
+│                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
