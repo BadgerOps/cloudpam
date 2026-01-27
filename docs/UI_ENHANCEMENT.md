@@ -41,10 +41,38 @@
 
 ---
 
+### Current Pain Points
+
+| Pain Point | Impact | UI Opportunity |
+|------------|--------|----------------|
+| Slow to find info | Wasted time, frustration | Fast global search, keyboard shortcuts |
+| Subnet-only view | Can't troubleshoot IP issues | Host tracking, IP lookup |
+| Stale data | Wrong decisions, conflicts | Real-time sync status, "last updated" indicators |
+| No cloud visibility | Drift, manual resources unknown | Discovery status, "unmanaged" badges |
+| Admin bottleneck | Slow allocation cycle | Self-service with guardrails |
+
+### Current vs. Desired Workflow
+
+**Current (Spreadsheet):**
+```
+User requests → Admin searches spreadsheet → Admin finds block →
+Admin updates spreadsheet → Admin tells user → User provisions
+```
+*Problems: Slow, manual, single point of failure, no validation*
+
+**Desired (CloudPAM):**
+```
+User searches available space → User selects block → System validates →
+User allocates (or requests approval) → Provisioned automatically
+```
+*Benefits: Self-service, real-time, validated, audited*
+
+---
+
 ## Requirements
 
 ### Functional Requirements
-*(To be filled - continuing discovery)*
+*(Continuing discovery)*
 
 ### Non-Functional Requirements
 
@@ -67,10 +95,10 @@
 - [x] Collaboration? → Yes, needs SSO + RBAC
 
 ### Pending
-- [ ] Current workflow pain points?
 - [ ] Key views/screens needed?
-- [ ] Search and filter requirements?
+- [ ] Search specifics?
 - [ ] Visualization preferences?
+- [ ] Self-service vs admin workflow?
 - [ ] Export/reporting needs?
 
 ---
@@ -92,5 +120,32 @@
 
 **Q: Collaboration needs?**
 > Collaborative environment. Should consider SSO login and RBAC/ABAC for admin, editor, viewer roles.
+
+**Q: Most common tasks (ranked)?**
+> 1. Allocate new subnet to team/account
+> 2. Review what's deployed vs. documented
+> 3. Find available space in a supernet
+> 4. Look up who owns an IP/subnet (which account, team)
+
+**Q: Current pain points?**
+> - Slow to find information
+> - Everything is subnet-based (no IP-level visibility)
+> - Data is stale/out of sync with reality
+> - No visibility into actual cloud state
+
+**Q: Info needed when planning allocation?**
+> ALL of it:
+> - Parent pool and utilization
+> - Available block sizes
+> - What's already allocated nearby
+> - Which accounts/teams own adjacent space
+
+**Q: Current allocation workflow?**
+> 1. User requests a subnet
+> 2. Network admin manually identifies available block
+> 3. Admin annotates spreadsheet
+> 4. Admin gives subnet to user
+>
+> **Problem:** Manual, slow, error-prone, admin bottleneck
 
 ---
