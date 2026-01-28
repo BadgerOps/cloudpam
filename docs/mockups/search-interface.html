@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudPAM UI Mockups - Global Search Interface</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #1f2937;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
+            --purple: #a855f7;
+            --border: #374151;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        h1 {
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        h2 {
+            margin: 2rem 0 1rem;
+            color: var(--accent);
+        }
+
+        .mockup-section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        .mockup-title {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .mockup-desc {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .mockup {
+            background: var(--bg-card);
+            border-radius: 6px;
+            padding: 1.5rem;
+            border: 1px solid var(--border);
+        }
+
+        /* Search Bar */
+        .search-container {
+            position: relative;
+        }
+
+        .search-bar {
+            display: flex;
+            align-items: center;
+            background: var(--bg-secondary);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .search-bar:focus-within {
+            border-color: var(--accent);
+        }
+
+        .search-icon {
+            color: var(--text-secondary);
+            margin-right: 0.75rem;
+            font-size: 1.1rem;
+        }
+
+        .search-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 1rem;
+            outline: none;
+        }
+
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .search-shortcut {
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-family: monospace;
+        }
+
+        /* Filter Pills */
+        .filter-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .filter-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.375rem 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-pill:hover {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .filter-pill.active {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .filter-pill .chevron {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .filter-pill.active .chevron {
+            color: white;
+        }
+
+        .add-filter {
+            color: var(--accent);
+            border-style: dashed;
+        }
+
+        /* Search Results Dropdown */
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            margin-top: 0.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+            z-index: 100;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .result-section {
+            padding: 0.75rem 1rem 0.5rem;
+        }
+
+        .result-section-title {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .result-section-icon {
+            font-size: 0.9rem;
+        }
+
+        .result-item {
+            display: flex;
+            align-items: center;
+            padding: 0.625rem 0.75rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .result-item:hover, .result-item.selected {
+            background: rgba(59, 130, 246, 0.15);
+        }
+
+        .result-item-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        .result-item-icon.pool {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--accent);
+        }
+
+        .result-item-icon.host {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--green);
+        }
+
+        .result-item-icon.account {
+            background: rgba(168, 85, 247, 0.2);
+            color: var(--purple);
+        }
+
+        .result-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .result-title {
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .result-cidr {
+            font-family: monospace;
+            color: var(--accent);
+        }
+
+        .result-meta {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.125rem;
+        }
+
+        .result-badge {
+            font-size: 0.7rem;
+            padding: 0.125rem 0.375rem;
+            border-radius: 3px;
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+        }
+
+        .result-status {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.8rem;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .status-dot.running { background: var(--green); }
+        .status-dot.available { background: var(--accent); }
+
+        .search-hints {
+            padding: 0.75rem 1rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .hint-key {
+            background: var(--bg-secondary);
+            padding: 0.125rem 0.375rem;
+            border-radius: 3px;
+            font-family: monospace;
+            margin-right: 0.25rem;
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+        }
+
+        .quick-action {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-action:hover {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .quick-action-icon {
+            color: var(--accent);
+        }
+
+        /* Search Types Demo */
+        .search-examples {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .search-example {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 1rem;
+            border: 1px solid var(--border);
+        }
+
+        .example-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .example-query {
+            font-family: monospace;
+            background: var(--bg-card);
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .example-desc {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        /* Notes */
+        .notes {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .notes h4 {
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .notes ul {
+            padding-left: 1.25rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .notes li {
+            margin-bottom: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>CloudPAM UI Mockups - Global Search Interface</h1>
+    <p class="subtitle">
+        Omnisearch supporting CIDR lookup, IP address search, name search, and multi-filter queries.
+    </p>
+
+    <!-- Main Search Interface -->
+    <div class="mockup-section">
+        <div class="mockup-title">Search Interface with Active Query</div>
+        <div class="mockup-desc">Command-K accessible search with real-time results and filter pills</div>
+
+        <div class="mockup">
+            <div class="search-container">
+                <div class="search-bar">
+                    <span class="search-icon">&#128269;</span>
+                    <input type="text" class="search-input" value="10.1.2" placeholder="Search pools, IPs, hosts, accounts...">
+                    <span class="search-shortcut">&#8984;K</span>
+                </div>
+
+                <div class="filter-row">
+                    <span class="filter-label">Filters:</span>
+                    <span class="filter-pill">Account <span class="chevron">&#9662;</span></span>
+                    <span class="filter-pill">Region <span class="chevron">&#9662;</span></span>
+                    <span class="filter-pill">Tier <span class="chevron">&#9662;</span></span>
+                    <span class="filter-pill active">Status: All <span class="chevron">&#9662;</span></span>
+                    <span class="filter-pill add-filter">+ Filter</span>
+                </div>
+
+                <div class="search-results">
+                    <div class="result-section">
+                        <div class="result-section-title">
+                            <span class="result-section-icon">&#128193;</span>
+                            POOLS matching "10.1.2"
+                        </div>
+                        <div class="result-item selected">
+                            <div class="result-item-icon pool">&#128193;</div>
+                            <div class="result-content">
+                                <div class="result-title">
+                                    <span class="result-cidr">10.1.2.0/24</span>
+                                    dev-api-subnet
+                                </div>
+                                <div class="result-meta">
+                                    <span class="result-badge">aws:dev-789012</span>
+                                    <span>us-west-2</span>
+                                    <span>52% used</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="result-item">
+                            <div class="result-item-icon pool">&#128193;</div>
+                            <div class="result-content">
+                                <div class="result-title">
+                                    <span class="result-cidr">10.1.20.0/22</span>
+                                    staging-vpc-primary
+                                </div>
+                                <div class="result-meta">
+                                    <span class="result-badge">gcp:staging-proj</span>
+                                    <span>us-central1</span>
+                                    <span>18% used</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="result-section">
+                        <div class="result-section-title">
+                            <span class="result-section-icon">&#128421;</span>
+                            HOSTS matching "10.1.2"
+                        </div>
+                        <div class="result-item">
+                            <div class="result-item-icon host">&#128421;</div>
+                            <div class="result-content">
+                                <div class="result-title">
+                                    <span class="result-cidr">10.1.2.45</span>
+                                    prod-api-server-3
+                                </div>
+                                <div class="result-meta">
+                                    <span class="result-badge">i-0abc123def</span>
+                                    <span class="result-status"><span class="status-dot running"></span> Running</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="result-item">
+                            <div class="result-item-icon host">&#128421;</div>
+                            <div class="result-content">
+                                <div class="result-title">
+                                    <span class="result-cidr">10.1.2.67</span>
+                                    prod-api-server-7
+                                </div>
+                                <div class="result-meta">
+                                    <span class="result-badge">i-0def456abc</span>
+                                    <span class="result-status"><span class="status-dot running"></span> Running</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="result-item">
+                            <div class="result-item-icon host">&#128421;</div>
+                            <div class="result-content">
+                                <div class="result-title">
+                                    <span class="result-cidr">10.1.2.89</span>
+                                    (unattached ENI)
+                                </div>
+                                <div class="result-meta">
+                                    <span class="result-badge">eni-789xyz</span>
+                                    <span class="result-status"><span class="status-dot available"></span> Available</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="search-hints">
+                        <span><span class="hint-key">Enter</span> to search</span>
+                        <span><span class="hint-key">Tab</span> cycle results</span>
+                        <span><span class="hint-key">Esc</span> close</span>
+                        <span><span class="hint-key">&#8984;Enter</span> open in new tab</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="quick-actions">
+                <div class="quick-action">
+                    <span class="quick-action-icon">+</span>
+                    New Pool
+                </div>
+                <div class="quick-action">
+                    <span class="quick-action-icon">&#8599;</span>
+                    Request Allocation
+                </div>
+                <div class="quick-action">
+                    <span class="quick-action-icon">&#128202;</span>
+                    Export Report
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search Query Types -->
+    <div class="mockup-section">
+        <div class="mockup-title">Supported Search Query Types</div>
+        <div class="mockup-desc">Examples of what users can type in the search bar</div>
+
+        <div class="search-examples">
+            <div class="search-example">
+                <div class="example-title">Exact CIDR</div>
+                <div class="example-query">10.0.1.0/24</div>
+                <div class="example-desc">Find the specific pool with this CIDR</div>
+            </div>
+            <div class="search-example">
+                <div class="example-title">Partial / Fuzzy CIDR</div>
+                <div class="example-query">10.1.</div>
+                <div class="example-desc">Find all pools starting with 10.1.x.x</div>
+            </div>
+            <div class="search-example">
+                <div class="example-title">IP Address Lookup</div>
+                <div class="example-query">10.0.2.145</div>
+                <div class="example-desc">Find the subnet containing this IP + host info if tracked</div>
+            </div>
+            <div class="search-example">
+                <div class="example-title">Name Search</div>
+                <div class="example-query">prod-vpc</div>
+                <div class="example-desc">Find pools/accounts matching this name</div>
+            </div>
+            <div class="search-example">
+                <div class="example-title">Account Search</div>
+                <div class="example-query">aws:123456789012</div>
+                <div class="example-desc">Find all pools in this AWS account</div>
+            </div>
+            <div class="search-example">
+                <div class="example-title">Combined Query</div>
+                <div class="example-query">10.0. account:prod tier:staging</div>
+                <div class="example-desc">Multi-filter query with CIDR prefix + filters</div>
+            </div>
+        </div>
+
+        <div class="notes">
+            <h4>Implementation Notes</h4>
+            <ul>
+                <li>Performance target: &lt;2 seconds for hundreds of pools</li>
+                <li>Results grouped by type (Pools, Hosts, Accounts)</li>
+                <li>Keyboard navigation fully supported</li>
+                <li>Debounce search input (300ms) to reduce API calls</li>
+                <li>Consider indexed search (e.g., SQLite FTS5) for scale</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Empty State -->
+    <div class="mockup-section">
+        <div class="mockup-title">Empty / Initial State</div>
+        <div class="mockup-desc">What users see when opening search with no query</div>
+
+        <div class="mockup">
+            <div class="search-container">
+                <div class="search-bar">
+                    <span class="search-icon">&#128269;</span>
+                    <input type="text" class="search-input" placeholder="Search pools, IPs, hosts, accounts...">
+                    <span class="search-shortcut">&#8984;K</span>
+                </div>
+
+                <div class="search-results" style="padding: 1.5rem;">
+                    <div style="text-align: center; color: var(--text-secondary);">
+                        <div style="font-size: 2rem; margin-bottom: 0.5rem;">&#128269;</div>
+                        <div style="font-weight: 500; color: var(--text-primary); margin-bottom: 0.5rem;">Search CloudPAM</div>
+                        <div style="font-size: 0.85rem; margin-bottom: 1rem;">
+                            Search by CIDR, IP address, pool name, or account
+                        </div>
+                        <div style="display: flex; justify-content: center; gap: 1rem; font-size: 0.8rem;">
+                            <span><span class="hint-key">10.0.0.0/16</span> CIDR</span>
+                            <span><span class="hint-key">10.0.1.45</span> IP</span>
+                            <span><span class="hint-key">prod-vpc</span> name</span>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+                        <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.75rem;">
+                            Recent Searches
+                        </div>
+                        <div class="result-item">
+                            <div class="result-item-icon pool">&#128193;</div>
+                            <div class="result-content">
+                                <div class="result-title">10.0.0.0/16</div>
+                                <div class="result-meta">Searched 2 hours ago</div>
+                            </div>
+                        </div>
+                        <div class="result-item">
+                            <div class="result-item-icon pool">&#128193;</div>
+                            <div class="result-content">
+                                <div class="result-title">payment-service</div>
+                                <div class="result-meta">Searched yesterday</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

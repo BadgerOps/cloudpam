@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudPAM UI Mockups - Utilization Display Options</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #1f2937;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --accent: #3b82f6;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
+            --border: #374151;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        h1 {
+            margin-bottom: 2rem;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            margin: 2rem 0 1rem;
+            color: var(--accent);
+        }
+
+        .option-section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        .option-title {
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .option-desc {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .mockup {
+            background: var(--bg-card);
+            border-radius: 6px;
+            padding: 1rem;
+            border: 1px solid var(--border);
+        }
+
+        /* Option A: Percentage Bar */
+        .pool-detail {
+            padding: 1rem;
+        }
+
+        .pool-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .pool-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .pool-meta {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+
+        .utilization-bar-container {
+            margin-top: 1rem;
+        }
+
+        .utilization-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.25rem;
+            font-size: 0.9rem;
+        }
+
+        .utilization-bar {
+            height: 24px;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .utilization-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+
+        .utilization-fill.healthy { background: var(--green); }
+        .utilization-fill.warning { background: var(--yellow); }
+        .utilization-fill.critical { background: var(--red); }
+
+        .utilization-text {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        /* Option B: Color-Coded Table */
+        .pool-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .pool-table th,
+        .pool-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .pool-table th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+        }
+
+        .pool-table tr:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .pool-row-child {
+            padding-left: 2rem !important;
+        }
+
+        .tree-icon {
+            color: var(--text-secondary);
+            margin-right: 0.5rem;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .status-healthy { background: rgba(34, 197, 94, 0.2); color: var(--green); }
+        .status-warning { background: rgba(234, 179, 8, 0.2); color: var(--yellow); }
+        .status-critical { background: rgba(239, 68, 68, 0.2); color: var(--red); }
+
+        /* Option C: Block Map */
+        .block-map-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .block-grid {
+            display: grid;
+            grid-template-columns: repeat(16, 1fr);
+            gap: 4px;
+            margin-bottom: 1rem;
+        }
+
+        .block {
+            aspect-ratio: 1;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.65rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            position: relative;
+        }
+
+        .block:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            z-index: 10;
+        }
+
+        .block.allocated {
+            background: var(--accent);
+        }
+
+        .block.available {
+            background: var(--bg-secondary);
+            border: 1px dashed var(--border);
+        }
+
+        .block.reserved {
+            background: var(--yellow);
+            opacity: 0.7;
+        }
+
+        .block-label {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+            padding: 0 2px;
+        }
+
+        .block-cidr {
+            font-size: 0.55rem;
+            color: rgba(255,255,255,0.7);
+        }
+
+        .legend {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+        }
+
+        /* Option D: Heatmap */
+        .heatmap-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .sync-status {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .heatmap-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.5rem;
+        }
+
+        .account-card {
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 1rem;
+        }
+
+        .account-name {
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        .account-pools {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+        }
+
+        .pool-cell {
+            aspect-ratio: 1;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .pool-cell.healthy { background: rgba(34, 197, 94, 0.3); color: var(--green); }
+        .pool-cell.warning { background: rgba(234, 179, 8, 0.3); color: var(--yellow); }
+        .pool-cell.critical { background: rgba(239, 68, 68, 0.3); color: var(--red); }
+        .pool-cell.empty { background: var(--bg-card); color: var(--text-secondary); }
+
+        .alert-banner {
+            margin-top: 1.5rem;
+            padding: 0.75rem 1rem;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--red);
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .alert-text {
+            color: var(--red);
+            font-weight: 500;
+        }
+
+        .alert-link {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        /* Option E: Sparklines */
+        .sparkline-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .sparkline-table th,
+        .sparkline-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .sparkline-table th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+        }
+
+        .sparkline {
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            height: 24px;
+        }
+
+        .spark-bar {
+            width: 6px;
+            background: var(--accent);
+            border-radius: 2px 2px 0 0;
+            transition: height 0.3s;
+        }
+
+        .current-value {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .pct {
+            font-weight: 600;
+            min-width: 40px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        /* Navigation */
+        .nav-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        .nav-tab {
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .nav-tab:hover {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .nav-tab.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .pros-cons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+        }
+
+        .pros, .cons {
+            padding: 0.75rem;
+            border-radius: 6px;
+        }
+
+        .pros {
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .cons {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .pros h4 { color: var(--green); margin-bottom: 0.5rem; }
+        .cons h4 { color: var(--red); margin-bottom: 0.5rem; }
+
+        ul {
+            padding-left: 1.25rem;
+        }
+
+        li {
+            margin-bottom: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>CloudPAM UI Mockups - Utilization Display Options</h1>
+
+    <p style="color: var(--text-secondary); margin-bottom: 2rem;">
+        Review each option and consider which would work best for different contexts.
+        Multiple options can be combined (e.g., Option B for lists + Option C for detail view).
+    </p>
+
+    <!-- Option A: Percentage Bar -->
+    <div class="option-section">
+        <div class="option-title">Option A: Inline Percentage Bar</div>
+        <div class="option-desc">Best for: Pool detail views, quick utilization check at a glance</div>
+
+        <div class="mockup">
+            <div class="pool-detail">
+                <div class="pool-header">
+                    <span class="pool-name">prod-vpc-primary (10.0.0.0/16)</span>
+                    <button class="btn btn-primary">+ Allocate Subnet</button>
+                </div>
+                <div class="pool-meta">
+                    Account: aws:123456789012 &nbsp;|&nbsp; Region: us-east-1 &nbsp;|&nbsp; Last sync: 2 minutes ago
+                </div>
+
+                <div class="utilization-bar-container">
+                    <div class="utilization-label">
+                        <span>Utilization</span>
+                        <span>134 of 256 /24 blocks allocated</span>
+                    </div>
+                    <div class="utilization-bar">
+                        <div class="utilization-fill warning" style="width: 52%"></div>
+                        <span class="utilization-text">52%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="pros-cons">
+            <div class="pros">
+                <h4>Pros</h4>
+                <ul>
+                    <li>Immediately clear utilization</li>
+                    <li>Shows exact numbers</li>
+                    <li>Familiar pattern</li>
+                </ul>
+            </div>
+            <div class="cons">
+                <h4>Cons</h4>
+                <ul>
+                    <li>Takes vertical space</li>
+                    <li>Not great for lists</li>
+                    <li>No trend information</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Option B: Color-Coded Table -->
+    <div class="option-section">
+        <div class="option-title">Option B: Color-Coded Status Badges in Table</div>
+        <div class="option-desc">Best for: Scanning lists, triage, identifying problems quickly</div>
+
+        <div class="mockup">
+            <table class="pool-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>CIDR</th>
+                        <th>Used</th>
+                        <th>Status</th>
+                        <th>Account</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="tree-icon">&#9660;</span> prod-vpc-primary</td>
+                        <td>10.0.0.0/16</td>
+                        <td>52%</td>
+                        <td><span class="status-badge status-healthy">Healthy</span></td>
+                        <td>aws:123456789012</td>
+                    </tr>
+                    <tr>
+                        <td class="pool-row-child"><span class="tree-icon">&#9500;</span> subnet-web</td>
+                        <td>10.0.1.0/24</td>
+                        <td>78%</td>
+                        <td><span class="status-badge status-warning">Warning</span></td>
+                        <td>aws:123456789012</td>
+                    </tr>
+                    <tr>
+                        <td class="pool-row-child"><span class="tree-icon">&#9500;</span> subnet-api</td>
+                        <td>10.0.2.0/24</td>
+                        <td>91%</td>
+                        <td><span class="status-badge status-critical">Critical</span></td>
+                        <td>aws:123456789012</td>
+                    </tr>
+                    <tr>
+                        <td class="pool-row-child"><span class="tree-icon">&#9492;</span> subnet-db</td>
+                        <td>10.0.3.0/24</td>
+                        <td>23%</td>
+                        <td><span class="status-badge status-healthy">Healthy</span></td>
+                        <td>aws:123456789012</td>
+                    </tr>
+                    <tr>
+                        <td><span class="tree-icon">&#9654;</span> dev-vpc</td>
+                        <td>10.1.0.0/16</td>
+                        <td>12%</td>
+                        <td><span class="status-badge status-healthy">Healthy</span></td>
+                        <td>aws:dev-789012</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
+                Thresholds: Healthy &lt;70% &nbsp;|&nbsp; Warning 70-85% &nbsp;|&nbsp; Critical &gt;85%
+            </p>
+        </div>
+
+        <div class="pros-cons">
+            <div class="pros">
+                <h4>Pros</h4>
+                <ul>
+                    <li>Compact, scannable</li>
+                    <li>Shows hierarchy</li>
+                    <li>Color draws eye to problems</li>
+                    <li>Sortable columns</li>
+                </ul>
+            </div>
+            <div class="cons">
+                <h4>Cons</h4>
+                <ul>
+                    <li>Less precise (just %)</li>
+                    <li>No visual proportion</li>
+                    <li>Need to set threshold config</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Option C: Block Map -->
+    <div class="option-section">
+        <div class="option-title">Option C: Visual Block Map (like disk partitions)</div>
+        <div class="option-desc">Best for: Planning allocations, finding contiguous space, understanding layout</div>
+
+        <div class="mockup">
+            <div class="block-map-header">
+                <div>
+                    <strong>prod-vpc-primary</strong> (10.0.0.0/16) - 256 /24 blocks
+                </div>
+                <button class="btn btn-primary">+ Allocate Block</button>
+            </div>
+
+            <div class="block-grid">
+                <!-- Row 1 -->
+                <div class="block allocated"><span class="block-label">web</span><span class="block-cidr">.1.0</span></div>
+                <div class="block allocated"><span class="block-label">api</span><span class="block-cidr">.2.0</span></div>
+                <div class="block allocated"><span class="block-label">db</span><span class="block-cidr">.3.0</span></div>
+                <div class="block available"><span class="block-cidr">.4.0</span></div>
+                <div class="block available"><span class="block-cidr">.5.0</span></div>
+                <div class="block available"><span class="block-cidr">.6.0</span></div>
+                <div class="block allocated"><span class="block-label">logs</span><span class="block-cidr">.7.0</span></div>
+                <div class="block allocated"><span class="block-label">mon</span><span class="block-cidr">.8.0</span></div>
+                <div class="block available"><span class="block-cidr">.9.0</span></div>
+                <div class="block available"><span class="block-cidr">.10.0</span></div>
+                <div class="block reserved"><span class="block-label">rsv</span><span class="block-cidr">.11.0</span></div>
+                <div class="block reserved"><span class="block-label">rsv</span><span class="block-cidr">.12.0</span></div>
+                <div class="block allocated"><span class="block-label">cache</span><span class="block-cidr">.13.0</span></div>
+                <div class="block available"><span class="block-cidr">.14.0</span></div>
+                <div class="block available"><span class="block-cidr">.15.0</span></div>
+                <div class="block available"><span class="block-cidr">.16.0</span></div>
+                <!-- Row 2 -->
+                <div class="block allocated"><span class="block-label">k8s-1</span><span class="block-cidr">.17.0</span></div>
+                <div class="block allocated"><span class="block-label">k8s-2</span><span class="block-cidr">.18.0</span></div>
+                <div class="block allocated"><span class="block-label">k8s-3</span><span class="block-cidr">.19.0</span></div>
+                <div class="block allocated"><span class="block-label">k8s-4</span><span class="block-cidr">.20.0</span></div>
+                <div class="block available"><span class="block-cidr">.21.0</span></div>
+                <div class="block available"><span class="block-cidr">.22.0</span></div>
+                <div class="block available"><span class="block-cidr">.23.0</span></div>
+                <div class="block available"><span class="block-cidr">.24.0</span></div>
+                <div class="block allocated"><span class="block-label">vpn</span><span class="block-cidr">.25.0</span></div>
+                <div class="block available"><span class="block-cidr">.26.0</span></div>
+                <div class="block available"><span class="block-cidr">.27.0</span></div>
+                <div class="block available"><span class="block-cidr">.28.0</span></div>
+                <div class="block available"><span class="block-cidr">.29.0</span></div>
+                <div class="block available"><span class="block-cidr">.30.0</span></div>
+                <div class="block available"><span class="block-cidr">.31.0</span></div>
+                <div class="block available"><span class="block-cidr">.32.0</span></div>
+            </div>
+
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: var(--accent);"></div>
+                    <span>Allocated</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: var(--bg-secondary); border: 1px dashed var(--border);"></div>
+                    <span>Available</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: var(--yellow); opacity: 0.7;"></div>
+                    <span>Reserved</span>
+                </div>
+            </div>
+            <p style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
+                Click a block to allocate or view details. Hover for full CIDR.
+            </p>
+        </div>
+
+        <div class="pros-cons">
+            <div class="pros">
+                <h4>Pros</h4>
+                <ul>
+                    <li>Visual understanding of space</li>
+                    <li>Find contiguous blocks easily</li>
+                    <li>Intuitive allocation interaction</li>
+                    <li>See fragmentation</li>
+                </ul>
+            </div>
+            <div class="cons">
+                <h4>Cons</h4>
+                <ul>
+                    <li>Doesn't scale to large pools well</li>
+                    <li>Mobile-unfriendly (fine for desktop)</li>
+                    <li>Labels can be cramped</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Option D: Heatmap Dashboard -->
+    <div class="option-section">
+        <div class="option-title">Option D: Heatmap Dashboard (Overview)</div>
+        <div class="option-desc">Best for: Executive view, cross-account overview, spotting problems across org</div>
+
+        <div class="mockup">
+            <div class="heatmap-header">
+                <h3 style="font-size: 1rem;">Utilization Heatmap</h3>
+                <span class="sync-status">Last sync: 2 minutes ago</span>
+            </div>
+
+            <div class="heatmap-grid">
+                <div class="account-card">
+                    <div class="account-name">aws:prod-123456</div>
+                    <div class="account-pools">
+                        <div class="pool-cell critical">91%</div>
+                        <div class="pool-cell warning">72%</div>
+                        <div class="pool-cell healthy">45%</div>
+                        <div class="pool-cell healthy">34%</div>
+                        <div class="pool-cell healthy">28%</div>
+                        <div class="pool-cell empty">-</div>
+                    </div>
+                </div>
+
+                <div class="account-card">
+                    <div class="account-name">aws:dev-789012</div>
+                    <div class="account-pools">
+                        <div class="pool-cell healthy">23%</div>
+                        <div class="pool-cell healthy">18%</div>
+                        <div class="pool-cell healthy">31%</div>
+                        <div class="pool-cell healthy">8%</div>
+                        <div class="pool-cell empty">-</div>
+                        <div class="pool-cell empty">-</div>
+                    </div>
+                </div>
+
+                <div class="account-card">
+                    <div class="account-name">gcp:project-alpha</div>
+                    <div class="account-pools">
+                        <div class="pool-cell warning">78%</div>
+                        <div class="pool-cell healthy">42%</div>
+                        <div class="pool-cell healthy">15%</div>
+                        <div class="pool-cell healthy">55%</div>
+                        <div class="pool-cell healthy">33%</div>
+                        <div class="pool-cell empty">-</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="alert-banner">
+                <span class="alert-text">3 pools need attention (&gt;85% utilized)</span>
+                <a href="#" class="alert-link">View Details &rarr;</a>
+            </div>
+        </div>
+
+        <div class="pros-cons">
+            <div class="pros">
+                <h4>Pros</h4>
+                <ul>
+                    <li>High-level overview</li>
+                    <li>Cross-account visibility</li>
+                    <li>Immediate problem identification</li>
+                    <li>Good for dashboards</li>
+                </ul>
+            </div>
+            <div class="cons">
+                <h4>Cons</h4>
+                <ul>
+                    <li>No detail (which pool is which?)</li>
+                    <li>Need drill-down for action</li>
+                    <li>Loses context without labels</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Option E: Sparklines -->
+    <div class="option-section">
+        <div class="option-title">Option E: Table with Sparkline Trends</div>
+        <div class="option-desc">Best for: Capacity planning, identifying growth patterns, forecasting</div>
+
+        <div class="mockup">
+            <table class="sparkline-table">
+                <thead>
+                    <tr>
+                        <th>Pool</th>
+                        <th>CIDR</th>
+                        <th>Trend (30 days)</th>
+                        <th>Current</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>prod-vpc/subnet-web</td>
+                        <td>10.0.1.0/24</td>
+                        <td>
+                            <div class="sparkline">
+                                <div class="spark-bar" style="height: 10%"></div>
+                                <div class="spark-bar" style="height: 20%"></div>
+                                <div class="spark-bar" style="height: 30%"></div>
+                                <div class="spark-bar" style="height: 40%"></div>
+                                <div class="spark-bar" style="height: 50%"></div>
+                                <div class="spark-bar" style="height: 60%"></div>
+                                <div class="spark-bar" style="height: 70%"></div>
+                                <div class="spark-bar" style="height: 78%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="current-value">
+                                <span class="pct">78%</span>
+                                <span class="status-badge status-warning">Warning</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>prod-vpc/subnet-api</td>
+                        <td>10.0.2.0/24</td>
+                        <td>
+                            <div class="sparkline">
+                                <div class="spark-bar" style="height: 30%"></div>
+                                <div class="spark-bar" style="height: 35%"></div>
+                                <div class="spark-bar" style="height: 45%"></div>
+                                <div class="spark-bar" style="height: 55%"></div>
+                                <div class="spark-bar" style="height: 60%"></div>
+                                <div class="spark-bar" style="height: 72%"></div>
+                                <div class="spark-bar" style="height: 85%"></div>
+                                <div class="spark-bar" style="height: 91%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="current-value">
+                                <span class="pct">91%</span>
+                                <span class="status-badge status-critical">Critical</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>prod-vpc/subnet-db</td>
+                        <td>10.0.3.0/24</td>
+                        <td>
+                            <div class="sparkline">
+                                <div class="spark-bar" style="height: 18%"></div>
+                                <div class="spark-bar" style="height: 19%"></div>
+                                <div class="spark-bar" style="height: 20%"></div>
+                                <div class="spark-bar" style="height: 21%"></div>
+                                <div class="spark-bar" style="height: 21%"></div>
+                                <div class="spark-bar" style="height: 22%"></div>
+                                <div class="spark-bar" style="height: 22%"></div>
+                                <div class="spark-bar" style="height: 23%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="current-value">
+                                <span class="pct">23%</span>
+                                <span class="status-badge status-healthy">Healthy</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>dev-vpc/main</td>
+                        <td>10.1.0.0/24</td>
+                        <td>
+                            <div class="sparkline">
+                                <div class="spark-bar" style="height: 8%"></div>
+                                <div class="spark-bar" style="height: 10%"></div>
+                                <div class="spark-bar" style="height: 12%"></div>
+                                <div class="spark-bar" style="height: 15%"></div>
+                                <div class="spark-bar" style="height: 14%"></div>
+                                <div class="spark-bar" style="height: 13%"></div>
+                                <div class="spark-bar" style="height: 12%"></div>
+                                <div class="spark-bar" style="height: 12%"></div>
+                            </div>
+                        </td>
+                        <td>
+                            <div class="current-value">
+                                <span class="pct">12%</span>
+                                <span class="status-badge status-healthy">Healthy</span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <p style="margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-secondary);">
+                Sparklines show utilization trend over past 30 days. Steep upward trends may indicate capacity planning needed.
+            </p>
+        </div>
+
+        <div class="pros-cons">
+            <div class="pros">
+                <h4>Pros</h4>
+                <ul>
+                    <li>Shows growth patterns</li>
+                    <li>Predictive insight</li>
+                    <li>Compact with rich data</li>
+                    <li>Great for capacity planning</li>
+                </ul>
+            </div>
+            <div class="cons">
+                <h4>Cons</h4>
+                <ul>
+                    <li>Requires historical data</li>
+                    <li>More complex to implement</li>
+                    <li>May be overkill for static pools</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <h2>Recommendation: Combine Multiple Options</h2>
+    <div class="option-section">
+        <p>Based on different use cases, consider this combination:</p>
+        <ul style="margin-top: 1rem;">
+            <li><strong>Dashboard/Home:</strong> Option D (Heatmap) for quick overview</li>
+            <li><strong>Pool List:</strong> Option B (Table with badges) for scanning and triage</li>
+            <li><strong>Pool Detail:</strong> Option A (Bar) + Option C (Block map) for planning</li>
+            <li><strong>Capacity Planning view:</strong> Option E (Sparklines) for trend analysis</li>
+        </ul>
+    </div>
+
+</body>
+</html>

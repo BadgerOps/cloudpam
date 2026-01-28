@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudPAM UI Mockups - Pool Detail View</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #1f2937;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
+            --purple: #a855f7;
+            --orange: #f97316;
+            --border: #374151;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        h1 {
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        .mockup-section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        .mockup-title {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .mockup-desc {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .mockup {
+            background: var(--bg-card);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        /* Page Header */
+        .page-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .breadcrumb {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 0.5rem;
+        }
+
+        .breadcrumb a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .page-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .cidr-badge {
+            font-family: monospace;
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--accent);
+            padding: 0.25rem 0.625rem;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+        }
+
+        /* Info Cards Row */
+        .info-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+
+        .info-card {
+            background: var(--bg-card);
+            padding: 0.875rem 1rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        .info-card-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        .info-card-value {
+            font-size: 1rem;
+            font-weight: 500;
+        }
+
+        .info-card-value.mono {
+            font-family: monospace;
+            color: var(--accent);
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0;
+            padding: 0 1.5rem;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+
+        .tab {
+            padding: 0.875rem 1.25rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.9rem;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: var(--text-primary);
+        }
+
+        .tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        /* Content Area */
+        .content {
+            padding: 1.5rem;
+        }
+
+        /* Utilization Bar */
+        .utilization-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .section-title {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .utilization-stats {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .utilization-stat {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .stat-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+        }
+
+        .stat-dot.allocated { background: var(--accent); }
+        .stat-dot.reserved { background: var(--yellow); }
+        .stat-dot.available { background: var(--bg-secondary); border: 1px dashed var(--border); }
+
+        .utilization-bar {
+            height: 32px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+        }
+
+        .utilization-segment {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 500;
+            transition: width 0.3s;
+        }
+
+        .utilization-segment.allocated {
+            background: var(--accent);
+            color: white;
+        }
+
+        .utilization-segment.reserved {
+            background: var(--yellow);
+            color: #000;
+        }
+
+        .utilization-segment.available {
+            background: transparent;
+            color: var(--text-muted);
+        }
+
+        /* Block Map */
+        .block-map-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .block-map-controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .view-toggle {
+            display: flex;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 2px;
+        }
+
+        .view-toggle-btn {
+            padding: 0.375rem 0.75rem;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+
+        .view-toggle-btn.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .block-grid {
+            display: grid;
+            grid-template-columns: repeat(16, 1fr);
+            gap: 4px;
+            margin-top: 1rem;
+        }
+
+        .block {
+            aspect-ratio: 1;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.6rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            position: relative;
+        }
+
+        .block:hover {
+            transform: scale(1.15);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            z-index: 10;
+        }
+
+        .block.allocated {
+            background: var(--accent);
+        }
+
+        .block.available {
+            background: var(--bg-secondary);
+            border: 1px dashed var(--border);
+        }
+
+        .block.reserved {
+            background: var(--yellow);
+        }
+
+        .block.selected {
+            outline: 2px solid white;
+            outline-offset: 1px;
+        }
+
+        .block-label {
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 100%;
+            padding: 0 2px;
+            color: white;
+        }
+
+        .block.available .block-label,
+        .block.available .block-cidr {
+            color: var(--text-muted);
+        }
+
+        .block.reserved .block-label,
+        .block.reserved .block-cidr {
+            color: #000;
+        }
+
+        .block-cidr {
+            font-size: 0.5rem;
+            opacity: 0.8;
+        }
+
+        /* Legend */
+        .legend {
+            display: flex;
+            gap: 1.5rem;
+            margin-top: 1rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+        }
+
+        /* Child Subnets Table */
+        .subnets-section {
+            margin-top: 1.5rem;
+        }
+
+        .subnet-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .subnet-table th,
+        .subnet-table td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .subnet-table th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .subnet-table tr:hover {
+            background: rgba(59, 130, 246, 0.05);
+        }
+
+        .subnet-cidr {
+            font-family: monospace;
+            color: var(--accent);
+        }
+
+        .subnet-name {
+            font-weight: 500;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .status-badge.healthy { background: rgba(34, 197, 94, 0.2); color: var(--green); }
+        .status-badge.warning { background: rgba(234, 179, 8, 0.2); color: var(--yellow); }
+        .status-badge.critical { background: rgba(239, 68, 68, 0.2); color: var(--red); }
+        .status-badge.unmanaged { background: rgba(168, 85, 247, 0.2); color: var(--purple); }
+
+        .subnet-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .action-btn {
+            padding: 0.25rem 0.5rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+
+        .action-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Sync Status */
+        .sync-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+            background: rgba(34, 197, 94, 0.1);
+            border-top: 1px solid var(--border);
+            font-size: 0.85rem;
+        }
+
+        .sync-icon {
+            color: var(--green);
+        }
+
+        .sync-text {
+            color: var(--text-secondary);
+        }
+
+        .sync-time {
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        /* Block Detail Popover */
+        .block-detail {
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 8px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            z-index: 100;
+            min-width: 200px;
+            display: none;
+        }
+
+        .block:hover .block-detail {
+            display: block;
+        }
+
+        .block-detail-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .block-detail-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            padding: 0.25rem 0;
+        }
+
+        .block-detail-label {
+            color: var(--text-muted);
+        }
+
+        /* Notes */
+        .notes {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .notes h4 {
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .notes ul {
+            padding-left: 1.25rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .notes li {
+            margin-bottom: 0.25rem;
+        }
+
+        /* Discovery Badges */
+        .discovery-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.125rem 0.5rem;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+
+        .discovery-badge.synced {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--green);
+        }
+
+        .discovery-badge.drift {
+            background: rgba(249, 115, 22, 0.2);
+            color: var(--orange);
+        }
+
+        .discovery-badge.unmanaged {
+            background: rgba(168, 85, 247, 0.2);
+            color: var(--purple);
+        }
+    </style>
+</head>
+<body>
+    <h1>CloudPAM UI Mockups - Pool Detail View</h1>
+    <p class="subtitle">
+        Combined view with utilization bar, block map, and child subnet table.
+    </p>
+
+    <!-- Full Pool Detail View -->
+    <div class="mockup-section">
+        <div class="mockup-title">Pool Detail Page</div>
+        <div class="mockup-desc">Complete view combining utilization, block map, and subnet list</div>
+
+        <div class="mockup">
+            <div class="page-header">
+                <div>
+                    <div class="breadcrumb">
+                        <a href="#">Pools</a> / <a href="#">prod-vpc-primary</a>
+                    </div>
+                    <div class="page-title">
+                        prod-vpc-primary
+                        <span class="cidr-badge">10.0.0.0/16</span>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-secondary">&#128393; Edit</button>
+                    <button class="btn btn-secondary">&#128202; Export</button>
+                    <button class="btn btn-primary">+ Allocate Subnet</button>
+                </div>
+            </div>
+
+            <div class="info-row">
+                <div class="info-card">
+                    <div class="info-card-label">Account</div>
+                    <div class="info-card-value">aws:123456789012</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-label">Region</div>
+                    <div class="info-card-value">us-east-1</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-label">Total Capacity</div>
+                    <div class="info-card-value mono">65,536 IPs (/16)</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-card-label">Child Subnets</div>
+                    <div class="info-card-value">12 allocated</div>
+                </div>
+            </div>
+
+            <div class="tabs">
+                <button class="tab active">Overview</button>
+                <button class="tab">Subnets (12)</button>
+                <button class="tab">Hosts</button>
+                <button class="tab">History</button>
+                <button class="tab">Settings</button>
+            </div>
+
+            <div class="content">
+                <!-- Utilization Bar -->
+                <div class="utilization-section">
+                    <div class="section-header">
+                        <div class="section-title">Utilization</div>
+                        <div class="utilization-stats">
+                            <div class="utilization-stat">
+                                <span class="stat-dot allocated"></span>
+                                <span>134 allocated (52%)</span>
+                            </div>
+                            <div class="utilization-stat">
+                                <span class="stat-dot reserved"></span>
+                                <span>8 reserved (3%)</span>
+                            </div>
+                            <div class="utilization-stat">
+                                <span class="stat-dot available"></span>
+                                <span>114 available (45%)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="utilization-bar">
+                        <div class="utilization-segment allocated" style="width: 52%;">52%</div>
+                        <div class="utilization-segment reserved" style="width: 3%;">3%</div>
+                        <div class="utilization-segment available" style="width: 45%;">45%</div>
+                    </div>
+                </div>
+
+                <!-- Block Map -->
+                <div class="block-map-section">
+                    <div class="section-header">
+                        <div class="section-title">Block Map (/24 view)</div>
+                        <div class="block-map-controls">
+                            <div class="view-toggle">
+                                <button class="view-toggle-btn active">/24</button>
+                                <button class="view-toggle-btn">/23</button>
+                                <button class="view-toggle-btn">/22</button>
+                            </div>
+                            <span style="color: var(--text-muted); font-size: 0.85rem;">
+                                Showing blocks 0-31 of 256
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="block-grid">
+                        <div class="block allocated"><span class="block-label">web</span><span class="block-cidr">.1.0</span></div>
+                        <div class="block allocated"><span class="block-label">api</span><span class="block-cidr">.2.0</span></div>
+                        <div class="block allocated"><span class="block-label">db</span><span class="block-cidr">.3.0</span></div>
+                        <div class="block available"><span class="block-cidr">.4.0</span></div>
+                        <div class="block available"><span class="block-cidr">.5.0</span></div>
+                        <div class="block available"><span class="block-cidr">.6.0</span></div>
+                        <div class="block allocated"><span class="block-label">logs</span><span class="block-cidr">.7.0</span></div>
+                        <div class="block allocated"><span class="block-label">mon</span><span class="block-cidr">.8.0</span></div>
+                        <div class="block available"><span class="block-cidr">.9.0</span></div>
+                        <div class="block available"><span class="block-cidr">.10.0</span></div>
+                        <div class="block reserved"><span class="block-label">rsv</span><span class="block-cidr">.11.0</span></div>
+                        <div class="block reserved"><span class="block-label">rsv</span><span class="block-cidr">.12.0</span></div>
+                        <div class="block allocated"><span class="block-label">cache</span><span class="block-cidr">.13.0</span></div>
+                        <div class="block available"><span class="block-cidr">.14.0</span></div>
+                        <div class="block available"><span class="block-cidr">.15.0</span></div>
+                        <div class="block available"><span class="block-cidr">.16.0</span></div>
+                        <div class="block allocated"><span class="block-label">k8s-1</span><span class="block-cidr">.17.0</span></div>
+                        <div class="block allocated"><span class="block-label">k8s-2</span><span class="block-cidr">.18.0</span></div>
+                        <div class="block allocated"><span class="block-label">k8s-3</span><span class="block-cidr">.19.0</span></div>
+                        <div class="block allocated"><span class="block-label">k8s-4</span><span class="block-cidr">.20.0</span></div>
+                        <div class="block available"><span class="block-cidr">.21.0</span></div>
+                        <div class="block available"><span class="block-cidr">.22.0</span></div>
+                        <div class="block available"><span class="block-cidr">.23.0</span></div>
+                        <div class="block available"><span class="block-cidr">.24.0</span></div>
+                        <div class="block allocated"><span class="block-label">vpn</span><span class="block-cidr">.25.0</span></div>
+                        <div class="block available"><span class="block-cidr">.26.0</span></div>
+                        <div class="block available"><span class="block-cidr">.27.0</span></div>
+                        <div class="block available"><span class="block-cidr">.28.0</span></div>
+                        <div class="block available"><span class="block-cidr">.29.0</span></div>
+                        <div class="block available"><span class="block-cidr">.30.0</span></div>
+                        <div class="block available"><span class="block-cidr">.31.0</span></div>
+                        <div class="block available"><span class="block-cidr">.32.0</span></div>
+                    </div>
+
+                    <div class="legend">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--accent);"></div>
+                            <span>Allocated</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--bg-secondary); border: 1px dashed var(--border);"></div>
+                            <span>Available</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: var(--yellow);"></div>
+                            <span>Reserved</span>
+                        </div>
+                        <div style="margin-left: auto; font-size: 0.85rem; color: var(--text-muted);">
+                            Click block to allocate or view details
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Child Subnets Table -->
+                <div class="subnets-section">
+                    <div class="section-header">
+                        <div class="section-title">Child Subnets</div>
+                        <input type="text" placeholder="Filter subnets..." style="padding: 0.375rem 0.75rem; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-primary); font-size: 0.85rem; width: 200px;">
+                    </div>
+
+                    <table class="subnet-table">
+                        <thead>
+                            <tr>
+                                <th>CIDR</th>
+                                <th>Name</th>
+                                <th>Usage</th>
+                                <th>Status</th>
+                                <th>Discovery</th>
+                                <th>Team</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><span class="subnet-cidr">10.0.1.0/24</span></td>
+                                <td><span class="subnet-name">subnet-web</span></td>
+                                <td>78%</td>
+                                <td><span class="status-badge warning">Warning</span></td>
+                                <td><span class="discovery-badge synced">&#10003; Synced</span></td>
+                                <td>Platform</td>
+                                <td class="subnet-actions">
+                                    <button class="action-btn">View</button>
+                                    <button class="action-btn">Edit</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><span class="subnet-cidr">10.0.2.0/24</span></td>
+                                <td><span class="subnet-name">subnet-api</span></td>
+                                <td>91%</td>
+                                <td><span class="status-badge critical">Critical</span></td>
+                                <td><span class="discovery-badge synced">&#10003; Synced</span></td>
+                                <td>API Team</td>
+                                <td class="subnet-actions">
+                                    <button class="action-btn">View</button>
+                                    <button class="action-btn">Edit</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><span class="subnet-cidr">10.0.3.0/24</span></td>
+                                <td><span class="subnet-name">subnet-db</span></td>
+                                <td>23%</td>
+                                <td><span class="status-badge healthy">Healthy</span></td>
+                                <td><span class="discovery-badge synced">&#10003; Synced</span></td>
+                                <td>Data Team</td>
+                                <td class="subnet-actions">
+                                    <button class="action-btn">View</button>
+                                    <button class="action-btn">Edit</button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><span class="subnet-cidr">10.0.7.0/24</span></td>
+                                <td><span class="subnet-name">subnet-logs</span></td>
+                                <td>45%</td>
+                                <td><span class="status-badge healthy">Healthy</span></td>
+                                <td><span class="discovery-badge drift">&#9888; Drift</span></td>
+                                <td>SRE</td>
+                                <td class="subnet-actions">
+                                    <button class="action-btn">View</button>
+                                    <button class="action-btn">Edit</button>
+                                </td>
+                            </tr>
+                            <tr style="background: rgba(168, 85, 247, 0.05);">
+                                <td><span class="subnet-cidr">10.0.50.0/24</span></td>
+                                <td><span class="subnet-name" style="color: var(--purple);">(discovered)</span></td>
+                                <td>-</td>
+                                <td><span class="status-badge unmanaged">Unmanaged</span></td>
+                                <td><span class="discovery-badge unmanaged">&#63; Unknown</span></td>
+                                <td>-</td>
+                                <td class="subnet-actions">
+                                    <button class="action-btn" style="border-color: var(--purple); color: var(--purple);">Claim</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="sync-status">
+                <span class="sync-icon">&#10003;</span>
+                <span class="sync-text">Last synced with AWS:</span>
+                <span class="sync-time">2 minutes ago</span>
+                <button class="btn btn-secondary" style="margin-left: auto; padding: 0.25rem 0.75rem; font-size: 0.8rem;">
+                    &#8635; Sync Now
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Discovery Status Indicators -->
+    <div class="mockup-section">
+        <div class="mockup-title">Discovery Status Badges</div>
+        <div class="mockup-desc">Visual indicators for cloud sync status and drift detection</div>
+
+        <div style="display: flex; gap: 2rem; padding: 1rem;">
+            <div style="text-align: center;">
+                <span class="discovery-badge synced" style="font-size: 0.85rem; padding: 0.25rem 0.75rem;">&#10003; Synced</span>
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">Matches cloud state</div>
+            </div>
+            <div style="text-align: center;">
+                <span class="discovery-badge drift" style="font-size: 0.85rem; padding: 0.25rem 0.75rem;">&#9888; Drift Detected</span>
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">Cloud differs from IPAM</div>
+            </div>
+            <div style="text-align: center;">
+                <span class="discovery-badge unmanaged" style="font-size: 0.85rem; padding: 0.25rem 0.75rem;">&#63; Unmanaged</span>
+                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">Exists in cloud, not in IPAM</div>
+            </div>
+        </div>
+
+        <div class="notes">
+            <h4>Discovery Features</h4>
+            <ul>
+                <li>Automatic detection of subnets created outside CloudPAM</li>
+                <li>Drift detection compares IPAM state vs actual cloud state</li>
+                <li>"Claim" action allows importing unmanaged subnets</li>
+                <li>Sync frequency configurable per account</li>
+            </ul>
+        </div>
+    </div>
+
+</body>
+</html>

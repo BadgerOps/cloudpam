@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudPAM UI Mockups - Export & Reports</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #1f2937;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
+            --purple: #a855f7;
+            --orange: #f97316;
+            --border: #374151;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        h1 {
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        .mockup-section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        .mockup-title {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .mockup-desc {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .mockup {
+            background: var(--bg-card);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        /* Modal */
+        .modal-backdrop {
+            position: relative;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 2rem;
+            display: flex;
+            justify-content: center;
+        }
+
+        .modal {
+            background: var(--bg-card);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            width: 100%;
+            max-width: 600px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.75rem;
+            padding: 1rem 1.5rem;
+            border-top: 1px solid var(--border);
+            background: var(--bg-secondary);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+        }
+
+        .btn-lg {
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+
+        .form-hint {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 0.375rem;
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 0.625rem 0.875rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+        }
+
+        .form-select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Checkbox Group */
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .checkbox-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .checkbox-item:hover {
+            border-color: var(--accent);
+        }
+
+        .checkbox-item.selected {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .checkbox-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            margin-top: 2px;
+            cursor: pointer;
+        }
+
+        .checkbox-content {
+            flex: 1;
+        }
+
+        .checkbox-title {
+            font-weight: 500;
+            margin-bottom: 0.125rem;
+        }
+
+        .checkbox-desc {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Format Options */
+        .format-options {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.75rem;
+        }
+
+        .format-option {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .format-option:hover {
+            border-color: var(--accent);
+        }
+
+        .format-option.selected {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.15);
+        }
+
+        .format-icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .format-name {
+            font-weight: 500;
+            margin-bottom: 0.125rem;
+        }
+
+        .format-ext {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Quick Export Cards */
+        .quick-exports {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+        }
+
+        .quick-export-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.25rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-export-card:hover {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.05);
+        }
+
+        .quick-export-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .quick-export-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        .quick-export-icon.csv {
+            background: rgba(34, 197, 94, 0.2);
+            color: var(--green);
+        }
+
+        .quick-export-icon.json {
+            background: rgba(59, 130, 246, 0.2);
+            color: var(--accent);
+        }
+
+        .quick-export-icon.pdf {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--red);
+        }
+
+        .quick-export-icon.yaml {
+            background: rgba(168, 85, 247, 0.2);
+            color: var(--purple);
+        }
+
+        .quick-export-title {
+            font-weight: 600;
+        }
+
+        .quick-export-desc {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Report Templates */
+        .report-templates {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .report-template {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 1.25rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .report-template:hover {
+            border-color: var(--accent);
+        }
+
+        .report-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .report-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 8px;
+            background: rgba(59, 130, 246, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            color: var(--accent);
+        }
+
+        .report-title {
+            font-weight: 500;
+            margin-bottom: 0.125rem;
+        }
+
+        .report-desc {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .report-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        /* Scheduled Reports */
+        .schedule-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .schedule-select {
+            padding: 0.5rem 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+        }
+
+        .schedule-input {
+            padding: 0.5rem 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            width: 200px;
+        }
+
+        /* Progress/Success State */
+        .export-progress {
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .progress-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .progress-icon.loading {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .progress-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 1.5rem;
+        }
+
+        .progress-bar-container {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            height: 8px;
+            overflow: hidden;
+            margin-bottom: 0.5rem;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--accent);
+            border-radius: 8px;
+            transition: width 0.3s;
+        }
+
+        .progress-percent {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Success State */
+        .success-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: rgba(34, 197, 94, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            margin: 0 auto 1rem;
+            color: var(--green);
+        }
+
+        .file-info {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 1.5rem;
+        }
+
+        .file-details {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .file-icon {
+            font-size: 1.5rem;
+        }
+
+        .file-name {
+            font-weight: 500;
+        }
+
+        .file-size {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Section Headers */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .section-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.05em;
+        }
+
+        /* Notes */
+        .notes {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .notes h4 {
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .notes ul {
+            padding-left: 1.25rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .notes li {
+            margin-bottom: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <h1>CloudPAM UI Mockups - Export & Reports</h1>
+    <p class="subtitle">
+        Export data in multiple formats and generate reports for compliance, capacity planning, and audits.
+    </p>
+
+    <!-- Export Modal -->
+    <div class="mockup-section">
+        <div class="mockup-title">Export Data Modal</div>
+        <div class="mockup-desc">Custom export with dataset selection and format options</div>
+
+        <div class="mockup">
+            <div class="modal-backdrop">
+                <div class="modal">
+                    <div class="modal-header">
+                        <div class="modal-title">Export Data</div>
+                        <button class="modal-close">&times;</button>
+                    </div>
+
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label class="form-label">Select Datasets</label>
+                            <div class="checkbox-group">
+                                <label class="checkbox-item selected">
+                                    <input type="checkbox" checked>
+                                    <div class="checkbox-content">
+                                        <div class="checkbox-title">Pools</div>
+                                        <div class="checkbox-desc">All IP pools with hierarchy, utilization, and metadata</div>
+                                    </div>
+                                </label>
+                                <label class="checkbox-item selected">
+                                    <input type="checkbox" checked>
+                                    <div class="checkbox-content">
+                                        <div class="checkbox-title">Accounts</div>
+                                        <div class="checkbox-desc">Cloud accounts with provider, regions, and settings</div>
+                                    </div>
+                                </label>
+                                <label class="checkbox-item">
+                                    <input type="checkbox">
+                                    <div class="checkbox-content">
+                                        <div class="checkbox-title">Allocations</div>
+                                        <div class="checkbox-desc">Active subnet allocations with team ownership</div>
+                                    </div>
+                                </label>
+                                <label class="checkbox-item">
+                                    <input type="checkbox">
+                                    <div class="checkbox-content">
+                                        <div class="checkbox-title">Hosts (if enabled)</div>
+                                        <div class="checkbox-desc">Individual IP assignments and host information</div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Export Format</label>
+                            <div class="format-options">
+                                <div class="format-option selected">
+                                    <span class="format-icon">&#128196;</span>
+                                    <span class="format-name">CSV</span>
+                                    <span class="format-ext">.csv (in .zip)</span>
+                                </div>
+                                <div class="format-option">
+                                    <span class="format-icon">&#123; &#125;</span>
+                                    <span class="format-name">JSON</span>
+                                    <span class="format-ext">.json</span>
+                                </div>
+                                <div class="format-option">
+                                    <span class="format-icon">&#128221;</span>
+                                    <span class="format-name">Excel</span>
+                                    <span class="format-ext">.xlsx</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Scope (Optional)</label>
+                            <select class="form-select">
+                                <option>All data</option>
+                                <option>Specific account...</option>
+                                <option>Specific pool...</option>
+                                <option>Date range...</option>
+                            </select>
+                            <div class="form-hint">Leave as "All data" for a complete export</div>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary">Cancel</button>
+                        <button class="btn btn-primary">&#8595; Export</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Export Options -->
+    <div class="mockup-section">
+        <div class="mockup-title">Quick Export Options</div>
+        <div class="mockup-desc">One-click exports for common use cases</div>
+
+        <div class="quick-exports">
+            <div class="quick-export-card">
+                <div class="quick-export-header">
+                    <div class="quick-export-icon csv">&#128196;</div>
+                    <div>
+                        <div class="quick-export-title">All Pools (CSV)</div>
+                    </div>
+                </div>
+                <div class="quick-export-desc">
+                    Export all pools with CIDR, name, account, utilization, and hierarchy as CSV files in a ZIP archive.
+                </div>
+            </div>
+
+            <div class="quick-export-card">
+                <div class="quick-export-header">
+                    <div class="quick-export-icon json">&#123; &#125;</div>
+                    <div>
+                        <div class="quick-export-title">Full Backup (JSON)</div>
+                    </div>
+                </div>
+                <div class="quick-export-desc">
+                    Complete data export including all pools, accounts, allocations, and settings in JSON format.
+                </div>
+            </div>
+
+            <div class="quick-export-card">
+                <div class="quick-export-header">
+                    <div class="quick-export-icon yaml">&#128221;</div>
+                    <div>
+                        <div class="quick-export-title">Terraform Import</div>
+                    </div>
+                </div>
+                <div class="quick-export-desc">
+                    Generate Terraform resource definitions for all managed subnets to enable infrastructure-as-code.
+                </div>
+            </div>
+
+            <div class="quick-export-card">
+                <div class="quick-export-header">
+                    <div class="quick-export-icon pdf">&#128196;</div>
+                    <div>
+                        <div class="quick-export-title">Utilization Report</div>
+                    </div>
+                </div>
+                <div class="quick-export-desc">
+                    PDF report with utilization charts, capacity forecasts, and recommendations.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Report Templates -->
+    <div class="mockup-section">
+        <div class="mockup-title">Report Templates</div>
+        <div class="mockup-desc">Pre-built reports for common needs</div>
+
+        <div class="report-templates">
+            <div class="report-template">
+                <div class="report-info">
+                    <div class="report-icon">&#128202;</div>
+                    <div>
+                        <div class="report-title">Capacity Planning Report</div>
+                        <div class="report-desc">Utilization trends, growth forecasts, and capacity recommendations</div>
+                    </div>
+                </div>
+                <div class="report-actions">
+                    <button class="btn btn-secondary">Preview</button>
+                    <button class="btn btn-primary">Generate</button>
+                </div>
+            </div>
+
+            <div class="report-template">
+                <div class="report-info">
+                    <div class="report-icon">&#128274;</div>
+                    <div>
+                        <div class="report-title">Compliance Audit Report</div>
+                        <div class="report-desc">RBAC assignments, approval history, and access audit trail</div>
+                    </div>
+                </div>
+                <div class="report-actions">
+                    <button class="btn btn-secondary">Preview</button>
+                    <button class="btn btn-primary">Generate</button>
+                </div>
+            </div>
+
+            <div class="report-template">
+                <div class="report-info">
+                    <div class="report-icon">&#9888;</div>
+                    <div>
+                        <div class="report-title">Drift & Reconciliation Report</div>
+                        <div class="report-desc">Summary of all drift, unmanaged resources, and resolution status</div>
+                    </div>
+                </div>
+                <div class="report-actions">
+                    <button class="btn btn-secondary">Preview</button>
+                    <button class="btn btn-primary">Generate</button>
+                </div>
+            </div>
+
+            <div class="report-template">
+                <div class="report-info">
+                    <div class="report-icon">&#128100;</div>
+                    <div>
+                        <div class="report-title">Team Allocation Summary</div>
+                        <div class="report-desc">IP space allocated per team, pending requests, and usage patterns</div>
+                    </div>
+                </div>
+                <div class="report-actions">
+                    <button class="btn btn-secondary">Preview</button>
+                    <button class="btn btn-primary">Generate</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scheduled Reports -->
+    <div class="mockup-section">
+        <div class="mockup-title">Scheduled Reports</div>
+        <div class="mockup-desc">Automatically generate and email reports on a schedule</div>
+
+        <div class="mockup">
+            <div class="modal-backdrop">
+                <div class="modal">
+                    <div class="modal-header">
+                        <div class="modal-title">Schedule Report</div>
+                        <button class="modal-close">&times;</button>
+                    </div>
+
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label class="form-label">Report Type</label>
+                            <select class="form-select">
+                                <option>Capacity Planning Report</option>
+                                <option>Compliance Audit Report</option>
+                                <option>Drift & Reconciliation Report</option>
+                                <option>Team Allocation Summary</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Schedule</label>
+                            <div class="schedule-row">
+                                <select class="schedule-select">
+                                    <option>Daily</option>
+                                    <option selected>Weekly</option>
+                                    <option>Monthly</option>
+                                </select>
+                                <span style="color: var(--text-secondary);">on</span>
+                                <select class="schedule-select">
+                                    <option selected>Monday</option>
+                                    <option>Tuesday</option>
+                                    <option>Wednesday</option>
+                                    <option>Thursday</option>
+                                    <option>Friday</option>
+                                </select>
+                                <span style="color: var(--text-secondary);">at</span>
+                                <select class="schedule-select">
+                                    <option>6:00 AM</option>
+                                    <option selected>9:00 AM</option>
+                                    <option>12:00 PM</option>
+                                    <option>5:00 PM</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Email Recipients</label>
+                            <input type="text" class="schedule-input" style="width: 100%;" placeholder="team@company.com, manager@company.com" value="network-team@company.com">
+                            <div class="form-hint">Comma-separated email addresses</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Format</label>
+                            <div class="schedule-row">
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                    <input type="radio" name="format" checked> PDF
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                    <input type="radio" name="format"> Excel
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                                    <input type="radio" name="format"> CSV
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary">Cancel</button>
+                        <button class="btn btn-primary">Create Schedule</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Progress & Success -->
+    <div class="mockup-section">
+        <div class="mockup-title">Export Progress & Success States</div>
+        <div class="mockup-desc">Feedback during export generation</div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+            <!-- Progress State -->
+            <div class="mockup" style="padding: 1.5rem;">
+                <div class="export-progress">
+                    <div class="progress-icon loading">&#8635;</div>
+                    <div class="progress-title">Generating Export...</div>
+                    <div class="progress-subtitle">Processing 847 pools across 12 accounts</div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" style="width: 65%;"></div>
+                    </div>
+                    <div class="progress-percent">65% complete</div>
+                </div>
+            </div>
+
+            <!-- Success State -->
+            <div class="mockup" style="padding: 1.5rem;">
+                <div class="export-progress">
+                    <div class="success-icon">&#10003;</div>
+                    <div class="progress-title">Export Complete!</div>
+                    <div class="progress-subtitle">Your download should start automatically</div>
+                    <div class="file-info">
+                        <div class="file-details">
+                            <span class="file-icon">&#128230;</span>
+                            <div>
+                                <div class="file-name">cloudpam-export-2024-01-15.zip</div>
+                                <div class="file-size">2.4 MB &bull; 3 files</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary">&#8595; Download Again</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- API Export -->
+    <div class="mockup-section">
+        <div class="mockup-title">API Export Endpoint</div>
+        <div class="mockup-desc">For programmatic access and integration with other tools</div>
+
+        <div style="background: var(--bg-card); border-radius: 8px; padding: 1.25rem; border: 1px solid var(--border);">
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">Current API endpoint:</div>
+            <div style="font-family: monospace; background: var(--bg-secondary); padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.9rem; display: flex; justify-content: space-between; align-items: center;">
+                <span>GET /api/v1/export?datasets=accounts,pools,blocks</span>
+                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">Copy</button>
+            </div>
+            <div style="margin-top: 1rem; font-size: 0.9rem; color: var(--text-secondary);">
+                <div style="margin-bottom: 0.5rem;"><strong>Query Parameters:</strong></div>
+                <div style="display: grid; grid-template-columns: 150px 1fr; gap: 0.375rem; font-size: 0.85rem;">
+                    <span style="font-family: monospace; color: var(--accent);">datasets</span>
+                    <span>accounts, pools, blocks (comma-separated)</span>
+                    <span style="font-family: monospace; color: var(--accent);">format</span>
+                    <span>csv, json, xlsx (default: csv in zip)</span>
+                    <span style="font-family: monospace; color: var(--accent);">account_id</span>
+                    <span>Filter to specific account</span>
+                    <span style="font-family: monospace; color: var(--accent);">pool_id</span>
+                    <span>Filter to specific pool and children</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="notes">
+            <h4>Implementation Notes</h4>
+            <ul>
+                <li>Current API endpoint exists at <code>/api/v1/export</code></li>
+                <li>Consider adding Excel (.xlsx) format support</li>
+                <li>PDF reports require server-side rendering (wkhtmltopdf or similar)</li>
+                <li>Large exports should be async with progress polling</li>
+                <li>Scheduled reports need a job scheduler (cron, Cloud Scheduler)</li>
+            </ul>
+        </div>
+    </div>
+
+</body>
+</html>
