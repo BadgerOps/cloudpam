@@ -196,7 +196,18 @@ User allocates (or requests approval) → Provisioned automatically
 
 ### HTML Mockups
 
-See `docs/mockups/utilization-options.html` for interactive HTML mockups of all utilization display options (A-E) with pros/cons analysis.
+Interactive HTML mockups are available in the `docs/mockups/` directory:
+
+| Mockup | File | Description |
+|--------|------|-------------|
+| **Utilization Display** | `utilization-options.html` | All 5 utilization display options (A-E) with pros/cons |
+| **Global Search** | `search-interface.html` | Omnisearch with filters, CIDR/IP/name lookup |
+| **Allocation Flow** | `allocation-flow.html` | Self-service allocation with RBAC and approval workflow |
+| **Pool Detail** | `pool-detail-view.html` | Combined utilization bar, block map, and subnet table |
+| **Drift & Reconciliation** | `drift-reconciliation.html` | Compare IPAM vs cloud state, resolve discrepancies |
+| **Export & Reports** | `export-reports.html` | Data export, report templates, scheduled reports |
+
+Open these files in a browser to see the interactive mockups.
 
 ### Utilization Display Options
 

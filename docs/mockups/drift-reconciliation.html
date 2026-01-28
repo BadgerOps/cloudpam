@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudPAM UI Mockups - Drift & Reconciliation Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #1f2937;
+            --text-primary: #e5e7eb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
+            --purple: #a855f7;
+            --orange: #f97316;
+            --border: #374151;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            padding: 2rem;
+            line-height: 1.6;
+        }
+
+        h1 {
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        .mockup-section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        .mockup-title {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .mockup-desc {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .mockup {
+            background: var(--bg-card);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        /* Page Header */
+        .page-header {
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .page-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+        }
+
+        .btn-warning {
+            background: var(--orange);
+            color: white;
+        }
+
+        /* Summary Cards */
+        .summary-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            padding: 1.25rem 1.5rem;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .summary-card {
+            background: var(--bg-card);
+            padding: 1rem 1.25rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .summary-card:hover {
+            border-color: var(--accent);
+        }
+
+        .summary-card.active {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .summary-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .summary-card-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .summary-card-icon {
+            font-size: 1.25rem;
+        }
+
+        .summary-card-value {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .summary-card-value.green { color: var(--green); }
+        .summary-card-value.orange { color: var(--orange); }
+        .summary-card-value.purple { color: var(--purple); }
+        .summary-card-value.red { color: var(--red); }
+
+        .summary-card-subtitle {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        /* Filters */
+        .filters-row {
+            display: flex;
+            gap: 0.75rem;
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .filter-select {
+            padding: 0.375rem 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+        }
+
+        .filter-toggle {
+            display: flex;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            padding: 2px;
+        }
+
+        .filter-toggle-btn {
+            padding: 0.375rem 0.75rem;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .filter-toggle-btn.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* Content */
+        .content {
+            padding: 1.5rem;
+        }
+
+        /* Issue Cards */
+        .issue-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .issue-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            overflow: hidden;
+        }
+
+        .issue-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 1rem 1.25rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .issue-type {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.625rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        .issue-type.drift {
+            background: rgba(249, 115, 22, 0.2);
+            color: var(--orange);
+        }
+
+        .issue-type.unmanaged {
+            background: rgba(168, 85, 247, 0.2);
+            color: var(--purple);
+        }
+
+        .issue-type.missing {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--red);
+        }
+
+        .issue-title {
+            font-weight: 600;
+            margin-top: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .issue-cidr {
+            font-family: monospace;
+            color: var(--accent);
+        }
+
+        .issue-meta {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        .issue-time {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .issue-card-body {
+            padding: 1rem 1.25rem;
+        }
+
+        .diff-view {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .diff-panel {
+            background: var(--bg-card);
+            border-radius: 6px;
+            padding: 1rem;
+            border: 1px solid var(--border);
+        }
+
+        .diff-panel-header {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .diff-panel.ipam .diff-panel-header {
+            color: var(--accent);
+        }
+
+        .diff-panel.cloud .diff-panel-header {
+            color: var(--green);
+        }
+
+        .diff-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.375rem 0;
+            font-size: 0.9rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .diff-row:last-child {
+            border-bottom: none;
+        }
+
+        .diff-label {
+            color: var(--text-secondary);
+        }
+
+        .diff-value {
+            font-weight: 500;
+        }
+
+        .diff-value.changed {
+            color: var(--orange);
+            background: rgba(249, 115, 22, 0.1);
+            padding: 0.125rem 0.375rem;
+            border-radius: 3px;
+        }
+
+        .diff-value.missing {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .issue-card-actions {
+            display: flex;
+            gap: 0.75rem;
+            padding: 1rem 1.25rem;
+            border-top: 1px solid var(--border);
+            background: var(--bg-card);
+        }
+
+        .action-btn {
+            padding: 0.375rem 0.75rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .action-btn:hover {
+            border-color: var(--accent);
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .action-btn.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        .action-btn.danger {
+            border-color: var(--red);
+            color: var(--red);
+        }
+
+        .action-btn.danger:hover {
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        /* Unmanaged Resource Card */
+        .unmanaged-details {
+            background: var(--bg-card);
+            border-radius: 6px;
+            padding: 1rem;
+            border: 1px solid var(--border);
+        }
+
+        .unmanaged-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 1rem;
+            font-size: 0.9rem;
+        }
+
+        .unmanaged-field {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .unmanaged-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-bottom: 0.25rem;
+        }
+
+        /* Last Sync Banner */
+        .sync-banner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+        }
+
+        .sync-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            font-size: 0.85rem;
+        }
+
+        .sync-status {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+        }
+
+        .sync-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+        }
+
+        .sync-dot.syncing {
+            background: var(--yellow);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Notes */
+        .notes {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .notes h4 {
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .notes ul {
+            padding-left: 1.25rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .notes li {
+            margin-bottom: 0.25rem;
+        }
+
+        /* Bulk Actions */
+        .bulk-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 1.25rem;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 6px;
+            margin-bottom: 1rem;
+        }
+
+        .bulk-count {
+            font-weight: 500;
+        }
+
+        .bulk-divider {
+            width: 1px;
+            height: 24px;
+            background: var(--border);
+        }
+    </style>
+</head>
+<body>
+    <h1>CloudPAM UI Mockups - Drift & Reconciliation Dashboard</h1>
+    <p class="subtitle">
+        Compare IPAM state vs actual cloud infrastructure. Detect drift, unmanaged resources, and missing subnets.
+    </p>
+
+    <!-- Main Dashboard -->
+    <div class="mockup-section">
+        <div class="mockup-title">Reconciliation Dashboard</div>
+        <div class="mockup-desc">Overview of all discrepancies between CloudPAM and cloud providers</div>
+
+        <div class="mockup">
+            <div class="page-header">
+                <div class="page-title">Reconciliation</div>
+                <div class="header-actions">
+                    <span style="color: var(--text-secondary); font-size: 0.85rem;">Auto-sync: Every 15 min</span>
+                    <button class="btn btn-secondary">&#9881; Settings</button>
+                    <button class="btn btn-primary">&#8635; Sync All Accounts</button>
+                </div>
+            </div>
+
+            <div class="summary-row">
+                <div class="summary-card">
+                    <div class="summary-card-header">
+                        <span class="summary-card-label">In Sync</span>
+                        <span class="summary-card-icon">&#10003;</span>
+                    </div>
+                    <div class="summary-card-value green">847</div>
+                    <div class="summary-card-subtitle">subnets match cloud state</div>
+                </div>
+                <div class="summary-card active">
+                    <div class="summary-card-header">
+                        <span class="summary-card-label">Drift Detected</span>
+                        <span class="summary-card-icon">&#9888;</span>
+                    </div>
+                    <div class="summary-card-value orange">12</div>
+                    <div class="summary-card-subtitle">subnets differ from IPAM</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-card-header">
+                        <span class="summary-card-label">Unmanaged</span>
+                        <span class="summary-card-icon">&#63;</span>
+                    </div>
+                    <div class="summary-card-value purple">8</div>
+                    <div class="summary-card-subtitle">found in cloud, not in IPAM</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-card-header">
+                        <span class="summary-card-label">Missing</span>
+                        <span class="summary-card-icon">&#10007;</span>
+                    </div>
+                    <div class="summary-card-value red">3</div>
+                    <div class="summary-card-subtitle">in IPAM, not found in cloud</div>
+                </div>
+            </div>
+
+            <div class="filters-row">
+                <span class="filter-label">Show:</span>
+                <div class="filter-toggle">
+                    <button class="filter-toggle-btn active">All Issues</button>
+                    <button class="filter-toggle-btn">Drift</button>
+                    <button class="filter-toggle-btn">Unmanaged</button>
+                    <button class="filter-toggle-btn">Missing</button>
+                </div>
+                <span class="filter-label" style="margin-left: 1rem;">Account:</span>
+                <select class="filter-select">
+                    <option>All Accounts</option>
+                    <option>aws:123456789012 (prod)</option>
+                    <option>aws:987654321098 (dev)</option>
+                    <option>gcp:project-alpha</option>
+                </select>
+                <span class="filter-label">Region:</span>
+                <select class="filter-select">
+                    <option>All Regions</option>
+                    <option>us-east-1</option>
+                    <option>us-west-2</option>
+                    <option>eu-west-1</option>
+                </select>
+            </div>
+
+            <div class="content">
+                <!-- Bulk Actions (shown when items selected) -->
+                <div class="bulk-actions">
+                    <input type="checkbox" checked style="width: 16px; height: 16px;">
+                    <span class="bulk-count">3 selected</span>
+                    <div class="bulk-divider"></div>
+                    <button class="action-btn">Accept Cloud State</button>
+                    <button class="action-btn">Update Cloud to Match IPAM</button>
+                    <button class="action-btn">Import to IPAM</button>
+                    <button class="action-btn danger">Dismiss</button>
+                </div>
+
+                <div class="issue-list">
+                    <!-- Drift Issue -->
+                    <div class="issue-card">
+                        <div class="issue-card-header">
+                            <div>
+                                <span class="issue-type drift">&#9888; Drift Detected</span>
+                                <div class="issue-title">
+                                    <input type="checkbox" style="width: 16px; height: 16px;">
+                                    <span class="issue-cidr">10.0.7.0/24</span>
+                                    subnet-logs
+                                </div>
+                                <div class="issue-meta">aws:123456789012 &bull; us-east-1 &bull; prod-vpc-primary</div>
+                            </div>
+                            <div class="issue-time">Detected 2 hours ago</div>
+                        </div>
+                        <div class="issue-card-body">
+                            <div class="diff-view">
+                                <div class="diff-panel ipam">
+                                    <div class="diff-panel-header">
+                                        <span>&#128193;</span> CloudPAM (Expected)
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Name</span>
+                                        <span class="diff-value">subnet-logs</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">CIDR</span>
+                                        <span class="diff-value">10.0.7.0/24</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">AZ</span>
+                                        <span class="diff-value changed">us-east-1a</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Public</span>
+                                        <span class="diff-value changed">No</span>
+                                    </div>
+                                </div>
+                                <div class="diff-panel cloud">
+                                    <div class="diff-panel-header">
+                                        <span>&#9729;</span> AWS (Actual)
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Name</span>
+                                        <span class="diff-value">subnet-logs</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">CIDR</span>
+                                        <span class="diff-value">10.0.7.0/24</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">AZ</span>
+                                        <span class="diff-value changed">us-east-1b</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Public</span>
+                                        <span class="diff-value changed">Yes</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="issue-card-actions">
+                            <button class="action-btn primary">Accept Cloud State</button>
+                            <button class="action-btn">Update Cloud to Match IPAM</button>
+                            <button class="action-btn">View in AWS Console</button>
+                            <button class="action-btn danger" style="margin-left: auto;">Dismiss</button>
+                        </div>
+                    </div>
+
+                    <!-- Unmanaged Issue -->
+                    <div class="issue-card">
+                        <div class="issue-card-header">
+                            <div>
+                                <span class="issue-type unmanaged">&#63; Unmanaged Resource</span>
+                                <div class="issue-title">
+                                    <input type="checkbox" style="width: 16px; height: 16px;">
+                                    <span class="issue-cidr">10.0.50.0/24</span>
+                                    subnet-0abc123def456
+                                </div>
+                                <div class="issue-meta">aws:123456789012 &bull; us-east-1 &bull; vpc-0xyz789</div>
+                            </div>
+                            <div class="issue-time">Discovered 1 day ago</div>
+                        </div>
+                        <div class="issue-card-body">
+                            <div class="unmanaged-details">
+                                <div class="unmanaged-row">
+                                    <div class="unmanaged-field">
+                                        <span class="unmanaged-label">Subnet ID</span>
+                                        <span>subnet-0abc123def456</span>
+                                    </div>
+                                    <div class="unmanaged-field">
+                                        <span class="unmanaged-label">VPC</span>
+                                        <span>vpc-0xyz789 (prod-vpc)</span>
+                                    </div>
+                                    <div class="unmanaged-field">
+                                        <span class="unmanaged-label">AZ</span>
+                                        <span>us-east-1c</span>
+                                    </div>
+                                    <div class="unmanaged-field">
+                                        <span class="unmanaged-label">Created</span>
+                                        <span>2024-01-10</span>
+                                    </div>
+                                </div>
+                                <div class="unmanaged-row" style="margin-top: 0.75rem;">
+                                    <div class="unmanaged-field">
+                                        <span class="unmanaged-label">Tags</span>
+                                        <span>Environment=prod, Team=unknown</span>
+                                    </div>
+                                    <div class="unmanaged-field">
+                                        <span class="unmanaged-label">IPs in Use</span>
+                                        <span>23 / 254</span>
+                                    </div>
+                                    <div class="unmanaged-field">
+                                        <span class="unmanaged-label">Attached ENIs</span>
+                                        <span>5 instances</span>
+                                    </div>
+                                    <div class="unmanaged-field">
+                                        <span class="unmanaged-label">Route Table</span>
+                                        <span>rtb-private-main</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="issue-card-actions">
+                            <button class="action-btn primary">Import to CloudPAM</button>
+                            <button class="action-btn">Assign to Pool</button>
+                            <button class="action-btn">View in AWS Console</button>
+                            <button class="action-btn danger" style="margin-left: auto;">Ignore</button>
+                        </div>
+                    </div>
+
+                    <!-- Missing Issue -->
+                    <div class="issue-card">
+                        <div class="issue-card-header">
+                            <div>
+                                <span class="issue-type missing">&#10007; Missing in Cloud</span>
+                                <div class="issue-title">
+                                    <input type="checkbox" style="width: 16px; height: 16px;">
+                                    <span class="issue-cidr">10.0.99.0/24</span>
+                                    legacy-batch-subnet
+                                </div>
+                                <div class="issue-meta">aws:123456789012 &bull; us-east-1 &bull; prod-vpc-primary</div>
+                            </div>
+                            <div class="issue-time">Missing since 3 days ago</div>
+                        </div>
+                        <div class="issue-card-body">
+                            <div class="diff-view">
+                                <div class="diff-panel ipam">
+                                    <div class="diff-panel-header">
+                                        <span>&#128193;</span> CloudPAM (Expected)
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Name</span>
+                                        <span class="diff-value">legacy-batch-subnet</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">CIDR</span>
+                                        <span class="diff-value">10.0.99.0/24</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Team</span>
+                                        <span class="diff-value">Data Platform</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Created in IPAM</span>
+                                        <span class="diff-value">2023-06-15</span>
+                                    </div>
+                                </div>
+                                <div class="diff-panel cloud">
+                                    <div class="diff-panel-header">
+                                        <span>&#9729;</span> AWS (Actual)
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Status</span>
+                                        <span class="diff-value missing">Not Found</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Last Seen</span>
+                                        <span class="diff-value">2024-01-12 14:32</span>
+                                    </div>
+                                    <div class="diff-row">
+                                        <span class="diff-label">Possible Cause</span>
+                                        <span class="diff-value">Manually deleted</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="issue-card-actions">
+                            <button class="action-btn primary">Remove from CloudPAM</button>
+                            <button class="action-btn">Recreate in AWS</button>
+                            <button class="action-btn">View History</button>
+                            <button class="action-btn danger" style="margin-left: auto;">Keep in IPAM</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sync-banner">
+                <div class="sync-info">
+                    <div class="sync-status">
+                        <span class="sync-dot"></span>
+                        <span>All accounts synced</span>
+                    </div>
+                    <span style="color: var(--text-muted);">Last sync: 3 minutes ago</span>
+                    <span style="color: var(--text-muted);">Next sync: in 12 minutes</span>
+                </div>
+                <div style="display: flex; gap: 0.75rem; font-size: 0.85rem;">
+                    <span style="color: var(--text-secondary);">aws:123456789012 &#10003;</span>
+                    <span style="color: var(--text-secondary);">aws:987654321098 &#10003;</span>
+                    <span style="color: var(--text-secondary);">gcp:project-alpha &#10003;</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Issue Type Explanations -->
+    <div class="mockup-section">
+        <div class="mockup-title">Issue Types & Resolution Actions</div>
+        <div class="mockup-desc">What each issue type means and how to resolve them</div>
+
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem;">
+            <div style="background: var(--bg-card); padding: 1.25rem; border-radius: 8px; border: 1px solid var(--border);">
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                    <span class="issue-type drift">&#9888; Drift</span>
+                </div>
+                <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Subnet exists in both IPAM and cloud, but properties differ (name, AZ, tags, etc.)
+                </div>
+                <div style="font-size: 0.85rem;">
+                    <div style="font-weight: 500; margin-bottom: 0.5rem;">Resolution Options:</div>
+                    <ul style="padding-left: 1.25rem; color: var(--text-secondary);">
+                        <li>Accept Cloud State - update IPAM to match</li>
+                        <li>Update Cloud - push IPAM values to cloud</li>
+                        <li>Dismiss - ignore this difference</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div style="background: var(--bg-card); padding: 1.25rem; border-radius: 8px; border: 1px solid var(--border);">
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                    <span class="issue-type unmanaged">&#63; Unmanaged</span>
+                </div>
+                <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Subnet found in cloud but not tracked in CloudPAM. May be manually created or from another tool.
+                </div>
+                <div style="font-size: 0.85rem;">
+                    <div style="font-weight: 500; margin-bottom: 0.5rem;">Resolution Options:</div>
+                    <ul style="padding-left: 1.25rem; color: var(--text-secondary);">
+                        <li>Import - add to CloudPAM tracking</li>
+                        <li>Assign to Pool - import under a parent</li>
+                        <li>Ignore - exclude from future scans</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div style="background: var(--bg-card); padding: 1.25rem; border-radius: 8px; border: 1px solid var(--border);">
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                    <span class="issue-type missing">&#10007; Missing</span>
+                </div>
+                <div style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                    Subnet tracked in IPAM but not found in cloud. May have been deleted outside IPAM.
+                </div>
+                <div style="font-size: 0.85rem;">
+                    <div style="font-weight: 500; margin-bottom: 0.5rem;">Resolution Options:</div>
+                    <ul style="padding-left: 1.25rem; color: var(--text-secondary);">
+                        <li>Remove from IPAM - clean up stale record</li>
+                        <li>Recreate in Cloud - provision again</li>
+                        <li>Keep in IPAM - retain for documentation</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="notes">
+            <h4>Implementation Notes</h4>
+            <ul>
+                <li>Sync runs on configurable schedule (default: 15 min) or on-demand</li>
+                <li>Each account can have different sync settings</li>
+                <li>Bulk actions allow resolving multiple issues at once</li>
+                <li>All resolutions are logged in audit trail</li>
+                <li>Webhooks can notify on new drift detection</li>
+            </ul>
+        </div>
+    </div>
+
+</body>
+</html>
