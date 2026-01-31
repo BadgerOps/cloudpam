@@ -1,50 +1,118 @@
-# Changelog – Phase 1
+# Changelog
 
-## Scope
-- Add hierarchical pools (top-level and sub-pools).
-- Compute selectable IPv4 blocks within a pool and display hosts per block.
-- Create sub-pools by clicking a free block in the UI.
-- Optional SQLite backend (build tag) with in-memory default.
-- Minor cleanup (unused import fix) and basic validation.
+All notable changes to CloudPAM will be documented in this file.
 
-## What Changed
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-- Domain model:
-  - `internal/domain/types.go`: `Pool` now includes `parent_id`; `CreatePool` accepts optional `parent_id`.
+## [Unreleased]
 
-- Storage:
-  - `internal/storage/store.go`: added `GetPool`; `CreatePool` stores `parent_id`; in-memory store updated.
-  - `internal/storage/sqlite/sqlite.go`: schema migration includes `parent_id`; implemented `ListPools`, `CreatePool`, `GetPool` with `parent_id`.
+### Planned
+- Enhanced Pool model with types, status, utilization tracking
+- Hierarchical tree view UI matching mockups
+- Dashboard with stats cards and alerts panel
 
-- API:
-  - `internal/http/server.go`:
-    - New route `GET /api/v1/pools/{id}/blocks?new_prefix_len=<n>` returns IPv4 subnets inside the pool CIDR, each with hosts per block and Used/Free flag.
-    - `POST /api/v1/pools` accepts `parent_id` and validates child CIDR is within parent (IPv4).
-    - Added IPv4 helpers (address math, usable host counts).
+## [0.2.0] - 2026-01-31
 
-- UI (Alpine.js):
-  - `web/index.html`:
-    - Top-level pools table with “View Blocks”.
-    - Block browser: choose prefix size, see hosts, Used/Free, and create a sub-pool.
+### Added - Sprint 1-4: Foundation & Observability
 
-- Server/Build:
-  - `cmd/cloudpam/main.go`: select storage via helper; removed unused `fmt` import.
-  - `cmd/cloudpam/store_default.go`: default in-memory store; warns if `SQLITE_DSN` set without `-tags sqlite`.
-  - `cmd/cloudpam/store_sqlite.go` (build tag `sqlite`): initializes SQLite store from `SQLITE_DSN` (or default), falls back to memory on error.
+#### Observability (Sprint 1)
+- Structured logging with `slog` package (JSON output, request context)
+- Request ID middleware for distributed tracing
+- Rate limiting middleware with token bucket algorithm
+- `/readyz` endpoint with database health check
+- Health check improvements
 
-## How to Use (Dev)
-- Start (memory store): `go run ./cmd/cloudpam`
-- Open UI: http://localhost:8080
-- Create a top-level pool (e.g., Name: `Prod`, CIDR: `10.0.0.0/16`).
-- Click “View Blocks”, choose `Block size (prefix)` (e.g., 24), click “List Blocks”.
-- Click “Create Sub-pool” on a Free block and provide a name.
+#### Metrics & Validation (Sprint 2)
+- Prometheus metrics endpoint (`/metrics`)
+- HTTP request counters and latency histograms
+- Rate limit metrics (allowed/rejected)
+- Active connections gauge
+- Input validation hardening for all API inputs
+- CIDR validation with IPv4/IPv6 support
+- Name and identifier validation
 
-## SQLite Support
-- Build: `go build -tags sqlite -o cloudpam ./cmd/cloudpam`
-- Run: `SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' ./cloudpam`
-- Note: add dependency if not present: `go get modernc.org/sqlite@latest`.
+#### Authentication & Audit (Sprint 3)
+- API key authentication with Argon2id hashing
+- Secure key generation with `cpam_` prefix
+- Auth middleware for request validation
+- Audit logging infrastructure (`internal/audit/`)
+- Memory-backed audit store with filtering
+- Key management endpoints:
+  - `POST /api/v1/auth/keys` - Create API key
+  - `GET /api/v1/auth/keys` - List API keys
+  - `DELETE /api/v1/auth/keys/{id}` - Delete API key
+  - `POST /api/v1/auth/keys/{id}/revoke` - Revoke API key
+  - `GET /api/v1/audit` - Query audit log
 
-## Notes
-- Blocks and validation currently target IPv4 only.
-- Used block detection marks blocks that exactly match existing sub-pool CIDRs; partial overlap handling can be added later.
-- Next candidates: delete endpoints, list sub-pools under a parent, IPv6 support, allocator service, and policy hooks.
+#### Authorization & Testing (Sprint 4)
+- Role-based access control (RBAC)
+  - Roles: admin, operator, viewer, auditor
+  - Granular permissions for pools, accounts, apikeys, audit
+- Session store interface for future OIDC support
+- Authorization middleware (`RequirePermission`, `RequireRole`)
+- Comprehensive integration test suite
+- Storage interface extensions for PostgreSQL preparation
+- Test utilities package (`internal/testutil/`)
+
+### Changed
+- Improved error handling with structured error responses
+- Enhanced middleware chain with proper ordering
+- Updated documentation in CLAUDE.md and README.md
+
+### Test Coverage
+- auth: 96.6%
+- observability: 96.8%
+- storage: 89.6%
+- validation: 100%
+- audit: 70.9%
+- http: 67.0%
+
+## [0.1.0] - 2024-11-04
+
+### Added - Phase 1: Core IPAM
+
+#### Domain Model
+- `Pool` entity with hierarchical support (`parent_id`)
+- `Account` entity for cloud account management
+- CIDR validation and IPv4 block computation
+
+#### Storage Layer
+- In-memory store (default)
+- SQLite store (build tag `-tags sqlite`)
+- Migration system for schema versioning
+
+#### API Endpoints
+- `GET /api/v1/pools` - List all pools
+- `POST /api/v1/pools` - Create pool
+- `GET /api/v1/pools/{id}` - Get pool by ID
+- `PATCH /api/v1/pools/{id}` - Update pool
+- `DELETE /api/v1/pools/{id}` - Delete pool
+- `GET /api/v1/pools/{id}/blocks` - Enumerate available blocks
+- `GET /api/v1/accounts` - List accounts
+- `POST /api/v1/accounts` - Create account
+- `GET /api/v1/accounts/{id}` - Get account
+- `PATCH /api/v1/accounts/{id}` - Update account
+- `DELETE /api/v1/accounts/{id}` - Delete account
+- `GET /api/v1/blocks` - List assigned blocks
+- `GET /api/v1/export` - Export data as CSV
+
+#### UI (Alpine.js)
+- Pool management table with CRUD operations
+- Block browser with prefix selection
+- Sub-pool allocation from available blocks
+- Account management
+- Data export functionality
+
+#### Infrastructure
+- Graceful shutdown with signal handling
+- Sentry integration for error tracking
+- Configurable via environment variables
+
+### Notes
+- IPv4 only (IPv6 planned)
+- Block detection marks exact CIDR matches as used
+
+[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/BadgerOps/cloudpam/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/BadgerOps/cloudpam/releases/tag/v0.1.0
