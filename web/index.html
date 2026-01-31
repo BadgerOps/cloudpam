@@ -545,8 +545,40 @@
                           <p class="text-lg font-semibold" x-text="accountName(current.account_id) || 'None'"></p>
                         </div>
                       </div>
+                      <!-- Custom Allocation -->
+                      <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <h3 class="font-medium text-gray-900 mb-3">Allocate New Block</h3>
+                        <div class="grid grid-cols-3 gap-3">
+                          <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">Name</label>
+                            <input type="text" x-model="allocForm.name" placeholder="e.g., prod-vpc-1" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                          </div>
+                          <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">CIDR</label>
+                            <input type="text" x-model="allocForm.cidr" :placeholder="'e.g., ' + suggestNextCidr()" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono" />
+                          </div>
+                          <div class="flex items-end">
+                            <button @click="allocateCustom()" :disabled="!allocForm.name || !allocForm.cidr" class="w-full px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                              Allocate
+                            </button>
+                          </div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Enter any valid CIDR within <code class="bg-white px-1 rounded" x-text="current.cidr"></code></p>
+                      </div>
+
+                      <!-- Browse Available Blocks -->
                       <div class="mb-6">
-                        <h3 class="font-medium text-gray-900 mb-3">Sub-allocations</h3>
+                        <div class="flex items-center justify-between mb-3">
+                          <h3 class="font-medium text-gray-900">Available Blocks</h3>
+                          <div class="flex items-center gap-2">
+                            <label class="text-xs text-gray-500">Block size:</label>
+                            <select x-model="prefixLen" @change="loadBlocks()" class="px-2 py-1 text-sm border border-gray-300 rounded-lg">
+                              <template x-for="p in availablePrefixes()" :key="p">
+                                <option :value="p" x-text="'/' + p + ' (' + formatHostCount(Math.pow(2, 32-p)) + ' IPs)'"></option>
+                              </template>
+                            </select>
+                          </div>
+                        </div>
                         <div class="border border-gray-200 rounded-lg overflow-hidden">
                           <table class="w-full">
                             <thead class="bg-gray-50">
@@ -554,27 +586,36 @@
                                 <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">CIDR</th>
                                 <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">Status</th>
                                 <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">Name</th>
+                                <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">IPs</th>
                                 <th class="px-3 py-2"></th>
                               </tr>
                             </thead>
                             <tbody class="divide-y divide-gray-200">
                               <template x-for="b in blocks" :key="b.cidr">
-                                <tr>
-                                  <td class="px-3 py-2"><code class="text-xs" x-text="b.cidr"></code></td>
+                                <tr :class="b.used ? 'bg-gray-50' : ''">
+                                  <td class="px-3 py-2"><code class="text-xs font-mono" x-text="b.cidr"></code></td>
                                   <td class="px-3 py-2">
                                     <span x-show="b.used" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Used</span>
                                     <span x-show="!b.used" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Free</span>
                                   </td>
                                   <td class="px-3 py-2 text-sm" x-text="b.assigned_name || '-'"></td>
+                                  <td class="px-3 py-2 text-xs text-gray-500" x-text="formatHostCount(Math.pow(2, 32 - parseInt(b.cidr.split('/')[1])))"></td>
                                   <td class="px-3 py-2">
-                                    <button x-show="!b.used" @click="allocateBlock(b)" class="text-blue-600 hover:text-blue-700 text-xs font-medium">Allocate</button>
+                                    <button x-show="!b.used" @click="quickAllocate(b)" class="text-blue-600 hover:text-blue-700 text-xs font-medium">Allocate</button>
                                   </td>
                                 </tr>
                               </template>
-                              <template x-if="blocks.length === 0">
+                              <template x-if="blocks.length === 0 && !loadingBlocks">
                                 <tr>
-                                  <td colspan="4" class="px-3 py-6 text-center text-gray-500">
-                                    <button @click="loadBlocks()" class="text-blue-600 hover:text-blue-700">Load blocks</button>
+                                  <td colspan="5" class="px-3 py-6 text-center text-gray-500">
+                                    <span x-text="blocksError || 'Select a block size to view available blocks'"></span>
+                                  </td>
+                                </tr>
+                              </template>
+                              <template x-if="loadingBlocks">
+                                <tr>
+                                  <td colspan="5" class="px-3 py-6 text-center text-gray-500">
+                                    <span class="spinner mr-2"></span> Loading blocks...
                                   </td>
                                 </tr>
                               </template>
@@ -1427,11 +1468,15 @@
           search: '',
           pageSize: '50',
           showCreateForm: false,
-          form: { name: '', cidr: '', account_id: null, type: 'subnet', status: 'active', source: 'manual', description: '' },
+          form: { name: '', cidr: '', account_id: null, parent_id: null, type: 'subnet', status: 'active', source: 'manual', description: '' },
           cidrError: '',
           creating: false,
           current: null,
           blocks: [],
+          prefixLen: 24,
+          loadingBlocks: false,
+          blocksError: '',
+          allocForm: { name: '', cidr: '' },
 
           async init() {
             this.pools = Alpine.store('app').pools;
@@ -1497,37 +1542,90 @@
           viewPool(p) {
             this.current = p;
             this.blocks = [];
+            this.blocksError = '';
+            this.allocForm = { name: '', cidr: '' };
+            // Set default prefix based on pool size
+            const poolPrefix = parseInt(p.cidr?.split('/')[1] || '8', 10);
+            this.prefixLen = Math.min(poolPrefix + 4, 28); // Default to 4 bits smaller, max /28
             this.loadBlocks();
+          },
+
+          availablePrefixes() {
+            if (!this.current) return [];
+            const poolPrefix = parseInt(this.current.cidr?.split('/')[1] || '8', 10);
+            const prefixes = [];
+            for (let p = poolPrefix + 1; p <= 30; p++) {
+              prefixes.push(p);
+            }
+            return prefixes;
+          },
+
+          suggestNextCidr() {
+            if (!this.current) return '';
+            // Find first free block from the list
+            const freeBlock = this.blocks.find(b => !b.used);
+            if (freeBlock) return freeBlock.cidr;
+            // Otherwise suggest based on pool
+            const base = this.current.cidr.split('/')[0];
+            return base + '/' + this.prefixLen;
           },
 
           async loadBlocks() {
             if (!this.current) return;
+            this.loadingBlocks = true;
+            this.blocksError = '';
             try {
-              const res = await fetch(`/api/v1/pools/${this.current.id}/blocks?new_prefix_len=24&page_size=20`);
+              const res = await fetch(`/api/v1/pools/${this.current.id}/blocks?new_prefix_len=${this.prefixLen}&page_size=50`);
               if (res.ok) {
                 const data = await res.json();
                 this.blocks = Array.isArray(data) ? data : (data.items || []);
+              } else {
+                const err = await res.json().catch(() => ({}));
+                this.blocksError = err.error || 'Failed to load blocks';
               }
             } catch (e) {
               console.error('Failed to load blocks', e);
+              this.blocksError = 'Failed to load blocks';
+            } finally {
+              this.loadingBlocks = false;
             }
           },
 
-          async allocateBlock(b) {
-            const name = prompt(`Name for sub-pool ${b.cidr}:`);
+          async quickAllocate(b) {
+            const name = prompt(`Name for block ${b.cidr}:`);
             if (!name) return;
+            await this.doAllocate(name, b.cidr);
+          },
 
+          async allocateCustom() {
+            if (!this.allocForm.name || !this.allocForm.cidr) return;
+            await this.doAllocate(this.allocForm.name, this.allocForm.cidr);
+            this.allocForm = { name: '', cidr: '' };
+          },
+
+          async doAllocate(name, cidr) {
             try {
               const res = await fetch('/api/v1/pools', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name, cidr: b.cidr, parent_id: this.current.id })
+                body: JSON.stringify({
+                  name,
+                  cidr,
+                  parent_id: this.current.id,
+                  type: 'subnet',
+                  status: 'active',
+                  source: 'manual'
+                })
               });
               if (res.ok) {
                 await Alpine.store('app').fetchPools();
                 this.pools = Alpine.store('app').pools;
                 this.loadBlocks();
-                showToast('Block allocated');
+                if (window.appInstance) window.appInstance.loadData();
+                showToast('Block allocated: ' + cidr);
+              } else {
+                const err = await res.json().catch(() => ({}));
+                showToast(err.error || 'Failed to allocate block', 'error');
               }
             } catch (e) {
               showToast('Failed to allocate', 'error');
