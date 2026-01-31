@@ -685,8 +685,8 @@ func (s *Store) calculatePoolStats(ctx context.Context, p domain.Pool) (*domain.
     } else {
         // For IPv6, cap at max int64 for practical purposes
         bits := 128 - prefix.Bits()
-        if bits > 63 {
-            totalIPs = 1 << 63
+        if bits >= 63 {
+            totalIPs = 1<<63 - 1 // max int64
         } else {
             totalIPs = int64(1) << bits
         }

@@ -1092,7 +1092,9 @@ func TestPoolsHierarchy(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &root)
 
 	rr = doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"us-east-1","cidr":"10.0.0.0/12","parent_id":`+strconv.FormatInt(root.ID, 10)+`,"type":"region"}`, stdhttp.StatusCreated)
-	var region struct{ ID int64 `json:"id"` }
+	var region struct {
+		ID int64 `json:"id"`
+	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &region)
 
 	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"prod-vpc","cidr":"10.0.0.0/16","parent_id":`+strconv.FormatInt(region.ID, 10)+`,"type":"vpc"}`, stdhttp.StatusCreated)
@@ -1101,10 +1103,10 @@ func TestPoolsHierarchy(t *testing.T) {
 	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools/hierarchy", "", stdhttp.StatusOK)
 	var resp struct {
 		Pools []struct {
-			ID       int64  `json:"id"`
-			Name     string `json:"name"`
-			Type     string `json:"type"`
-			Stats    struct {
+			ID    int64  `json:"id"`
+			Name  string `json:"name"`
+			Type  string `json:"type"`
+			Stats struct {
 				TotalIPs       int64   `json:"total_ips"`
 				DirectChildren int     `json:"direct_children"`
 				Utilization    float64 `json:"utilization"`
