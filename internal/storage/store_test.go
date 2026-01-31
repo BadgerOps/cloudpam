@@ -937,20 +937,29 @@ func TestMemoryStore_GetPoolChildren(t *testing.T) {
 	m := NewMemoryStore()
 
 	// Create parent and children
-	parent, _ := m.CreatePool(ctx, domain.CreatePool{
+	parent, err := m.CreatePool(ctx, domain.CreatePool{
 		Name: "parent",
 		CIDR: "10.0.0.0/8",
 	})
-	m.CreatePool(ctx, domain.CreatePool{
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	_, err = m.CreatePool(ctx, domain.CreatePool{
 		Name:     "child1",
 		CIDR:     "10.0.0.0/16",
 		ParentID: &parent.ID,
 	})
-	m.CreatePool(ctx, domain.CreatePool{
+	if err != nil {
+		t.Fatalf("create child1: %v", err)
+	}
+	_, err = m.CreatePool(ctx, domain.CreatePool{
 		Name:     "child2",
 		CIDR:     "10.1.0.0/16",
 		ParentID: &parent.ID,
 	})
+	if err != nil {
+		t.Fatalf("create child2: %v", err)
+	}
 
 	children, err := m.GetPoolChildren(ctx, parent.ID)
 	if err != nil {
