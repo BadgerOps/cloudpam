@@ -99,6 +99,29 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
 }
 
+// logAudit logs an audit event for CRUD operations.
+func (s *Server) logAudit(ctx context.Context, action, resourceType, resourceID, resourceName string, statusCode int) {
+	if s.auditLogger == nil {
+		return
+	}
+	event := &audit.AuditEvent{
+		Actor:        "anonymous", // Will be overwritten if auth is enabled
+		ActorType:    audit.ActorTypeAnonymous,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		ResourceName: resourceName,
+		StatusCode:   statusCode,
+	}
+	// Try to get request ID from context
+	if reqID := ctx.Value(requestIDContextKey); reqID != nil {
+		if id, ok := reqID.(string); ok {
+			event.RequestID = id
+		}
+	}
+	_ = s.auditLogger.Log(ctx, event)
+}
+
 // RegisterRoutes registers all HTTP routes without RBAC protection.
 // This is for backward compatibility. Use RegisterProtectedRoutes for RBAC enforcement.
 func (s *Server) RegisterRoutes() {
@@ -1081,8 +1104,11 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
+		s.logAudit(r.Context(), audit.ActionUpdate, audit.ResourceAccount, fmt.Sprintf("%d", a.ID), a.Name, http.StatusOK)
 		writeJSON(w, http.StatusOK, a)
 	case http.MethodDelete:
+		// Get account info before delete for audit logging
+		acct, acctFound, _ := s.store.GetAccount(r.Context(), id)
 		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
 		if force == "1" || force == "true" || force == "yes" {
@@ -1098,6 +1124,11 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
+		accountName := ""
+		if acctFound {
+			accountName = acct.Name
+		}
+		s.logAudit(r.Context(), audit.ActionDelete, audit.ResourceAccount, fmt.Sprintf("%d", id), accountName, http.StatusNoContent)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -1291,6 +1322,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 		"name", a.Name,
 	})
 	s.logger.InfoContext(ctx, "accounts:create success", fields...)
+	s.logAudit(ctx, audit.ActionCreate, audit.ResourceAccount, fmt.Sprintf("%d", a.ID), a.Name, http.StatusCreated)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(a)
@@ -1520,6 +1552,8 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPatch:
 		s.updatePool(w, r, id64)
 	case http.MethodDelete:
+		// Get pool info before delete for audit logging
+		pool, poolFound, _ := s.store.GetPool(r.Context(), id64)
 		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
 		if force == "1" || force == "true" || force == "yes" {
@@ -1535,6 +1569,11 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
+		poolName := ""
+		if poolFound {
+			poolName = pool.Name
+		}
+		s.logAudit(r.Context(), audit.ActionDelete, audit.ResourcePool, fmt.Sprintf("%d", id64), poolName, http.StatusNoContent)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -1648,6 +1687,7 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request, id int64) {
 		s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
 		return
 	}
+	s.logAudit(ctx, audit.ActionUpdate, audit.ResourcePool, fmt.Sprintf("%d", p.ID), p.Name, http.StatusOK)
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -1836,6 +1876,7 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		"parent_id", valueOrNil(p.ParentID),
 		"account_id", valueOrNil(p.AccountID),
 	})...)
+	s.logAudit(ctx, audit.ActionCreate, audit.ResourcePool, fmt.Sprintf("%d", p.ID), p.Name, http.StatusCreated)
 	writeJSON(w, http.StatusCreated, p)
 }
 

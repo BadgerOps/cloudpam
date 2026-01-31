@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 
+	"cloudpam/internal/audit"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
 )
@@ -19,6 +20,11 @@ func selectStore(logger observability.Logger) storage.Store {
 		logger.Warn("SQLITE_DSN set but binary not built with -tags sqlite; using in-memory store")
 	}
 	return storage.NewMemoryStore()
+}
+
+// selectAuditLogger returns an in-memory audit logger when built without 'sqlite' tag.
+func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
+	return audit.NewMemoryAuditLogger()
 }
 
 // sqliteStatus returns schema status string when not built with sqlite tag.

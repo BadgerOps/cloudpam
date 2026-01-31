@@ -5,6 +5,7 @@ package main
 import (
 	"os"
 
+	"cloudpam/internal/audit"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
 	sqlitestore "cloudpam/internal/storage/sqlite"
@@ -27,6 +28,24 @@ func selectStore(logger observability.Logger) storage.Store {
 	}
 	logger.Info("using sqlite store", "dsn", dsn)
 	return st
+}
+
+// selectAuditLogger returns a SQLite-backed audit logger when built with 'sqlite' tag.
+func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	dsn := os.Getenv("SQLITE_DSN")
+	if dsn == "" {
+		dsn = "file:cloudpam.db?cache=shared&_fk=1"
+	}
+	al, err := audit.NewSQLiteAuditLogger(dsn)
+	if err != nil {
+		logger.Error("sqlite audit logger init failed; falling back to memory", "error", err)
+		return audit.NewMemoryAuditLogger()
+	}
+	logger.Info("using sqlite audit logger")
+	return al
 }
 
 // sqliteStatus returns migration status when built with sqlite tag.
