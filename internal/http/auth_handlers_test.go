@@ -24,10 +24,10 @@ func setupAuthTestServer() (*AuthServer, *auth.MemoryKeyStore, *audit.MemoryAudi
 		Format: "json",
 		Output: io.Discard,
 	})
-	srv := NewServer(mux, st, logger, nil)
+	auditLogger := audit.NewMemoryAuditLogger()
+	srv := NewServer(mux, st, logger, nil, auditLogger)
 
 	keyStore := auth.NewMemoryKeyStore()
-	auditLogger := audit.NewMemoryAuditLogger()
 
 	authSrv := NewAuthServer(srv, keyStore, auditLogger)
 	srv.RegisterRoutes()

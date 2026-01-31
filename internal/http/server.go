@@ -20,6 +20,7 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	apidocs "cloudpam/docs"
+	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/observability"
@@ -40,20 +41,25 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 type Server struct {
-	mux     *http.ServeMux
-	store   storage.Store
-	logger  observability.Logger
-	metrics *observability.Metrics
+	mux         *http.ServeMux
+	store       storage.Store
+	logger      observability.Logger
+	metrics     *observability.Metrics
+	auditLogger audit.AuditLogger
 }
 
 // NewServer creates a new HTTP server with the given dependencies.
 // If logger is nil, a default logger will be used.
 // If metrics is nil, metrics collection is disabled.
-func NewServer(mux *http.ServeMux, store storage.Store, logger observability.Logger, metrics *observability.Metrics) *Server {
+// If auditLogger is nil, a memory-based audit logger will be used.
+func NewServer(mux *http.ServeMux, store storage.Store, logger observability.Logger, metrics *observability.Metrics, auditLogger audit.AuditLogger) *Server {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	return &Server{mux: mux, store: store, logger: logger, metrics: metrics}
+	if auditLogger == nil {
+		auditLogger = audit.NewMemoryAuditLogger()
+	}
+	return &Server{mux: mux, store: store, logger: logger, metrics: metrics, auditLogger: auditLogger}
 }
 
 // NewServerWithSlog creates a new HTTP server with a raw *slog.Logger.
@@ -65,7 +71,7 @@ func NewServerWithSlog(mux *http.ServeMux, store storage.Store, slogger *slog.Lo
 	} else {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	return &Server{mux: mux, store: store, logger: logger, metrics: nil}
+	return &Server{mux: mux, store: store, logger: logger, metrics: nil, auditLogger: audit.NewMemoryAuditLogger()}
 }
 
 func valueOrNil[T any](ptr *T) any {
@@ -115,6 +121,8 @@ func (s *Server) RegisterRoutes() {
 	// Data import (CSV)
 	s.mux.HandleFunc("/api/v1/import/accounts", s.handleImportAccounts)
 	s.mux.HandleFunc("/api/v1/import/pools", s.handleImportPools)
+	// Audit logs (unprotected access)
+	s.mux.HandleFunc("/api/v1/audit", s.handleAuditList)
 	// Static index
 	s.mux.HandleFunc("/", s.handleIndex)
 }
@@ -975,6 +983,53 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		"created": created,
 		"skipped": skipped,
 		"errors":  errors,
+	})
+}
+
+// GET /api/v1/audit - List audit events with optional filtering
+// Query params: limit, offset, actor, action, resource_type
+func (s *Server) handleAuditList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	q := r.URL.Query()
+
+	// Parse pagination
+	limit := 50
+	if l := q.Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+
+	offset := 0
+	if o := q.Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	opts := audit.ListOptions{
+		Limit:        limit,
+		Offset:       offset,
+		Actor:        q.Get("actor"),
+		Action:       q.Get("action"),
+		ResourceType: q.Get("resource_type"),
+	}
+
+	events, total, err := s.auditLogger.List(r.Context(), opts)
+	if err != nil {
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to list audit events", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"events": events,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
 	})
 }
 

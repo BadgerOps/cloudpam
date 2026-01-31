@@ -918,7 +918,7 @@ func TestIntegration_ScopeEnforcement(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	srv := cloudpamhttp.NewServer(mux, store, logger, nil)
+	srv := cloudpamhttp.NewServer(mux, store, logger, nil, nil)
 	srv.RegisterRoutes()
 
 	// Wrap with auth middleware (required)

@@ -32,7 +32,7 @@ func setupTestServer() (*Server, *storage.MemoryStore) {
 		Format: "json",
 		Output: io.Discard,
 	})
-	srv := NewServer(mux, st, logger, nil)
+	srv := NewServer(mux, st, logger, nil, nil)
 	srv.RegisterRoutes()
 	return srv, st
 }
@@ -689,7 +689,7 @@ func TestReadyzEndpointDatabaseFailure(t *testing.T) {
 		Format: "json",
 		Output: io.Discard,
 	})
-	srv := NewServer(mux, st, logger, nil)
+	srv := NewServer(mux, st, logger, nil, nil)
 	srv.RegisterRoutes()
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/readyz", nil)
@@ -728,7 +728,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		Namespace: "cloudpam",
 		Version:   "test",
 	})
-	srv := NewServer(mux, st, logger, metrics)
+	srv := NewServer(mux, st, logger, metrics, nil)
 	srv.RegisterRoutes()
 
 	// Make a request to trigger metrics recording
@@ -775,7 +775,7 @@ func TestMetricsEndpointDisabled(t *testing.T) {
 		Output: io.Discard,
 	})
 	// Create without metrics (nil)
-	srv := NewServer(mux, st, logger, nil)
+	srv := NewServer(mux, st, logger, nil, nil)
 	srv.RegisterRoutes()
 
 	// Metrics endpoint should 404 when metrics is nil

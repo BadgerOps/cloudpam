@@ -97,7 +97,7 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 
 	// Create the base server
 	mux := http.NewServeMux()
-	srv := cloudpamhttp.NewServer(mux, store, logger, metrics)
+	srv := cloudpamhttp.NewServer(mux, store, logger, metrics, auditLogger)
 	srv.RegisterRoutes()
 
 	// Create auth server for key management endpoints

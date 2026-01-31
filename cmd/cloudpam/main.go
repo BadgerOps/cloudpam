@@ -106,7 +106,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	srv := ih.NewServer(mux, store, logger, metrics)
+	srv := ih.NewServer(mux, store, logger, metrics, nil) // nil audit logger uses memory implementation
 	srv.RegisterRoutes()
 
 	// Apply middleware stack (metrics, request ID, structured logging, rate limiting).
