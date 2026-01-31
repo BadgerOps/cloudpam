@@ -326,13 +326,13 @@ func TestDefaultRateLimitConfigInvalidEnv(t *testing.T) {
 	origRPS := os.Getenv("RATE_LIMIT_RPS")
 	origBurst := os.Getenv("RATE_LIMIT_BURST")
 	defer func() {
-		os.Setenv("RATE_LIMIT_RPS", origRPS)
-		os.Setenv("RATE_LIMIT_BURST", origBurst)
+		_ = os.Setenv("RATE_LIMIT_RPS", origRPS)
+		_ = os.Setenv("RATE_LIMIT_BURST", origBurst)
 	}()
 
 	// Set invalid values
-	os.Setenv("RATE_LIMIT_RPS", "invalid")
-	os.Setenv("RATE_LIMIT_BURST", "notanumber")
+	_ = os.Setenv("RATE_LIMIT_RPS", "invalid")
+	_ = os.Setenv("RATE_LIMIT_BURST", "notanumber")
 
 	cfg := DefaultRateLimitConfig()
 	if cfg.RequestsPerSecond != defaultRateLimitRPS {
