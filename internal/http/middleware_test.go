@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"cloudpam/internal/auth"
 )
 
 func newTestLogger() *slog.Logger {
@@ -606,6 +609,674 @@ func TestRateLimitConfigEnabled(t *testing.T) {
 			got := tt.cfg.Enabled()
 			if got != tt.want {
 				t.Errorf("RateLimitConfig.Enabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Auth middleware tests
+
+func createTestKey(t *testing.T, store auth.KeyStore, name string, scopes []string) (string, *auth.APIKey) {
+	t.Helper()
+	plaintext, apiKey, err := auth.GenerateAPIKey(auth.GenerateAPIKeyOptions{
+		Name:   name,
+		Scopes: scopes,
+	})
+	if err != nil {
+		t.Fatalf("failed to generate API key: %v", err)
+	}
+	if err := store.Create(context.Background(), apiKey); err != nil {
+		t.Fatalf("failed to store API key: %v", err)
+	}
+	return plaintext, apiKey
+}
+
+func TestAuthMiddlewareValidKey(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+	plaintext, apiKey := createTestKey(t, store, "Test Key", []string{"pools:read"})
+
+	var capturedKey *auth.APIKey
+	handler := AuthMiddleware(store, true, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedKey = auth.APIKeyFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if capturedKey == nil {
+		t.Fatal("expected API key in context")
+	}
+	if capturedKey.ID != apiKey.ID {
+		t.Errorf("expected key ID %q, got %q", apiKey.ID, capturedKey.ID)
+	}
+}
+
+func TestAuthMiddlewareMissingAuthRequired(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+
+	handler := AuthMiddleware(store, true, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+
+	var resp apiError
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Error != "unauthorized" {
+		t.Errorf("expected error 'unauthorized', got %q", resp.Error)
+	}
+}
+
+func TestAuthMiddlewareMissingAuthOptional(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+
+	var called bool
+	handler := AuthMiddleware(store, false, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if key := auth.APIKeyFromContext(r.Context()); key != nil {
+			t.Error("expected no key in context for unauthenticated request")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !called {
+		t.Error("handler was not called")
+	}
+}
+
+func TestAuthMiddlewareInvalidFormat(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+
+	handler := AuthMiddleware(store, true, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	tests := []struct {
+		name   string
+		header string
+	}{
+		{"Basic auth", "Basic dXNlcjpwYXNz"},
+		{"No Bearer prefix", "cpam_abc12345678901234567890123456789012"},
+		{"Invalid key format", "Bearer not-a-valid-key"},
+		{"Short key", "Bearer cpam_abc"},
+		{"Invalid chars", "Bearer cpam_abc!@#$%"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", tt.header)
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401, got %d", rr.Code)
+			}
+		})
+	}
+}
+
+func TestAuthMiddlewareKeyNotFound(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+
+	handler := AuthMiddleware(store, true, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	// Valid format but key doesn't exist
+	req.Header.Set("Authorization", "Bearer cpam_abcdefgh12345678901234567890123456789012")
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}
+
+func TestAuthMiddlewareRevokedKey(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+	plaintext, apiKey := createTestKey(t, store, "Test Key", []string{"pools:read"})
+
+	// Revoke the key
+	if err := store.Revoke(context.Background(), apiKey.ID); err != nil {
+		t.Fatalf("failed to revoke key: %v", err)
+	}
+
+	handler := AuthMiddleware(store, true, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+
+	var resp apiError
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Detail != "API key has been revoked" {
+		t.Errorf("expected revoked message, got %q", resp.Detail)
+	}
+}
+
+func TestAuthMiddlewareExpiredKey(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+
+	// Create an expired key
+	expired := time.Now().Add(-1 * time.Hour)
+	plaintext, apiKey, err := auth.GenerateAPIKey(auth.GenerateAPIKeyOptions{
+		Name:      "Expired Key",
+		Scopes:    []string{"pools:read"},
+		ExpiresAt: &expired,
+	})
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	if err := store.Create(context.Background(), apiKey); err != nil {
+		t.Fatalf("failed to store key: %v", err)
+	}
+
+	handler := AuthMiddleware(store, true, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+
+	var resp apiError
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Detail != "API key has expired" {
+		t.Errorf("expected expired message, got %q", resp.Detail)
+	}
+}
+
+func TestAuthMiddlewareWrongKey(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+	_, apiKey := createTestKey(t, store, "Test Key", []string{"pools:read"})
+
+	// Create a different key with the same prefix (simulating a brute force attempt)
+	// The prefix will match but the hash won't
+	wrongKey := "cpam_" + apiKey.Prefix + "wrongkeywrongkeywrongkeywrongkeyXX"
+
+	handler := AuthMiddleware(store, true, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+wrongKey)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rr.Code)
+	}
+}
+
+func TestRequireScopeMiddleware(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+	plaintext, _ := createTestKey(t, store, "Test Key", []string{"pools:read", "accounts:read"})
+
+	tests := []struct {
+		name           string
+		requiredScope  string
+		expectedStatus int
+	}{
+		{"has scope", "pools:read", http.StatusOK},
+		{"missing scope", "pools:write", http.StatusForbidden},
+		{"different resource", "accounts:read", http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := ApplyMiddlewares(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}),
+				AuthMiddleware(store, true, newTestLogger()),
+				RequireScopeMiddleware(tt.requiredScope, newTestLogger()),
+			)
+
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", "Bearer "+plaintext)
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != tt.expectedStatus {
+				t.Errorf("expected %d, got %d: %s", tt.expectedStatus, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestRequireScopeMiddlewareWildcard(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+	plaintext, _ := createTestKey(t, store, "Admin Key", []string{"*"})
+
+	handler := ApplyMiddlewares(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+		AuthMiddleware(store, true, newTestLogger()),
+		RequireScopeMiddleware("anything:really", newTestLogger()),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for wildcard scope, got %d", rr.Code)
+	}
+}
+
+func TestRequireScopeMiddlewareResourceWildcard(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+	plaintext, _ := createTestKey(t, store, "Pools Admin", []string{"pools:*"})
+
+	tests := []struct {
+		name           string
+		requiredScope  string
+		expectedStatus int
+	}{
+		{"pools:read", "pools:read", http.StatusOK},
+		{"pools:write", "pools:write", http.StatusOK},
+		{"pools:delete", "pools:delete", http.StatusOK},
+		{"accounts:read", "accounts:read", http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := ApplyMiddlewares(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}),
+				AuthMiddleware(store, true, newTestLogger()),
+				RequireScopeMiddleware(tt.requiredScope, newTestLogger()),
+			)
+
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", "Bearer "+plaintext)
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != tt.expectedStatus {
+				t.Errorf("expected %d, got %d", tt.expectedStatus, rr.Code)
+			}
+		})
+	}
+}
+
+func TestRequireAnyScopeMiddleware(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+	plaintext, _ := createTestKey(t, store, "Test Key", []string{"pools:read"})
+
+	tests := []struct {
+		name           string
+		requiredScopes []string
+		expectedStatus int
+	}{
+		{"has one of required", []string{"pools:read", "pools:write"}, http.StatusOK},
+		{"has none of required", []string{"accounts:write", "pools:delete"}, http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := ApplyMiddlewares(
+				http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}),
+				AuthMiddleware(store, true, newTestLogger()),
+				RequireAnyScopeMiddleware(tt.requiredScopes, newTestLogger()),
+			)
+
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("Authorization", "Bearer "+plaintext)
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != tt.expectedStatus {
+				t.Errorf("expected %d, got %d: %s", tt.expectedStatus, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestRequireScopeMiddlewareNoAuth(t *testing.T) {
+	handler := RequireScopeMiddleware("pools:read", newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated request, got %d", rr.Code)
+	}
+}
+
+func TestAuthMiddlewareUpdatesLastUsed(t *testing.T) {
+	store := auth.NewMemoryKeyStore()
+	plaintext, apiKey := createTestKey(t, store, "Test Key", []string{"pools:read"})
+
+	// Verify initial state
+	initial, _ := store.GetByID(context.Background(), apiKey.ID)
+	if initial.LastUsedAt != nil {
+		t.Fatal("LastUsedAt should initially be nil")
+	}
+
+	handler := AuthMiddleware(store, true, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	// Give the async update time to complete
+	time.Sleep(50 * time.Millisecond)
+
+	updated, _ := store.GetByID(context.Background(), apiKey.ID)
+	if updated.LastUsedAt == nil {
+		t.Error("LastUsedAt should be updated after successful auth")
+	}
+}
+
+// Audit middleware tests
+
+// mockAuditLogger captures audit events for testing
+type mockAuditLogger struct {
+	events []*AuditEvent
+}
+
+func (m *mockAuditLogger) Log(ctx context.Context, event *AuditEvent) error {
+	m.events = append(m.events, event)
+	return nil
+}
+
+func TestAuditMiddlewareSkipsGETRequests(t *testing.T) {
+	auditLog := &mockAuditLogger{}
+	handler := AuditMiddleware(auditLog, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
+	handler.ServeHTTP(rr, req)
+
+	if len(auditLog.events) != 0 {
+		t.Errorf("expected no audit events for GET, got %d", len(auditLog.events))
+	}
+}
+
+func TestAuditMiddlewareLogsPostRequests(t *testing.T) {
+	auditLog := &mockAuditLogger{}
+	handler := AuditMiddleware(auditLog, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pools", nil)
+	handler.ServeHTTP(rr, req)
+
+	if len(auditLog.events) != 1 {
+		t.Fatalf("expected 1 audit event for POST, got %d", len(auditLog.events))
+	}
+
+	event := auditLog.events[0]
+	if event.Action != "create" {
+		t.Errorf("expected action 'create', got %q", event.Action)
+	}
+	if event.ResourceType != "pool" {
+		t.Errorf("expected resource_type 'pool', got %q", event.ResourceType)
+	}
+	if event.StatusCode != http.StatusCreated {
+		t.Errorf("expected status code %d, got %d", http.StatusCreated, event.StatusCode)
+	}
+}
+
+func TestAuditMiddlewareLogsPatchRequests(t *testing.T) {
+	auditLog := &mockAuditLogger{}
+	handler := AuditMiddleware(auditLog, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/accounts/123", nil)
+	handler.ServeHTTP(rr, req)
+
+	if len(auditLog.events) != 1 {
+		t.Fatalf("expected 1 audit event for PATCH, got %d", len(auditLog.events))
+	}
+
+	event := auditLog.events[0]
+	if event.Action != "update" {
+		t.Errorf("expected action 'update', got %q", event.Action)
+	}
+	if event.ResourceType != "account" {
+		t.Errorf("expected resource_type 'account', got %q", event.ResourceType)
+	}
+	if event.ResourceID != "123" {
+		t.Errorf("expected resource_id '123', got %q", event.ResourceID)
+	}
+}
+
+func TestAuditMiddlewareLogsDeleteRequests(t *testing.T) {
+	auditLog := &mockAuditLogger{}
+	handler := AuditMiddleware(auditLog, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/pools/456", nil)
+	handler.ServeHTTP(rr, req)
+
+	if len(auditLog.events) != 1 {
+		t.Fatalf("expected 1 audit event for DELETE, got %d", len(auditLog.events))
+	}
+
+	event := auditLog.events[0]
+	if event.Action != "delete" {
+		t.Errorf("expected action 'delete', got %q", event.Action)
+	}
+	if event.ResourceID != "456" {
+		t.Errorf("expected resource_id '456', got %q", event.ResourceID)
+	}
+}
+
+func TestAuditMiddlewareSkipsHealthEndpoints(t *testing.T) {
+	auditLog := &mockAuditLogger{}
+	handler := AuditMiddleware(auditLog, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	endpoints := []string{"/healthz", "/readyz", "/metrics", "/openapi.yaml"}
+	for _, ep := range endpoints {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, ep, nil)
+		handler.ServeHTTP(rr, req)
+	}
+
+	if len(auditLog.events) != 0 {
+		t.Errorf("expected no audit events for health endpoints, got %d", len(auditLog.events))
+	}
+}
+
+func TestAuditMiddlewareCapturesActorFromContext(t *testing.T) {
+	auditLog := &mockAuditLogger{}
+	keyStore := auth.NewMemoryKeyStore()
+	plaintext, _ := createTestKey(t, keyStore, "Test Key", []string{"*"})
+
+	// Chain auth and audit middleware
+	handler := ApplyMiddlewares(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+		}),
+		AuthMiddleware(keyStore, false, newTestLogger()),
+		AuditMiddleware(auditLog, newTestLogger()),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pools", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	handler.ServeHTTP(rr, req)
+
+	if len(auditLog.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(auditLog.events))
+	}
+
+	event := auditLog.events[0]
+	if event.Actor == "anonymous" {
+		t.Error("expected actor to be API key prefix, got 'anonymous'")
+	}
+	if event.ActorType != "api_key" {
+		t.Errorf("expected actor_type 'api_key', got %q", event.ActorType)
+	}
+}
+
+func TestAuditMiddlewareAnonymousActor(t *testing.T) {
+	auditLog := &mockAuditLogger{}
+	handler := AuditMiddleware(auditLog, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", nil)
+	handler.ServeHTTP(rr, req)
+
+	if len(auditLog.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(auditLog.events))
+	}
+
+	event := auditLog.events[0]
+	if event.Actor != "anonymous" {
+		t.Errorf("expected actor 'anonymous', got %q", event.Actor)
+	}
+	if event.ActorType != "anonymous" {
+		t.Errorf("expected actor_type 'anonymous', got %q", event.ActorType)
+	}
+}
+
+func TestAuditMiddlewareNilLogger(t *testing.T) {
+	// Should not panic with nil audit logger
+	handler := AuditMiddleware(nil, newTestLogger())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pools", nil)
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Errorf("expected 201, got %d", rr.Code)
+	}
+}
+
+func TestParseResourceFromPath(t *testing.T) {
+	tests := []struct {
+		path         string
+		wantType     string
+		wantID       string
+	}{
+		{"/api/v1/pools", "pool", ""},
+		{"/api/v1/pools/123", "pool", "123"},
+		{"/api/v1/pools/123/blocks", "", ""}, // Skip blocks subroute
+		{"/api/v1/accounts", "account", ""},
+		{"/api/v1/accounts/456", "account", "456"},
+		{"/api/v1/auth/keys", "api_key", ""},
+		{"/api/v1/auth/keys/abc-123", "api_key", "abc-123"},
+		{"/healthz", "", ""},
+		{"/api/v1/unknown", "", ""},
+		{"/other/path", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			gotType, gotID := parseResourceFromPath(tt.path)
+			if gotType != tt.wantType {
+				t.Errorf("parseResourceFromPath(%q) type = %q, want %q", tt.path, gotType, tt.wantType)
+			}
+			if gotID != tt.wantID {
+				t.Errorf("parseResourceFromPath(%q) id = %q, want %q", tt.path, gotID, tt.wantID)
+			}
+		})
+	}
+}
+
+func TestMethodToAction(t *testing.T) {
+	tests := []struct {
+		method string
+		want   string
+	}{
+		{http.MethodPost, "create"},
+		{http.MethodPatch, "update"},
+		{http.MethodPut, "update"},
+		{http.MethodDelete, "delete"},
+		{http.MethodGet, ""},
+		{http.MethodHead, ""},
+		{http.MethodOptions, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method, func(t *testing.T) {
+			got := methodToAction(tt.method)
+			if got != tt.want {
+				t.Errorf("methodToAction(%q) = %q, want %q", tt.method, got, tt.want)
 			}
 		})
 	}
