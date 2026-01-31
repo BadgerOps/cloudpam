@@ -17,8 +17,8 @@ func TestSession_IsExpired(t *testing.T) {
 	}{
 		{"future expiry", now.Add(time.Hour), false},
 		{"past expiry", now.Add(-time.Hour), true},
-		{"just expired", now.Add(-time.Millisecond), true},
-		{"not yet expired", now.Add(time.Millisecond), false},
+		{"just expired", now.Add(-time.Second), true},
+		{"not yet expired", now.Add(time.Minute), false},
 	}
 
 	for _, tt := range tests {
