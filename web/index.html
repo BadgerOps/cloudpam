@@ -45,6 +45,99 @@
       </template>
     </div>
 
+    <!-- Global Search Modal (Command-K) -->
+    <div x-data="globalSearch()" x-show="open" x-cloak @open-search.window="openSearch()" @keydown.window="handleKeydown($event)" @keydown.escape.window="open && (open=false)" class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/40">
+      <div @click.outside="open=false" class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
+        <!-- Search Input -->
+        <div class="px-4 py-3 border-b border-gray-200">
+          <div class="flex items-center gap-3">
+            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+            <input x-ref="searchInput" type="text" x-model="query" @input.debounce.200ms="search()" placeholder="Search pools, accounts, CIDRs..." class="flex-1 text-lg outline-none" autofocus />
+            <kbd class="px-2 py-1 text-xs bg-gray-100 text-gray-500 rounded">ESC</kbd>
+          </div>
+        </div>
+
+        <!-- Results -->
+        <div class="max-h-96 overflow-auto">
+          <template x-if="query && !loading && results.pools.length === 0 && results.accounts.length === 0">
+            <div class="p-8 text-center text-gray-500">
+              <svg class="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              <p>No results for "<span x-text="query"></span>"</p>
+            </div>
+          </template>
+
+          <!-- Pools Section -->
+          <template x-if="results.pools.length > 0">
+            <div class="px-3 py-2">
+              <p class="px-2 py-1 text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" /></svg>
+                Pools
+              </p>
+              <template x-for="pool in results.pools.slice(0, 5)" :key="pool.id">
+                <div @click="selectPool(pool)" class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-blue-50 cursor-pointer">
+                  <div class="w-8 h-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2" /></svg>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                      <code class="text-blue-600 font-mono text-sm" x-text="pool.cidr"></code>
+                      <span class="font-medium text-gray-900" x-text="pool.name"></span>
+                    </div>
+                    <p class="text-sm text-gray-500" x-text="pool.type + ' • ' + (pool.status || 'active')"></p>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- Accounts Section -->
+          <template x-if="results.accounts.length > 0">
+            <div class="px-3 py-2">
+              <p class="px-2 py-1 text-xs font-medium text-gray-500 uppercase tracking-wide flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>
+                Accounts
+              </p>
+              <template x-for="account in results.accounts.slice(0, 5)" :key="account.id">
+                <div @click="selectAccount(account)" class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-purple-50 cursor-pointer">
+                  <div class="w-8 h-8 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                      <span class="font-medium text-gray-900" x-text="account.name"></span>
+                      <span :class="'px-1.5 py-0.5 text-xs rounded ' + (account.provider === 'aws' ? 'bg-orange-100 text-orange-700' : account.provider === 'gcp' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700')" x-text="(account.provider || '').toUpperCase()"></span>
+                    </div>
+                    <p class="text-sm text-gray-500 font-mono" x-text="account.key"></p>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- Empty State -->
+          <template x-if="!query">
+            <div class="p-6 text-center">
+              <svg class="w-10 h-10 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+              <p class="text-gray-600 font-medium mb-1">Search CloudPAM</p>
+              <p class="text-sm text-gray-500 mb-4">Search by CIDR, IP address, pool name, or account</p>
+              <div class="flex justify-center gap-3 text-xs text-gray-500">
+                <span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded font-mono">10.0.0.0/16</kbd> CIDR</span>
+                <span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded font-mono">10.0.1.45</kbd> IP</span>
+                <span><kbd class="px-1.5 py-0.5 bg-gray-100 rounded font-mono">prod-vpc</kbd> name</span>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-4 py-2 border-t border-gray-200 bg-gray-50 flex items-center gap-4 text-xs text-gray-500">
+          <span><kbd class="px-1 py-0.5 bg-white border rounded">↵</kbd> select</span>
+          <span><kbd class="px-1 py-0.5 bg-white border rounded">↑↓</kbd> navigate</span>
+          <span><kbd class="px-1 py-0.5 bg-white border rounded">esc</kbd> close</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Main App -->
     <div x-data="app()" x-init="init()" class="h-screen flex">
       <!-- Sidebar -->
@@ -107,7 +200,8 @@
           <div class="flex items-center gap-4 flex-1">
             <div class="relative w-96">
               <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-              <input type="text" x-model="searchQuery" placeholder="Search pools, CIDRs, accounts..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
+              <input type="text" readonly @click="$dispatch('open-search')" @focus="$dispatch('open-search')" placeholder="Search pools, CIDRs, accounts..." class="w-full pl-10 pr-16 py-2 border border-gray-300 rounded-lg hover:border-gray-400 cursor-pointer outline-none" />
+              <kbd class="absolute right-3 top-1/2 -translate-y-1/2 px-2 py-0.5 bg-gray-100 text-gray-500 text-xs rounded">⌘K</kbd>
             </div>
           </div>
           <div class="flex items-center gap-4">
@@ -895,72 +989,170 @@
               <div class="flex items-center justify-between mb-6">
                 <div>
                   <h1 class="text-2xl font-semibold text-gray-900">Audit Log</h1>
-                  <p class="text-gray-500">Track all changes and actions in the system</p>
+                  <p class="text-gray-500">Complete history of all changes and actions</p>
                 </div>
-                <button @click="refresh()" class="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                  Refresh
-                </button>
+                <div class="flex items-center gap-2">
+                  <button @click="refresh()" class="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                    Refresh
+                  </button>
+                  <button @click="exportAudit()" class="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                    Export
+                  </button>
+                </div>
               </div>
 
-              <!-- Filters -->
+              <!-- Filters Bar -->
               <div class="bg-white rounded-xl border border-gray-200 mb-6">
-                <div class="p-4 flex items-center gap-4">
-                  <div class="flex-1">
-                    <input type="text" x-model="search" placeholder="Search events..." class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                <div class="p-4 flex items-center gap-4 flex-wrap">
+                  <div class="relative flex-1 min-w-[250px]">
+                    <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                    <input type="text" x-model="search" placeholder="Search events, actors, resources..." class="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
                   </div>
-                  <select x-model="actionFilter" class="px-3 py-2 border border-gray-300 rounded-lg">
+                  <select x-model="actionFilter" @change="refresh()" class="px-3 py-2 border border-gray-300 rounded-lg bg-white">
                     <option value="">All Actions</option>
-                    <option value="create">Create</option>
-                    <option value="update">Update</option>
-                    <option value="delete">Delete</option>
+                    <option value="create">Created</option>
+                    <option value="update">Updated</option>
+                    <option value="delete">Deleted</option>
                   </select>
-                  <select x-model="resourceFilter" class="px-3 py-2 border border-gray-300 rounded-lg">
+                  <select x-model="resourceFilter" @change="refresh()" class="px-3 py-2 border border-gray-300 rounded-lg bg-white">
                     <option value="">All Resources</option>
                     <option value="pool">Pools</option>
                     <option value="account">Accounts</option>
                     <option value="apikey">API Keys</option>
                   </select>
+                  <span class="text-sm text-gray-500" x-text="filteredEvents().length + ' events'"></span>
                 </div>
               </div>
 
-              <!-- Audit Events -->
+              <!-- Timeline Audit Events -->
               <div class="bg-white rounded-xl border border-gray-200">
-                <div class="divide-y divide-gray-200">
+                <div class="divide-y divide-gray-100">
                   <template x-for="event in filteredEvents()" :key="event.id">
-                    <div class="p-4 hover:bg-gray-50">
+                    <div class="px-4 py-3 hover:bg-gray-50 cursor-pointer" @click="toggleEvent(event.id)">
                       <div class="flex items-start gap-4">
-                        <div :class="'w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium ' + getActionColor(event.action)">
-                          <span x-text="getActionIcon(event.action)"></span>
-                        </div>
-                        <div class="flex-1 min-w-0">
-                          <div class="flex items-center gap-2 mb-1">
-                            <span class="font-medium text-gray-900" x-text="event.actor || 'system'"></span>
-                            <span class="text-gray-500" x-text="formatAction(event.action)"></span>
-                            <span class="font-medium text-gray-900" x-text="event.resource_type || 'resource'"></span>
-                            <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded" x-text="event.resource_id || '-'"></code>
+                        <!-- Timeline Icon -->
+                        <div class="flex flex-col items-center pt-1">
+                          <div :class="'w-9 h-9 rounded-full flex items-center justify-center ' + getActionBadge(event.action)">
+                            <svg x-show="event.action?.includes('create')" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" /></svg>
+                            <svg x-show="event.action?.includes('update')" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                            <svg x-show="event.action?.includes('delete')" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                            <svg x-show="!event.action?.includes('create') && !event.action?.includes('update') && !event.action?.includes('delete')" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                           </div>
-                          <div class="text-sm text-gray-500" x-text="formatTimestamp(event.timestamp)"></div>
-                          <template x-if="event.details">
-                            <div class="mt-2 text-sm text-gray-600 bg-gray-50 rounded p-2">
-                              <pre class="whitespace-pre-wrap" x-text="JSON.stringify(event.details, null, 2)"></pre>
+                          <div class="w-px flex-1 bg-gray-200 mt-2" x-show="!$el.closest('[x-for]').nextElementSibling?.querySelector('[x-for]')"></div>
+                        </div>
+
+                        <!-- Content -->
+                        <div class="flex-1 min-w-0">
+                          <div class="flex items-center gap-2 flex-wrap">
+                            <span :class="'px-2 py-0.5 rounded text-xs font-medium ' + getActionBadge(event.action)" x-text="formatActionLabel(event.action)"></span>
+                            <span class="font-medium text-gray-900 capitalize" x-text="event.resource_type || 'resource'"></span>
+                            <code class="text-sm bg-gray-100 px-1.5 py-0.5 rounded font-mono" x-text="event.resource_name || event.resource_id || '-'"></code>
+                          </div>
+
+                          <div class="flex items-center gap-3 mt-1.5 text-sm text-gray-500 flex-wrap">
+                            <span class="flex items-center gap-1.5">
+                              <span class="w-5 h-5 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-medium" x-text="(event.actor || 'S')[0].toUpperCase()"></span>
+                              <span x-text="event.actor || 'system'"></span>
+                            </span>
+                            <span>&bull;</span>
+                            <span x-text="formatRelativeTime(event.timestamp)"></span>
+                            <template x-if="event.ip_address">
+                              <span class="flex items-center gap-1">
+                                <span>&bull;</span>
+                                <span class="font-mono text-xs" x-text="event.ip_address"></span>
+                              </span>
+                            </template>
+                          </div>
+
+                          <!-- Expanded Details -->
+                          <template x-if="expandedEvents.has(event.id)">
+                            <div class="mt-3 p-3 bg-gray-50 rounded-lg space-y-3">
+                              <!-- Changes -->
+                              <template x-if="event.changes">
+                                <div>
+                                  <p class="text-xs font-medium text-gray-500 uppercase mb-2">Changes</p>
+                                  <div class="space-y-1.5">
+                                    <template x-for="[field, change] in Object.entries(event.changes || {})" :key="field">
+                                      <div class="flex items-start gap-2 text-sm">
+                                        <span class="text-gray-500 font-mono w-24 flex-shrink-0" x-text="field + ':'"></span>
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                          <template x-if="change.before !== null && change.before !== undefined">
+                                            <span class="px-2 py-0.5 bg-red-50 text-red-700 rounded font-mono text-xs line-through" x-text="formatChangeValue(change.before)"></span>
+                                          </template>
+                                          <template x-if="change.before !== null && change.after !== null">
+                                            <span class="text-gray-400">&rarr;</span>
+                                          </template>
+                                          <template x-if="change.after !== null && change.after !== undefined">
+                                            <span class="px-2 py-0.5 bg-green-50 text-green-700 rounded font-mono text-xs" x-text="formatChangeValue(change.after)"></span>
+                                          </template>
+                                        </div>
+                                      </div>
+                                    </template>
+                                  </div>
+                                </div>
+                              </template>
+
+                              <!-- Metadata -->
+                              <div class="grid grid-cols-2 gap-4 pt-2 border-t border-gray-200">
+                                <div>
+                                  <p class="text-xs text-gray-500">Request ID</p>
+                                  <code class="text-xs font-mono" x-text="event.request_id || '-'"></code>
+                                </div>
+                                <div>
+                                  <p class="text-xs text-gray-500">Timestamp</p>
+                                  <code class="text-xs font-mono" x-text="event.timestamp || '-'"></code>
+                                </div>
+                                <template x-if="event.status_code">
+                                  <div>
+                                    <p class="text-xs text-gray-500">Status Code</p>
+                                    <code class="text-xs font-mono" x-text="event.status_code"></code>
+                                  </div>
+                                </template>
+                              </div>
                             </div>
                           </template>
                         </div>
-                        <div class="text-xs text-gray-400" x-text="event.request_id ? 'req:' + event.request_id.slice(0, 8) : ''"></div>
+
+                        <!-- Expand Indicator -->
+                        <div class="flex-shrink-0 pt-1 text-gray-400">
+                          <svg :class="expandedEvents.has(event.id) ? 'rotate-90' : ''" class="w-5 h-5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg>
+                        </div>
                       </div>
                     </div>
                   </template>
+
                   <template x-if="filteredEvents().length === 0">
                     <div class="p-12 text-center">
                       <svg class="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      <p class="text-gray-500 font-medium" x-text="loading ? 'Loading...' : (authRequired ? 'Authentication required to view audit logs' : 'No audit events found')"></p>
+                      <p class="text-gray-500 font-medium" x-text="loading ? 'Loading events...' : (authRequired ? 'Authentication required' : 'No audit events found')"></p>
                       <template x-if="authRequired">
                         <p class="text-sm text-gray-400 mt-2">Audit logs require API key authentication</p>
+                      </template>
+                      <template x-if="!loading && !authRequired">
+                        <p class="text-sm text-gray-400 mt-2">Actions like creating pools or accounts will appear here</p>
                       </template>
                     </div>
                   </template>
                 </div>
+
+                <!-- Pagination -->
+                <template x-if="filteredEvents().length > 0">
+                  <div class="px-4 py-3 border-t border-gray-200 flex items-center justify-between bg-gray-50 rounded-b-xl">
+                    <p class="text-sm text-gray-500">
+                      Showing <span x-text="filteredEvents().length"></span> of <span x-text="total"></span> events
+                    </p>
+                    <div class="flex items-center gap-2">
+                      <button @click="prevPage()" :disabled="offset === 0" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed">
+                        Previous
+                      </button>
+                      <button @click="nextPage()" :disabled="offset + events.length >= total" class="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed">
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
           </template>
@@ -1065,14 +1257,20 @@
     </div>
 
     <!-- Import/Export Modal -->
-    <div x-data="dataIO()" x-show="open" x-cloak @open-data-io.window="open=true" @click.self="open=false" @keydown.escape.window="open=false" class="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-      <div class="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-auto">
-        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+    <div x-data="dataIO()" x-show="open" x-cloak @open-data-io.window="open=true" @click.self="!fullscreen && (open=false)" @keydown.escape.window="fullscreen ? fullscreen=false : open=false" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div :class="fullscreen ? 'fixed inset-4' : 'w-full max-w-5xl max-h-[90vh]'" class="bg-white rounded-xl shadow-xl overflow-auto transition-all duration-200">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-20">
           <h3 class="text-lg font-semibold">Data Import / Export</h3>
-          <button @click="open=false" class="text-gray-400 hover:text-gray-600">&times;</button>
+          <div class="flex items-center gap-2">
+            <button @click="fullscreen=!fullscreen" class="text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100" :title="fullscreen ? 'Exit fullscreen' : 'Fullscreen'">
+              <svg x-show="!fullscreen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+              <svg x-show="fullscreen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+            <button @click="open=false;fullscreen=false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+          </div>
         </div>
         <div class="p-6">
-          <div class="grid grid-cols-2 gap-6">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- Export Section -->
             <div>
               <h4 class="font-medium mb-3">Export Data</h4>
@@ -1134,7 +1332,7 @@
                   </div>
 
                   <!-- Data preview table with validation highlighting -->
-                  <div class="max-h-64 overflow-auto border border-gray-200 rounded text-xs">
+                  <div class="overflow-auto border border-gray-200 rounded text-xs" :class="fullscreen ? 'max-h-[calc(100vh-380px)]' : 'max-h-80'">
                     <table class="w-full">
                       <thead class="bg-gray-50 sticky top-0 z-10">
                         <tr>
@@ -1211,15 +1409,16 @@
           <!-- CSV Format Help -->
           <div class="mt-6 pt-6 border-t border-gray-200">
             <h4 class="font-medium mb-2">CSV Format</h4>
-            <div class="grid grid-cols-2 gap-4 text-sm text-gray-600">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-gray-600">
               <div>
                 <p class="font-medium text-gray-700">accounts.csv</p>
-                <code class="text-xs bg-gray-100 px-1 rounded">key,name,provider,tier,environment,regions</code>
+                <code class="text-xs bg-gray-100 px-1 rounded block">key,name,provider,tier,environment,regions</code>
                 <p class="text-xs mt-1">Regions separated by semicolons (;)</p>
               </div>
               <div>
                 <p class="font-medium text-gray-700">pools.csv</p>
-                <code class="text-xs bg-gray-100 px-1 rounded">name,cidr,parent_id,account_id,type,status</code>
+                <code class="text-xs bg-gray-100 px-1 rounded block">name,cidr,parent_id,account_key,type,status</code>
+                <p class="text-xs mt-1 text-amber-700"><strong>Tip:</strong> Use <code>account_key</code> (e.g., aws:123456789) instead of <code>account_id</code> for reliable imports.</p>
                 <p class="text-xs mt-1">Types: supernet, region, environment, vpc, subnet</p>
               </div>
             </div>
@@ -1259,6 +1458,85 @@
               this.toasts.push({ id, message, type });
               setTimeout(() => { this.toasts = this.toasts.filter(t => t.id !== id); }, 3000);
             };
+          }
+        };
+      }
+
+      // Global Search (Command-K)
+      function globalSearch() {
+        return {
+          open: false,
+          query: '',
+          loading: false,
+          results: { pools: [], accounts: [] },
+          selectedIndex: 0,
+
+          openSearch() {
+            this.open = true;
+            this.query = '';
+            this.results = { pools: [], accounts: [] };
+            this.$nextTick(() => this.$refs.searchInput?.focus());
+          },
+
+          handleKeydown(e) {
+            // Command/Ctrl + K to open search
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+              e.preventDefault();
+              this.openSearch();
+            }
+          },
+
+          async search() {
+            if (!this.query.trim()) {
+              this.results = { pools: [], accounts: [] };
+              return;
+            }
+            this.loading = true;
+            try {
+              const q = this.query.toLowerCase();
+              // Fetch pools and accounts, filter client-side for simplicity
+              const [poolsRes, accountsRes] = await Promise.all([
+                fetch('/api/v1/pools'),
+                fetch('/api/v1/accounts')
+              ]);
+              const pools = await poolsRes.json();
+              const accounts = await accountsRes.json();
+
+              // Filter pools by CIDR, name, or description
+              this.results.pools = (pools || []).filter(p =>
+                (p.cidr || '').toLowerCase().includes(q) ||
+                (p.name || '').toLowerCase().includes(q) ||
+                (p.description || '').toLowerCase().includes(q)
+              ).slice(0, 10);
+
+              // Filter accounts by key, name, or provider
+              this.results.accounts = (accounts || []).filter(a =>
+                (a.key || '').toLowerCase().includes(q) ||
+                (a.name || '').toLowerCase().includes(q) ||
+                (a.provider || '').toLowerCase().includes(q)
+              ).slice(0, 10);
+            } catch (e) {
+              console.error('Search failed', e);
+            } finally {
+              this.loading = false;
+            }
+          },
+
+          selectPool(pool) {
+            this.open = false;
+            // Navigate to pools tab and select this pool
+            if (window.appInstance) {
+              window.appInstance.tab = 'pools';
+              window.appInstance.selectedPool = pool;
+            }
+          },
+
+          selectAccount(account) {
+            this.open = false;
+            // Navigate to accounts tab
+            if (window.appInstance) {
+              window.appInstance.tab = 'accounts';
+            }
           }
         };
       }
@@ -1981,6 +2259,10 @@
           resourceFilter: '',
           loading: false,
           authRequired: false,
+          expandedEvents: new Set(),
+          total: 0,
+          offset: 0,
+          limit: 50,
 
           async init() {
             await this.refresh();
@@ -1990,7 +2272,7 @@
             this.loading = true;
             this.authRequired = false;
             try {
-              let url = '/api/v1/audit?limit=50';
+              let url = `/api/v1/audit?limit=${this.limit}&offset=${this.offset}`;
               if (this.actionFilter) url += '&action=' + this.actionFilter;
               if (this.resourceFilter) url += '&resource_type=' + this.resourceFilter;
 
@@ -2003,6 +2285,7 @@
               if (res.ok) {
                 const data = await res.json();
                 this.events = data.events || data || [];
+                this.total = data.total || this.events.length;
               }
             } catch (e) {
               console.error('Failed to load audit logs', e);
@@ -2018,36 +2301,74 @@
               (e.actor || '').toLowerCase().includes(q) ||
               (e.action || '').toLowerCase().includes(q) ||
               (e.resource_type || '').toLowerCase().includes(q) ||
+              (e.resource_name || '').toLowerCase().includes(q) ||
               (e.resource_id || '').toLowerCase().includes(q)
             );
           },
 
-          formatAction(action) {
-            if (!action) return 'performed action on';
-            const parts = action.split('.');
-            return parts[parts.length - 1] + 'd';
+          toggleEvent(id) {
+            if (this.expandedEvents.has(id)) {
+              this.expandedEvents.delete(id);
+            } else {
+              this.expandedEvents.add(id);
+            }
+            this.expandedEvents = new Set(this.expandedEvents);
           },
 
-          formatTimestamp(ts) {
+          prevPage() {
+            if (this.offset > 0) {
+              this.offset = Math.max(0, this.offset - this.limit);
+              this.refresh();
+            }
+          },
+
+          nextPage() {
+            if (this.offset + this.events.length < this.total) {
+              this.offset += this.limit;
+              this.refresh();
+            }
+          },
+
+          formatActionLabel(action) {
+            if (!action) return 'Action';
+            if (action.includes('create')) return 'Created';
+            if (action.includes('update')) return 'Updated';
+            if (action.includes('delete')) return 'Deleted';
+            return action.charAt(0).toUpperCase() + action.slice(1);
+          },
+
+          formatRelativeTime(ts) {
             if (!ts) return '';
             const d = new Date(ts);
-            return d.toLocaleString();
+            const now = new Date();
+            const diff = now - d;
+            const mins = Math.floor(diff / 60000);
+            const hours = Math.floor(diff / 3600000);
+            const days = Math.floor(diff / 86400000);
+
+            if (mins < 1) return 'just now';
+            if (mins < 60) return `${mins} min ago`;
+            if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+            if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`;
+            return d.toLocaleDateString();
           },
 
-          getActionColor(action) {
-            if (!action) return 'bg-gray-500';
-            if (action.includes('create')) return 'bg-green-500';
-            if (action.includes('update')) return 'bg-blue-500';
-            if (action.includes('delete')) return 'bg-red-500';
-            return 'bg-gray-500';
+          formatChangeValue(val) {
+            if (val === null || val === undefined) return 'null';
+            if (typeof val === 'object') return JSON.stringify(val);
+            return String(val);
           },
 
-          getActionIcon(action) {
-            if (!action) return '?';
-            if (action.includes('create')) return '+';
-            if (action.includes('update')) return '~';
-            if (action.includes('delete')) return '-';
-            return 'i';
+          getActionBadge(action) {
+            if (!action) return 'bg-gray-100 text-gray-700';
+            if (action.includes('create')) return 'bg-green-100 text-green-700';
+            if (action.includes('update')) return 'bg-blue-100 text-blue-700';
+            if (action.includes('delete')) return 'bg-red-100 text-red-700';
+            return 'bg-gray-100 text-gray-700';
+          },
+
+          exportAudit() {
+            window.open('/api/v1/export?datasets=audit', '_blank');
           }
         };
       }
@@ -2056,6 +2377,7 @@
       function dataIO() {
         return {
           open: false,
+          fullscreen: false,
           exp: { accounts: true, pools: true, blocks: false },
           imp: {
             type: 'accounts',
@@ -2283,6 +2605,7 @@
           },
 
           resetImport() {
+            this.fullscreen = false;
             this.imp = {
               type: 'accounts',
               headers: [],

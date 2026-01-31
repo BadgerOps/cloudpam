@@ -930,18 +930,30 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build account lookup map (key -> ID) for resolving account references
+	accounts, _ := s.store.ListAccounts(r.Context())
+	accountKeyToID := make(map[string]int64)
+	for _, a := range accounts {
+		accountKeyToID[a.Key] = a.ID
+	}
+
+	s.logger.InfoContext(r.Context(), "pools:import starting",
+		"total_rows", len(records)-1,
+		"known_accounts", len(accountKeyToID))
+
 	// Parse all rows first to enable hierarchical import
 	type poolRow struct {
-		rowNum      int
-		name        string
-		cidr        string
-		oldID       int64  // original ID from CSV (if present)
-		oldParentID int64  // original parent_id from CSV
-		accountID   *int64
-		poolType    domain.PoolType
-		status      domain.PoolStatus
-		source      domain.PoolSource
-		description string
+		rowNum       int
+		name         string
+		cidr         string
+		oldID        int64  // original ID from CSV (if present)
+		oldParentID  int64  // original parent_id from CSV
+		oldAccountID int64  // original account_id from CSV
+		accountKey   string // account_key for lookup
+		poolType     domain.PoolType
+		status       domain.PoolStatus
+		source       domain.PoolSource
+		description  string
 	}
 
 	var rows []poolRow
@@ -978,13 +990,16 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Get account_id
+		// Get account_id (we'll resolve this later)
 		if idx, ok := colIdx["account_id"]; ok && idx < len(row) {
 			if v := strings.TrimSpace(row[idx]); v != "" {
-				if aid, err := strconv.ParseInt(v, 10, 64); err == nil {
-					pr.accountID = &aid
-				}
+				pr.oldAccountID, _ = strconv.ParseInt(v, 10, 64)
 			}
+		}
+
+		// Get account_key for direct lookup (preferred over account_id)
+		if idx, ok := colIdx["account_key"]; ok && idx < len(row) {
+			pr.accountKey = strings.TrimSpace(row[idx])
 		}
 
 		if idx, ok := colIdx["type"]; ok && idx < len(row) {
@@ -1027,21 +1042,54 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		pool := domain.CreatePool{
 			Name:        pr.name,
 			CIDR:        pr.cidr,
-			AccountID:   pr.accountID,
 			Type:        pr.poolType,
 			Status:      pr.status,
 			Source:      pr.source,
 			Description: pr.description,
 		}
 
+		// Resolve account_id: prefer account_key lookup, fall back to direct ID
+		if pr.accountKey != "" {
+			if accountID, ok := accountKeyToID[pr.accountKey]; ok {
+				pool.AccountID = &accountID
+				s.logger.DebugContext(r.Context(), "pools:import resolved account by key",
+					"row", pr.rowNum, "account_key", pr.accountKey, "account_id", accountID)
+			} else {
+				s.logger.WarnContext(r.Context(), "pools:import account key not found",
+					"row", pr.rowNum, "account_key", pr.accountKey)
+				errors = append(errors, fmt.Sprintf("row %d: account_key '%s' not found", pr.rowNum, pr.accountKey))
+				continue
+			}
+		} else if pr.oldAccountID != 0 {
+			// Try to find account by checking if this ID exists
+			if _, ok, _ := s.store.GetAccount(r.Context(), pr.oldAccountID); ok {
+				pool.AccountID = &pr.oldAccountID
+			} else {
+				// Account ID doesn't exist - this is a stale reference from exported data
+				s.logger.WarnContext(r.Context(), "pools:import account_id not found (stale reference)",
+					"row", pr.rowNum, "account_id", pr.oldAccountID,
+					"hint", "use account_key column instead of account_id for reliable imports")
+				errors = append(errors, fmt.Sprintf("row %d: account_id %d not found (use account_key column for imports)", pr.rowNum, pr.oldAccountID))
+				continue
+			}
+		}
+
 		// Resolve parent_id using old-to-new mapping
 		if pr.oldParentID != 0 {
 			if newParentID, ok := oldToNewID[pr.oldParentID]; ok {
 				pool.ParentID = &newParentID
+				s.logger.DebugContext(r.Context(), "pools:import resolved parent",
+					"row", pr.rowNum, "old_parent_id", pr.oldParentID, "new_parent_id", newParentID)
 			} else {
-				// Parent not found in mapping - might be a pre-existing pool
-				// Try to use the ID directly (for imports into existing data)
-				pool.ParentID = &pr.oldParentID
+				// Check if parent exists directly (for imports into existing data)
+				if _, ok, _ := s.store.GetPool(r.Context(), pr.oldParentID); ok {
+					pool.ParentID = &pr.oldParentID
+				} else {
+					s.logger.WarnContext(r.Context(), "pools:import parent_id not found",
+						"row", pr.rowNum, "parent_id", pr.oldParentID)
+					errors = append(errors, fmt.Sprintf("row %d: parent_id %d not found", pr.rowNum, pr.oldParentID))
+					continue
+				}
 			}
 		}
 
@@ -1056,8 +1104,14 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			pool.Source = domain.PoolSourceManual
 		}
 
+		s.logger.DebugContext(r.Context(), "pools:import creating pool",
+			"row", pr.rowNum, "name", pool.Name, "cidr", pool.CIDR,
+			"parent_id", valueOrNil(pool.ParentID), "account_id", valueOrNil(pool.AccountID))
+
 		createdPool, err := s.store.CreatePool(r.Context(), pool)
 		if err != nil {
+			s.logger.WarnContext(r.Context(), "pools:import create failed",
+				"row", pr.rowNum, "name", pool.Name, "error", err.Error())
 			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
 				skipped++
 			} else {
@@ -1072,6 +1126,8 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		}
 		cidrToNewID[pr.cidr] = createdPool.ID
 
+		s.logger.InfoContext(r.Context(), "pools:import created pool",
+			"row", pr.rowNum, "id", createdPool.ID, "name", createdPool.Name)
 		created++
 	}
 

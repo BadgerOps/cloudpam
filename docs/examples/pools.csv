@@ -1,15 +1,15 @@
-id,name,cidr,parent_id,account_id,created_at
-1,Prod VPC main,10.0.0.0/16,,1001,2024-01-15T10:00:00Z
-2,Prod web tier,10.0.1.0/24,1,1001,2024-01-15T10:05:00Z
-3,Prod app tier,10.0.2.0/24,1,1001,2024-01-15T10:10:00Z
-4,Prod db tier,10.0.3.0/24,1,1001,2024-01-15T10:15:00Z
-5,Staging VPC,10.10.0.0/16,,1002,2024-01-16T09:00:00Z
-6,Staging app,10.10.1.0/24,5,1002,2024-01-16T09:05:00Z
-7,Dev VPC,10.20.0.0/16,,1003,2024-01-17T08:00:00Z
-8,Dev team A,10.20.1.0/24,7,1003,2024-01-17T08:05:00Z
-9,Dev team B,10.20.2.0/24,7,1003,2024-01-17T08:10:00Z
-10,Prod GCP network,10.50.0.0/16,,1004,2024-01-18T11:00:00Z
-11,Prod services,10.50.1.0/24,10,1004,2024-01-18T11:05:00Z
-12,Dev GCP network,10.60.0.0/16,,1005,2024-01-19T14:00:00Z
-13,Dev services,10.60.1.0/24,12,1005,2024-01-19T14:05:00Z
-14,Shared services,10.80.0.0/24,,1006,2024-01-20T16:00:00Z
+id,name,cidr,parent_id,account_key,type,status,source,description,created_at
+1,Prod VPC main,10.0.0.0/16,,aws:111111111111,supernet,active,manual,Production AWS VPC,2024-01-15T10:00:00Z
+2,Prod web tier,10.0.1.0/24,1,aws:111111111111,subnet,active,manual,Production web tier,2024-01-15T10:05:00Z
+3,Prod app tier,10.0.2.0/24,1,aws:111111111111,subnet,active,manual,Production app tier,2024-01-15T10:10:00Z
+4,Prod db tier,10.0.3.0/24,1,aws:111111111111,subnet,active,manual,Production database tier,2024-01-15T10:15:00Z
+5,Staging VPC,10.10.0.0/16,,aws:222222222222,supernet,active,manual,Staging AWS VPC,2024-01-16T09:00:00Z
+6,Staging app,10.10.1.0/24,5,aws:222222222222,subnet,active,manual,Staging application tier,2024-01-16T09:05:00Z
+7,Dev VPC,10.20.0.0/16,,aws:333333333333,supernet,active,manual,Development AWS VPC,2024-01-17T08:00:00Z
+8,Dev team A,10.20.1.0/24,7,aws:333333333333,subnet,active,manual,Dev Team A subnet,2024-01-17T08:05:00Z
+9,Dev team B,10.20.2.0/24,7,aws:333333333333,subnet,active,manual,Dev Team B subnet,2024-01-17T08:10:00Z
+10,Prod GCP network,10.50.0.0/16,,gcp:proj-alpha,supernet,active,manual,Production GCP network,2024-01-18T11:00:00Z
+11,Prod services,10.50.1.0/24,10,gcp:proj-alpha,subnet,active,manual,GCP production services,2024-01-18T11:05:00Z
+12,Dev GCP network,10.60.0.0/16,,gcp:proj-beta,supernet,active,manual,Development GCP network,2024-01-19T14:00:00Z
+13,Dev services,10.60.1.0/24,12,gcp:proj-beta,subnet,active,manual,GCP dev services,2024-01-19T14:05:00Z
+14,Shared services,10.80.0.0/24,,aws:444444444444,subnet,active,manual,Cross-environment shared services,2024-01-20T16:00:00Z
