@@ -1050,7 +1050,7 @@ func TestBlocksForPool_Pagination(t *testing.T) {
 	// Create pool
 	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
 	var pool poolDTO
-	json.Unmarshal(rr.Body.Bytes(), &pool)
+	_ = json.Unmarshal(rr.Body.Bytes(), &pool)
 	poolPath := "/api/v1/pools/" + strconv.FormatInt(pool.ID, 10) + "/blocks"
 
 	// Test invalid page_size

@@ -213,10 +213,11 @@ func hashKey(key string, salt []byte) []byte {
 // isValidBase64URL checks if a string contains only valid base64url characters.
 func isValidBase64URL(s string) bool {
 	for _, r := range s {
-		if !((r >= 'A' && r <= 'Z') ||
-			(r >= 'a' && r <= 'z') ||
-			(r >= '0' && r <= '9') ||
-			r == '-' || r == '_') {
+		isUpper := r >= 'A' && r <= 'Z'
+		isLower := r >= 'a' && r <= 'z'
+		isDigit := r >= '0' && r <= '9'
+		isSpecial := r == '-' || r == '_'
+		if !isUpper && !isLower && !isDigit && !isSpecial {
 			return false
 		}
 	}

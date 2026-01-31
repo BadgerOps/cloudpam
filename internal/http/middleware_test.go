@@ -304,13 +304,13 @@ func TestDefaultRateLimitConfigFromEnv(t *testing.T) {
 	origRPS := os.Getenv("RATE_LIMIT_RPS")
 	origBurst := os.Getenv("RATE_LIMIT_BURST")
 	defer func() {
-		os.Setenv("RATE_LIMIT_RPS", origRPS)
-		os.Setenv("RATE_LIMIT_BURST", origBurst)
+		_ = os.Setenv("RATE_LIMIT_RPS", origRPS)
+		_ = os.Setenv("RATE_LIMIT_BURST", origBurst)
 	}()
 
 	// Set custom values
-	os.Setenv("RATE_LIMIT_RPS", "50")
-	os.Setenv("RATE_LIMIT_BURST", "100")
+	_ = os.Setenv("RATE_LIMIT_RPS", "50")
+	_ = os.Setenv("RATE_LIMIT_BURST", "100")
 
 	cfg := DefaultRateLimitConfig()
 	if cfg.RequestsPerSecond != 50 {

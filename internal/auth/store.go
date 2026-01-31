@@ -215,13 +215,9 @@ func copyAPIKey(key *APIKey) *APIKey {
 }
 
 func copyBytes(dst, src []byte) {
-	for i := range src {
-		dst[i] = src[i]
-	}
+	copy(dst, src)
 }
 
 func copyStrings(dst, src []string) {
-	for i := range src {
-		dst[i] = src[i]
-	}
+	copy(dst, src)
 }

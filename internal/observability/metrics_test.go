@@ -68,7 +68,7 @@ func TestMetricsConfigFromEnv(t *testing.T) {
 
 func TestMetricsConfigFromEnvEnabled(t *testing.T) {
 	origEnabled := os.Getenv("CLOUDPAM_METRICS_ENABLED")
-	defer os.Setenv("CLOUDPAM_METRICS_ENABLED", origEnabled)
+	defer func() { _ = os.Setenv("CLOUDPAM_METRICS_ENABLED", origEnabled) }()
 
 	tests := []struct {
 		envValue string
@@ -85,7 +85,7 @@ func TestMetricsConfigFromEnvEnabled(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.envValue, func(t *testing.T) {
-			os.Setenv("CLOUDPAM_METRICS_ENABLED", tt.envValue)
+			_ = os.Setenv("CLOUDPAM_METRICS_ENABLED", tt.envValue)
 			cfg := MetricsConfigFromEnv()
 			if cfg.Enabled != tt.want {
 				t.Errorf("expected Enabled=%v for env=%q, got %v", tt.want, tt.envValue, cfg.Enabled)

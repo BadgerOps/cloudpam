@@ -514,7 +514,7 @@ func TestContextWithAPIKey(t *testing.T) {
 	}
 
 	// Nil context
-	if key := APIKeyFromContext(nil); key != nil {
+	if key := APIKeyFromContext(nil); key != nil { //nolint:staticcheck // testing nil context handling
 		t.Error("nil context should return nil")
 	}
 }

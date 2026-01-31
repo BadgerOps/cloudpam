@@ -233,7 +233,7 @@ func TestAPIKeys_MethodNotAllowed(t *testing.T) {
 	var created struct {
 		ID string `json:"id"`
 	}
-	json.Unmarshal(createRR.Body.Bytes(), &created)
+	_ = json.Unmarshal(createRR.Body.Bytes(), &created)
 
 	// POST not allowed on /api/v1/auth/keys/{id}
 	req = httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/keys/"+created.ID, nil)
@@ -276,7 +276,7 @@ func TestAudit_List_WithEvents(t *testing.T) {
 	// Add some audit events directly
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		auditLogger.Log(ctx, &audit.AuditEvent{
+		_ = auditLogger.Log(ctx, &audit.AuditEvent{
 			Actor:        "cpam_test",
 			ActorType:    audit.ActorTypeAPIKey,
 			Action:       audit.ActionCreate,
@@ -310,7 +310,7 @@ func TestAudit_List_Pagination(t *testing.T) {
 	// Add 25 events
 	ctx := context.Background()
 	for i := 0; i < 25; i++ {
-		auditLogger.Log(ctx, &audit.AuditEvent{
+		_ = auditLogger.Log(ctx, &audit.AuditEvent{
 			Actor:        "cpam_test",
 			ActorType:    audit.ActorTypeAPIKey,
 			Action:       audit.ActionCreate,
@@ -352,7 +352,7 @@ func TestAudit_List_Filtering(t *testing.T) {
 
 	// Add diverse events
 	ctx := context.Background()
-	auditLogger.Log(ctx, &audit.AuditEvent{
+	_ = auditLogger.Log(ctx, &audit.AuditEvent{
 		Actor:        "cpam_user1",
 		ActorType:    audit.ActorTypeAPIKey,
 		Action:       audit.ActionCreate,
@@ -360,7 +360,7 @@ func TestAudit_List_Filtering(t *testing.T) {
 		ResourceID:   "1",
 		StatusCode:   201,
 	})
-	auditLogger.Log(ctx, &audit.AuditEvent{
+	_ = auditLogger.Log(ctx, &audit.AuditEvent{
 		Actor:        "cpam_user2",
 		ActorType:    audit.ActorTypeAPIKey,
 		Action:       audit.ActionUpdate,

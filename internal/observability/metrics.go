@@ -238,8 +238,8 @@ func (m *Metrics) writePrometheusMetrics(w http.ResponseWriter) {
 	_, _ = fmt.Fprintf(w, "%s_info{version=%q} 1\n\n", m.namespace, m.version)
 
 	// HTTP request total
-	fmt.Fprintf(w, "# HELP %s_http_requests_total Total number of HTTP requests\n", m.namespace)
-	fmt.Fprintf(w, "# TYPE %s_http_requests_total counter\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "# HELP %s_http_requests_total Total number of HTTP requests\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "# TYPE %s_http_requests_total counter\n", m.namespace)
 	m.mu.RLock()
 	// Sort keys for deterministic output
 	keys := make([]string, 0, len(m.httpRequestCounts))
@@ -251,7 +251,7 @@ func (m *Metrics) writePrometheusMetrics(w http.ResponseWriter) {
 		counter := m.httpRequestCounts[key]
 		parts := strings.SplitN(key, ":", 3)
 		if len(parts) == 3 {
-			fmt.Fprintf(w, "%s_http_requests_total{method=%q,path=%q,status=%q} %d\n",
+			_, _ = fmt.Fprintf(w, "%s_http_requests_total{method=%q,path=%q,status=%q} %d\n",
 				m.namespace, parts[0], parts[1], parts[2], counter.Load())
 		}
 	}
@@ -259,8 +259,8 @@ func (m *Metrics) writePrometheusMetrics(w http.ResponseWriter) {
 	_, _ = fmt.Fprintln(w)
 
 	// HTTP request duration quantiles
-	fmt.Fprintf(w, "# HELP %s_http_request_duration_seconds HTTP request duration in seconds\n", m.namespace)
-	fmt.Fprintf(w, "# TYPE %s_http_request_duration_seconds summary\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "# HELP %s_http_request_duration_seconds HTTP request duration in seconds\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "# TYPE %s_http_request_duration_seconds summary\n", m.namespace)
 	m.httpDurationMu.RLock()
 	durationKeys := make([]string, 0, len(m.httpDurations))
 	for k := range m.httpDurations {
@@ -275,13 +275,13 @@ func (m *Metrics) writePrometheusMetrics(w http.ResponseWriter) {
 			// Output quantiles
 			for _, q := range []float64{0.5, 0.9, 0.99} {
 				val := collector.quantile(q)
-				fmt.Fprintf(w, "%s_http_request_duration_seconds{method=%q,path=%q,quantile=\"%.2f\"} %.6f\n",
+				_, _ = fmt.Fprintf(w, "%s_http_request_duration_seconds{method=%q,path=%q,quantile=\"%.2f\"} %.6f\n",
 					m.namespace, method, path, q, val)
 			}
 			// Output sum and count
-			fmt.Fprintf(w, "%s_http_request_duration_seconds_sum{method=%q,path=%q} %.6f\n",
+			_, _ = fmt.Fprintf(w, "%s_http_request_duration_seconds_sum{method=%q,path=%q} %.6f\n",
 				m.namespace, method, path, collector.sum())
-			fmt.Fprintf(w, "%s_http_request_duration_seconds_count{method=%q,path=%q} %d\n",
+			_, _ = fmt.Fprintf(w, "%s_http_request_duration_seconds_count{method=%q,path=%q} %d\n",
 				m.namespace, method, path, collector.count())
 		}
 	}
@@ -289,15 +289,15 @@ func (m *Metrics) writePrometheusMetrics(w http.ResponseWriter) {
 	_, _ = fmt.Fprintln(w)
 
 	// Rate limiter metrics
-	fmt.Fprintf(w, "# HELP %s_rate_limit_requests_total Total rate limit decisions\n", m.namespace)
-	fmt.Fprintf(w, "# TYPE %s_rate_limit_requests_total counter\n", m.namespace)
-	fmt.Fprintf(w, "%s_rate_limit_requests_total{status=\"allowed\"} %d\n", m.namespace, m.rateLimitAllowed.Load())
-	fmt.Fprintf(w, "%s_rate_limit_requests_total{status=\"rejected\"} %d\n\n", m.namespace, m.rateLimitRejected.Load())
+	_, _ = fmt.Fprintf(w, "# HELP %s_rate_limit_requests_total Total rate limit decisions\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "# TYPE %s_rate_limit_requests_total counter\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "%s_rate_limit_requests_total{status=\"allowed\"} %d\n", m.namespace, m.rateLimitAllowed.Load())
+	_, _ = fmt.Fprintf(w, "%s_rate_limit_requests_total{status=\"rejected\"} %d\n\n", m.namespace, m.rateLimitRejected.Load())
 
 	// Active connections gauge
-	fmt.Fprintf(w, "# HELP %s_active_connections Current number of active HTTP connections\n", m.namespace)
-	fmt.Fprintf(w, "# TYPE %s_active_connections gauge\n", m.namespace)
-	fmt.Fprintf(w, "%s_active_connections %d\n", m.namespace, m.activeConnections.Load())
+	_, _ = fmt.Fprintf(w, "# HELP %s_active_connections Current number of active HTTP connections\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "# TYPE %s_active_connections gauge\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "%s_active_connections %d\n", m.namespace, m.activeConnections.Load())
 }
 
 // MetricsMiddleware returns an HTTP middleware that records request metrics.
