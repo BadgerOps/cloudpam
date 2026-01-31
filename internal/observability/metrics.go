@@ -233,9 +233,9 @@ func (m *Metrics) Handler() http.Handler {
 // writePrometheusMetrics writes all metrics in Prometheus text format.
 func (m *Metrics) writePrometheusMetrics(w http.ResponseWriter) {
 	// App info metric
-	fmt.Fprintf(w, "# HELP %s_info Application information\n", m.namespace)
-	fmt.Fprintf(w, "# TYPE %s_info gauge\n", m.namespace)
-	fmt.Fprintf(w, "%s_info{version=%q} 1\n\n", m.namespace, m.version)
+	_, _ = fmt.Fprintf(w, "# HELP %s_info Application information\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "# TYPE %s_info gauge\n", m.namespace)
+	_, _ = fmt.Fprintf(w, "%s_info{version=%q} 1\n\n", m.namespace, m.version)
 
 	// HTTP request total
 	fmt.Fprintf(w, "# HELP %s_http_requests_total Total number of HTTP requests\n", m.namespace)
@@ -256,7 +256,7 @@ func (m *Metrics) writePrometheusMetrics(w http.ResponseWriter) {
 		}
 	}
 	m.mu.RUnlock()
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 
 	// HTTP request duration quantiles
 	fmt.Fprintf(w, "# HELP %s_http_request_duration_seconds HTTP request duration in seconds\n", m.namespace)
@@ -286,7 +286,7 @@ func (m *Metrics) writePrometheusMetrics(w http.ResponseWriter) {
 		}
 	}
 	m.httpDurationMu.RUnlock()
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 
 	// Rate limiter metrics
 	fmt.Fprintf(w, "# HELP %s_rate_limit_requests_total Total rate limit decisions\n", m.namespace)

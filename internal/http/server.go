@@ -67,11 +67,6 @@ func NewServerWithSlog(mux *http.ServeMux, store storage.Store, slogger *slog.Lo
 	return &Server{mux: mux, store: store, logger: logger, metrics: nil}
 }
 
-// slogLogger returns the underlying slog.Logger for backward compatibility.
-func (s *Server) slogLogger() *slog.Logger {
-	return s.logger.Slog()
-}
-
 func valueOrNil[T any](ptr *T) any {
 	if ptr == nil {
 		return nil

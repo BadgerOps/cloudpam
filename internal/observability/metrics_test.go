@@ -48,13 +48,13 @@ func TestMetricsConfigFromEnv(t *testing.T) {
 	origEnabled := os.Getenv("CLOUDPAM_METRICS_ENABLED")
 	origVersion := os.Getenv("APP_VERSION")
 	defer func() {
-		os.Setenv("CLOUDPAM_METRICS_ENABLED", origEnabled)
-		os.Setenv("APP_VERSION", origVersion)
+		_ = os.Setenv("CLOUDPAM_METRICS_ENABLED", origEnabled)
+		_ = os.Setenv("APP_VERSION", origVersion)
 	}()
 
 	// Test with custom values
-	os.Setenv("CLOUDPAM_METRICS_ENABLED", "false")
-	os.Setenv("APP_VERSION", "v2.0.0")
+	_ = os.Setenv("CLOUDPAM_METRICS_ENABLED", "false")
+	_ = os.Setenv("APP_VERSION", "v2.0.0")
 
 	cfg := MetricsConfigFromEnv()
 

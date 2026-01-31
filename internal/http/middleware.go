@@ -243,15 +243,9 @@ func RateLimitMiddleware(cfg RateLimitConfig, logger *slog.Logger) Middleware {
 			// Set rate limit headers
 			w.Header().Set("X-RateLimit-Limit", strconv.FormatFloat(cfg.RequestsPerSecond, 'f', -1, 64))
 
-			// Calculate remaining tokens (approximate, since we're not holding the lock)
-			reservation := v.limiter.ReserveN(now, 0)
-			remaining := int(math.Floor(float64(cfg.Burst) * (1 - reservation.Delay().Seconds()*cfg.RequestsPerSecond/float64(cfg.Burst))))
-			if remaining < 0 {
-				remaining = 0
-			}
-			// More accurate: use Tokens() which returns float64
+			// Calculate remaining tokens using Tokens() which returns float64
 			tokens := v.limiter.Tokens()
-			remaining = int(math.Floor(tokens))
+			remaining := int(math.Floor(tokens))
 			if remaining < 0 {
 				remaining = 0
 			}

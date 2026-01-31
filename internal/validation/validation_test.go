@@ -284,7 +284,7 @@ func TestValidateName(t *testing.T) {
 		{name: "short name", input: "A", wantErr: nil},
 		{name: "name with numbers", input: "VPC-123", wantErr: nil},
 		{name: "name with special chars", input: "Prod_VPC-East (Primary)", wantErr: nil},
-		{name: "name with unicode", input: "Produccion-VPC", wantErr: nil},
+		{name: "name with unicode", input: "Production-VPC", wantErr: nil},
 		{name: "name with whitespace trimmed", input: "  My VPC  ", wantErr: nil},
 
 		// Empty/whitespace

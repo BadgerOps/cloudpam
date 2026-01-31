@@ -206,7 +206,7 @@ func TestWithRequestID(t *testing.T) {
 }
 
 func TestRequestIDFromContextNilContext(t *testing.T) {
-	got := RequestIDFromContext(nil)
+	got := RequestIDFromContext(nil) //nolint:staticcheck // testing nil context handling
 	if got != "" {
 		t.Errorf("expected empty string for nil context, got %q", got)
 	}
@@ -243,7 +243,7 @@ func TestWithComponent(t *testing.T) {
 }
 
 func TestComponentFromContextNilContext(t *testing.T) {
-	got := ComponentFromContext(nil)
+	got := ComponentFromContext(nil) //nolint:staticcheck // testing nil context handling
 	if got != "" {
 		t.Errorf("expected empty string for nil context, got %q", got)
 	}
@@ -410,7 +410,7 @@ func TestLoggerAllLevelMethods(t *testing.T) {
 }
 
 func TestAppendContextFieldsNilContext(t *testing.T) {
-	args := appendContextFields(nil, []any{"key", "value"})
+	args := appendContextFields(nil, []any{"key", "value"}) //nolint:staticcheck // testing nil context handling
 	if len(args) != 2 {
 		t.Errorf("expected 2 args for nil context, got %d", len(args))
 	}

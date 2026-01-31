@@ -973,7 +973,7 @@ func TestAccountPatch_InvalidJSON(t *testing.T) {
 	var acc struct {
 		ID int64 `json:"id"`
 	}
-	json.Unmarshal(rr.Body.Bytes(), &acc)
+	_ = json.Unmarshal(rr.Body.Bytes(), &acc)
 
 	// Try PATCH with invalid JSON
 	req := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/accounts/"+strconv.FormatInt(acc.ID, 10), strings.NewReader("{invalid"))
@@ -991,7 +991,7 @@ func TestPoolPatch_InvalidJSON(t *testing.T) {
 	// Create a pool first
 	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
 	var pool poolDTO
-	json.Unmarshal(rr.Body.Bytes(), &pool)
+	_ = json.Unmarshal(rr.Body.Bytes(), &pool)
 
 	// Try PATCH with invalid JSON
 	req := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/pools/"+strconv.FormatInt(pool.ID, 10), strings.NewReader("{invalid"))
@@ -1009,7 +1009,7 @@ func TestBlocksEndpoint_Pagination(t *testing.T) {
 	// Create pool
 	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
 	var pool poolDTO
-	json.Unmarshal(rr.Body.Bytes(), &pool)
+	_ = json.Unmarshal(rr.Body.Bytes(), &pool)
 
 	// Test invalid page_size
 	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/blocks?page_size=-1", nil)
