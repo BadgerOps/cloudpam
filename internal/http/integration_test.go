@@ -238,7 +238,7 @@ func TestIntegration_MetricsEndpoint(t *testing.T) {
 		if resp.StatusCode != r.status {
 			t.Errorf("expected status %d for %s %s, got %d", r.status, r.method, r.path, resp.StatusCode)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	// Fetch metrics endpoint
@@ -301,7 +301,7 @@ func TestIntegration_PoolCRUD(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401 for unauthenticated request, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// CREATE
 	poolData := map[string]interface{}{
@@ -346,7 +346,7 @@ func TestIntegration_PoolCRUD(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for pool read, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// UPDATE
 	updateData := map[string]interface{}{
@@ -383,7 +383,7 @@ func TestIntegration_PoolCRUD(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("expected 204 for pool delete, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Verify deletion
 	req, _ = testutil.AuthenticatedRequest(http.MethodGet, baseURL+"/api/v1/pools/"+itoa(poolID), plaintext, nil)
@@ -395,7 +395,7 @@ func TestIntegration_PoolCRUD(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 for deleted pool, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // TestIntegration_AccountCRUD tests account operations end-to-end with authentication.
@@ -465,7 +465,7 @@ func TestIntegration_AccountCRUD(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for account read, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// UPDATE
 	updateData := map[string]interface{}{
@@ -509,7 +509,7 @@ func TestIntegration_AccountCRUD(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("expected 204 for account delete, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Verify deletion
 	req, _ = testutil.AuthenticatedRequest(http.MethodGet, baseURL+"/api/v1/accounts/"+itoa(accountID), plaintext, nil)
@@ -521,7 +521,7 @@ func TestIntegration_AccountCRUD(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 for deleted account, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // TestIntegration_ConcurrentAccess tests thread-safety under concurrent load.
@@ -569,7 +569,7 @@ func TestIntegration_ConcurrentAccess(t *testing.T) {
 				errors <- err
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode == http.StatusCreated {
 				atomic.AddInt32(&successCount, 1)
@@ -597,7 +597,7 @@ func TestIntegration_ConcurrentAccess(t *testing.T) {
 				errors <- err
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode == http.StatusCreated {
 				atomic.AddInt32(&successCount, 1)
@@ -619,7 +619,7 @@ func TestIntegration_ConcurrentAccess(t *testing.T) {
 				errors <- err
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			if resp.StatusCode == http.StatusOK {
 				atomic.AddInt32(&successCount, 1)
@@ -673,7 +673,7 @@ func TestIntegration_RequestIDPropagation(t *testing.T) {
 	if generatedID == "" {
 		t.Error("expected X-Request-ID header in response")
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Test 2: Server uses provided request ID
 	customID := "test-request-id-12345"
@@ -688,7 +688,7 @@ func TestIntegration_RequestIDPropagation(t *testing.T) {
 	if returnedID != customID {
 		t.Errorf("expected X-Request-ID %q, got %q", customID, returnedID)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Test 3: Invalid request IDs are rejected and new ones generated
 	req, _ = http.NewRequest(http.MethodGet, baseURL+"/healthz", nil)
@@ -705,7 +705,7 @@ func TestIntegration_RequestIDPropagation(t *testing.T) {
 	if sanitizedID == "" {
 		t.Error("expected a new request ID to be generated")
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // TestIntegration_ErrorResponses tests that error responses are properly formatted.
@@ -945,7 +945,7 @@ func TestIntegration_ScopeEnforcement(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 for read with read scope, got %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Write key should succeed on POST
 	poolData := `{"name":"scope-test","cidr":"10.99.0.0/16"}`
@@ -958,5 +958,5 @@ func TestIntegration_ScopeEnforcement(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Errorf("expected 201 for write with write scope, got %d: %s", resp.StatusCode, string(body))
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
