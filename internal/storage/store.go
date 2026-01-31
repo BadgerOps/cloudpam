@@ -2,9 +2,7 @@ package storage
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
-	"net"
 	"net/netip"
 	"sync"
 	"time"
@@ -515,21 +513,6 @@ func (m *MemoryStore) calculatePoolStatsLocked(p domain.Pool) domain.PoolStats {
 		ChildCount:     totalChildCount,
 		DirectChildren: directChildren,
 	}
-}
-
-// ipv4ToUint32 converts an IPv4 address to uint32.
-func ipv4ToUint32(a netip.Addr) uint32 {
-	b := a.As4()
-	return binary.BigEndian.Uint32(b[:])
-}
-
-// uint32ToIPv4 converts a uint32 to an IPv4 address.
-func uint32ToIPv4(u uint32) netip.Addr {
-	var b [4]byte
-	binary.BigEndian.PutUint32(b[:], u)
-	ip := net.IPv4(b[0], b[1], b[2], b[3])
-	addr, _ := netip.ParseAddr(ip.String())
-	return addr
 }
 
 // Close is a no-op for MemoryStore as it holds no external resources.

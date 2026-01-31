@@ -768,23 +768,32 @@ func TestMemoryStore_GetPoolWithStats(t *testing.T) {
 	m := NewMemoryStore()
 
 	// Create parent pool
-	parent, _ := m.CreatePool(ctx, domain.CreatePool{
+	parent, err := m.CreatePool(ctx, domain.CreatePool{
 		Name: "parent",
 		CIDR: "10.0.0.0/16",
 		Type: domain.PoolTypeSupernet,
 	})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
 
 	// Create child pools
-	m.CreatePool(ctx, domain.CreatePool{
+	_, err = m.CreatePool(ctx, domain.CreatePool{
 		Name:     "child1",
 		CIDR:     "10.0.0.0/24",
 		ParentID: &parent.ID,
 	})
-	m.CreatePool(ctx, domain.CreatePool{
+	if err != nil {
+		t.Fatalf("create child1: %v", err)
+	}
+	_, err = m.CreatePool(ctx, domain.CreatePool{
 		Name:     "child2",
 		CIDR:     "10.0.1.0/24",
 		ParentID: &parent.ID,
 	})
+	if err != nil {
+		t.Fatalf("create child2: %v", err)
+	}
 
 	// Get pool with stats
 	pws, err := m.GetPoolWithStats(ctx, parent.ID)
@@ -832,29 +841,41 @@ func TestMemoryStore_GetPoolHierarchy(t *testing.T) {
 	m := NewMemoryStore()
 
 	// Create hierarchy: root -> region -> vpc -> subnet
-	root, _ := m.CreatePool(ctx, domain.CreatePool{
+	root, err := m.CreatePool(ctx, domain.CreatePool{
 		Name: "enterprise",
 		CIDR: "10.0.0.0/8",
 		Type: domain.PoolTypeSupernet,
 	})
-	region, _ := m.CreatePool(ctx, domain.CreatePool{
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	region, err := m.CreatePool(ctx, domain.CreatePool{
 		Name:     "us-east-1",
 		CIDR:     "10.0.0.0/12",
 		ParentID: &root.ID,
 		Type:     domain.PoolTypeRegion,
 	})
-	vpc, _ := m.CreatePool(ctx, domain.CreatePool{
+	if err != nil {
+		t.Fatalf("create region: %v", err)
+	}
+	vpc, err := m.CreatePool(ctx, domain.CreatePool{
 		Name:     "prod-vpc",
 		CIDR:     "10.0.0.0/16",
 		ParentID: &region.ID,
 		Type:     domain.PoolTypeVPC,
 	})
-	m.CreatePool(ctx, domain.CreatePool{
+	if err != nil {
+		t.Fatalf("create vpc: %v", err)
+	}
+	_, err = m.CreatePool(ctx, domain.CreatePool{
 		Name:     "app-subnet",
 		CIDR:     "10.0.0.0/24",
 		ParentID: &vpc.ID,
 		Type:     domain.PoolTypeSubnet,
 	})
+	if err != nil {
+		t.Fatalf("create subnet: %v", err)
+	}
 
 	// Get full hierarchy (nil root)
 	hierarchy, err := m.GetPoolHierarchy(ctx, nil)
