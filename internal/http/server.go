@@ -930,53 +930,119 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var created, skipped int
-	var errors []string
+	// Parse all rows first to enable hierarchical import
+	type poolRow struct {
+		rowNum      int
+		name        string
+		cidr        string
+		oldID       int64  // original ID from CSV (if present)
+		oldParentID int64  // original parent_id from CSV
+		accountID   *int64
+		poolType    domain.PoolType
+		status      domain.PoolStatus
+		source      domain.PoolSource
+		description string
+	}
+
+	var rows []poolRow
+	idIdx, hasID := colIdx["id"]
 
 	for i, row := range records[1:] {
 		if len(row) <= nameIdx || len(row) <= cidrIdx {
-			errors = append(errors, fmt.Sprintf("row %d: insufficient columns", i+2))
 			continue
 		}
 
 		name := strings.TrimSpace(row[nameIdx])
 		cidr := strings.TrimSpace(row[cidrIdx])
 		if name == "" || cidr == "" {
-			errors = append(errors, fmt.Sprintf("row %d: name and cidr required", i+2))
 			continue
 		}
 
-		pool := domain.CreatePool{
-			Name: name,
-			CIDR: cidr,
+		pr := poolRow{
+			rowNum: i + 2,
+			name:   name,
+			cidr:   cidr,
 		}
 
-		// Optional columns
-		if idx, ok := colIdx["parent_id"]; ok && idx < len(row) {
-			if v := strings.TrimSpace(row[idx]); v != "" {
-				if pid, err := strconv.ParseInt(v, 10, 64); err == nil {
-					pool.ParentID = &pid
-				}
+		// Get original ID if present
+		if hasID && idIdx < len(row) {
+			if v := strings.TrimSpace(row[idIdx]); v != "" {
+				pr.oldID, _ = strconv.ParseInt(v, 10, 64)
 			}
 		}
+
+		// Get parent_id
+		if idx, ok := colIdx["parent_id"]; ok && idx < len(row) {
+			if v := strings.TrimSpace(row[idx]); v != "" {
+				pr.oldParentID, _ = strconv.ParseInt(v, 10, 64)
+			}
+		}
+
+		// Get account_id
 		if idx, ok := colIdx["account_id"]; ok && idx < len(row) {
 			if v := strings.TrimSpace(row[idx]); v != "" {
 				if aid, err := strconv.ParseInt(v, 10, 64); err == nil {
-					pool.AccountID = &aid
+					pr.accountID = &aid
 				}
 			}
 		}
+
 		if idx, ok := colIdx["type"]; ok && idx < len(row) {
-			pool.Type = domain.PoolType(strings.TrimSpace(row[idx]))
+			pr.poolType = domain.PoolType(strings.TrimSpace(row[idx]))
 		}
 		if idx, ok := colIdx["status"]; ok && idx < len(row) {
-			pool.Status = domain.PoolStatus(strings.TrimSpace(row[idx]))
+			pr.status = domain.PoolStatus(strings.TrimSpace(row[idx]))
 		}
 		if idx, ok := colIdx["source"]; ok && idx < len(row) {
-			pool.Source = domain.PoolSource(strings.TrimSpace(row[idx]))
+			pr.source = domain.PoolSource(strings.TrimSpace(row[idx]))
 		}
 		if idx, ok := colIdx["description"]; ok && idx < len(row) {
-			pool.Description = strings.TrimSpace(row[idx])
+			pr.description = strings.TrimSpace(row[idx])
+		}
+
+		rows = append(rows, pr)
+	}
+
+	// Sort rows: no parent first, then by oldParentID to process parents before children
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].oldParentID == 0 && rows[j].oldParentID != 0 {
+			return true
+		}
+		if rows[i].oldParentID != 0 && rows[j].oldParentID == 0 {
+			return false
+		}
+		return rows[i].oldParentID < rows[j].oldParentID
+	})
+
+	var created, skipped int
+	var errors []string
+
+	// Map old IDs to new IDs for parent resolution
+	oldToNewID := make(map[int64]int64)
+
+	// Also build a CIDR to new ID map for fallback parent resolution
+	cidrToNewID := make(map[string]int64)
+
+	for _, pr := range rows {
+		pool := domain.CreatePool{
+			Name:        pr.name,
+			CIDR:        pr.cidr,
+			AccountID:   pr.accountID,
+			Type:        pr.poolType,
+			Status:      pr.status,
+			Source:      pr.source,
+			Description: pr.description,
+		}
+
+		// Resolve parent_id using old-to-new mapping
+		if pr.oldParentID != 0 {
+			if newParentID, ok := oldToNewID[pr.oldParentID]; ok {
+				pool.ParentID = &newParentID
+			} else {
+				// Parent not found in mapping - might be a pre-existing pool
+				// Try to use the ID directly (for imports into existing data)
+				pool.ParentID = &pr.oldParentID
+			}
 		}
 
 		// Set defaults
@@ -990,15 +1056,22 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			pool.Source = domain.PoolSourceManual
 		}
 
-		_, err := s.store.CreatePool(r.Context(), pool)
+		createdPool, err := s.store.CreatePool(r.Context(), pool)
 		if err != nil {
 			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
 				skipped++
 			} else {
-				errors = append(errors, fmt.Sprintf("row %d: %v", i+2, err))
+				errors = append(errors, fmt.Sprintf("row %d: %v", pr.rowNum, err))
 			}
 			continue
 		}
+
+		// Record the ID mapping for child pool resolution
+		if pr.oldID != 0 {
+			oldToNewID[pr.oldID] = createdPool.ID
+		}
+		cidrToNewID[pr.cidr] = createdPool.ID
+
 		created++
 	}
 
