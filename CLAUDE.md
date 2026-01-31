@@ -4,7 +4,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CloudPAM is a lightweight, cloud-native IP Address Management (IPAM) system for AWS and GCP with an extensible provider model. It features a Go backend, Alpine.js frontend, and supports both in-memory and SQLite storage backends.
+CloudPAM is an intelligent IP Address Management (IPAM) platform designed to manage, analyze, and optimize network infrastructure across cloud providers (AWS, GCP, Azure) and on-premises environments. It features a Go backend, Alpine.js frontend, and supports both in-memory and SQLite/PostgreSQL storage backends.
+
+**Key Capabilities** (current + planned):
+- Centralized IP address management with hierarchical pools
+- Multi-cloud discovery and drift detection
+- Intelligent analysis (gap analysis, fragmentation, compliance)
+- AI-powered planning with LLM integration
+- Enterprise features: multi-tenancy, SSO/OIDC, audit logging
+
+## Implementation Status
+
+The project is currently at **Phase 1** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
+
+**Current State** (from code review in `REVIEW.md`):
+- 60% production ready, 52.5% test coverage
+- Core pool/account CRUD operational
+- Dual storage backends (in-memory, SQLite)
+- Basic graceful shutdown and Sentry integration
+
+**Critical Issues to Address First** (P0/P1):
+1. ~~Resource leak in SQLite store~~ - Close() method exists
+2. ~~Missing graceful shutdown~~ - Implemented
+3. Input validation hardening (`internal/validation/`)
+4. Structured logging migration to `slog`
+5. Rate limiting middleware
+6. Health/readiness endpoints (`/healthz`, `/readyz`)
+7. Prometheus metrics
+
+## Planning Documentation
+
+Recent planning session produced these design documents:
+
+| Document | Purpose |
+|----------|---------|
+| `IMPLEMENTATION_ROADMAP.md` | 20-week phased implementation plan |
+| `REVIEW.md` | Code review with prioritized issues |
+| `DATABASE_SCHEMA.md` | Complete PostgreSQL/SQLite schema |
+| `AUTH_FLOWS.md` | OAuth2/OIDC and API key authentication |
+| `SMART_PLANNING.md` | Analysis engine and AI planning architecture |
+| `OBSERVABILITY.md` | Logging, metrics, tracing, audit logging |
+| `API_EXAMPLES.md` | API usage examples |
+| `DEPLOYMENT.md` | Kubernetes and cloud deployment guides |
+| `CLEANUP.md` | Documentation consolidation notes |
+
+**OpenAPI Specifications**:
+- `docs/openapi.yaml` - Core IPAM API (current)
+- `openapi-smart-planning.yaml` - Smart Planning API (planned)
+- `openapi-observability.yaml` - Audit/observability API (planned)
 
 ## Build System & Commands
 
@@ -60,6 +107,58 @@ APP_URL=http://localhost:8080 npm run screenshots  # Outputs to photos/
 
 ## Architecture
 
+### Current Architecture (Phase 1)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     CloudPAM Current                        │
+├─────────────────────────────────────────────────────────────┤
+│  cmd/cloudpam/main.go                                       │
+│  ├── HTTP Server (net/http)                                 │
+│  ├── Sentry Integration                                     │
+│  └── Graceful Shutdown                                      │
+├─────────────────────────────────────────────────────────────┤
+│  internal/http/server.go                                    │
+│  ├── Pool CRUD handlers                                     │
+│  ├── Account CRUD handlers                                  │
+│  ├── Block enumeration                                      │
+│  └── CSV export                                             │
+├─────────────────────────────────────────────────────────────┤
+│  internal/storage/                                          │
+│  ├── Store interface                                        │
+│  ├── MemoryStore (default)                                  │
+│  └── SQLite store (-tags sqlite)                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Planned Architecture (Phases 2-5)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     CloudPAM Target                         │
+├─────────────────────────────────────────────────────────────┤
+│  internal/http/          │  internal/auth/                  │
+│  ├── Middleware chain    │  ├── OIDC provider               │
+│  ├── Rate limiting       │  ├── Session management          │
+│  └── Request ID          │  └── RBAC authorization          │
+├──────────────────────────┼──────────────────────────────────┤
+│  internal/planning/      │  internal/discovery/             │
+│  ├── Analysis engine     │  ├── AWS collector               │
+│  ├── Recommendations     │  ├── GCP collector               │
+│  ├── Schema wizard       │  ├── Azure collector             │
+│  └── AI/LLM integration  │  └── Sync engine                 │
+├──────────────────────────┼──────────────────────────────────┤
+│  internal/observability/ │  internal/audit/                 │
+│  ├── slog logger         │  ├── Event capture               │
+│  ├── OpenTelemetry       │  ├── Database storage            │
+│  └── Prometheus metrics  │  └── SIEM export                 │
+├─────────────────────────────────────────────────────────────┤
+│  internal/storage/                                          │
+│  ├── PostgreSQL (production)                                │
+│  └── SQLite (development/lightweight)                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### Storage Layer Architecture
 
 The storage layer uses build tags to switch between implementations:
@@ -78,6 +177,25 @@ The storage layer uses build tags to switch between implementations:
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
   - Current migrations: `0001_init.sql`, `0002_accounts_meta.sql`
+
+- **Planned: PostgreSQL Support** (Phase 1-2)
+  - Production-grade database with native CIDR operations
+  - Separate migration files in `migrations/postgres/`
+  - Row-level security for multi-tenancy
+  - See `DATABASE_SCHEMA.md` for complete schema
+
+### Planned Packages
+
+New Go packages defined with interfaces (see `internal/*/interfaces.go`):
+
+| Package | Purpose | Key Interfaces |
+|---------|---------|----------------|
+| `internal/planning` | Smart planning engine | `DiscoveryService`, `AnalysisService`, `RecommendationService`, `AIPlanningService`, `SchemaWizardService`, `LLMProvider` |
+| `internal/observability` | Logging, metrics, tracing | `Logger`, `Metrics`, `Tracer`, `AuditLogger`, `HealthChecker` |
+| `internal/auth` | Authentication/authorization | (planned) `AuthProvider`, `SessionStore`, `Authorizer` |
+| `internal/discovery` | Cloud resource discovery | (planned) `Collector`, `SyncEngine` |
+
+These interfaces are defined and ready for implementation.
 
 ### HTTP Layer
 
@@ -187,12 +305,25 @@ When adding endpoints:
 
 ## Environment Variables
 
+### Current
 - `ADDR` or `PORT`: listen address (default `:8080`)
 - `SQLITE_DSN`: SQLite connection string (default `file:cloudpam.db?cache=shared&_fk=1`)
 - `APP_VERSION`: optional version stamp for migrations and Sentry release tracking
 - `SENTRY_DSN`: Sentry DSN for backend error tracking (optional)
 - `SENTRY_FRONTEND_DSN`: Sentry DSN for frontend error tracking (optional, can be different from backend DSN)
 - `SENTRY_ENVIRONMENT`: Sentry environment name (default: `production`)
+
+### Planned (from OBSERVABILITY.md)
+- `CLOUDPAM_LOG_LEVEL`: Log level - debug, info, warn, error (default: `info`)
+- `CLOUDPAM_LOG_FORMAT`: Log format - json, text (default: `json`)
+- `CLOUDPAM_METRICS_ENABLED`: Enable Prometheus metrics (default: `true`)
+- `CLOUDPAM_METRICS_PORT`: Metrics endpoint port (default: `8889`)
+- `CLOUDPAM_TRACING_ENABLED`: Enable distributed tracing (default: `true`)
+- `CLOUDPAM_TRACING_ENDPOINT`: Jaeger collector endpoint
+- `CLOUDPAM_TRACING_SAMPLE_RATE`: Trace sampling rate (default: `0.01`)
+- `DATABASE_URL`: PostgreSQL connection string (planned)
+- `RATE_LIMIT_RPS`: Rate limit requests per second (planned)
+- `RATE_LIMIT_BURST`: Rate limit burst size (planned)
 
 ## API Contract
 
@@ -316,42 +447,107 @@ cloudpam/
 │   └── store_sqlite.go     # SQLite store selection (-tags sqlite)
 ├── internal/
 │   ├── domain/             # Core types (Pool, Account)
-│   │   └── types.go
+│   │   ├── types.go        # Current types
+│   │   └── models.go       # Extended models (planned)
 │   ├── http/               # HTTP server, routes, handlers
 │   │   ├── server.go       # Server implementation and all handlers
-│   │   ├── server_test.go
-│   │   └── handlers_test.go
-│   └── storage/            # Storage interface and implementations
-│       ├── store.go        # Store interface and MemoryStore
-│       ├── store_test.go
-│       └── sqlite/         # SQLite implementation
-│           ├── sqlite.go
-│           └── migrator.go
-├── migrations/             # SQL migrations (embedded in SQLite builds)
+│   │   ├── middleware.go   # Middleware (logging, auth, rate limit)
+│   │   ├── context.go      # Request context helpers
+│   │   └── *_test.go       # Tests
+│   ├── storage/            # Storage interface and implementations
+│   │   ├── store.go        # Store interface and MemoryStore
+│   │   ├── interfaces.go   # Extended storage interfaces (planned)
+│   │   ├── cidr.go         # CIDR utility functions (planned)
+│   │   └── sqlite/         # SQLite implementation
+│   │       ├── sqlite.go
+│   │       └── migrator.go
+│   ├── validation/         # Input validation (partial)
+│   │   └── validation.go
+│   ├── planning/           # Smart planning engine (interfaces defined)
+│   │   └── interfaces.go   # DiscoveryService, AnalysisService, etc.
+│   ├── observability/      # Logging, metrics, tracing (interfaces defined)
+│   │   └── interfaces.go   # Logger, Metrics, Tracer, AuditLogger
+│   └── docs/               # Internal documentation handlers
+│       └── handler.go
+├── migrations/             # SQL migrations
 │   ├── embed.go
-│   ├── 0001_init.sql
-│   └── 0002_accounts_meta.sql
+│   ├── 0001_init.sql       # Current SQLite migrations
+│   ├── 0002_accounts_meta.sql
+│   ├── postgres/           # PostgreSQL migrations (planned)
+│   │   ├── 001_initial_schema.up.sql
+│   │   └── 001_initial_schema.down.sql
+│   └── sqlite/             # SQLite migrations (new structure)
+│       ├── 001_initial_schema.up.sql
+│       └── 001_initial_schema.down.sql
+├── deploy/                 # Deployment configurations (planned)
+│   ├── k8s/                # Kubernetes manifests
+│   │   ├── observability-stack.yaml
+│   │   └── vector-daemonset.yaml
+│   ├── vector/             # Vector log shipping config
+│   │   └── vector.toml
+│   └── docker-compose.observability.yml
 ├── web/                    # Frontend (Alpine.js SPA)
-│   ├── embed.go            # Embeds index.html at build time
+│   ├── embed.go
 │   └── index.html
 ├── docs/                   # Documentation
-│   ├── openapi.yaml        # OpenAPI 3.1 spec
-│   ├── spec_embed.go       # Embeds OpenAPI spec
-│   ├── PROJECT_PLAN.md     # Roadmap and project plan
-│   └── CHANGELOG.md        # Version history
+│   ├── openapi.yaml        # Core API spec
+│   ├── spec_embed.go
+│   ├── PROJECT_PLAN.md
+│   └── CHANGELOG.md
 ├── scripts/                # Utility scripts
 ├── photos/                 # Screenshots (Git LFS tracked)
 ├── .github/workflows/      # CI/CD workflows
 ├── Justfile                # Task runner commands
 ├── .golangci.yml           # Linter configuration
 ├── go.mod / go.sum         # Go module files
-└── CLAUDE.md               # This file
+├── CLAUDE.md               # This file
+├── IMPLEMENTATION_ROADMAP.md  # 20-week implementation plan
+├── REVIEW.md               # Code review with prioritized issues
+├── DATABASE_SCHEMA.md      # Complete database schema
+├── AUTH_FLOWS.md           # Authentication architecture
+├── SMART_PLANNING.md       # Smart planning architecture
+├── OBSERVABILITY.md        # Observability architecture
+├── openapi-smart-planning.yaml   # Smart Planning API spec
+└── openapi-observability.yaml    # Observability API spec
 ```
 
 ## Roadmap Context
 
-See `docs/PROJECT_PLAN.md` for future work. Key upcoming features:
-- Provider abstraction and fakes
-- AWS/GCP discovery and reconciliation
-- Allocator service and policies (VRFs, reservations)
-- AuthN/Z and audit logging
+See `IMPLEMENTATION_ROADMAP.md` for the detailed 20-week plan. Summary:
+
+| Phase | Weeks | Focus | Key Deliverables |
+|-------|-------|-------|------------------|
+| **1: Foundation** | 1-4 | Core infrastructure | Auth, database layer, basic pools |
+| **2: Cloud Integration** | 5-8 | Multi-cloud | AWS/GCP/Azure discovery, sync engine |
+| **3: Smart Planning** | 9-12 | Analysis | Gap analysis, recommendations, schema wizard |
+| **4: AI Planning** | 13-16 | LLM integration | Conversational planning, plan generation |
+| **5: Enterprise** | 17-20 | Production ready | Multi-tenancy, SSO, audit, rate limiting |
+
+### Immediate Next Steps (from REVIEW.md)
+
+**Sprint 1 - Critical Fixes:**
+1. Add input validation package (`internal/validation/`)
+2. Migrate to structured logging with `slog`
+3. Add `/readyz` endpoint with database health check
+4. Implement rate limiting middleware
+
+**Sprint 2 - Observability:**
+5. Implement `internal/observability/` interfaces
+6. Add Prometheus metrics endpoint
+7. Add request ID middleware
+8. Increase test coverage to 65%+
+
+### Development Priorities
+
+When implementing new features, follow this order:
+1. **P0 issues** from REVIEW.md (critical bugs/gaps)
+2. **P1 issues** (production readiness)
+3. **Phase 1** roadmap items (foundation)
+4. **Phase 2+** features (cloud integration, planning)
+
+## Additional Documentation
+
+- `docs/PROJECT_PLAN.md` - Original project roadmap
+- `API_EXAMPLES.md` - API usage examples
+- `DEPLOYMENT.md` - Deployment guides
+- `CLEANUP.md` - Documentation consolidation notes

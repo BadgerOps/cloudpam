@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,10 +14,13 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	ih "cloudpam/internal/http"
+	"cloudpam/internal/observability"
 )
 
 func main() {
-	logger := setupLogger()
+	// Initialize structured logger from environment configuration
+	logCfg := observability.ConfigFromEnv()
+	logger := observability.NewLogger(logCfg)
 
 	addr := envOr("ADDR", ":8080")
 	if p := os.Getenv("PORT"); p != "" { // Heroku-style
@@ -59,6 +61,19 @@ func main() {
 	// Select storage based on build tags and env (see store_*.go in this package).
 	store := selectStore(logger)
 
+	// Initialize metrics
+	metricsCfg := observability.MetricsConfigFromEnv()
+	var metrics *observability.Metrics
+	if metricsCfg.Enabled {
+		metrics = observability.NewMetrics(metricsCfg)
+		logger.Info("metrics enabled",
+			"namespace", metricsCfg.Namespace,
+			"version", metricsCfg.Version,
+		)
+	} else {
+		logger.Info("metrics disabled")
+	}
+
 	rateCfg := ih.DefaultRateLimitConfig()
 	if rpsVal := strings.TrimSpace(os.Getenv("RATE_LIMIT_RPS")); rpsVal != "" {
 		if parsed, err := strconv.ParseFloat(rpsVal, 64); err != nil {
@@ -91,15 +106,17 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	srv := ih.NewServer(mux, store, logger)
+	srv := ih.NewServer(mux, store, logger, metrics)
 	srv.RegisterRoutes()
 
-	// Apply middleware stack (request ID, structured logging, rate limiting).
+	// Apply middleware stack (metrics, request ID, structured logging, rate limiting).
+	// Order: metrics (outermost) -> requestID -> logging -> rateLimiting (innermost before handler)
 	handler := ih.ApplyMiddlewares(
 		mux,
+		observability.MetricsMiddleware(metrics),
 		ih.RequestIDMiddleware(),
-		ih.LoggingMiddleware(logger),
-		ih.RateLimitMiddleware(rateCfg, logger),
+		ih.LoggingMiddleware(logger.Slog()),
+		ih.RateLimitMiddleware(rateCfg, logger.Slog()),
 	)
 	server := &http.Server{
 		Addr:              addr,
@@ -158,24 +175,6 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-func setupLogger() *slog.Logger {
-	levelVar := new(slog.LevelVar)
-	switch strings.ToLower(envOr("LOG_LEVEL", "info")) {
-	case "debug":
-		levelVar.Set(slog.LevelDebug)
-	case "warn", "warning":
-		levelVar.Set(slog.LevelWarn)
-	case "error":
-		levelVar.Set(slog.LevelError)
-	default:
-		levelVar.Set(slog.LevelInfo)
-	}
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: levelVar,
-	})
-	return slog.New(handler)
-}
-
 func envOr(k, def string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
@@ -184,7 +183,7 @@ func envOr(k, def string) string {
 }
 
 // runMigrationsCLI executes migration commands (sqlite builds only).
-func runMigrationsCLI(logger *slog.Logger, cmd string) {
+func runMigrationsCLI(logger observability.Logger, cmd string) {
 	dsn := os.Getenv("SQLITE_DSN")
 	if dsn == "" {
 		dsn = "file:cloudpam.db?cache=shared&_fk=1"

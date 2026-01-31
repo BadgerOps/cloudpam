@@ -43,3 +43,9 @@ Icon?
 
 # Coverage files
 coverage*
+
+# Planning documents and mockups (local only, not committed)
+.planning/
+
+# Claude Code local config
+.claude/

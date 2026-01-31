@@ -1,118 +1,211 @@
 # CloudPAM
 
-[![Test](https://github.com/BadgerOps/cloudpam/actions/workflows/test.yml/badge.svg)](https://github.com/BadgerOps/cloudpam/actions/workflows/test.yml)
-[![Lint](https://github.com/BadgerOps/cloudpam/actions/workflows/lint.yml/badge.svg)](https://github.com/BadgerOps/cloudpam/actions/workflows/lint.yml)
+**Cloud-native IP Address Management**
 
-Lightweight, cloud‑native IP Address Management (IPAM) for AWS and GCP with an extensible provider model. Backend in Go, UI with Alpine.js, storage via in‑memory or SQLite.
+CloudPAM is a modern IPAM solution designed for hybrid and multi-cloud environments. It helps infrastructure teams plan, allocate, and track IP addresses across on-premises data centers and cloud providers.
 
-## Quick Start (Dev)
-- Prereqs: Go 1.24+
-- Run (in‑memory): `make dev` (or `go run ./cmd/cloudpam`)
-- Open: http://localhost:8080
+## Key Features
 
-Features in the UI
-- Create top‑level pools (CIDR).
-- Explore selectable IPv4 blocks within a pool with pagination (10/50/100/All) and create sub‑pools from free blocks.
+- **Hierarchical Pool Management** - Organize IP addresses in a tree structure matching your network topology
+- **Smart Planning** - AI-assisted network planning with gap analysis, recommendations, and growth projections
+- **Cloud Discovery** - Auto-import VPCs, subnets, and IPs from AWS, GCP, and Azure
+- **Schema Wizard** - Design IP schemas with templates before deploying
+- **Drift Detection** - Identify discrepancies between planned and actual allocations
+- **Multi-tenant** - Role-based access control with team-scoped permissions
 
-## SQLite Mode (optional)
-- Add driver: `go get modernc.org/sqlite@latest`
-- Build with tag: `make sqlite-build` (or `go build -tags sqlite -o cloudpam ./cmd/cloudpam`)
-- Run with DSN: `make sqlite-run` (or `SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' ./cloudpam`)
-
-## Tasks via Make or Just
-- Makefile delegates to `just` if installed; otherwise runs built-in fallbacks.
-- Common tasks: `make dev | build | sqlite-build | sqlite-run | fmt | lint | test | tidy`
-- If you prefer Justfile directly: `just dev`, `just sqlite-run`, etc.
-
-## Releases
-- Release artifacts are multi-platform binaries (Linux/macOS/Windows on amd64/arm64) built with the `sqlite` tag using the CGO-less `modernc.org/sqlite` driver.
-- No system SQLite is required. Migrations are embedded and applied automatically.
-- To use SQLite, set `SQLITE_DSN` (defaults to `file:cloudpam.db?cache=shared&_fk=1` when unset in sqlite builds). Examples:
-  - Linux/macOS: `SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' ./cloudpam`
-  - Windows (PowerShell): `$env:SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1'; .\cloudpam.exe`
-
-## Upgrading
-- SQLite builds run forward-only schema migrations automatically at startup; binaries embed SQL migrations.
-- View schema status: `./cloudpam -migrate status` (or `cloudpam.exe -migrate status` on Windows).
-- Backward downgrades after applying migrations are not supported; take a file backup of your DB before major upgrades.
-- Rolling upgrade (single node): stop old binary, start new; DB is reused in place.
-- Compatibility: `schema_info.min_supported_schema` guards older binaries; follow release notes if a breaking schema change occurs.
-- Optional: set `APP_VERSION` to stamp migrations (e.g., `APP_VERSION=v1.2.3 ./cloudpam`).
-
-## CI and Linting
-- This repo includes `.golangci.yml` and a GitHub Actions workflow at `.github/workflows/lint.yml`.
-- CI pins Go `1.24.x` and golangci-lint `v2.1.6` to avoid local toolchain mismatches.
-
-Notes
-- Without the `sqlite` build tag, the server uses an in‑memory store and logs a hint if `SQLITE_DSN` is set.
-- Current CIDR tools and validation target IPv4. IPv6 support is planned.
-
-## API Reference
-The REST contract is captured in `docs/openapi.yaml` (OpenAPI 3.1). Preview it locally with your preferred viewer or import it into Postman/Insomnia.
-
-Common requests:
+## Quick Start
 
 ```bash
-# Liveness probe
-curl http://localhost:8080/healthz
+# Clone the repository
+git clone https://github.com/BadgerOps/cloudpam.git
+cd cloudpam
 
-# List pools
-curl http://localhost:8080/api/v1/pools
+# Start with Docker Compose (SQLite)
+docker-compose up -d
 
-# Create a /24 child pool under parent 1
-curl -X POST http://localhost:8080/api/v1/pools \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Prod-1","cidr":"10.0.1.0/24","parent_id":1}'
-
-# Enumerate candidate /26 blocks for pool 1
-curl "http://localhost:8080/api/v1/pools/1/blocks?new_prefix_len=26&page_size=50&page=1"
-
-# List assigned blocks filtered by account IDs
-curl "http://localhost:8080/api/v1/blocks?accounts=12,14&page_size=50&page=1"
+# Access the UI
+open http://localhost:8080
 ```
 
-Errors use the JSON envelope `{"error":"message","detail":"optional context"}`. The live server also serves the spec at `http://localhost:8080/openapi.yaml` for tooling consumption.
-
-### OpenAPI tooling
-- Validate the spec (Ruby/Psych sanity check): `just openapi-validate`
-- Generate HTML docs (writes to `docs/openapi-html/`): `just openapi-html`
-- Example client generation: `openapi-generator-cli generate -i docs/openapi.yaml -g typescript-fetch -o clients/ts`
-
 ## Documentation
-- Project plan: `docs/PROJECT_PLAN.md`
-- Changelog: `docs/CHANGELOG.md`
-- OpenAPI spec: `docs/openapi.yaml`
 
-## Screenshots
-The `photos/` directory contains app screenshots (tracked via Git LFS). To enable LFS locally: `git lfs install`.
+### Getting Started
+| Document | Description |
+|----------|-------------|
+| [Quick Start Guide](internal/docs/content/getting-started/quick-start.md) | Get running in 5 minutes |
+| [Deployment Guide](DEPLOYMENT.md) | Production deployment options |
 
-- Pools overview: `photos/pools.png`
-  ![Pools](photos/pools.png)
-- Pool blocks with filters and tooltips: `photos/blocks.png`
-  ![Blocks](photos/blocks.png)
-- IP Space visualization bar: `photos/visualization.png`
-  ![Visualization](photos/visualization.png)
-- Bulk actions (Pools): `photos/bulk-actions-pools.png`
-  ![Bulk Pools](photos/bulk-actions-pools.png)
-- Accounts list and edit: `photos/accounts.png`
-  ![Accounts](photos/accounts.png)
-- Analytics filters and charts: `photos/analytics.png`
-  ![Analytics](photos/analytics.png)
+### Architecture & Design
+| Document | Description |
+|----------|-------------|
+| [API Specification](openapi.yaml) | OpenAPI 3.1 spec (85+ endpoints) |
+| [Smart Planning API](openapi-smart-planning.yaml) | AI planning & analysis endpoints |
+| [Database Schema](DATABASE_SCHEMA.md) | PostgreSQL/SQLite schema design |
+| [Authentication Flows](AUTH_FLOWS.md) | JWT, API keys, SSO/OIDC |
+| [Documentation Architecture](DOCUMENTATION_ARCHITECTURE.md) | Embedded docs system |
 
-Suggested capture set (drop files into `photos/` with these names):
-- `pools.png`, `blocks.png`, `visualization.png`, `bulk-actions-pools.png`, `accounts.png`, `analytics.png`
+### Smart Planning
+| Document | Description |
+|----------|-------------|
+| [Smart Planning Architecture](SMART_PLANNING.md) | Discovery, analysis, and AI planning |
+| [Planning Interfaces](internal/planning/interfaces.go) | Go service interfaces |
+| [Implementation Roadmap](IMPLEMENTATION_ROADMAP.md) | 20-week development plan |
 
-Automated capture (Playwright)
-- Prereqs: Node 18+, `git lfs install`, app running at `http://localhost:8080` (or set `APP_URL`).
-- From `code/cloudpam/`:
-  - `npm install`
-  - `npx playwright install chromium`
-  - `APP_URL=http://localhost:8080 npm run screenshots`
-- Outputs to `photos/` with the filenames above.
+### Observability
+| Document | Description |
+|----------|-------------|
+| [Observability Architecture](OBSERVABILITY.md) | Logging, metrics, tracing, audit |
+| [Observability Interfaces](internal/observability/interfaces.go) | Logger, Metrics, Tracer interfaces |
+| [Observability API](openapi-observability.yaml) | Audit log and health endpoints |
+| [Vector Configuration](deploy/vector/vector.toml) | Log shipping to Splunk, CloudWatch, etc. |
+| [K8s Observability](deploy/k8s/observability-stack.yaml) | Prometheus, Grafana, Jaeger |
+| [Docker Compose](deploy/docker-compose.observability.yml) | Local observability stack |
 
+### User Guides
+| Document | Description |
+|----------|-------------|
+| [IP Schema Planning](internal/docs/content/user-guide/ip-schema-planning.md) | Design effective IP schemas |
+| [Smart Planning Guide](internal/docs/content/user-guide/smart-planning.md) | AI-assisted network planning |
+| [API Examples](API_EXAMPLES.md) | Common API usage patterns |
 
-## Roadmap (short)
-- Provider abstraction and fakes
-- AWS/GCP discovery and reconciliation
-- Allocator service and policies (VRFs, reservations)
-- AuthN/Z and audit logging
+### UI Mockups
+| Mockup | Description |
+|--------|-------------|
+| [Dashboard](cloudpam-dashboard.html) | Main dashboard with pool overview |
+| [Cloud Accounts](cloudpam-accounts.html) | Cloud provider integration |
+| [Discovery](cloudpam-discovery.html) | Cloud resource discovery |
+| [Schema Planner](cloudpam-schema-planner.html) | Visual schema designer |
+| [AI Planning Assistant](cloudpam-ai-planning.html) | Conversational planning interface |
+| [Audit Log](cloudpam-audit-log.html) | Activity and change tracking |
+| [Auth Settings](cloudpam-settings-auth.html) | Authentication configuration |
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              CloudPAM                                        │
+│                                                                              │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────────────┐ │
+│  │    REST API    │  │    Web UI      │  │      AI Planning Assistant     │ │
+│  │  (OpenAPI 3.1) │  │    (React)     │  │   (LLM-powered, pluggable)     │ │
+│  └───────┬────────┘  └───────┬────────┘  └───────────────┬────────────────┘ │
+│          │                   │                           │                   │
+│  ┌───────┴───────────────────┴───────────────────────────┴────────────────┐ │
+│  │                         Core Services                                   │ │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────────────┐ │ │
+│  │  │    Pools    │ │    Auth     │ │   Audit     │ │   Smart Planning  │ │ │
+│  │  │  Management │ │   (RBAC)    │ │   Logging   │ │  (Analysis + AI)  │ │ │
+│  │  └─────────────┘ └─────────────┘ └─────────────┘ └───────────────────┘ │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                    │                                         │
+│  ┌─────────────────────────────────┴─────────────────────────────────────┐  │
+│  │                   PostgreSQL / SQLite (dual-mode)                      │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────┘
+          │                    │                    │
+          ▼                    ▼                    ▼
+   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+   │     AWS     │      │     GCP     │      │    Azure    │
+   │ (VPC/EC2)   │      │ (Compute)   │      │  (VNets)    │
+   └─────────────┘      └─────────────┘      └─────────────┘
+```
+
+## Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| **Backend** | Go 1.21+ |
+| **Database** | PostgreSQL 15+ (production) / SQLite (development) |
+| **Frontend** | React 18 + Tailwind CSS |
+| **API** | OpenAPI 3.1 with Scalar documentation |
+| **Auth** | JWT + OAuth/OIDC + API Keys |
+| **AI** | Pluggable LLM (OpenAI, Anthropic, Azure, Ollama) |
+| **Logging** | slog (Go std lib) + Vector for shipping |
+| **Metrics** | OpenTelemetry + Prometheus |
+| **Tracing** | OpenTelemetry + Jaeger |
+
+## Project Structure
+
+```
+cloudpam/
+├── cmd/
+│   └── cloudpam/           # Main application entry point
+├── internal/
+│   ├── api/                # HTTP handlers and routing
+│   ├── domain/             # Core domain models
+│   │   └── models.go       # Pool, Address, User types
+│   ├── storage/            # Database interfaces and implementations
+│   │   ├── interfaces.go   # Repository interfaces
+│   │   ├── postgres/       # PostgreSQL implementation
+│   │   └── sqlite/         # SQLite implementation
+│   ├── planning/           # Smart planning services
+│   │   └── interfaces.go   # Discovery, Analysis, AI interfaces
+│   ├── observability/      # Logging, metrics, tracing
+│   │   └── interfaces.go   # Logger, Metrics, Tracer interfaces
+│   ├── auth/               # Authentication and authorization
+│   └── docs/               # Embedded documentation
+├── deploy/                 # Deployment configurations
+│   ├── vector/             # Vector log shipping config
+│   ├── k8s/                # Kubernetes manifests
+│   └── docker-compose.observability.yml
+├── migrations/             # Database migrations
+├── web/                    # React frontend
+├── openapi.yaml            # Core API specification
+├── openapi-smart-planning.yaml  # Planning API specification
+└── docker-compose.yml      # Local development setup
+```
+
+## Implementation Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Foundation | 🟡 Design | Core API, database, auth |
+| Cloud Integration | 🟡 Design | AWS/GCP/Azure discovery |
+| Smart Planning | 🟡 Design | Analysis, recommendations |
+| AI Planning | 🟡 Design | LLM integration, conversations |
+| Observability | 🟡 Design | Logging, metrics, tracing, audit |
+| Enterprise | ⚪ Planned | Multi-tenancy, SSO |
+
+See [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) for the full development timeline.
+
+## API Overview
+
+CloudPAM provides a comprehensive REST API with 100+ endpoints:
+
+### Core Resources
+- `GET/POST /api/v1/pools` - Pool management
+- `GET/POST /api/v1/cloud-accounts` - Cloud provider integration
+- `GET /api/v1/discovery/resources` - Discovered cloud resources
+- `GET /api/v1/audit/events` - Audit trail
+
+### Smart Planning
+- `POST /api/v1/planning/analyze` - Run network analysis
+- `GET /api/v1/planning/recommendations` - Get recommendations
+- `POST /api/v1/planning/ai/conversations` - AI planning sessions
+- `POST /api/v1/planning/schema/generate` - Generate schemas
+
+### Configuration
+- `GET/PUT /api/v1/settings/llm` - LLM provider configuration
+- `GET /api/v1/settings/llm/prompts` - Prompt templates
+
+Full API documentation available at `/docs/api` when running.
+
+## Contributing
+
+We welcome contributions! Please see our contributing guidelines:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Support
+
+- **Documentation**: Browse the `/docs` endpoint
+- **Issues**: [GitHub Issues](https://github.com/BadgerOps/cloudpam/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/BadgerOps/cloudpam/discussions)

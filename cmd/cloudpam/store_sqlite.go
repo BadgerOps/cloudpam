@@ -3,18 +3,18 @@
 package main
 
 import (
-	"log/slog"
 	"os"
 
+	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
 	sqlitestore "cloudpam/internal/storage/sqlite"
 )
 
 // selectStore returns a SQLite-backed store when built with the 'sqlite' tag.
 // Configure with env var SQLITE_DSN (e.g., file:cloudpam.db?cache=shared&_fk=1)
-func selectStore(logger *slog.Logger) storage.Store {
+func selectStore(logger observability.Logger) storage.Store {
 	if logger == nil {
-		logger = slog.Default()
+		logger = observability.NewLogger(observability.DefaultConfig())
 	}
 	dsn := os.Getenv("SQLITE_DSN")
 	if dsn == "" {
