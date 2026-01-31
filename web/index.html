@@ -246,11 +246,12 @@
                     </template>
                   </div>
                   <div class="px-4 py-3 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-xs text-gray-500">
-                    <div class="flex items-center gap-4">
-                      <span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-purple-500"></div> Root</span>
+                    <div class="flex items-center gap-4 flex-wrap">
+                      <span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-purple-500"></div> Supernet</span>
                       <span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-blue-500"></div> Region</span>
                       <span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-green-500"></div> Environment</span>
-                      <span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-amber-500"></div> Account</span>
+                      <span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-amber-500"></div> VPC</span>
+                      <span class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-orange-500"></div> Subnet</span>
                     </div>
                   </div>
                 </div>
@@ -402,17 +403,37 @@
                   <h3 class="font-semibold">Create New Pool</h3>
                   <button @click="showCreateForm = false" class="text-gray-400 hover:text-gray-600">&times;</button>
                 </div>
-                <div class="p-4">
+                <div class="p-4 space-y-4">
                   <div class="grid grid-cols-4 gap-4">
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                      <label class="block text-sm font-medium text-gray-700 mb-1">Name *</label>
                       <input type="text" x-model="form.name" placeholder="e.g., Production VPC" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700 mb-1">CIDR Block</label>
+                      <label class="block text-sm font-medium text-gray-700 mb-1">CIDR Block *</label>
                       <input type="text" x-model="form.cidr" @blur="validateCIDR()" placeholder="e.g., 10.0.0.0/16" :class="'w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none ' + (cidrError ? 'border-red-500' : 'border-gray-300')" />
                       <p x-show="cidrError" class="text-red-500 text-xs mt-1" x-text="cidrError"></p>
                     </div>
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                      <select x-model="form.type" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="supernet">Supernet</option>
+                        <option value="region">Region</option>
+                        <option value="environment">Environment</option>
+                        <option value="vpc">VPC</option>
+                        <option value="subnet">Subnet</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                      <select x-model="form.status" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="active">Active</option>
+                        <option value="planned">Planned</option>
+                        <option value="deprecated">Deprecated</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="grid grid-cols-4 gap-4">
                     <div>
                       <label class="block text-sm font-medium text-gray-700 mb-1">Account (optional)</label>
                       <select x-model.number="form.account_id" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
@@ -422,12 +443,25 @@
                         </template>
                       </select>
                     </div>
-                    <div class="flex items-end">
-                      <button @click="createPool()" :disabled="creating || !!cidrError" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                        <span x-show="creating" class="spinner mr-2"></span>
-                        <span x-text="creating ? 'Creating...' : 'Create Pool'"></span>
-                      </button>
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 mb-1">Parent Pool (optional)</label>
+                      <select x-model.number="form.parent_id" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option :value="null">No Parent (Root Pool)</option>
+                        <template x-for="p in $store.app.pools" :key="p.id">
+                          <option :value="p.id" x-text="p.name + ' (' + p.cidr + ')'"></option>
+                        </template>
+                      </select>
                     </div>
+                    <div class="col-span-2">
+                      <label class="block text-sm font-medium text-gray-700 mb-1">Description (optional)</label>
+                      <input type="text" x-model="form.description" placeholder="Brief description of this pool" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                    </div>
+                  </div>
+                  <div class="flex justify-end">
+                    <button @click="createPool()" :disabled="creating || !!cidrError" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                      <span x-show="creating" class="spinner mr-2"></span>
+                      <span x-text="creating ? 'Creating...' : 'Create Pool'"></span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -680,14 +714,78 @@
             </div>
           </template>
 
-          <!-- Audit View (Placeholder) -->
+          <!-- Audit View -->
           <template x-if="tab==='audit'">
-            <div class="flex-1 flex items-center justify-center">
-              <div class="text-center">
-                <svg class="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                <h2 class="text-xl font-semibold text-gray-900 mb-2">Audit Log</h2>
-                <p class="text-gray-500 mb-4">Track all changes and actions in the system</p>
-                <p class="text-sm text-gray-400">Coming in a future release</p>
+            <div class="flex-1 overflow-auto p-6" x-data="auditView()" x-init="init()">
+              <div class="flex items-center justify-between mb-6">
+                <div>
+                  <h1 class="text-2xl font-semibold text-gray-900">Audit Log</h1>
+                  <p class="text-gray-500">Track all changes and actions in the system</p>
+                </div>
+                <button @click="refresh()" class="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                  Refresh
+                </button>
+              </div>
+
+              <!-- Filters -->
+              <div class="bg-white rounded-xl border border-gray-200 mb-6">
+                <div class="p-4 flex items-center gap-4">
+                  <div class="flex-1">
+                    <input type="text" x-model="search" placeholder="Search events..." class="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+                  <select x-model="actionFilter" class="px-3 py-2 border border-gray-300 rounded-lg">
+                    <option value="">All Actions</option>
+                    <option value="create">Create</option>
+                    <option value="update">Update</option>
+                    <option value="delete">Delete</option>
+                  </select>
+                  <select x-model="resourceFilter" class="px-3 py-2 border border-gray-300 rounded-lg">
+                    <option value="">All Resources</option>
+                    <option value="pool">Pools</option>
+                    <option value="account">Accounts</option>
+                    <option value="apikey">API Keys</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Audit Events -->
+              <div class="bg-white rounded-xl border border-gray-200">
+                <div class="divide-y divide-gray-200">
+                  <template x-for="event in filteredEvents()" :key="event.id">
+                    <div class="p-4 hover:bg-gray-50">
+                      <div class="flex items-start gap-4">
+                        <div :class="'w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-medium ' + getActionColor(event.action)">
+                          <span x-text="getActionIcon(event.action)"></span>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                          <div class="flex items-center gap-2 mb-1">
+                            <span class="font-medium text-gray-900" x-text="event.actor || 'system'"></span>
+                            <span class="text-gray-500" x-text="formatAction(event.action)"></span>
+                            <span class="font-medium text-gray-900" x-text="event.resource_type || 'resource'"></span>
+                            <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded" x-text="event.resource_id || '-'"></code>
+                          </div>
+                          <div class="text-sm text-gray-500" x-text="formatTimestamp(event.timestamp)"></div>
+                          <template x-if="event.details">
+                            <div class="mt-2 text-sm text-gray-600 bg-gray-50 rounded p-2">
+                              <pre class="whitespace-pre-wrap" x-text="JSON.stringify(event.details, null, 2)"></pre>
+                            </div>
+                          </template>
+                        </div>
+                        <div class="text-xs text-gray-400" x-text="event.request_id ? 'req:' + event.request_id.slice(0, 8) : ''"></div>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="filteredEvents().length === 0">
+                    <div class="p-12 text-center">
+                      <svg class="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      <p class="text-gray-500 font-medium" x-text="loading ? 'Loading...' : (authRequired ? 'Authentication required to view audit logs' : 'No audit events found')"></p>
+                      <template x-if="authRequired">
+                        <p class="text-sm text-gray-400 mt-2">Audit logs require API key authentication</p>
+                      </template>
+                    </div>
+                  </template>
+                </div>
               </div>
             </div>
           </template>
@@ -715,12 +813,36 @@
                   </div>
                   <div class="bg-gray-50 rounded-lg p-3">
                     <p class="text-xs text-gray-500">Total IPs</p>
-                    <p class="font-medium" x-text="formatHostCount(getHostCount(selectedPool.cidr))"></p>
+                    <p class="font-medium" x-text="selectedPool.stats ? formatHostCount(selectedPool.stats.total_ips) : formatHostCount(getHostCount(selectedPool.cidr))"></p>
                   </div>
                   <div class="bg-gray-50 rounded-lg p-3">
                     <p class="text-xs text-gray-500">Status</p>
                     <p class="font-medium capitalize" x-text="selectedPool.status || 'active'"></p>
                   </div>
+                  <template x-if="selectedPool.stats">
+                    <div class="bg-gray-50 rounded-lg p-3">
+                      <p class="text-xs text-gray-500">Used IPs</p>
+                      <p class="font-medium" x-text="formatHostCount(selectedPool.stats.used_ips)"></p>
+                    </div>
+                  </template>
+                  <template x-if="selectedPool.stats">
+                    <div class="bg-gray-50 rounded-lg p-3">
+                      <p class="text-xs text-gray-500">Available IPs</p>
+                      <p class="font-medium" x-text="formatHostCount(selectedPool.stats.available_ips)"></p>
+                    </div>
+                  </template>
+                  <template x-if="selectedPool.stats && selectedPool.stats.child_count > 0">
+                    <div class="bg-gray-50 rounded-lg p-3">
+                      <p class="text-xs text-gray-500">Child Pools</p>
+                      <p class="font-medium" x-text="selectedPool.stats.child_count"></p>
+                    </div>
+                  </template>
+                  <template x-if="selectedPool.description">
+                    <div class="bg-gray-50 rounded-lg p-3 col-span-2">
+                      <p class="text-xs text-gray-500">Description</p>
+                      <p class="font-medium" x-text="selectedPool.description"></p>
+                    </div>
+                  </template>
                 </div>
                 <template x-if="selectedPool.utilization !== undefined">
                   <div>
@@ -878,17 +1000,16 @@
           expandedNodes: new Set([]),
           showCreateForm: false,
 
-          // Mock data for demo
-          alerts: [
-            { id: 1, type: 'drift', severity: 'warning', title: 'CIDR Drift Detected', message: 'staging-main VPC CIDR changed', time: '15 min ago' },
-            { id: 2, type: 'utilization', severity: 'warning', title: 'High Utilization', message: 'core-networking is 72% utilized', time: '1 hour ago' },
-          ],
-          recentActivity: [
-            { id: 1, action: 'created', entity: 'Pool', name: 'workload-002', user: 'admin', time: '10 min ago' },
-            { id: 2, action: 'updated', entity: 'Pool', name: 'staging-main', user: 'admin', time: '1 hour ago' },
-          ],
+          // Real data - populated from API
+          hierarchyData: [], // From /api/v1/pools/hierarchy
+          alerts: [],
+          recentActivity: [],
+          auditLogs: [],
 
           async init() {
+            // Store app instance globally for cross-component refresh
+            window.appInstance = this;
+
             // Restore tab from URL hash or localStorage
             const hash = location.hash.replace('#', '');
             const saved = localStorage.getItem('cp.tab');
@@ -905,23 +1026,101 @@
 
           async loadData() {
             try {
-              const [poolsRes, accountsRes] = await Promise.all([
+              const [poolsRes, hierarchyRes, accountsRes, auditRes] = await Promise.all([
                 fetch('/api/v1/pools'),
-                fetch('/api/v1/accounts')
+                fetch('/api/v1/pools/hierarchy'),
+                fetch('/api/v1/accounts'),
+                fetch('/api/v1/audit?limit=10').catch(() => ({ ok: false })) // May require auth
               ]);
               this.pools = await poolsRes.json();
               this.accounts = await accountsRes.json();
+
+              // Hierarchy includes stats
+              if (hierarchyRes.ok) {
+                const data = await hierarchyRes.json();
+                this.hierarchyData = data.pools || data || [];
+              }
+
+              // Audit logs (may require auth)
+              if (auditRes.ok) {
+                const auditData = await auditRes.json();
+                this.auditLogs = auditData.events || auditData || [];
+                this.recentActivity = this.auditLogs.slice(0, 5).map((e, i) => ({
+                  id: e.id || i,
+                  action: e.action || 'unknown',
+                  entity: e.resource_type || 'Resource',
+                  name: e.resource_id || '',
+                  user: e.actor || 'system',
+                  time: this.formatTimeAgo(e.timestamp)
+                }));
+              }
+
               Alpine.store('app').pools = this.pools;
               Alpine.store('app').accounts = this.accounts;
 
               // Auto-expand root nodes
               this.pools.filter(p => !p.parent_id).forEach(p => this.expandedNodes.add(p.id));
+
+              // Generate alerts from hierarchy data (high utilization)
+              this.generateAlerts();
             } catch (e) {
               console.error('Failed to load data', e);
             }
           },
 
+          formatTimeAgo(timestamp) {
+            if (!timestamp) return 'unknown';
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            if (diffMins < 1) return 'just now';
+            if (diffMins < 60) return diffMins + ' min ago';
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return diffHours + ' hour' + (diffHours > 1 ? 's' : '') + ' ago';
+            const diffDays = Math.floor(diffHours / 24);
+            return diffDays + ' day' + (diffDays > 1 ? 's' : '') + ' ago';
+          },
+
+          generateAlerts() {
+            this.alerts = [];
+            let alertId = 1;
+
+            // Check for high utilization pools
+            const checkUtilization = (pools) => {
+              for (const pool of pools) {
+                if (pool.stats && pool.stats.utilization > 80) {
+                  this.alerts.push({
+                    id: alertId++,
+                    type: 'utilization',
+                    severity: 'error',
+                    title: 'Critical Utilization',
+                    message: pool.name + ' is ' + Math.round(pool.stats.utilization) + '% utilized',
+                    time: 'now'
+                  });
+                } else if (pool.stats && pool.stats.utilization > 60) {
+                  this.alerts.push({
+                    id: alertId++,
+                    type: 'utilization',
+                    severity: 'warning',
+                    title: 'High Utilization',
+                    message: pool.name + ' is ' + Math.round(pool.stats.utilization) + '% utilized',
+                    time: 'now'
+                  });
+                }
+                if (pool.children) checkUtilization(pool.children);
+              }
+            };
+            checkUtilization(this.hierarchyData);
+          },
+
           get hierarchyTree() {
+            // Use hierarchy data from API if available (includes stats)
+            if (this.hierarchyData && this.hierarchyData.length > 0) {
+              return this.hierarchyData.map(p => this.enrichPool(p));
+            }
+
+            // Fallback: build tree from flat pools list
             const byParent = new Map();
             for (const p of this.pools) {
               const key = p.parent_id || 'root';
@@ -933,7 +1132,7 @@
               const children = byParent.get(parentId) || [];
               return children.map(p => ({
                 ...p,
-                type: this.inferPoolType(p),
+                type: p.type || this.inferPoolType(p),
                 children: buildTree(p.id)
               }));
             };
@@ -941,12 +1140,25 @@
             return buildTree('root');
           },
 
+          enrichPool(pool) {
+            // Calculate utilization percentage from stats
+            const utilization = pool.stats ? Math.round(pool.stats.utilization) : undefined;
+            return {
+              ...pool,
+              type: pool.type || this.inferPoolType(pool),
+              utilization: utilization,
+              children: pool.children ? pool.children.map(c => this.enrichPool(c)) : []
+            };
+          },
+
           inferPoolType(pool) {
-            if (!pool.parent_id) return 'root';
+            if (pool.type && pool.type !== 'subnet') return pool.type;
+            if (!pool.parent_id) return 'supernet';
             const prefix = parseInt(pool.cidr?.split('/')[1] || '0', 10);
             if (prefix <= 12) return 'region';
             if (prefix <= 16) return 'environment';
-            return 'account';
+            if (prefix <= 20) return 'vpc';
+            return 'subnet';
           },
 
           get totalIPs() {
@@ -999,7 +1211,15 @@
           },
 
           getPoolTypeColor(type) {
-            const colors = { root: 'bg-purple-500', region: 'bg-blue-500', environment: 'bg-green-500', account: 'bg-amber-500' };
+            const colors = {
+              supernet: 'bg-purple-500',
+              root: 'bg-purple-500',
+              region: 'bg-blue-500',
+              environment: 'bg-green-500',
+              vpc: 'bg-amber-500',
+              subnet: 'bg-orange-500',
+              account: 'bg-amber-500'
+            };
             return colors[type] || 'bg-gray-400';
           },
 
@@ -1072,7 +1292,7 @@
           search: '',
           pageSize: '50',
           showCreateForm: false,
-          form: { name: '', cidr: '', account_id: null },
+          form: { name: '', cidr: '', account_id: null, type: 'subnet', status: 'active', source: 'manual', description: '' },
           cidrError: '',
           creating: false,
           current: null,
@@ -1125,10 +1345,12 @@
                 showToast(err.error || 'Failed to create pool', 'error');
                 return;
               }
-              this.form = { name: '', cidr: '', account_id: null };
+              this.form = { name: '', cidr: '', account_id: null, parent_id: null, type: 'subnet', status: 'active', source: 'manual', description: '' };
               this.showCreateForm = false;
               await Alpine.store('app').fetchPools();
               this.pools = Alpine.store('app').pools;
+              // Reload hierarchy
+              if (window.appInstance) window.appInstance.loadData();
               showToast('Pool created');
             } catch (e) {
               showToast('Failed to create pool', 'error');
@@ -1261,6 +1483,86 @@
           getTierBadgeClass(t) {
             const classes = { prd: 'bg-red-100 text-red-700', stg: 'bg-amber-100 text-amber-700', dev: 'bg-green-100 text-green-700', sbx: 'bg-gray-100 text-gray-700' };
             return classes[t] || 'bg-gray-100 text-gray-700';
+          }
+        };
+      }
+
+      // Audit View
+      function auditView() {
+        return {
+          events: [],
+          search: '',
+          actionFilter: '',
+          resourceFilter: '',
+          loading: false,
+          authRequired: false,
+
+          async init() {
+            await this.refresh();
+          },
+
+          async refresh() {
+            this.loading = true;
+            this.authRequired = false;
+            try {
+              let url = '/api/v1/audit?limit=50';
+              if (this.actionFilter) url += '&action=' + this.actionFilter;
+              if (this.resourceFilter) url += '&resource_type=' + this.resourceFilter;
+
+              const res = await fetch(url);
+              if (res.status === 401 || res.status === 403) {
+                this.authRequired = true;
+                this.events = [];
+                return;
+              }
+              if (res.ok) {
+                const data = await res.json();
+                this.events = data.events || data || [];
+              }
+            } catch (e) {
+              console.error('Failed to load audit logs', e);
+            } finally {
+              this.loading = false;
+            }
+          },
+
+          filteredEvents() {
+            if (!this.search) return this.events;
+            const q = this.search.toLowerCase();
+            return this.events.filter(e =>
+              (e.actor || '').toLowerCase().includes(q) ||
+              (e.action || '').toLowerCase().includes(q) ||
+              (e.resource_type || '').toLowerCase().includes(q) ||
+              (e.resource_id || '').toLowerCase().includes(q)
+            );
+          },
+
+          formatAction(action) {
+            if (!action) return 'performed action on';
+            const parts = action.split('.');
+            return parts[parts.length - 1] + 'd';
+          },
+
+          formatTimestamp(ts) {
+            if (!ts) return '';
+            const d = new Date(ts);
+            return d.toLocaleString();
+          },
+
+          getActionColor(action) {
+            if (!action) return 'bg-gray-500';
+            if (action.includes('create')) return 'bg-green-500';
+            if (action.includes('update')) return 'bg-blue-500';
+            if (action.includes('delete')) return 'bg-red-500';
+            return 'bg-gray-500';
+          },
+
+          getActionIcon(action) {
+            if (!action) return '?';
+            if (action.includes('create')) return '+';
+            if (action.includes('update')) return '~';
+            if (action.includes('delete')) return '-';
+            return 'i';
           }
         };
       }
