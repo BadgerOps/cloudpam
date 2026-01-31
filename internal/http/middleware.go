@@ -3,8 +3,11 @@ package http
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,8 +21,8 @@ const (
 	requestIDHeader        = "X-Request-ID"
 	maxRequestIDLength     = 64
 	rateLimiterVisitorTTL  = 5 * time.Minute
-	defaultRateLimitPerMin = 100.0
-	defaultRateLimitBurst  = 20
+	defaultRateLimitRPS    = 100.0
+	defaultRateLimitBurst  = 200
 	minimumCleanupInterval = 30 * time.Second
 )
 
@@ -47,10 +50,26 @@ func (c RateLimitConfig) Enabled() bool {
 }
 
 // DefaultRateLimitConfig returns the default rate limiting configuration.
+// It reads RATE_LIMIT_RPS and RATE_LIMIT_BURST from environment variables,
+// falling back to 100 RPS and 200 burst if not set.
 func DefaultRateLimitConfig() RateLimitConfig {
+	rps := defaultRateLimitRPS
+	burst := defaultRateLimitBurst
+
+	if v := os.Getenv("RATE_LIMIT_RPS"); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil && parsed > 0 {
+			rps = parsed
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_BURST"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			burst = parsed
+		}
+	}
+
 	return RateLimitConfig{
-		RequestsPerSecond: defaultRateLimitPerMin / 60.0,
-		Burst:             defaultRateLimitBurst,
+		RequestsPerSecond: rps,
+		Burst:             burst,
 	}
 }
 
@@ -174,6 +193,12 @@ type clientLimiter struct {
 }
 
 // RateLimitMiddleware enforces per-client rate limiting using a token bucket.
+// It adds the following headers to all responses:
+//   - X-RateLimit-Limit: maximum requests per second
+//   - X-RateLimit-Remaining: approximate remaining tokens
+//   - X-RateLimit-Reset: Unix timestamp when a token will be available
+//
+// When the rate limit is exceeded, it returns 429 Too Many Requests with a Retry-After header.
 func RateLimitMiddleware(cfg RateLimitConfig, logger *slog.Logger) Middleware {
 	if !cfg.Enabled() {
 		return func(next http.Handler) http.Handler { return next }
@@ -215,6 +240,27 @@ func RateLimitMiddleware(cfg RateLimitConfig, logger *slog.Logger) Middleware {
 			}
 			mu.Unlock()
 
+			// Set rate limit headers
+			w.Header().Set("X-RateLimit-Limit", strconv.FormatFloat(cfg.RequestsPerSecond, 'f', -1, 64))
+
+			// Calculate remaining tokens (approximate, since we're not holding the lock)
+			reservation := v.limiter.ReserveN(now, 0)
+			remaining := int(math.Floor(float64(cfg.Burst) * (1 - reservation.Delay().Seconds()*cfg.RequestsPerSecond/float64(cfg.Burst))))
+			if remaining < 0 {
+				remaining = 0
+			}
+			// More accurate: use Tokens() which returns float64
+			tokens := v.limiter.Tokens()
+			remaining = int(math.Floor(tokens))
+			if remaining < 0 {
+				remaining = 0
+			}
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+
+			// Reset time: when the next token will be available
+			resetTime := now.Add(time.Duration(float64(time.Second) / cfg.RequestsPerSecond))
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetTime.Unix(), 10))
+
 			if !v.limiter.AllowN(now, 1) {
 				attrs := appendRequestID(r.Context(), []any{
 					"method", r.Method,
@@ -222,7 +268,12 @@ func RateLimitMiddleware(cfg RateLimitConfig, logger *slog.Logger) Middleware {
 					"status", http.StatusTooManyRequests,
 				})
 				logger.WarnContext(r.Context(), "rate limit exceeded", attrs...)
-				w.Header().Set("Retry-After", "1")
+				// Calculate retry-after in seconds
+				retryAfter := int(math.Ceil(1 / cfg.RequestsPerSecond))
+				if retryAfter < 1 {
+					retryAfter = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 				writeJSON(w, http.StatusTooManyRequests, apiError{Error: "too many requests"})
 				return
 			}

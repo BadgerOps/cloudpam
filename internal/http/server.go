@@ -83,6 +83,7 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
+	s.mux.HandleFunc("/readyz", s.handleReady)
 	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
 	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
 	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
@@ -514,6 +515,50 @@ func (s *statusRecorder) WriteHeader(code int) { s.status = code; s.ResponseWrit
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ReadinessResponse represents the JSON response for the readiness check endpoint.
+type ReadinessResponse struct {
+	Status string            `json:"status"`
+	Checks map[string]string `json:"checks"`
+}
+
+// handleReady checks if the application is ready to accept traffic.
+// Unlike /healthz (liveness), this endpoint verifies that dependencies are accessible.
+// Returns 200 OK if all checks pass, 503 Service Unavailable otherwise.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	ctx := r.Context()
+	checks := make(map[string]string)
+	status := "ok"
+
+	// Database check: attempt to list pools to verify database connectivity
+	_, err := s.store.ListPools(ctx)
+	if err != nil {
+		checks["database"] = "error"
+		status = "unhealthy"
+		s.loggerOrDefault().ErrorContext(ctx, "readiness check failed", appendRequestID(ctx, []any{
+			"check", "database",
+			"error", err.Error(),
+		})...)
+	} else {
+		checks["database"] = "ok"
+	}
+
+	resp := ReadinessResponse{
+		Status: status,
+		Checks: checks,
+	}
+
+	if status == "ok" {
+		writeJSON(w, http.StatusOK, resp)
+	} else {
+		writeJSON(w, http.StatusServiceUnavailable, resp)
+	}
 }
 
 func (s *Server) handleTestSentry(w http.ResponseWriter, r *http.Request) {

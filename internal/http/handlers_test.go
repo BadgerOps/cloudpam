@@ -1,7 +1,9 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	stdhttp "net/http"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 )
 
@@ -607,5 +610,99 @@ func TestOpenAPISpecEndpoint(t *testing.T) {
 	srv.mux.ServeHTTP(rr, req)
 	if rr.Code != stdhttp.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 for non-GET, got %d", rr.Code)
+	}
+}
+
+func TestHealthzEndpoint(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Fatalf("expected status ok, got %q", resp["status"])
+	}
+}
+
+func TestReadyzEndpoint(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/readyz", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var resp struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("expected status ok, got %q", resp.Status)
+	}
+	if resp.Checks["database"] != "ok" {
+		t.Fatalf("expected database check ok, got %q", resp.Checks["database"])
+	}
+}
+
+func TestReadyzEndpointMethodNotAllowed(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/readyz", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for POST, got %d", rr.Code)
+	}
+}
+
+// failingStore is a mock store that always fails database operations
+type failingStore struct {
+	storage.MemoryStore
+}
+
+func (f *failingStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
+	return nil, errors.New("database connection failed")
+}
+
+func TestReadyzEndpointDatabaseFailure(t *testing.T) {
+	st := &failingStore{}
+	mux := stdhttp.NewServeMux()
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+	srv := NewServer(mux, st, logger)
+	srv.RegisterRoutes()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/readyz", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+
+	var resp struct {
+		Status string            `json:"status"`
+		Checks map[string]string `json:"checks"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp.Status != "unhealthy" {
+		t.Fatalf("expected status unhealthy, got %q", resp.Status)
+	}
+	if resp.Checks["database"] != "error" {
+		t.Fatalf("expected database check error, got %q", resp.Checks["database"])
 	}
 }
