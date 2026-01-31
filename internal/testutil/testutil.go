@@ -53,7 +53,7 @@ type TestServerComponents struct {
 	// KeyStore is the API key store.
 	KeyStore *auth.MemoryKeyStore
 	// AuditLogger is the audit logger.
-	AuditLogger *audit.MemoryAuditLogger
+	AuditLogger audit.AuditLogger
 	// Metrics is the metrics collector.
 	Metrics *observability.Metrics
 	// Logger is the structured logger.
@@ -90,14 +90,14 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 	keyStore := auth.NewMemoryKeyStore()
 
 	// Create audit logger
-	var auditLogger *audit.MemoryAuditLogger
+	var auditLogger audit.AuditLogger
 	if cfg.EnableAudit {
 		auditLogger = audit.NewMemoryAuditLogger(audit.WithMaxEvents(1000))
 	}
 
 	// Create the base server
 	mux := http.NewServeMux()
-	srv := cloudpamhttp.NewServer(mux, store, logger, metrics)
+	srv := cloudpamhttp.NewServer(mux, store, logger, metrics, auditLogger)
 	srv.RegisterRoutes()
 
 	// Create auth server for key management endpoints
@@ -154,9 +154,9 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 	}
 }
 
-// auditLoggerAdapter adapts audit.MemoryAuditLogger to cloudpamhttp.AuditLogger interface.
+// auditLoggerAdapter adapts audit.AuditLogger to cloudpamhttp.AuditLogger interface.
 type auditLoggerAdapter struct {
-	logger *audit.MemoryAuditLogger
+	logger audit.AuditLogger
 }
 
 func (a *auditLoggerAdapter) Log(ctx context.Context, event *cloudpamhttp.AuditEvent) error {

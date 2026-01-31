@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -16,8 +17,15 @@ type Store interface {
 	GetPool(ctx context.Context, id int64) (domain.Pool, bool, error)
 	UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error)
 	UpdatePoolMeta(ctx context.Context, id int64, name *string, accountID *int64) (domain.Pool, bool, error)
+	// UpdatePool updates pool metadata with support for new fields (type, status, description, tags).
+	UpdatePool(ctx context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error)
 	DeletePool(ctx context.Context, id int64) (bool, error)
 	DeletePoolCascade(ctx context.Context, id int64) (bool, error)
+	// Enhanced pool methods for hierarchy and statistics
+	GetPoolWithStats(ctx context.Context, id int64) (*domain.PoolWithStats, error)
+	GetPoolHierarchy(ctx context.Context, rootID *int64) ([]domain.PoolWithStats, error)
+	GetPoolChildren(ctx context.Context, parentID int64) ([]domain.Pool, error)
+	CalculatePoolUtilization(ctx context.Context, id int64) (*domain.PoolStats, error)
 	// Accounts management
 	ListAccounts(ctx context.Context) ([]domain.Account, error)
 	CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error)
@@ -61,13 +69,44 @@ func (m *MemoryStore) CreatePool(ctx context.Context, in domain.CreatePool) (dom
 	defer m.mu.Unlock()
 	id := m.next
 	m.next++
+	now := time.Now().UTC()
+
+	// Apply defaults for new fields
+	poolType := in.Type
+	if poolType == "" {
+		poolType = domain.PoolTypeSubnet
+	}
+	poolStatus := in.Status
+	if poolStatus == "" {
+		poolStatus = domain.PoolStatusActive
+	}
+	poolSource := in.Source
+	if poolSource == "" {
+		poolSource = domain.PoolSourceManual
+	}
+
+	// Copy tags to avoid shared reference
+	var tags map[string]string
+	if in.Tags != nil {
+		tags = make(map[string]string, len(in.Tags))
+		for k, v := range in.Tags {
+			tags[k] = v
+		}
+	}
+
 	p := domain.Pool{
-		ID:        id,
-		Name:      in.Name,
-		CIDR:      in.CIDR,
-		ParentID:  in.ParentID,
-		AccountID: in.AccountID,
-		CreatedAt: time.Now().UTC(),
+		ID:          id,
+		Name:        in.Name,
+		CIDR:        in.CIDR,
+		ParentID:    in.ParentID,
+		AccountID:   in.AccountID,
+		Type:        poolType,
+		Status:      poolStatus,
+		Source:      poolSource,
+		Description: in.Description,
+		Tags:        tags,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	m.pools[id] = p
 	return p, nil
@@ -106,6 +145,45 @@ func (m *MemoryStore) UpdatePoolMeta(ctx context.Context, id int64, name *string
 	if accountID != nil || true {
 		p.AccountID = accountID
 	}
+	p.UpdatedAt = time.Now().UTC()
+	m.pools[id] = p
+	return p, true, nil
+}
+
+// UpdatePool updates pool metadata with support for new fields.
+func (m *MemoryStore) UpdatePool(ctx context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.pools[id]
+	if !ok {
+		return domain.Pool{}, false, nil
+	}
+	if update.Name != nil {
+		p.Name = *update.Name
+	}
+	// AccountID is always set (can be nil to clear)
+	p.AccountID = update.AccountID
+	if update.Type != nil {
+		p.Type = *update.Type
+	}
+	if update.Status != nil {
+		p.Status = *update.Status
+	}
+	if update.Description != nil {
+		p.Description = *update.Description
+	}
+	if update.Tags != nil {
+		// Copy tags to avoid shared reference
+		if *update.Tags != nil {
+			p.Tags = make(map[string]string, len(*update.Tags))
+			for k, v := range *update.Tags {
+				p.Tags[k] = v
+			}
+		} else {
+			p.Tags = nil
+		}
+	}
+	p.UpdatedAt = time.Now().UTC()
 	m.pools[id] = p
 	return p, true, nil
 }
@@ -269,6 +347,172 @@ func (m *MemoryStore) GetAccount(ctx context.Context, id int64) (domain.Account,
 	defer m.mu.RUnlock()
 	a, ok := m.accounts[id]
 	return a, ok, nil
+}
+
+// GetPoolWithStats returns a pool with its computed statistics.
+func (m *MemoryStore) GetPoolWithStats(ctx context.Context, id int64) (*domain.PoolWithStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.pools[id]
+	if !ok {
+		return nil, errors.New("pool not found")
+	}
+	stats := m.calculatePoolStatsLocked(p)
+	return &domain.PoolWithStats{
+		Pool:  p,
+		Stats: stats,
+	}, nil
+}
+
+// GetPoolHierarchy returns the pool hierarchy tree starting from rootID.
+// If rootID is nil, returns all top-level pools with their children.
+func (m *MemoryStore) GetPoolHierarchy(ctx context.Context, rootID *int64) ([]domain.PoolWithStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Build parent -> children map
+	children := make(map[int64][]int64)
+	for _, p := range m.pools {
+		if p.ParentID != nil {
+			children[*p.ParentID] = append(children[*p.ParentID], p.ID)
+		}
+	}
+
+	// Recursive function to build tree
+	var buildTree func(pid int64) domain.PoolWithStats
+	buildTree = func(pid int64) domain.PoolWithStats {
+		p := m.pools[pid]
+		stats := m.calculatePoolStatsLocked(p)
+		result := domain.PoolWithStats{
+			Pool:  p,
+			Stats: stats,
+		}
+		for _, childID := range children[pid] {
+			result.Children = append(result.Children, buildTree(childID))
+		}
+		return result
+	}
+
+	var result []domain.PoolWithStats
+
+	if rootID != nil {
+		// Return subtree from specific root
+		if _, ok := m.pools[*rootID]; !ok {
+			return nil, errors.New("root pool not found")
+		}
+		result = append(result, buildTree(*rootID))
+	} else {
+		// Return all top-level pools (no parent)
+		for _, p := range m.pools {
+			if p.ParentID == nil {
+				result = append(result, buildTree(p.ID))
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// GetPoolChildren returns the direct children of a pool.
+func (m *MemoryStore) GetPoolChildren(ctx context.Context, parentID int64) ([]domain.Pool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if _, ok := m.pools[parentID]; !ok {
+		return nil, errors.New("parent pool not found")
+	}
+
+	var children []domain.Pool
+	for _, p := range m.pools {
+		if p.ParentID != nil && *p.ParentID == parentID {
+			children = append(children, p)
+		}
+	}
+	return children, nil
+}
+
+// CalculatePoolUtilization calculates statistics for a pool.
+func (m *MemoryStore) CalculatePoolUtilization(ctx context.Context, id int64) (*domain.PoolStats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.pools[id]
+	if !ok {
+		return nil, errors.New("pool not found")
+	}
+	stats := m.calculatePoolStatsLocked(p)
+	return &stats, nil
+}
+
+// calculatePoolStatsLocked calculates stats for a pool (must be called with lock held).
+func (m *MemoryStore) calculatePoolStatsLocked(p domain.Pool) domain.PoolStats {
+	// Parse the pool's CIDR to get total IPs
+	prefix, err := netip.ParsePrefix(p.CIDR)
+	if err != nil {
+		return domain.PoolStats{}
+	}
+
+	var totalIPs int64
+	if prefix.Addr().Is4() {
+		totalIPs = int64(1) << (32 - prefix.Bits())
+	} else {
+		// For IPv6, cap at max int64 for practical purposes
+		bits := 128 - prefix.Bits()
+		if bits >= 63 {
+			totalIPs = int64(1) << 62 // Cap to avoid overflow
+		} else {
+			totalIPs = int64(1) << bits
+		}
+	}
+
+	// Count direct children and calculate used IPs
+	var directChildren int
+	var usedIPs int64
+	var totalChildCount int
+
+	// Recursive function to count all descendants
+	var countDescendants func(parentID int64) int
+	countDescendants = func(parentID int64) int {
+		count := 0
+		for _, child := range m.pools {
+			if child.ParentID != nil && *child.ParentID == parentID {
+				count++
+				count += countDescendants(child.ID)
+			}
+		}
+		return count
+	}
+
+	for _, child := range m.pools {
+		if child.ParentID != nil && *child.ParentID == p.ID {
+			directChildren++
+
+			// Calculate used IPs from child's CIDR
+			childPrefix, err := netip.ParsePrefix(child.CIDR)
+			if err != nil {
+				continue
+			}
+			if childPrefix.Addr().Is4() {
+				usedIPs += int64(1) << (32 - childPrefix.Bits())
+			}
+		}
+	}
+
+	totalChildCount = countDescendants(p.ID)
+
+	// Calculate utilization percentage
+	var utilization float64
+	if totalIPs > 0 {
+		utilization = float64(usedIPs) / float64(totalIPs) * 100
+	}
+
+	return domain.PoolStats{
+		TotalIPs:       totalIPs,
+		UsedIPs:        usedIPs,
+		AvailableIPs:   totalIPs - usedIPs,
+		Utilization:    utilization,
+		ChildCount:     totalChildCount,
+		DirectChildren: directChildren,
+	}
 }
 
 // Close is a no-op for MemoryStore as it holds no external resources.

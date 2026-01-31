@@ -7,10 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
-- Enhanced Pool model with types, status, utilization tracking
-- Hierarchical tree view UI matching mockups
-- Dashboard with stats cards and alerts panel
+### Added - Sprint 5: Enhanced Pool Model & UI
+
+#### Domain Model Enhancements
+- Pool types: supernet, region, environment, vpc, subnet
+- Pool status: planned, active, deprecated
+- Pool source: manual, discovered, imported
+- New fields: Description, Tags, UpdatedAt
+- PoolStats struct for utilization tracking (TotalIPs, UsedIPs, Utilization)
+- PoolWithStats for hierarchy responses with nested children
+
+#### Storage Layer
+- New methods: GetPoolWithStats, GetPoolHierarchy, GetPoolChildren
+- CalculatePoolUtilization with automatic child CIDR aggregation
+- UpdatePool method for modifying pool properties
+- SQLite migration (0003_enhanced_pools.sql) for new columns
+
+#### API Enhancements
+- `GET /api/v1/pools/hierarchy` - Nested tree structure with stats
+- `GET /api/v1/pools/{id}/stats` - Utilization details for a pool
+- `GET /api/v1/pools?include_stats=true` - Include stats in pool list
+- Updated POST/PATCH endpoints for new pool fields
+
+#### Frontend Overhaul
+- Dark sidebar navigation with icons (Dashboard, Pools, Accounts, Discovery, Audit)
+- Dashboard view with stats cards and alerts panel
+- Hierarchical tree view with expandable nodes
+- Pool type indicators (colored dots by type)
+- Utilization bars with color coding (green/amber/red)
+- Status badges (synced, drift, planned)
+- Pool detail slide-out panel
 
 ## [0.2.0] - 2026-01-31
 

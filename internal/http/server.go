@@ -20,6 +20,7 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	apidocs "cloudpam/docs"
+	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/observability"
@@ -40,20 +41,25 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 type Server struct {
-	mux     *http.ServeMux
-	store   storage.Store
-	logger  observability.Logger
-	metrics *observability.Metrics
+	mux         *http.ServeMux
+	store       storage.Store
+	logger      observability.Logger
+	metrics     *observability.Metrics
+	auditLogger audit.AuditLogger
 }
 
 // NewServer creates a new HTTP server with the given dependencies.
 // If logger is nil, a default logger will be used.
 // If metrics is nil, metrics collection is disabled.
-func NewServer(mux *http.ServeMux, store storage.Store, logger observability.Logger, metrics *observability.Metrics) *Server {
+// If auditLogger is nil, a memory-based audit logger will be used.
+func NewServer(mux *http.ServeMux, store storage.Store, logger observability.Logger, metrics *observability.Metrics, auditLogger audit.AuditLogger) *Server {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	return &Server{mux: mux, store: store, logger: logger, metrics: metrics}
+	if auditLogger == nil {
+		auditLogger = audit.NewMemoryAuditLogger()
+	}
+	return &Server{mux: mux, store: store, logger: logger, metrics: metrics, auditLogger: auditLogger}
 }
 
 // NewServerWithSlog creates a new HTTP server with a raw *slog.Logger.
@@ -65,7 +71,7 @@ func NewServerWithSlog(mux *http.ServeMux, store storage.Store, slogger *slog.Lo
 	} else {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	return &Server{mux: mux, store: store, logger: logger, metrics: nil}
+	return &Server{mux: mux, store: store, logger: logger, metrics: nil, auditLogger: audit.NewMemoryAuditLogger()}
 }
 
 func valueOrNil[T any](ptr *T) any {
@@ -93,6 +99,29 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
 }
 
+// logAudit logs an audit event for CRUD operations.
+func (s *Server) logAudit(ctx context.Context, action, resourceType, resourceID, resourceName string, statusCode int) {
+	if s.auditLogger == nil {
+		return
+	}
+	event := &audit.AuditEvent{
+		Actor:        "anonymous", // Will be overwritten if auth is enabled
+		ActorType:    audit.ActorTypeAnonymous,
+		Action:       action,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		ResourceName: resourceName,
+		StatusCode:   statusCode,
+	}
+	// Try to get request ID from context
+	if reqID := ctx.Value(requestIDContextKey); reqID != nil {
+		if id, ok := reqID.(string); ok {
+			event.RequestID = id
+		}
+	}
+	_ = s.auditLogger.Log(ctx, event)
+}
+
 // RegisterRoutes registers all HTTP routes without RBAC protection.
 // This is for backward compatibility. Use RegisterProtectedRoutes for RBAC enforcement.
 func (s *Server) RegisterRoutes() {
@@ -105,12 +134,18 @@ func (s *Server) RegisterRoutes() {
 	}
 	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
 	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
+	// Note: /api/v1/pools/hierarchy is handled by handlePoolsSubroutes
 	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
 	s.mux.HandleFunc("/api/v1/accounts", s.handleAccounts)
 	s.mux.HandleFunc("/api/v1/accounts/", s.handleAccountsSubroutes)
 	s.mux.HandleFunc("/api/v1/blocks", s.handleBlocksList)
 	// Data export (CSV in ZIP)
 	s.mux.HandleFunc("/api/v1/export", s.handleExport)
+	// Data import (CSV)
+	s.mux.HandleFunc("/api/v1/import/accounts", s.handleImportAccounts)
+	s.mux.HandleFunc("/api/v1/import/pools", s.handleImportPools)
+	// Audit logs (unprotected access)
+	s.mux.HandleFunc("/api/v1/audit", s.handleAuditList)
 	// Static index
 	s.mux.HandleFunc("/", s.handleIndex)
 }
@@ -198,6 +233,21 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 			return
 		}
 
+		// Handle /pools/hierarchy (no ID)
+		if parts[0] == "hierarchy" {
+			if r.Method != http.MethodGet {
+				s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+				return
+			}
+			// Requires pools:read
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.handlePoolsHierarchy(w, r)
+			return
+		}
+
 		id64, err := strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
 			s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool id", "")
@@ -216,6 +266,21 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				return
 			}
 			s.blocksForPool(w, r, id64)
+			return
+		}
+
+		// Handle /pools/{id}/stats
+		if len(parts) >= 2 && parts[1] == "stats" {
+			if r.Method != http.MethodGet {
+				s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+				return
+			}
+			// Requires pools:read
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.handlePoolStats(w, r, id64)
 			return
 		}
 
@@ -242,32 +307,7 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
-			var payload struct {
-				AccountID *int64  `json:"account_id"`
-				Name      *string `json:"name"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
-				return
-			}
-			if payload.Name != nil {
-				trimmed := strings.TrimSpace(*payload.Name)
-				payload.Name = &trimmed
-				if err := validation.ValidateName(*payload.Name); err != nil {
-					s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
-					return
-				}
-			}
-			p, ok, err := s.store.UpdatePoolMeta(ctx, id64, payload.Name, payload.AccountID)
-			if err != nil {
-				s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
-				return
-			}
-			if !ok {
-				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
-				return
-			}
-			writeJSON(w, http.StatusOK, p)
+			s.updatePool(w, r, id64)
 
 		case http.MethodDelete:
 			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionDelete) {
@@ -754,6 +794,397 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// POST /api/v1/import/accounts
+// Accepts CSV data with columns: key,name,provider,external_id,description,platform,tier,environment,regions
+func (s *Server) handleImportAccounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	reader := csv.NewReader(r.Body)
+	records, err := reader.ReadAll()
+	if err != nil {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid csv", err.Error())
+		return
+	}
+
+	if len(records) < 2 {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "csv must have header and at least one data row", "")
+		return
+	}
+
+	// Parse header to find column indices
+	header := records[0]
+	colIdx := make(map[string]int)
+	for i, h := range header {
+		colIdx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+
+	// Required columns
+	keyIdx, hasKey := colIdx["key"]
+	nameIdx, hasName := colIdx["name"]
+	if !hasKey || !hasName {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "csv must have 'key' and 'name' columns", "")
+		return
+	}
+
+	var created, skipped int
+	var errors []string
+
+	for i, row := range records[1:] {
+		if len(row) <= keyIdx || len(row) <= nameIdx {
+			errors = append(errors, fmt.Sprintf("row %d: insufficient columns", i+2))
+			continue
+		}
+
+		key := strings.TrimSpace(row[keyIdx])
+		name := strings.TrimSpace(row[nameIdx])
+		if key == "" || name == "" {
+			errors = append(errors, fmt.Sprintf("row %d: key and name required", i+2))
+			continue
+		}
+
+		acc := domain.CreateAccount{
+			Key:  key,
+			Name: name,
+		}
+
+		// Optional columns
+		if idx, ok := colIdx["provider"]; ok && idx < len(row) {
+			acc.Provider = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["external_id"]; ok && idx < len(row) {
+			acc.ExternalID = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["description"]; ok && idx < len(row) {
+			acc.Description = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["platform"]; ok && idx < len(row) {
+			acc.Platform = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["tier"]; ok && idx < len(row) {
+			acc.Tier = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["environment"]; ok && idx < len(row) {
+			acc.Environment = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["regions"]; ok && idx < len(row) {
+			regionsStr := strings.TrimSpace(row[idx])
+			if regionsStr != "" {
+				acc.Regions = strings.Split(regionsStr, ";")
+			}
+		}
+
+		_, err := s.store.CreateAccount(r.Context(), acc)
+		if err != nil {
+			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+				skipped++
+			} else {
+				errors = append(errors, fmt.Sprintf("row %d: %v", i+2, err))
+			}
+			continue
+		}
+		created++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"created": created,
+		"skipped": skipped,
+		"errors":  errors,
+	})
+}
+
+// POST /api/v1/import/pools
+// Accepts CSV data with columns: name,cidr,parent_id,account_id,type,status,source,description
+func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	reader := csv.NewReader(r.Body)
+	records, err := reader.ReadAll()
+	if err != nil {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid csv", err.Error())
+		return
+	}
+
+	if len(records) < 2 {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "csv must have header and at least one data row", "")
+		return
+	}
+
+	// Parse header to find column indices
+	header := records[0]
+	colIdx := make(map[string]int)
+	for i, h := range header {
+		colIdx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+
+	// Required columns
+	nameIdx, hasName := colIdx["name"]
+	cidrIdx, hasCIDR := colIdx["cidr"]
+	if !hasName || !hasCIDR {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "csv must have 'name' and 'cidr' columns", "")
+		return
+	}
+
+	// Build account lookup map (key -> ID) for resolving account references
+	accounts, _ := s.store.ListAccounts(r.Context())
+	accountKeyToID := make(map[string]int64)
+	for _, a := range accounts {
+		accountKeyToID[a.Key] = a.ID
+	}
+
+	s.logger.InfoContext(r.Context(), "pools:import starting",
+		"total_rows", len(records)-1,
+		"known_accounts", len(accountKeyToID))
+
+	// Parse all rows first to enable hierarchical import
+	type poolRow struct {
+		rowNum       int
+		name         string
+		cidr         string
+		oldID        int64  // original ID from CSV (if present)
+		oldParentID  int64  // original parent_id from CSV
+		oldAccountID int64  // original account_id from CSV
+		accountKey   string // account_key for lookup
+		poolType     domain.PoolType
+		status       domain.PoolStatus
+		source       domain.PoolSource
+		description  string
+	}
+
+	var rows []poolRow
+	idIdx, hasID := colIdx["id"]
+
+	for i, row := range records[1:] {
+		if len(row) <= nameIdx || len(row) <= cidrIdx {
+			continue
+		}
+
+		name := strings.TrimSpace(row[nameIdx])
+		cidr := strings.TrimSpace(row[cidrIdx])
+		if name == "" || cidr == "" {
+			continue
+		}
+
+		pr := poolRow{
+			rowNum: i + 2,
+			name:   name,
+			cidr:   cidr,
+		}
+
+		// Get original ID if present
+		if hasID && idIdx < len(row) {
+			if v := strings.TrimSpace(row[idIdx]); v != "" {
+				pr.oldID, _ = strconv.ParseInt(v, 10, 64)
+			}
+		}
+
+		// Get parent_id
+		if idx, ok := colIdx["parent_id"]; ok && idx < len(row) {
+			if v := strings.TrimSpace(row[idx]); v != "" {
+				pr.oldParentID, _ = strconv.ParseInt(v, 10, 64)
+			}
+		}
+
+		// Get account_id (we'll resolve this later)
+		if idx, ok := colIdx["account_id"]; ok && idx < len(row) {
+			if v := strings.TrimSpace(row[idx]); v != "" {
+				pr.oldAccountID, _ = strconv.ParseInt(v, 10, 64)
+			}
+		}
+
+		// Get account_key for direct lookup (preferred over account_id)
+		if idx, ok := colIdx["account_key"]; ok && idx < len(row) {
+			pr.accountKey = strings.TrimSpace(row[idx])
+		}
+
+		if idx, ok := colIdx["type"]; ok && idx < len(row) {
+			pr.poolType = domain.PoolType(strings.TrimSpace(row[idx]))
+		}
+		if idx, ok := colIdx["status"]; ok && idx < len(row) {
+			pr.status = domain.PoolStatus(strings.TrimSpace(row[idx]))
+		}
+		if idx, ok := colIdx["source"]; ok && idx < len(row) {
+			pr.source = domain.PoolSource(strings.TrimSpace(row[idx]))
+		}
+		if idx, ok := colIdx["description"]; ok && idx < len(row) {
+			pr.description = strings.TrimSpace(row[idx])
+		}
+
+		rows = append(rows, pr)
+	}
+
+	// Sort rows: no parent first, then by oldParentID to process parents before children
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].oldParentID == 0 && rows[j].oldParentID != 0 {
+			return true
+		}
+		if rows[i].oldParentID != 0 && rows[j].oldParentID == 0 {
+			return false
+		}
+		return rows[i].oldParentID < rows[j].oldParentID
+	})
+
+	var created, skipped int
+	var errors []string
+
+	// Map old IDs to new IDs for parent resolution
+	oldToNewID := make(map[int64]int64)
+
+	// Also build a CIDR to new ID map for fallback parent resolution
+	cidrToNewID := make(map[string]int64)
+
+	for _, pr := range rows {
+		pool := domain.CreatePool{
+			Name:        pr.name,
+			CIDR:        pr.cidr,
+			Type:        pr.poolType,
+			Status:      pr.status,
+			Source:      pr.source,
+			Description: pr.description,
+		}
+
+		// Resolve account_id: prefer account_key lookup, fall back to direct ID
+		if pr.accountKey != "" {
+			if accountID, ok := accountKeyToID[pr.accountKey]; ok {
+				pool.AccountID = &accountID
+				s.logger.DebugContext(r.Context(), "pools:import resolved account by key",
+					"row", pr.rowNum, "account_key", pr.accountKey, "account_id", accountID)
+			} else {
+				s.logger.WarnContext(r.Context(), "pools:import account key not found",
+					"row", pr.rowNum, "account_key", pr.accountKey)
+				errors = append(errors, fmt.Sprintf("row %d: account_key '%s' not found", pr.rowNum, pr.accountKey))
+				continue
+			}
+		} else if pr.oldAccountID != 0 {
+			// Try to find account by checking if this ID exists
+			if _, ok, _ := s.store.GetAccount(r.Context(), pr.oldAccountID); ok {
+				pool.AccountID = &pr.oldAccountID
+			} else {
+				// Account ID doesn't exist - this is a stale reference from exported data
+				s.logger.WarnContext(r.Context(), "pools:import account_id not found (stale reference)",
+					"row", pr.rowNum, "account_id", pr.oldAccountID,
+					"hint", "use account_key column instead of account_id for reliable imports")
+				errors = append(errors, fmt.Sprintf("row %d: account_id %d not found (use account_key column for imports)", pr.rowNum, pr.oldAccountID))
+				continue
+			}
+		}
+
+		// Resolve parent_id using old-to-new mapping
+		if pr.oldParentID != 0 {
+			if newParentID, ok := oldToNewID[pr.oldParentID]; ok {
+				pool.ParentID = &newParentID
+				s.logger.DebugContext(r.Context(), "pools:import resolved parent",
+					"row", pr.rowNum, "old_parent_id", pr.oldParentID, "new_parent_id", newParentID)
+			} else {
+				// Check if parent exists directly (for imports into existing data)
+				if _, ok, _ := s.store.GetPool(r.Context(), pr.oldParentID); ok {
+					pool.ParentID = &pr.oldParentID
+				} else {
+					s.logger.WarnContext(r.Context(), "pools:import parent_id not found",
+						"row", pr.rowNum, "parent_id", pr.oldParentID)
+					errors = append(errors, fmt.Sprintf("row %d: parent_id %d not found", pr.rowNum, pr.oldParentID))
+					continue
+				}
+			}
+		}
+
+		// Set defaults
+		if pool.Type == "" {
+			pool.Type = domain.PoolTypeSubnet
+		}
+		if pool.Status == "" {
+			pool.Status = domain.PoolStatusActive
+		}
+		if pool.Source == "" {
+			pool.Source = domain.PoolSourceManual
+		}
+
+		s.logger.DebugContext(r.Context(), "pools:import creating pool",
+			"row", pr.rowNum, "name", pool.Name, "cidr", pool.CIDR,
+			"parent_id", valueOrNil(pool.ParentID), "account_id", valueOrNil(pool.AccountID))
+
+		createdPool, err := s.store.CreatePool(r.Context(), pool)
+		if err != nil {
+			s.logger.WarnContext(r.Context(), "pools:import create failed",
+				"row", pr.rowNum, "name", pool.Name, "error", err.Error())
+			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+				skipped++
+			} else {
+				errors = append(errors, fmt.Sprintf("row %d: %v", pr.rowNum, err))
+			}
+			continue
+		}
+
+		// Record the ID mapping for child pool resolution
+		if pr.oldID != 0 {
+			oldToNewID[pr.oldID] = createdPool.ID
+		}
+		cidrToNewID[pr.cidr] = createdPool.ID
+
+		s.logger.InfoContext(r.Context(), "pools:import created pool",
+			"row", pr.rowNum, "id", createdPool.ID, "name", createdPool.Name)
+		created++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"created": created,
+		"skipped": skipped,
+		"errors":  errors,
+	})
+}
+
+// GET /api/v1/audit - List audit events with optional filtering
+// Query params: limit, offset, actor, action, resource_type
+func (s *Server) handleAuditList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	q := r.URL.Query()
+
+	// Parse pagination
+	limit := 50
+	if l := q.Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+
+	offset := 0
+	if o := q.Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
+	opts := audit.ListOptions{
+		Limit:        limit,
+		Offset:       offset,
+		Actor:        q.Get("actor"),
+		Action:       q.Get("action"),
+		ResourceType: q.Get("resource_type"),
+	}
+
+	events, total, err := s.auditLogger.List(r.Context(), opts)
+	if err != nil {
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to list audit events", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"events": events,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
 // /api/v1/accounts/{id}
 func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/")
@@ -802,8 +1233,11 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
+		s.logAudit(r.Context(), audit.ActionUpdate, audit.ResourceAccount, fmt.Sprintf("%d", a.ID), a.Name, http.StatusOK)
 		writeJSON(w, http.StatusOK, a)
 	case http.MethodDelete:
+		// Get account info before delete for audit logging
+		acct, acctFound, _ := s.store.GetAccount(r.Context(), id)
 		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
 		if force == "1" || force == "true" || force == "yes" {
@@ -819,6 +1253,11 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
+		accountName := ""
+		if acctFound {
+			accountName = acct.Name
+		}
+		s.logAudit(r.Context(), audit.ActionDelete, audit.ResourceAccount, fmt.Sprintf("%d", id), accountName, http.StatusNoContent)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -1012,6 +1451,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 		"name", a.Name,
 	})
 	s.logger.InfoContext(ctx, "accounts:create success", fields...)
+	s.logAudit(ctx, audit.ActionCreate, audit.ResourceAccount, fmt.Sprintf("%d", a.ID), a.Name, http.StatusCreated)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(a)
@@ -1183,6 +1623,8 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 }
 
 // /api/v1/pools/{id}/blocks?new_prefix_len=24
+// /api/v1/pools/hierarchy - returns pool hierarchy tree
+// /api/v1/pools/{id}/stats - returns pool statistics
 func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/pools/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -1190,6 +1632,17 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 		return
 	}
+
+	// Handle /api/v1/pools/hierarchy (no ID)
+	if parts[0] == "hierarchy" {
+		if r.Method != http.MethodGet {
+			s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+			return
+		}
+		s.handlePoolsHierarchy(w, r)
+		return
+	}
+
 	id64, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool id", "")
@@ -1201,6 +1654,15 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.blocksForPool(w, r, id64)
+		return
+	}
+	// Handle /api/v1/pools/{id}/stats
+	if len(parts) >= 2 && parts[1] == "stats" {
+		if r.Method != http.MethodGet {
+			s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+			return
+		}
+		s.handlePoolStats(w, r, id64)
 		return
 	}
 	// Pool detail
@@ -1217,34 +1679,10 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, p)
 	case http.MethodPatch:
-		var payload struct {
-			AccountID *int64  `json:"account_id"`
-			Name      *string `json:"name"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
-			return
-		}
-		// Validate name if provided
-		if payload.Name != nil {
-			trimmed := strings.TrimSpace(*payload.Name)
-			payload.Name = &trimmed
-			if err := validation.ValidateName(*payload.Name); err != nil {
-				s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
-				return
-			}
-		}
-		p, ok, err := s.store.UpdatePoolMeta(r.Context(), id64, payload.Name, payload.AccountID)
-		if err != nil {
-			s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
-			return
-		}
-		if !ok {
-			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
-			return
-		}
-		writeJSON(w, http.StatusOK, p)
+		s.updatePool(w, r, id64)
 	case http.MethodDelete:
+		// Get pool info before delete for audit logging
+		pool, poolFound, _ := s.store.GetPool(r.Context(), id64)
 		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
 		if force == "1" || force == "true" || force == "yes" {
@@ -1260,17 +1698,162 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 			return
 		}
+		poolName := ""
+		if poolFound {
+			poolName = pool.Name
+		}
+		s.logAudit(r.Context(), audit.ActionDelete, audit.ResourcePool, fmt.Sprintf("%d", id64), poolName, http.StatusNoContent)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
 
+// handlePoolsHierarchy returns the pool hierarchy tree.
+// GET /api/v1/pools/hierarchy?root_id=1
+func (s *Server) handlePoolsHierarchy(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Optional root_id query param
+	var rootID *int64
+	if rootIDStr := r.URL.Query().Get("root_id"); rootIDStr != "" {
+		id, err := strconv.ParseInt(rootIDStr, 10, 64)
+		if err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, "invalid root_id", "")
+			return
+		}
+		rootID = &id
+	}
+
+	hierarchy, err := s.store.GetPoolHierarchy(ctx, rootID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			s.writeErr(ctx, w, http.StatusNotFound, err.Error(), "")
+			return
+		}
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+		return
+	}
+
+	type response struct {
+		Pools []domain.PoolWithStats `json:"pools"`
+	}
+	writeJSON(w, http.StatusOK, response{Pools: hierarchy})
+}
+
+// handlePoolStats returns statistics for a specific pool.
+// GET /api/v1/pools/{id}/stats
+func (s *Server) handlePoolStats(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	stats, err := s.store.CalculatePoolUtilization(ctx, id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			s.writeErr(ctx, w, http.StatusNotFound, err.Error(), "")
+			return
+		}
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// updatePool handles PATCH /api/v1/pools/{id}
+func (s *Server) updatePool(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	var payload struct {
+		AccountID   *int64             `json:"account_id"`
+		Name        *string            `json:"name"`
+		Type        *domain.PoolType   `json:"type"`
+		Status      *domain.PoolStatus `json:"status"`
+		Description *string            `json:"description"`
+		Tags        *map[string]string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
+		return
+	}
+
+	// Validate name if provided
+	if payload.Name != nil {
+		trimmed := strings.TrimSpace(*payload.Name)
+		payload.Name = &trimmed
+		if err := validation.ValidateName(*payload.Name); err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
+	}
+
+	// Validate type if provided
+	if payload.Type != nil && !domain.IsValidPoolType(*payload.Type) {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool type", fmt.Sprintf("valid types: %v", domain.ValidPoolTypes))
+		return
+	}
+
+	// Validate status if provided
+	if payload.Status != nil && !domain.IsValidPoolStatus(*payload.Status) {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool status", fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses))
+		return
+	}
+
+	update := domain.UpdatePool{
+		Name:        payload.Name,
+		AccountID:   payload.AccountID,
+		Type:        payload.Type,
+		Status:      payload.Status,
+		Description: payload.Description,
+		Tags:        payload.Tags,
+	}
+
+	p, ok, err := s.store.UpdatePool(ctx, id, update)
+	if err != nil {
+		s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+	if !ok {
+		s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+		return
+	}
+	s.logAudit(ctx, audit.ActionUpdate, audit.ResourcePool, fmt.Sprintf("%d", p.ID), p.Name, http.StatusOK)
+	writeJSON(w, http.StatusOK, p)
+}
+
 func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// Check for include_stats query param
+	includeStats := strings.ToLower(r.URL.Query().Get("include_stats"))
+	if includeStats == "true" || includeStats == "1" || includeStats == "yes" {
+		// Return all pools with stats (flat list, not hierarchy)
+		pools, err := s.store.ListPools(ctx)
+		if err != nil {
+			s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+			return
+		}
+
+		type poolWithStats struct {
+			domain.Pool
+			Stats domain.PoolStats `json:"stats"`
+		}
+
+		result := make([]poolWithStats, 0, len(pools))
+		for _, p := range pools {
+			stats, err := s.store.CalculatePoolUtilization(ctx, p.ID)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+				return
+			}
+			result = append(result, poolWithStats{Pool: p, Stats: *stats})
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
 	pools, err := s.store.ListPools(ctx)
 	if err != nil {
-		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, pools)
@@ -1305,6 +1888,33 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			"reason", err.Error(),
 		})...)
 		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+
+	// Validate pool type if provided
+	if in.Type != "" && !domain.IsValidPoolType(in.Type) {
+		logger.WarnContext(ctx, "pools:create invalid type", appendRequestID(ctx, []any{
+			"type", in.Type,
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool type", fmt.Sprintf("valid types: %v", domain.ValidPoolTypes))
+		return
+	}
+
+	// Validate pool status if provided
+	if in.Status != "" && !domain.IsValidPoolStatus(in.Status) {
+		logger.WarnContext(ctx, "pools:create invalid status", appendRequestID(ctx, []any{
+			"status", in.Status,
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool status", fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses))
+		return
+	}
+
+	// Validate pool source if provided
+	if in.Source != "" && !domain.IsValidPoolSource(in.Source) {
+		logger.WarnContext(ctx, "pools:create invalid source", appendRequestID(ctx, []any{
+			"source", in.Source,
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool source", fmt.Sprintf("valid sources: %v", domain.ValidPoolSources))
 		return
 	}
 
@@ -1395,6 +2005,7 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		"parent_id", valueOrNil(p.ParentID),
 		"account_id", valueOrNil(p.AccountID),
 	})...)
+	s.logAudit(ctx, audit.ActionCreate, audit.ResourcePool, fmt.Sprintf("%d", p.ID), p.Name, http.StatusCreated)
 	writeJSON(w, http.StatusCreated, p)
 }
 

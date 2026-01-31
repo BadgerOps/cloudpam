@@ -61,15 +61,15 @@ type QueryOptions struct {
 	Actions []string // Match any of these actions
 
 	// Resource filters
-	ResourceType string // Filter by resource type: "pool", "account", "api_key"
-	ResourceID   string // Filter by exact resource ID
+	ResourceType string   // Filter by resource type: "pool", "account", "api_key"
+	ResourceID   string   // Filter by exact resource ID
 	ResourceIDs  []string // Match any of these resource IDs
 
 	// Status filters
-	Success      *bool // Filter by success (StatusCode < 400)
-	StatusCode   *int  // Exact match on status code
-	MinStatus    *int  // Minimum status code (inclusive)
-	MaxStatus    *int  // Maximum status code (inclusive)
+	Success    *bool // Filter by success (StatusCode < 400)
+	StatusCode *int  // Exact match on status code
+	MinStatus  *int  // Minimum status code (inclusive)
+	MaxStatus  *int  // Maximum status code (inclusive)
 
 	// Request filters
 	RequestID string // Filter by request ID

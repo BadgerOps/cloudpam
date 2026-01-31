@@ -27,15 +27,13 @@ func NewAuthServer(s *Server, keyStore auth.KeyStore, auditLogger audit.AuditLog
 	}
 }
 
-// RegisterAuthRoutes registers the auth and audit API endpoints without RBAC.
+// RegisterAuthRoutes registers the auth API endpoints without RBAC.
 // For backward compatibility. Use RegisterProtectedAuthRoutes for RBAC enforcement.
+// Note: Audit endpoint is registered by Server.RegisterRoutes() for unprotected access.
 func (as *AuthServer) RegisterAuthRoutes() {
 	// API key management
 	as.mux.HandleFunc("/api/v1/auth/keys", as.handleAPIKeys)
 	as.mux.HandleFunc("/api/v1/auth/keys/", as.handleAPIKeyByID)
-
-	// Audit endpoints
-	as.mux.HandleFunc("/api/v1/audit", as.handleAuditList)
 }
 
 // RegisterProtectedAuthRoutes registers the auth and audit API endpoints with RBAC.
