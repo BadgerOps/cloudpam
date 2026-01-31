@@ -112,6 +112,9 @@ func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/api/v1/blocks", s.handleBlocksList)
 	// Data export (CSV in ZIP)
 	s.mux.HandleFunc("/api/v1/export", s.handleExport)
+	// Data import (CSV)
+	s.mux.HandleFunc("/api/v1/import/accounts", s.handleImportAccounts)
+	s.mux.HandleFunc("/api/v1/import/pools", s.handleImportPools)
 	// Static index
 	s.mux.HandleFunc("/", s.handleIndex)
 }
@@ -758,6 +761,221 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// POST /api/v1/import/accounts
+// Accepts CSV data with columns: key,name,provider,external_id,description,platform,tier,environment,regions
+func (s *Server) handleImportAccounts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	reader := csv.NewReader(r.Body)
+	records, err := reader.ReadAll()
+	if err != nil {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid csv", err.Error())
+		return
+	}
+
+	if len(records) < 2 {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "csv must have header and at least one data row", "")
+		return
+	}
+
+	// Parse header to find column indices
+	header := records[0]
+	colIdx := make(map[string]int)
+	for i, h := range header {
+		colIdx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+
+	// Required columns
+	keyIdx, hasKey := colIdx["key"]
+	nameIdx, hasName := colIdx["name"]
+	if !hasKey || !hasName {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "csv must have 'key' and 'name' columns", "")
+		return
+	}
+
+	var created, skipped int
+	var errors []string
+
+	for i, row := range records[1:] {
+		if len(row) <= keyIdx || len(row) <= nameIdx {
+			errors = append(errors, fmt.Sprintf("row %d: insufficient columns", i+2))
+			continue
+		}
+
+		key := strings.TrimSpace(row[keyIdx])
+		name := strings.TrimSpace(row[nameIdx])
+		if key == "" || name == "" {
+			errors = append(errors, fmt.Sprintf("row %d: key and name required", i+2))
+			continue
+		}
+
+		acc := domain.CreateAccount{
+			Key:  key,
+			Name: name,
+		}
+
+		// Optional columns
+		if idx, ok := colIdx["provider"]; ok && idx < len(row) {
+			acc.Provider = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["external_id"]; ok && idx < len(row) {
+			acc.ExternalID = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["description"]; ok && idx < len(row) {
+			acc.Description = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["platform"]; ok && idx < len(row) {
+			acc.Platform = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["tier"]; ok && idx < len(row) {
+			acc.Tier = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["environment"]; ok && idx < len(row) {
+			acc.Environment = strings.TrimSpace(row[idx])
+		}
+		if idx, ok := colIdx["regions"]; ok && idx < len(row) {
+			regionsStr := strings.TrimSpace(row[idx])
+			if regionsStr != "" {
+				acc.Regions = strings.Split(regionsStr, ";")
+			}
+		}
+
+		_, err := s.store.CreateAccount(r.Context(), acc)
+		if err != nil {
+			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+				skipped++
+			} else {
+				errors = append(errors, fmt.Sprintf("row %d: %v", i+2, err))
+			}
+			continue
+		}
+		created++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"created": created,
+		"skipped": skipped,
+		"errors":  errors,
+	})
+}
+
+// POST /api/v1/import/pools
+// Accepts CSV data with columns: name,cidr,parent_id,account_id,type,status,source,description
+func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	reader := csv.NewReader(r.Body)
+	records, err := reader.ReadAll()
+	if err != nil {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid csv", err.Error())
+		return
+	}
+
+	if len(records) < 2 {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "csv must have header and at least one data row", "")
+		return
+	}
+
+	// Parse header to find column indices
+	header := records[0]
+	colIdx := make(map[string]int)
+	for i, h := range header {
+		colIdx[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+
+	// Required columns
+	nameIdx, hasName := colIdx["name"]
+	cidrIdx, hasCIDR := colIdx["cidr"]
+	if !hasName || !hasCIDR {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "csv must have 'name' and 'cidr' columns", "")
+		return
+	}
+
+	var created, skipped int
+	var errors []string
+
+	for i, row := range records[1:] {
+		if len(row) <= nameIdx || len(row) <= cidrIdx {
+			errors = append(errors, fmt.Sprintf("row %d: insufficient columns", i+2))
+			continue
+		}
+
+		name := strings.TrimSpace(row[nameIdx])
+		cidr := strings.TrimSpace(row[cidrIdx])
+		if name == "" || cidr == "" {
+			errors = append(errors, fmt.Sprintf("row %d: name and cidr required", i+2))
+			continue
+		}
+
+		pool := domain.CreatePool{
+			Name: name,
+			CIDR: cidr,
+		}
+
+		// Optional columns
+		if idx, ok := colIdx["parent_id"]; ok && idx < len(row) {
+			if v := strings.TrimSpace(row[idx]); v != "" {
+				if pid, err := strconv.ParseInt(v, 10, 64); err == nil {
+					pool.ParentID = &pid
+				}
+			}
+		}
+		if idx, ok := colIdx["account_id"]; ok && idx < len(row) {
+			if v := strings.TrimSpace(row[idx]); v != "" {
+				if aid, err := strconv.ParseInt(v, 10, 64); err == nil {
+					pool.AccountID = &aid
+				}
+			}
+		}
+		if idx, ok := colIdx["type"]; ok && idx < len(row) {
+			pool.Type = domain.PoolType(strings.TrimSpace(row[idx]))
+		}
+		if idx, ok := colIdx["status"]; ok && idx < len(row) {
+			pool.Status = domain.PoolStatus(strings.TrimSpace(row[idx]))
+		}
+		if idx, ok := colIdx["source"]; ok && idx < len(row) {
+			pool.Source = domain.PoolSource(strings.TrimSpace(row[idx]))
+		}
+		if idx, ok := colIdx["description"]; ok && idx < len(row) {
+			pool.Description = strings.TrimSpace(row[idx])
+		}
+
+		// Set defaults
+		if pool.Type == "" {
+			pool.Type = domain.PoolTypeSubnet
+		}
+		if pool.Status == "" {
+			pool.Status = domain.PoolStatusActive
+		}
+		if pool.Source == "" {
+			pool.Source = domain.PoolSourceManual
+		}
+
+		_, err := s.store.CreatePool(r.Context(), pool)
+		if err != nil {
+			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+				skipped++
+			} else {
+				errors = append(errors, fmt.Sprintf("row %d: %v", i+2, err))
+			}
+			continue
+		}
+		created++
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"created": created,
+		"skipped": skipped,
+		"errors":  errors,
+	})
 }
 
 // /api/v1/accounts/{id}
