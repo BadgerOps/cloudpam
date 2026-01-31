@@ -21,6 +21,7 @@ import (
 
 	apidocs "cloudpam/docs"
 	"cloudpam/internal/domain"
+	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
 	"cloudpam/internal/validation"
 	webui "cloudpam/web"
@@ -38,20 +39,37 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 type Server struct {
-	mux    *http.ServeMux
-	store  storage.Store
-	logger *slog.Logger
+	mux     *http.ServeMux
+	store   storage.Store
+	logger  observability.Logger
+	metrics *observability.Metrics
 }
 
-func NewServer(mux *http.ServeMux, store storage.Store, logger *slog.Logger) *Server {
-	return &Server{mux: mux, store: store, logger: logger}
-}
-
-func (s *Server) loggerOrDefault() *slog.Logger {
-	if s.logger != nil {
-		return s.logger
+// NewServer creates a new HTTP server with the given dependencies.
+// If logger is nil, a default logger will be used.
+// If metrics is nil, metrics collection is disabled.
+func NewServer(mux *http.ServeMux, store storage.Store, logger observability.Logger, metrics *observability.Metrics) *Server {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	return slog.Default()
+	return &Server{mux: mux, store: store, logger: logger, metrics: metrics}
+}
+
+// NewServerWithSlog creates a new HTTP server with a raw *slog.Logger.
+// This is for backward compatibility with existing code.
+func NewServerWithSlog(mux *http.ServeMux, store storage.Store, slogger *slog.Logger) *Server {
+	var logger observability.Logger
+	if slogger != nil {
+		logger = observability.NewLoggerFromSlog(slogger)
+	} else {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	return &Server{mux: mux, store: store, logger: logger, metrics: nil}
+}
+
+// slogLogger returns the underlying slog.Logger for backward compatibility.
+func (s *Server) slogLogger() *slog.Logger {
+	return s.logger.Slog()
 }
 
 func valueOrNil[T any](ptr *T) any {
@@ -70,12 +88,11 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 		fields = append(fields, "detail", detail)
 	}
 	fields = appendRequestID(ctx, fields)
-	logger := s.loggerOrDefault()
 	if code >= 500 {
-		logger.ErrorContext(ctx, "request failed", fields...)
+		s.logger.ErrorContext(ctx, "request failed", fields...)
 		sentry.CaptureMessage(fmt.Sprintf("HTTP %d: %s (detail: %s)", code, msg, detail))
 	} else {
-		logger.WarnContext(ctx, "request failed", fields...)
+		s.logger.WarnContext(ctx, "request failed", fields...)
 	}
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
 }
@@ -84,6 +101,10 @@ func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/readyz", s.handleReady)
+	// Metrics endpoint
+	if s.metrics != nil {
+		s.mux.Handle("/metrics", s.metrics.Handler())
+	}
 	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
 	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
 	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
@@ -138,7 +159,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		"blocks_fields", r.URL.Query().Get("blocks_fields"),
 	}
 	fields = appendRequestID(ctx, fields)
-	s.loggerOrDefault().InfoContext(ctx, "export requested", fields...)
+	s.logger.InfoContext(ctx, "export requested", fields...)
 
 	// Helper to parse field lists with defaults
 	parseFields := func(q, def string) []string {
@@ -541,7 +562,7 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		checks["database"] = "error"
 		status = "unhealthy"
-		s.loggerOrDefault().ErrorContext(ctx, "readiness check failed", appendRequestID(ctx, []any{
+		s.logger.ErrorContext(ctx, "readiness check failed", appendRequestID(ctx, []any{
 			"check", "database",
 			"error", err.Error(),
 		})...)
@@ -653,7 +674,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	var in domain.CreateAccount
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		fields := appendRequestID(ctx, []any{"reason", err.Error()})
-		s.loggerOrDefault().WarnContext(ctx, "accounts:create invalid json", fields...)
+		s.logger.WarnContext(ctx, "accounts:create invalid json", fields...)
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
 		return
 	}
@@ -663,7 +684,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	// Validate account key format
 	if err := validation.ValidateAccountKey(in.Key); err != nil {
 		fields := appendRequestID(ctx, []any{"key", in.Key, "reason", err.Error()})
-		s.loggerOrDefault().WarnContext(ctx, "accounts:create invalid key", fields...)
+		s.logger.WarnContext(ctx, "accounts:create invalid key", fields...)
 		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
@@ -671,7 +692,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	// Validate account name
 	if err := validation.ValidateName(in.Name); err != nil {
 		fields := appendRequestID(ctx, []any{"name", in.Name, "reason", err.Error()})
-		s.loggerOrDefault().WarnContext(ctx, "accounts:create invalid name", fields...)
+		s.logger.WarnContext(ctx, "accounts:create invalid name", fields...)
 		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
@@ -683,7 +704,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 			"name", in.Name,
 			"error", err.Error(),
 		})
-		s.loggerOrDefault().WarnContext(ctx, "accounts:create storage error", fields...)
+		s.logger.WarnContext(ctx, "accounts:create storage error", fields...)
 		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
@@ -692,7 +713,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 		"key", a.Key,
 		"name", a.Name,
 	})
-	s.loggerOrDefault().InfoContext(ctx, "accounts:create success", fields...)
+	s.logger.InfoContext(ctx, "accounts:create success", fields...)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(a)
@@ -959,7 +980,7 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	logger := s.loggerOrDefault()
+	logger := s.logger
 	var in domain.CreatePool
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		logger.WarnContext(ctx, "pools:create invalid json", appendRequestID(ctx, []any{"reason", err.Error()})...)

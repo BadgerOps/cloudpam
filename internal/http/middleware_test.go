@@ -470,9 +470,9 @@ func TestSanitizeRequestID(t *testing.T) {
 
 func TestRequestIDMiddlewareRejectsInvalidID(t *testing.T) {
 	tests := []struct {
-		name     string
-		inputID  string
-		wantNew  bool // whether we expect a new ID to be generated
+		name    string
+		inputID string
+		wantNew bool // whether we expect a new ID to be generated
 	}{
 		{
 			name:    "rejects too long ID",

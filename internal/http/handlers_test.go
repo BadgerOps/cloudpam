@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,6 +12,7 @@ import (
 	"testing"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
 )
 
@@ -27,8 +27,12 @@ type poolDTO struct {
 func setupTestServer() (*Server, *storage.MemoryStore) {
 	st := storage.NewMemoryStore()
 	mux := stdhttp.NewServeMux()
-	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
-	srv := NewServer(mux, st, logger)
+	logger := observability.NewLogger(observability.Config{
+		Level:  "info",
+		Format: "json",
+		Output: io.Discard,
+	})
+	srv := NewServer(mux, st, logger, nil)
 	srv.RegisterRoutes()
 	return srv, st
 }
@@ -680,8 +684,12 @@ func (f *failingStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
 func TestReadyzEndpointDatabaseFailure(t *testing.T) {
 	st := &failingStore{}
 	mux := stdhttp.NewServeMux()
-	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
-	srv := NewServer(mux, st, logger)
+	logger := observability.NewLogger(observability.Config{
+		Level:  "info",
+		Format: "json",
+		Output: io.Discard,
+	})
+	srv := NewServer(mux, st, logger, nil)
 	srv.RegisterRoutes()
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/readyz", nil)
@@ -704,5 +712,372 @@ func TestReadyzEndpointDatabaseFailure(t *testing.T) {
 	}
 	if resp.Checks["database"] != "error" {
 		t.Fatalf("expected database check error, got %q", resp.Checks["database"])
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	st := storage.NewMemoryStore()
+	mux := stdhttp.NewServeMux()
+	logger := observability.NewLogger(observability.Config{
+		Level:  "info",
+		Format: "json",
+		Output: io.Discard,
+	})
+	// Create with metrics enabled
+	metrics := observability.NewMetrics(observability.MetricsConfig{
+		Namespace: "cloudpam",
+		Version:   "test",
+	})
+	srv := NewServer(mux, st, logger, metrics)
+	srv.RegisterRoutes()
+
+	// Make a request to trigger metrics recording
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+
+	// Fetch metrics endpoint
+	req := httptest.NewRequest(stdhttp.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	body := rr.Body.String()
+
+	// Check for expected metrics
+	if !strings.Contains(body, "cloudpam_info") {
+		t.Errorf("expected cloudpam_info metric in output")
+	}
+	if !strings.Contains(body, `version="test"`) {
+		t.Errorf("expected version label in output")
+	}
+	if !strings.Contains(body, "cloudpam_rate_limit_requests_total") {
+		t.Errorf("expected cloudpam_rate_limit_requests_total metric in output")
+	}
+	if !strings.Contains(body, "cloudpam_active_connections") {
+		t.Errorf("expected cloudpam_active_connections metric in output")
+	}
+
+	// Check content-type
+	contentType := rr.Header().Get("Content-Type")
+	if !strings.HasPrefix(contentType, "text/plain") {
+		t.Errorf("expected Content-Type text/plain, got %q", contentType)
+	}
+}
+
+func TestMetricsEndpointDisabled(t *testing.T) {
+	st := storage.NewMemoryStore()
+	mux := stdhttp.NewServeMux()
+	logger := observability.NewLogger(observability.Config{
+		Level:  "info",
+		Format: "json",
+		Output: io.Discard,
+	})
+	// Create without metrics (nil)
+	srv := NewServer(mux, st, logger, nil)
+	srv.RegisterRoutes()
+
+	// Metrics endpoint should 404 when metrics is nil
+	req := httptest.NewRequest(stdhttp.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404 when metrics disabled, got %d", rr.Code)
+	}
+}
+
+func TestExportEndpoint(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create test data
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:123456789012","name":"TestAccount"}`, stdhttp.StatusCreated)
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+
+	// Test missing datasets parameter
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/export", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400 for missing datasets, got %d", rr.Code)
+	}
+
+	// Test invalid datasets
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/export?datasets=invalid", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid datasets, got %d", rr.Code)
+	}
+
+	// Test method not allowed
+	req = httptest.NewRequest(stdhttp.MethodPost, "/api/v1/export?datasets=accounts", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for POST, got %d", rr.Code)
+	}
+
+	// Test successful export with accounts
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/export?datasets=accounts", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "application/zip" {
+		t.Fatalf("expected Content-Type application/zip, got %q", ct)
+	}
+
+	// Test successful export with pools
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/export?datasets=pools", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	// Test successful export with all datasets
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/export?datasets=accounts,pools,blocks", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestListAccountsEndpoint(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Test empty list
+	rr := doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/accounts", "", stdhttp.StatusOK)
+	var accounts []struct{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &accounts); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("expected empty list, got %d", len(accounts))
+	}
+
+	// Create an account
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:123456789012","name":"Test"}`, stdhttp.StatusCreated)
+
+	// Test list with data
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/accounts", "", stdhttp.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &accounts); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+}
+
+func TestPoolHandlers_MethodNotAllowed(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Test PUT on /api/v1/pools
+	req := httptest.NewRequest(stdhttp.MethodPut, "/api/v1/pools", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+
+	// Test PUT on /api/v1/accounts
+	req = httptest.NewRequest(stdhttp.MethodPut, "/api/v1/accounts", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+func TestAccountSubroutes_NotFound(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Empty path after /accounts/
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/accounts/", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+
+	// Non-existent account
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/accounts/9999", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+
+	// Invalid method on account subroute
+	req = httptest.NewRequest(stdhttp.MethodPost, "/api/v1/accounts/1", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+func TestPoolSubroutes_NotFound(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Empty path after /pools/
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/pools/", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+
+	// Non-existent pool
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/pools/9999", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+
+	// Invalid method on pool subroute
+	req = httptest.NewRequest(stdhttp.MethodPost, "/api/v1/pools/1", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+
+	// Blocks endpoint on non-existent pool
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/pools/9999/blocks?new_prefix_len=24", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+
+	// POST on blocks endpoint
+	req = httptest.NewRequest(stdhttp.MethodPost, "/api/v1/pools/1/blocks?new_prefix_len=24", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+func TestAccountPatch_InvalidJSON(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create an account first
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:123456789012","name":"Test"}`, stdhttp.StatusCreated)
+	var acc struct {
+		ID int64 `json:"id"`
+	}
+	json.Unmarshal(rr.Body.Bytes(), &acc)
+
+	// Try PATCH with invalid JSON
+	req := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/accounts/"+strconv.FormatInt(acc.ID, 10), strings.NewReader("{invalid"))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestPoolPatch_InvalidJSON(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create a pool first
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+	var pool poolDTO
+	json.Unmarshal(rr.Body.Bytes(), &pool)
+
+	// Try PATCH with invalid JSON
+	req := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/pools/"+strconv.FormatInt(pool.ID, 10), strings.NewReader("{invalid"))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestBlocksEndpoint_Pagination(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pool
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+	var pool poolDTO
+	json.Unmarshal(rr.Body.Bytes(), &pool)
+
+	// Test invalid page_size
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/blocks?page_size=-1", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400 for negative page_size, got %d", rr.Code)
+	}
+
+	// Test invalid page
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/blocks?page=0", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400 for page=0, got %d", rr.Code)
+	}
+
+	// Test invalid page format
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/blocks?page=abc", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid page, got %d", rr.Code)
+	}
+
+	// Test page_size=all
+	req = httptest.NewRequest(stdhttp.MethodGet, "/api/v1/blocks?page_size=all", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestBlocksForPool_Pagination(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pool
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+	var pool poolDTO
+	json.Unmarshal(rr.Body.Bytes(), &pool)
+	poolPath := "/api/v1/pools/" + strconv.FormatInt(pool.ID, 10) + "/blocks"
+
+	// Test invalid page_size
+	req := httptest.NewRequest(stdhttp.MethodGet, poolPath+"?new_prefix_len=24&page_size=-1", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400 for negative page_size, got %d", rr.Code)
+	}
+
+	// Test invalid page
+	req = httptest.NewRequest(stdhttp.MethodGet, poolPath+"?new_prefix_len=24&page=0", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected 400 for page=0, got %d", rr.Code)
+	}
+}
+
+func TestIndexHandler_NotFoundPath(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Non-root path should 404
+	req := httptest.NewRequest(stdhttp.MethodGet, "/nonexistent", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
 	}
 }
