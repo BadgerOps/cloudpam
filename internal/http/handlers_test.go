@@ -1081,3 +1081,317 @@ func TestIndexHandler_NotFoundPath(t *testing.T) {
 		t.Fatalf("expected 404, got %d", rr.Code)
 	}
 }
+
+// TestPoolsHierarchy tests the GET /api/v1/pools/hierarchy endpoint
+func TestPoolsHierarchy(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create hierarchy: root -> region -> vpc
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"enterprise","cidr":"10.0.0.0/8","type":"supernet"}`, stdhttp.StatusCreated)
+	var root poolDTO
+	_ = json.Unmarshal(rr.Body.Bytes(), &root)
+
+	rr = doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"us-east-1","cidr":"10.0.0.0/12","parent_id":`+strconv.FormatInt(root.ID, 10)+`,"type":"region"}`, stdhttp.StatusCreated)
+	var region struct{ ID int64 `json:"id"` }
+	_ = json.Unmarshal(rr.Body.Bytes(), &region)
+
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"prod-vpc","cidr":"10.0.0.0/16","parent_id":`+strconv.FormatInt(region.ID, 10)+`,"type":"vpc"}`, stdhttp.StatusCreated)
+
+	// Get full hierarchy
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools/hierarchy", "", stdhttp.StatusOK)
+	var resp struct {
+		Pools []struct {
+			ID       int64  `json:"id"`
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Stats    struct {
+				TotalIPs       int64   `json:"total_ips"`
+				DirectChildren int     `json:"direct_children"`
+				Utilization    float64 `json:"utilization"`
+			} `json:"stats"`
+			Children []struct {
+				Name     string `json:"name"`
+				Children []struct {
+					Name string `json:"name"`
+				} `json:"children"`
+			} `json:"children"`
+		} `json:"pools"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal hierarchy: %v", err)
+	}
+
+	if len(resp.Pools) != 1 {
+		t.Fatalf("expected 1 root pool, got %d", len(resp.Pools))
+	}
+	if resp.Pools[0].Name != "enterprise" {
+		t.Errorf("expected root name enterprise, got %s", resp.Pools[0].Name)
+	}
+	if resp.Pools[0].Type != "supernet" {
+		t.Errorf("expected type supernet, got %s", resp.Pools[0].Type)
+	}
+	if resp.Pools[0].Stats.DirectChildren != 1 {
+		t.Errorf("expected 1 direct child, got %d", resp.Pools[0].Stats.DirectChildren)
+	}
+	if len(resp.Pools[0].Children) != 1 || resp.Pools[0].Children[0].Name != "us-east-1" {
+		t.Error("expected us-east-1 as child")
+	}
+
+	// Get subtree from specific root
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools/hierarchy?root_id="+strconv.FormatInt(region.ID, 10), "", stdhttp.StatusOK)
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Pools) != 1 || resp.Pools[0].Name != "us-east-1" {
+		t.Error("expected us-east-1 as subtree root")
+	}
+
+	// Test invalid root_id
+	doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools/hierarchy?root_id=abc", "", stdhttp.StatusBadRequest)
+
+	// Test non-existent root_id
+	doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools/hierarchy?root_id=9999", "", stdhttp.StatusNotFound)
+
+	// Test method not allowed
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/pools/hierarchy", nil)
+	rrr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rrr, req)
+	if rrr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for POST, got %d", rrr.Code)
+	}
+}
+
+// TestPoolStats tests the GET /api/v1/pools/{id}/stats endpoint
+func TestPoolStats(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pool with children
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+	var root poolDTO
+	_ = json.Unmarshal(rr.Body.Bytes(), &root)
+
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"child1","cidr":"10.0.0.0/24","parent_id":`+strconv.FormatInt(root.ID, 10)+`}`, stdhttp.StatusCreated)
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"child2","cidr":"10.0.1.0/24","parent_id":`+strconv.FormatInt(root.ID, 10)+`}`, stdhttp.StatusCreated)
+
+	// Get stats
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools/"+strconv.FormatInt(root.ID, 10)+"/stats", "", stdhttp.StatusOK)
+	var stats struct {
+		TotalIPs       int64   `json:"total_ips"`
+		UsedIPs        int64   `json:"used_ips"`
+		AvailableIPs   int64   `json:"available_ips"`
+		Utilization    float64 `json:"utilization"`
+		DirectChildren int     `json:"direct_children"`
+		ChildCount     int     `json:"child_count"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("unmarshal stats: %v", err)
+	}
+
+	// /16 = 65536 IPs, 2x /24 = 512 used
+	if stats.TotalIPs != 65536 {
+		t.Errorf("expected 65536 total IPs, got %d", stats.TotalIPs)
+	}
+	if stats.UsedIPs != 512 {
+		t.Errorf("expected 512 used IPs, got %d", stats.UsedIPs)
+	}
+	if stats.DirectChildren != 2 {
+		t.Errorf("expected 2 direct children, got %d", stats.DirectChildren)
+	}
+
+	// Test non-existent pool
+	doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools/9999/stats", "", stdhttp.StatusNotFound)
+
+	// Test method not allowed
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/pools/"+strconv.FormatInt(root.ID, 10)+"/stats", nil)
+	rrr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rrr, req)
+	if rrr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for POST, got %d", rrr.Code)
+	}
+}
+
+// TestPoolEnhancedFields tests creating and updating pools with new fields
+func TestPoolEnhancedFields(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pool with all new fields
+	body := `{
+		"name": "enterprise-root",
+		"cidr": "10.0.0.0/8",
+		"type": "supernet",
+		"status": "active",
+		"source": "manual",
+		"description": "Enterprise root network",
+		"tags": {"env": "prod", "team": "network"}
+	}`
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", body, stdhttp.StatusCreated)
+
+	var pool struct {
+		ID          int64             `json:"id"`
+		Name        string            `json:"name"`
+		Type        string            `json:"type"`
+		Status      string            `json:"status"`
+		Source      string            `json:"source"`
+		Description string            `json:"description"`
+		Tags        map[string]string `json:"tags"`
+		UpdatedAt   string            `json:"updated_at"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &pool); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if pool.Type != "supernet" {
+		t.Errorf("expected type supernet, got %s", pool.Type)
+	}
+	if pool.Status != "active" {
+		t.Errorf("expected status active, got %s", pool.Status)
+	}
+	if pool.Source != "manual" {
+		t.Errorf("expected source manual, got %s", pool.Source)
+	}
+	if pool.Description != "Enterprise root network" {
+		t.Errorf("expected description, got %s", pool.Description)
+	}
+	if pool.Tags["env"] != "prod" {
+		t.Errorf("expected tag env=prod, got %v", pool.Tags)
+	}
+
+	// Update pool with PATCH
+	updateBody := `{
+		"name": "updated-root",
+		"type": "region",
+		"status": "deprecated",
+		"description": "Updated description",
+		"tags": {"env": "staging"}
+	}`
+	rr = doJSON(t, srv.mux, stdhttp.MethodPatch, "/api/v1/pools/"+strconv.FormatInt(pool.ID, 10), updateBody, stdhttp.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &pool); err != nil {
+		t.Fatalf("unmarshal updated: %v", err)
+	}
+
+	if pool.Name != "updated-root" {
+		t.Errorf("expected name updated-root, got %s", pool.Name)
+	}
+	if pool.Type != "region" {
+		t.Errorf("expected type region, got %s", pool.Type)
+	}
+	if pool.Status != "deprecated" {
+		t.Errorf("expected status deprecated, got %s", pool.Status)
+	}
+	if pool.Description != "Updated description" {
+		t.Errorf("expected updated description, got %s", pool.Description)
+	}
+	if pool.Tags["env"] != "staging" {
+		t.Errorf("expected tag env=staging, got %v", pool.Tags)
+	}
+}
+
+// TestPoolDefaults tests that new fields have sensible defaults
+func TestPoolDefaults(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pool without specifying new fields
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"test","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+
+	var pool struct {
+		Type   string `json:"type"`
+		Status string `json:"status"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &pool); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if pool.Type != "subnet" {
+		t.Errorf("expected default type subnet, got %s", pool.Type)
+	}
+	if pool.Status != "active" {
+		t.Errorf("expected default status active, got %s", pool.Status)
+	}
+	if pool.Source != "manual" {
+		t.Errorf("expected default source manual, got %s", pool.Source)
+	}
+}
+
+// TestPoolInvalidType tests validation of pool type
+func TestPoolInvalidType(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pool with invalid type
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"test","cidr":"10.0.0.0/16","type":"invalid"}`, stdhttp.StatusBadRequest)
+
+	// Create valid pool then try to update with invalid type
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"test","cidr":"172.16.0.0/16"}`, stdhttp.StatusCreated)
+	var pool poolDTO
+	_ = json.Unmarshal(rr.Body.Bytes(), &pool)
+
+	doJSON(t, srv.mux, stdhttp.MethodPatch, "/api/v1/pools/"+strconv.FormatInt(pool.ID, 10), `{"type":"invalid"}`, stdhttp.StatusBadRequest)
+}
+
+// TestPoolInvalidStatus tests validation of pool status
+func TestPoolInvalidStatus(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pool with invalid status
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"test","cidr":"10.0.0.0/16","status":"invalid"}`, stdhttp.StatusBadRequest)
+}
+
+// TestPoolInvalidSource tests validation of pool source
+func TestPoolInvalidSource(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pool with invalid source
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"test","cidr":"10.0.0.0/16","source":"invalid"}`, stdhttp.StatusBadRequest)
+}
+
+// TestListPoolsWithStats tests the GET /api/v1/pools?include_stats=true endpoint
+func TestListPoolsWithStats(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	// Create pools
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
+	var root poolDTO
+	_ = json.Unmarshal(rr.Body.Bytes(), &root)
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"child","cidr":"10.0.0.0/24","parent_id":`+strconv.FormatInt(root.ID, 10)+`}`, stdhttp.StatusCreated)
+
+	// List without stats (default)
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools", "", stdhttp.StatusOK)
+	var poolsNoStats []struct {
+		Stats interface{} `json:"stats"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &poolsNoStats)
+	// Without include_stats, should just be a flat list of pools (no separate stats key)
+
+	// List with stats
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools?include_stats=true", "", stdhttp.StatusOK)
+	var poolsWithStats []struct {
+		ID    int64  `json:"id"`
+		Name  string `json:"name"`
+		Stats struct {
+			TotalIPs       int64 `json:"total_ips"`
+			DirectChildren int   `json:"direct_children"`
+		} `json:"stats"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &poolsWithStats); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if len(poolsWithStats) != 2 {
+		t.Fatalf("expected 2 pools, got %d", len(poolsWithStats))
+	}
+
+	// Find root and verify stats
+	var foundRoot bool
+	for _, p := range poolsWithStats {
+		if p.Name == "root" {
+			foundRoot = true
+			if p.Stats.TotalIPs != 65536 {
+				t.Errorf("expected 65536 total IPs for root, got %d", p.Stats.TotalIPs)
+			}
+			if p.Stats.DirectChildren != 1 {
+				t.Errorf("expected 1 direct child, got %d", p.Stats.DirectChildren)
+			}
+		}
+	}
+	if !foundRoot {
+		t.Error("root pool not found")
+	}
+}

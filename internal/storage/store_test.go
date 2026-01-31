@@ -612,3 +612,401 @@ func TestMemoryStore_RegionsCopied(t *testing.T) {
 		t.Error("regions should be copied, not shared")
 	}
 }
+
+// TestMemoryStore_EnhancedPoolFields tests the new pool fields (type, status, source, description, tags)
+func TestMemoryStore_EnhancedPoolFields(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create pool with all new fields
+	tags := map[string]string{"env": "prod", "team": "network"}
+	p, err := m.CreatePool(ctx, domain.CreatePool{
+		Name:        "enterprise-root",
+		CIDR:        "10.0.0.0/8",
+		Type:        domain.PoolTypeSupernet,
+		Status:      domain.PoolStatusActive,
+		Source:      domain.PoolSourceManual,
+		Description: "Enterprise root network",
+		Tags:        tags,
+	})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	// Verify all fields are set correctly
+	if p.Type != domain.PoolTypeSupernet {
+		t.Errorf("expected type supernet, got %s", p.Type)
+	}
+	if p.Status != domain.PoolStatusActive {
+		t.Errorf("expected status active, got %s", p.Status)
+	}
+	if p.Source != domain.PoolSourceManual {
+		t.Errorf("expected source manual, got %s", p.Source)
+	}
+	if p.Description != "Enterprise root network" {
+		t.Errorf("expected description, got %s", p.Description)
+	}
+	if len(p.Tags) != 2 || p.Tags["env"] != "prod" {
+		t.Errorf("expected tags, got %v", p.Tags)
+	}
+	if p.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be set")
+	}
+	if p.UpdatedAt.IsZero() {
+		t.Error("expected UpdatedAt to be set")
+	}
+
+	// Verify GetPool returns the same data
+	got, ok, err := m.GetPool(ctx, p.ID)
+	if err != nil || !ok {
+		t.Fatalf("get pool: %v ok=%v", err, ok)
+	}
+	if got.Type != domain.PoolTypeSupernet {
+		t.Errorf("GetPool: expected type supernet, got %s", got.Type)
+	}
+	if got.Description != "Enterprise root network" {
+		t.Errorf("GetPool: expected description, got %s", got.Description)
+	}
+}
+
+// TestMemoryStore_PoolDefaults tests that new fields have sensible defaults
+func TestMemoryStore_PoolDefaults(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create pool without specifying new fields
+	p, err := m.CreatePool(ctx, domain.CreatePool{
+		Name: "test-pool",
+		CIDR: "10.0.0.0/16",
+	})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	// Verify defaults
+	if p.Type != domain.PoolTypeSubnet {
+		t.Errorf("expected default type subnet, got %s", p.Type)
+	}
+	if p.Status != domain.PoolStatusActive {
+		t.Errorf("expected default status active, got %s", p.Status)
+	}
+	if p.Source != domain.PoolSourceManual {
+		t.Errorf("expected default source manual, got %s", p.Source)
+	}
+}
+
+// TestMemoryStore_UpdatePool tests the UpdatePool method
+func TestMemoryStore_UpdatePool(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create pool
+	p, _ := m.CreatePool(ctx, domain.CreatePool{
+		Name:   "test-pool",
+		CIDR:   "10.0.0.0/16",
+		Type:   domain.PoolTypeSubnet,
+		Status: domain.PoolStatusPlanned,
+	})
+
+	// Update pool
+	newName := "updated-pool"
+	newType := domain.PoolTypeVPC
+	newStatus := domain.PoolStatusActive
+	newDesc := "Updated description"
+	newTags := map[string]string{"updated": "true"}
+
+	updated, ok, err := m.UpdatePool(ctx, p.ID, domain.UpdatePool{
+		Name:        &newName,
+		Type:        &newType,
+		Status:      &newStatus,
+		Description: &newDesc,
+		Tags:        &newTags,
+	})
+	if err != nil || !ok {
+		t.Fatalf("update pool: %v ok=%v", err, ok)
+	}
+
+	if updated.Name != "updated-pool" {
+		t.Errorf("expected name updated-pool, got %s", updated.Name)
+	}
+	if updated.Type != domain.PoolTypeVPC {
+		t.Errorf("expected type vpc, got %s", updated.Type)
+	}
+	if updated.Status != domain.PoolStatusActive {
+		t.Errorf("expected status active, got %s", updated.Status)
+	}
+	if updated.Description != "Updated description" {
+		t.Errorf("expected description updated, got %s", updated.Description)
+	}
+	if updated.Tags["updated"] != "true" {
+		t.Errorf("expected tags updated, got %v", updated.Tags)
+	}
+	// UpdatedAt should be set (may be equal to or after CreatedAt depending on timing)
+	if updated.UpdatedAt.IsZero() {
+		t.Error("expected UpdatedAt to be set")
+	}
+}
+
+// TestMemoryStore_UpdatePoolNonExistent tests UpdatePool on non-existent pool
+func TestMemoryStore_UpdatePoolNonExistent(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	name := "test"
+	_, ok, err := m.UpdatePool(ctx, 999, domain.UpdatePool{Name: &name})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ok {
+		t.Error("expected ok=false for non-existent pool")
+	}
+}
+
+// TestMemoryStore_GetPoolWithStats tests the GetPoolWithStats method
+func TestMemoryStore_GetPoolWithStats(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create parent pool
+	parent, _ := m.CreatePool(ctx, domain.CreatePool{
+		Name: "parent",
+		CIDR: "10.0.0.0/16",
+		Type: domain.PoolTypeSupernet,
+	})
+
+	// Create child pools
+	m.CreatePool(ctx, domain.CreatePool{
+		Name:     "child1",
+		CIDR:     "10.0.0.0/24",
+		ParentID: &parent.ID,
+	})
+	m.CreatePool(ctx, domain.CreatePool{
+		Name:     "child2",
+		CIDR:     "10.0.1.0/24",
+		ParentID: &parent.ID,
+	})
+
+	// Get pool with stats
+	pws, err := m.GetPoolWithStats(ctx, parent.ID)
+	if err != nil {
+		t.Fatalf("get pool with stats: %v", err)
+	}
+
+	// Verify stats
+	if pws.Stats.TotalIPs != 65536 { // /16 = 2^16 = 65536
+		t.Errorf("expected total IPs 65536, got %d", pws.Stats.TotalIPs)
+	}
+	if pws.Stats.UsedIPs != 512 { // 2 x /24 = 2 x 256 = 512
+		t.Errorf("expected used IPs 512, got %d", pws.Stats.UsedIPs)
+	}
+	if pws.Stats.AvailableIPs != 65024 { // 65536 - 512 = 65024
+		t.Errorf("expected available IPs 65024, got %d", pws.Stats.AvailableIPs)
+	}
+	if pws.Stats.DirectChildren != 2 {
+		t.Errorf("expected 2 direct children, got %d", pws.Stats.DirectChildren)
+	}
+	if pws.Stats.ChildCount != 2 {
+		t.Errorf("expected 2 total children, got %d", pws.Stats.ChildCount)
+	}
+	// Utilization should be ~0.78%
+	expectedUtil := float64(512) / float64(65536) * 100
+	if pws.Stats.Utilization < expectedUtil-0.01 || pws.Stats.Utilization > expectedUtil+0.01 {
+		t.Errorf("expected utilization ~%.2f%%, got %.2f%%", expectedUtil, pws.Stats.Utilization)
+	}
+}
+
+// TestMemoryStore_GetPoolWithStatsNotFound tests GetPoolWithStats on non-existent pool
+func TestMemoryStore_GetPoolWithStatsNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.GetPoolWithStats(ctx, 999)
+	if err == nil {
+		t.Error("expected error for non-existent pool")
+	}
+}
+
+// TestMemoryStore_GetPoolHierarchy tests the GetPoolHierarchy method
+func TestMemoryStore_GetPoolHierarchy(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create hierarchy: root -> region -> vpc -> subnet
+	root, _ := m.CreatePool(ctx, domain.CreatePool{
+		Name: "enterprise",
+		CIDR: "10.0.0.0/8",
+		Type: domain.PoolTypeSupernet,
+	})
+	region, _ := m.CreatePool(ctx, domain.CreatePool{
+		Name:     "us-east-1",
+		CIDR:     "10.0.0.0/12",
+		ParentID: &root.ID,
+		Type:     domain.PoolTypeRegion,
+	})
+	vpc, _ := m.CreatePool(ctx, domain.CreatePool{
+		Name:     "prod-vpc",
+		CIDR:     "10.0.0.0/16",
+		ParentID: &region.ID,
+		Type:     domain.PoolTypeVPC,
+	})
+	m.CreatePool(ctx, domain.CreatePool{
+		Name:     "app-subnet",
+		CIDR:     "10.0.0.0/24",
+		ParentID: &vpc.ID,
+		Type:     domain.PoolTypeSubnet,
+	})
+
+	// Get full hierarchy (nil root)
+	hierarchy, err := m.GetPoolHierarchy(ctx, nil)
+	if err != nil {
+		t.Fatalf("get pool hierarchy: %v", err)
+	}
+
+	// Should have one top-level pool
+	if len(hierarchy) != 1 {
+		t.Fatalf("expected 1 top-level pool, got %d", len(hierarchy))
+	}
+
+	// Verify structure
+	rootNode := hierarchy[0]
+	if rootNode.Name != "enterprise" {
+		t.Errorf("expected root name enterprise, got %s", rootNode.Name)
+	}
+	if len(rootNode.Children) != 1 {
+		t.Fatalf("expected 1 child of root, got %d", len(rootNode.Children))
+	}
+	if rootNode.Children[0].Name != "us-east-1" {
+		t.Errorf("expected region name us-east-1, got %s", rootNode.Children[0].Name)
+	}
+	if len(rootNode.Children[0].Children) != 1 {
+		t.Fatalf("expected 1 child of region, got %d", len(rootNode.Children[0].Children))
+	}
+	if rootNode.Children[0].Children[0].Name != "prod-vpc" {
+		t.Errorf("expected vpc name prod-vpc, got %s", rootNode.Children[0].Children[0].Name)
+	}
+
+	// Get subtree from specific root
+	subtree, err := m.GetPoolHierarchy(ctx, &region.ID)
+	if err != nil {
+		t.Fatalf("get subtree: %v", err)
+	}
+	if len(subtree) != 1 {
+		t.Fatalf("expected 1 node in subtree, got %d", len(subtree))
+	}
+	if subtree[0].Name != "us-east-1" {
+		t.Errorf("expected subtree root us-east-1, got %s", subtree[0].Name)
+	}
+}
+
+// TestMemoryStore_GetPoolHierarchyNotFound tests GetPoolHierarchy with non-existent root
+func TestMemoryStore_GetPoolHierarchyNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	badID := int64(999)
+	_, err := m.GetPoolHierarchy(ctx, &badID)
+	if err == nil {
+		t.Error("expected error for non-existent root")
+	}
+}
+
+// TestMemoryStore_GetPoolChildren tests the GetPoolChildren method
+func TestMemoryStore_GetPoolChildren(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create parent and children
+	parent, _ := m.CreatePool(ctx, domain.CreatePool{
+		Name: "parent",
+		CIDR: "10.0.0.0/8",
+	})
+	m.CreatePool(ctx, domain.CreatePool{
+		Name:     "child1",
+		CIDR:     "10.0.0.0/16",
+		ParentID: &parent.ID,
+	})
+	m.CreatePool(ctx, domain.CreatePool{
+		Name:     "child2",
+		CIDR:     "10.1.0.0/16",
+		ParentID: &parent.ID,
+	})
+
+	children, err := m.GetPoolChildren(ctx, parent.ID)
+	if err != nil {
+		t.Fatalf("get pool children: %v", err)
+	}
+	if len(children) != 2 {
+		t.Errorf("expected 2 children, got %d", len(children))
+	}
+}
+
+// TestMemoryStore_GetPoolChildrenNotFound tests GetPoolChildren with non-existent parent
+func TestMemoryStore_GetPoolChildrenNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.GetPoolChildren(ctx, 999)
+	if err == nil {
+		t.Error("expected error for non-existent parent")
+	}
+}
+
+// TestMemoryStore_CalculatePoolUtilization tests the CalculatePoolUtilization method
+func TestMemoryStore_CalculatePoolUtilization(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create pool with no children
+	p, _ := m.CreatePool(ctx, domain.CreatePool{
+		Name: "empty",
+		CIDR: "10.0.0.0/16",
+	})
+
+	stats, err := m.CalculatePoolUtilization(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("calculate utilization: %v", err)
+	}
+
+	if stats.TotalIPs != 65536 {
+		t.Errorf("expected 65536 total IPs, got %d", stats.TotalIPs)
+	}
+	if stats.UsedIPs != 0 {
+		t.Errorf("expected 0 used IPs, got %d", stats.UsedIPs)
+	}
+	if stats.Utilization != 0 {
+		t.Errorf("expected 0%% utilization, got %.2f%%", stats.Utilization)
+	}
+}
+
+// TestMemoryStore_CalculatePoolUtilizationNotFound tests CalculatePoolUtilization with non-existent pool
+func TestMemoryStore_CalculatePoolUtilizationNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.CalculatePoolUtilization(ctx, 999)
+	if err == nil {
+		t.Error("expected error for non-existent pool")
+	}
+}
+
+// TestMemoryStore_TagsCopied tests that tags are copied on create and update
+func TestMemoryStore_TagsCopied(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	tags := map[string]string{"env": "prod"}
+	p, _ := m.CreatePool(ctx, domain.CreatePool{
+		Name: "test",
+		CIDR: "10.0.0.0/16",
+		Tags: tags,
+	})
+
+	// Modify original map
+	tags["env"] = "dev"
+
+	// Verify stored tags are not affected
+	got, _, _ := m.GetPool(ctx, p.ID)
+	if got.Tags["env"] != "prod" {
+		t.Error("tags should be copied, not shared")
+	}
+}

@@ -105,6 +105,7 @@ func (s *Server) RegisterRoutes() {
 	}
 	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
 	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
+	// Note: /api/v1/pools/hierarchy is handled by handlePoolsSubroutes
 	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
 	s.mux.HandleFunc("/api/v1/accounts", s.handleAccounts)
 	s.mux.HandleFunc("/api/v1/accounts/", s.handleAccountsSubroutes)
@@ -198,6 +199,21 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 			return
 		}
 
+		// Handle /pools/hierarchy (no ID)
+		if parts[0] == "hierarchy" {
+			if r.Method != http.MethodGet {
+				s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+				return
+			}
+			// Requires pools:read
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.handlePoolsHierarchy(w, r)
+			return
+		}
+
 		id64, err := strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
 			s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool id", "")
@@ -216,6 +232,21 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				return
 			}
 			s.blocksForPool(w, r, id64)
+			return
+		}
+
+		// Handle /pools/{id}/stats
+		if len(parts) >= 2 && parts[1] == "stats" {
+			if r.Method != http.MethodGet {
+				s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+				return
+			}
+			// Requires pools:read
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.handlePoolStats(w, r, id64)
 			return
 		}
 
@@ -242,32 +273,7 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
-			var payload struct {
-				AccountID *int64  `json:"account_id"`
-				Name      *string `json:"name"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
-				return
-			}
-			if payload.Name != nil {
-				trimmed := strings.TrimSpace(*payload.Name)
-				payload.Name = &trimmed
-				if err := validation.ValidateName(*payload.Name); err != nil {
-					s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
-					return
-				}
-			}
-			p, ok, err := s.store.UpdatePoolMeta(ctx, id64, payload.Name, payload.AccountID)
-			if err != nil {
-				s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
-				return
-			}
-			if !ok {
-				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
-				return
-			}
-			writeJSON(w, http.StatusOK, p)
+			s.updatePool(w, r, id64)
 
 		case http.MethodDelete:
 			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionDelete) {
@@ -1183,6 +1189,8 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 }
 
 // /api/v1/pools/{id}/blocks?new_prefix_len=24
+// /api/v1/pools/hierarchy - returns pool hierarchy tree
+// /api/v1/pools/{id}/stats - returns pool statistics
 func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/pools/")
 	parts := strings.Split(strings.Trim(path, "/"), "/")
@@ -1190,6 +1198,17 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 		return
 	}
+
+	// Handle /api/v1/pools/hierarchy (no ID)
+	if parts[0] == "hierarchy" {
+		if r.Method != http.MethodGet {
+			s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+			return
+		}
+		s.handlePoolsHierarchy(w, r)
+		return
+	}
+
 	id64, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool id", "")
@@ -1201,6 +1220,15 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.blocksForPool(w, r, id64)
+		return
+	}
+	// Handle /api/v1/pools/{id}/stats
+	if len(parts) >= 2 && parts[1] == "stats" {
+		if r.Method != http.MethodGet {
+			s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+			return
+		}
+		s.handlePoolStats(w, r, id64)
 		return
 	}
 	// Pool detail
@@ -1217,33 +1245,7 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, p)
 	case http.MethodPatch:
-		var payload struct {
-			AccountID *int64  `json:"account_id"`
-			Name      *string `json:"name"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid json", "")
-			return
-		}
-		// Validate name if provided
-		if payload.Name != nil {
-			trimmed := strings.TrimSpace(*payload.Name)
-			payload.Name = &trimmed
-			if err := validation.ValidateName(*payload.Name); err != nil {
-				s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
-				return
-			}
-		}
-		p, ok, err := s.store.UpdatePoolMeta(r.Context(), id64, payload.Name, payload.AccountID)
-		if err != nil {
-			s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
-			return
-		}
-		if !ok {
-			s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
-			return
-		}
-		writeJSON(w, http.StatusOK, p)
+		s.updatePool(w, r, id64)
 	case http.MethodDelete:
 		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
@@ -1266,11 +1268,150 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handlePoolsHierarchy returns the pool hierarchy tree.
+// GET /api/v1/pools/hierarchy?root_id=1
+func (s *Server) handlePoolsHierarchy(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Optional root_id query param
+	var rootID *int64
+	if rootIDStr := r.URL.Query().Get("root_id"); rootIDStr != "" {
+		id, err := strconv.ParseInt(rootIDStr, 10, 64)
+		if err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, "invalid root_id", "")
+			return
+		}
+		rootID = &id
+	}
+
+	hierarchy, err := s.store.GetPoolHierarchy(ctx, rootID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			s.writeErr(ctx, w, http.StatusNotFound, err.Error(), "")
+			return
+		}
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+		return
+	}
+
+	type response struct {
+		Pools []domain.PoolWithStats `json:"pools"`
+	}
+	writeJSON(w, http.StatusOK, response{Pools: hierarchy})
+}
+
+// handlePoolStats returns statistics for a specific pool.
+// GET /api/v1/pools/{id}/stats
+func (s *Server) handlePoolStats(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	stats, err := s.store.CalculatePoolUtilization(ctx, id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			s.writeErr(ctx, w, http.StatusNotFound, err.Error(), "")
+			return
+		}
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// updatePool handles PATCH /api/v1/pools/{id}
+func (s *Server) updatePool(w http.ResponseWriter, r *http.Request, id int64) {
+	ctx := r.Context()
+
+	var payload struct {
+		AccountID   *int64             `json:"account_id"`
+		Name        *string            `json:"name"`
+		Type        *domain.PoolType   `json:"type"`
+		Status      *domain.PoolStatus `json:"status"`
+		Description *string            `json:"description"`
+		Tags        *map[string]string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
+		return
+	}
+
+	// Validate name if provided
+	if payload.Name != nil {
+		trimmed := strings.TrimSpace(*payload.Name)
+		payload.Name = &trimmed
+		if err := validation.ValidateName(*payload.Name); err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
+	}
+
+	// Validate type if provided
+	if payload.Type != nil && !domain.IsValidPoolType(*payload.Type) {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool type", fmt.Sprintf("valid types: %v", domain.ValidPoolTypes))
+		return
+	}
+
+	// Validate status if provided
+	if payload.Status != nil && !domain.IsValidPoolStatus(*payload.Status) {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool status", fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses))
+		return
+	}
+
+	update := domain.UpdatePool{
+		Name:        payload.Name,
+		AccountID:   payload.AccountID,
+		Type:        payload.Type,
+		Status:      payload.Status,
+		Description: payload.Description,
+		Tags:        payload.Tags,
+	}
+
+	p, ok, err := s.store.UpdatePool(ctx, id, update)
+	if err != nil {
+		s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+	if !ok {
+		s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
 func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	// Check for include_stats query param
+	includeStats := strings.ToLower(r.URL.Query().Get("include_stats"))
+	if includeStats == "true" || includeStats == "1" || includeStats == "yes" {
+		// Return all pools with stats (flat list, not hierarchy)
+		pools, err := s.store.ListPools(ctx)
+		if err != nil {
+			s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+			return
+		}
+
+		type poolWithStats struct {
+			domain.Pool
+			Stats domain.PoolStats `json:"stats"`
+		}
+
+		result := make([]poolWithStats, 0, len(pools))
+		for _, p := range pools {
+			stats, err := s.store.CalculatePoolUtilization(ctx, p.ID)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+				return
+			}
+			result = append(result, poolWithStats{Pool: p, Stats: *stats})
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
 	pools, err := s.store.ListPools(ctx)
 	if err != nil {
-		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, pools)
@@ -1305,6 +1446,33 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			"reason", err.Error(),
 		})...)
 		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+
+	// Validate pool type if provided
+	if in.Type != "" && !domain.IsValidPoolType(in.Type) {
+		logger.WarnContext(ctx, "pools:create invalid type", appendRequestID(ctx, []any{
+			"type", in.Type,
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool type", fmt.Sprintf("valid types: %v", domain.ValidPoolTypes))
+		return
+	}
+
+	// Validate pool status if provided
+	if in.Status != "" && !domain.IsValidPoolStatus(in.Status) {
+		logger.WarnContext(ctx, "pools:create invalid status", appendRequestID(ctx, []any{
+			"status", in.Status,
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool status", fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses))
+		return
+	}
+
+	// Validate pool source if provided
+	if in.Source != "" && !domain.IsValidPoolSource(in.Source) {
+		logger.WarnContext(ctx, "pools:create invalid source", appendRequestID(ctx, []any{
+			"source", in.Source,
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool source", fmt.Sprintf("valid sources: %v", domain.ValidPoolSources))
 		return
 	}
 

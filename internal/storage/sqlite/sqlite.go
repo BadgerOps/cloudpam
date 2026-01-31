@@ -5,9 +5,12 @@ package sqlite
 import (
     "context"
     "database/sql"
-    "errors"
+    "encoding/binary"
     "encoding/json"
+    "errors"
     "fmt"
+    "net"
+    "net/netip"
     "time"
 
     _ "modernc.org/sqlite" // CGO-less SQLite driver
@@ -68,7 +71,7 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
-    rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, created_at FROM pools ORDER BY id ASC`)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools ORDER BY id ASC`)
     if err != nil {
         return nil, err
     }
@@ -76,10 +79,10 @@ func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
     var out []domain.Pool
     for rows.Next() {
         var p domain.Pool
-        var ts string
-        var parent sql.NullInt64
-        var account sql.NullInt64
-        if err := rows.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &ts); err != nil {
+        var createdAt, updatedAt sql.NullString
+        var parent, account sql.NullInt64
+        var poolType, poolStatus, poolSource, description, tagsJSON sql.NullString
+        if err := rows.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &poolType, &poolStatus, &poolSource, &description, &tagsJSON, &createdAt, &updatedAt); err != nil {
             return nil, err
         }
         if parent.Valid {
@@ -88,8 +91,37 @@ func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
         if account.Valid {
             p.AccountID = &account.Int64
         }
-        if t, e := time.Parse(time.RFC3339, ts); e == nil {
-            p.CreatedAt = t
+        // Set new fields with defaults
+        p.Type = domain.PoolTypeSubnet
+        if poolType.Valid && poolType.String != "" {
+            p.Type = domain.PoolType(poolType.String)
+        }
+        p.Status = domain.PoolStatusActive
+        if poolStatus.Valid && poolStatus.String != "" {
+            p.Status = domain.PoolStatus(poolStatus.String)
+        }
+        p.Source = domain.PoolSourceManual
+        if poolSource.Valid && poolSource.String != "" {
+            p.Source = domain.PoolSource(poolSource.String)
+        }
+        if description.Valid {
+            p.Description = description.String
+        }
+        if tagsJSON.Valid && tagsJSON.String != "" && tagsJSON.String != "{}" {
+            var tags map[string]string
+            if err := json.Unmarshal([]byte(tagsJSON.String), &tags); err == nil {
+                p.Tags = tags
+            }
+        }
+        if createdAt.Valid {
+            if t, e := time.Parse(time.RFC3339, createdAt.String); e == nil {
+                p.CreatedAt = t
+            }
+        }
+        if updatedAt.Valid {
+            if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
+                p.UpdatedAt = t
+            }
         }
         out = append(out, p)
     }
@@ -100,7 +132,35 @@ func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Po
     if in.Name == "" || in.CIDR == "" {
         return domain.Pool{}, errors.New("name and cidr required")
     }
-    res, err := s.db.ExecContext(ctx, `INSERT INTO pools(name, cidr, parent_id, account_id, created_at) VALUES(?, ?, ?, ?, ?)`, in.Name, in.CIDR, in.ParentID, in.AccountID, time.Now().UTC().Format(time.RFC3339))
+    now := time.Now().UTC()
+
+    // Apply defaults for new fields
+    poolType := in.Type
+    if poolType == "" {
+        poolType = domain.PoolTypeSubnet
+    }
+    poolStatus := in.Status
+    if poolStatus == "" {
+        poolStatus = domain.PoolStatusActive
+    }
+    poolSource := in.Source
+    if poolSource == "" {
+        poolSource = domain.PoolSourceManual
+    }
+
+    // Serialize tags to JSON
+    var tagsJSON string
+    if in.Tags != nil {
+        if b, e := json.Marshal(in.Tags); e == nil {
+            tagsJSON = string(b)
+        }
+    } else {
+        tagsJSON = "{}"
+    }
+
+    nowStr := now.Format(time.RFC3339)
+    res, err := s.db.ExecContext(ctx, `INSERT INTO pools(name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        in.Name, in.CIDR, in.ParentID, in.AccountID, string(poolType), string(poolStatus), string(poolSource), in.Description, tagsJSON, nowStr, nowStr)
     if err != nil {
         return domain.Pool{}, err
     }
@@ -108,16 +168,39 @@ func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Po
     if err != nil {
         return domain.Pool{}, err
     }
-    return domain.Pool{ID: id, Name: in.Name, CIDR: in.CIDR, ParentID: in.ParentID, AccountID: in.AccountID, CreatedAt: time.Now().UTC()}, nil
+
+    // Copy tags to avoid shared reference
+    var tags map[string]string
+    if in.Tags != nil {
+        tags = make(map[string]string, len(in.Tags))
+        for k, v := range in.Tags {
+            tags[k] = v
+        }
+    }
+
+    return domain.Pool{
+        ID:          id,
+        Name:        in.Name,
+        CIDR:        in.CIDR,
+        ParentID:    in.ParentID,
+        AccountID:   in.AccountID,
+        Type:        poolType,
+        Status:      poolStatus,
+        Source:      poolSource,
+        Description: in.Description,
+        Tags:        tags,
+        CreatedAt:   now,
+        UpdatedAt:   now,
+    }, nil
 }
 
 func (s *Store) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error) {
     var p domain.Pool
-    var ts string
-    var parent sql.NullInt64
-    row := s.db.QueryRowContext(ctx, `SELECT id, name, cidr, parent_id, account_id, created_at FROM pools WHERE id=?`, id)
-    var account sql.NullInt64
-    if err := row.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &ts); err != nil {
+    var createdAt, updatedAt sql.NullString
+    var parent, account sql.NullInt64
+    var poolType, poolStatus, poolSource, description, tagsJSON sql.NullString
+    row := s.db.QueryRowContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE id=?`, id)
+    if err := row.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &poolType, &poolStatus, &poolSource, &description, &tagsJSON, &createdAt, &updatedAt); err != nil {
         if errors.Is(err, sql.ErrNoRows) {
             return domain.Pool{}, false, nil
         }
@@ -129,15 +212,45 @@ func (s *Store) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error
     if account.Valid {
         p.AccountID = &account.Int64
     }
-    if t, e := time.Parse(time.RFC3339, ts); e == nil {
-        p.CreatedAt = t
+    // Set new fields with defaults
+    p.Type = domain.PoolTypeSubnet
+    if poolType.Valid && poolType.String != "" {
+        p.Type = domain.PoolType(poolType.String)
+    }
+    p.Status = domain.PoolStatusActive
+    if poolStatus.Valid && poolStatus.String != "" {
+        p.Status = domain.PoolStatus(poolStatus.String)
+    }
+    p.Source = domain.PoolSourceManual
+    if poolSource.Valid && poolSource.String != "" {
+        p.Source = domain.PoolSource(poolSource.String)
+    }
+    if description.Valid {
+        p.Description = description.String
+    }
+    if tagsJSON.Valid && tagsJSON.String != "" && tagsJSON.String != "{}" {
+        var tags map[string]string
+        if err := json.Unmarshal([]byte(tagsJSON.String), &tags); err == nil {
+            p.Tags = tags
+        }
+    }
+    if createdAt.Valid {
+        if t, e := time.Parse(time.RFC3339, createdAt.String); e == nil {
+            p.CreatedAt = t
+        }
+    }
+    if updatedAt.Valid {
+        if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
+            p.UpdatedAt = t
+        }
     }
     return p, true, nil
 }
 
 func (s *Store) UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error) {
     // Update and then fetch
-    if _, err := s.db.ExecContext(ctx, `UPDATE pools SET account_id=? WHERE id=?`, accountID, id); err != nil {
+    now := time.Now().UTC().Format(time.RFC3339)
+    if _, err := s.db.ExecContext(ctx, `UPDATE pools SET account_id=?, updated_at=? WHERE id=?`, accountID, now, id); err != nil {
         return domain.Pool{}, false, err
     }
     return s.GetPool(ctx, id)
@@ -150,7 +263,58 @@ func (s *Store) UpdatePoolMeta(ctx context.Context, id int64, name *string, acco
     if name != nil { p.Name = *name }
     // accountID can be nil to clear
     if accountID != nil || true { p.AccountID = accountID }
-    if _, err := s.db.ExecContext(ctx, `UPDATE pools SET name=?, account_id=? WHERE id=?`, p.Name, p.AccountID, id); err != nil {
+    now := time.Now().UTC().Format(time.RFC3339)
+    if _, err := s.db.ExecContext(ctx, `UPDATE pools SET name=?, account_id=?, updated_at=? WHERE id=?`, p.Name, p.AccountID, now, id); err != nil {
+        return domain.Pool{}, false, err
+    }
+    return s.GetPool(ctx, id)
+}
+
+// UpdatePool updates pool metadata with support for new fields.
+func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error) {
+    // Fetch current
+    p, ok, err := s.GetPool(ctx, id)
+    if err != nil || !ok {
+        return domain.Pool{}, ok, err
+    }
+    if update.Name != nil {
+        p.Name = *update.Name
+    }
+    // AccountID is always set (can be nil to clear)
+    p.AccountID = update.AccountID
+    if update.Type != nil {
+        p.Type = *update.Type
+    }
+    if update.Status != nil {
+        p.Status = *update.Status
+    }
+    if update.Description != nil {
+        p.Description = *update.Description
+    }
+    if update.Tags != nil {
+        if *update.Tags != nil {
+            p.Tags = make(map[string]string, len(*update.Tags))
+            for k, v := range *update.Tags {
+                p.Tags[k] = v
+            }
+        } else {
+            p.Tags = nil
+        }
+    }
+
+    // Serialize tags to JSON
+    var tagsJSON string
+    if p.Tags != nil {
+        if b, e := json.Marshal(p.Tags); e == nil {
+            tagsJSON = string(b)
+        }
+    } else {
+        tagsJSON = "{}"
+    }
+
+    now := time.Now().UTC().Format(time.RFC3339)
+    if _, err := s.db.ExecContext(ctx, `UPDATE pools SET name=?, account_id=?, type=?, status=?, description=?, tags=?, updated_at=? WHERE id=?`,
+        p.Name, p.AccountID, string(p.Type), string(p.Status), p.Description, tagsJSON, now, id); err != nil {
         return domain.Pool{}, false, err
     }
     return s.GetPool(ctx, id)
@@ -337,4 +501,283 @@ func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error
     // Delete account
     if _, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id); err != nil { return false, err }
     return true, nil
+}
+
+// GetPoolWithStats returns a pool with its computed statistics.
+func (s *Store) GetPoolWithStats(ctx context.Context, id int64) (*domain.PoolWithStats, error) {
+    p, ok, err := s.GetPool(ctx, id)
+    if err != nil {
+        return nil, err
+    }
+    if !ok {
+        return nil, errors.New("pool not found")
+    }
+    stats, err := s.calculatePoolStats(ctx, p)
+    if err != nil {
+        return nil, err
+    }
+    return &domain.PoolWithStats{
+        Pool:  p,
+        Stats: *stats,
+    }, nil
+}
+
+// GetPoolHierarchy returns the pool hierarchy tree starting from rootID.
+// If rootID is nil, returns all top-level pools with their children.
+func (s *Store) GetPoolHierarchy(ctx context.Context, rootID *int64) ([]domain.PoolWithStats, error) {
+    // Load all pools
+    pools, err := s.ListPools(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    // Build maps for quick lookup
+    poolMap := make(map[int64]domain.Pool)
+    childrenMap := make(map[int64][]int64)
+    for _, p := range pools {
+        poolMap[p.ID] = p
+        if p.ParentID != nil {
+            childrenMap[*p.ParentID] = append(childrenMap[*p.ParentID], p.ID)
+        }
+    }
+
+    // Recursive function to build tree
+    var buildTree func(pid int64) (domain.PoolWithStats, error)
+    buildTree = func(pid int64) (domain.PoolWithStats, error) {
+        p := poolMap[pid]
+        stats, err := s.calculatePoolStats(ctx, p)
+        if err != nil {
+            return domain.PoolWithStats{}, err
+        }
+        result := domain.PoolWithStats{
+            Pool:  p,
+            Stats: *stats,
+        }
+        for _, childID := range childrenMap[pid] {
+            child, err := buildTree(childID)
+            if err != nil {
+                return domain.PoolWithStats{}, err
+            }
+            result.Children = append(result.Children, child)
+        }
+        return result, nil
+    }
+
+    var result []domain.PoolWithStats
+
+    if rootID != nil {
+        // Return subtree from specific root
+        if _, ok := poolMap[*rootID]; !ok {
+            return nil, errors.New("root pool not found")
+        }
+        tree, err := buildTree(*rootID)
+        if err != nil {
+            return nil, err
+        }
+        result = append(result, tree)
+    } else {
+        // Return all top-level pools (no parent)
+        for _, p := range pools {
+            if p.ParentID == nil {
+                tree, err := buildTree(p.ID)
+                if err != nil {
+                    return nil, err
+                }
+                result = append(result, tree)
+            }
+        }
+    }
+
+    return result, nil
+}
+
+// GetPoolChildren returns the direct children of a pool.
+func (s *Store) GetPoolChildren(ctx context.Context, parentID int64) ([]domain.Pool, error) {
+    // Check parent exists
+    _, ok, err := s.GetPool(ctx, parentID)
+    if err != nil {
+        return nil, err
+    }
+    if !ok {
+        return nil, errors.New("parent pool not found")
+    }
+
+    rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE parent_id=? ORDER BY id ASC`, parentID)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var children []domain.Pool
+    for rows.Next() {
+        var p domain.Pool
+        var createdAt, updatedAt sql.NullString
+        var parent, account sql.NullInt64
+        var poolType, poolStatus, poolSource, description, tagsJSON sql.NullString
+        if err := rows.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &poolType, &poolStatus, &poolSource, &description, &tagsJSON, &createdAt, &updatedAt); err != nil {
+            return nil, err
+        }
+        if parent.Valid {
+            p.ParentID = &parent.Int64
+        }
+        if account.Valid {
+            p.AccountID = &account.Int64
+        }
+        p.Type = domain.PoolTypeSubnet
+        if poolType.Valid && poolType.String != "" {
+            p.Type = domain.PoolType(poolType.String)
+        }
+        p.Status = domain.PoolStatusActive
+        if poolStatus.Valid && poolStatus.String != "" {
+            p.Status = domain.PoolStatus(poolStatus.String)
+        }
+        p.Source = domain.PoolSourceManual
+        if poolSource.Valid && poolSource.String != "" {
+            p.Source = domain.PoolSource(poolSource.String)
+        }
+        if description.Valid {
+            p.Description = description.String
+        }
+        if tagsJSON.Valid && tagsJSON.String != "" && tagsJSON.String != "{}" {
+            var tags map[string]string
+            if err := json.Unmarshal([]byte(tagsJSON.String), &tags); err == nil {
+                p.Tags = tags
+            }
+        }
+        if createdAt.Valid {
+            if t, e := time.Parse(time.RFC3339, createdAt.String); e == nil {
+                p.CreatedAt = t
+            }
+        }
+        if updatedAt.Valid {
+            if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
+                p.UpdatedAt = t
+            }
+        }
+        children = append(children, p)
+    }
+    return children, rows.Err()
+}
+
+// CalculatePoolUtilization calculates statistics for a pool.
+func (s *Store) CalculatePoolUtilization(ctx context.Context, id int64) (*domain.PoolStats, error) {
+    p, ok, err := s.GetPool(ctx, id)
+    if err != nil {
+        return nil, err
+    }
+    if !ok {
+        return nil, errors.New("pool not found")
+    }
+    return s.calculatePoolStats(ctx, p)
+}
+
+// calculatePoolStats calculates stats for a pool.
+func (s *Store) calculatePoolStats(ctx context.Context, p domain.Pool) (*domain.PoolStats, error) {
+    // Parse the pool's CIDR to get total IPs
+    prefix, err := netip.ParsePrefix(p.CIDR)
+    if err != nil {
+        return &domain.PoolStats{}, nil
+    }
+
+    var totalIPs int64
+    if prefix.Addr().Is4() {
+        totalIPs = int64(1) << (32 - prefix.Bits())
+    } else {
+        // For IPv6, cap at max int64 for practical purposes
+        bits := 128 - prefix.Bits()
+        if bits > 63 {
+            totalIPs = 1 << 63
+        } else {
+            totalIPs = int64(1) << bits
+        }
+    }
+
+    // Get direct children
+    rows, err := s.db.QueryContext(ctx, `SELECT cidr FROM pools WHERE parent_id=?`, p.ID)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var directChildren int
+    var usedIPs int64
+    for rows.Next() {
+        var childCIDR string
+        if err := rows.Scan(&childCIDR); err != nil {
+            return nil, err
+        }
+        directChildren++
+
+        // Calculate used IPs from child's CIDR
+        childPrefix, err := netip.ParsePrefix(childCIDR)
+        if err != nil {
+            continue
+        }
+        if childPrefix.Addr().Is4() {
+            usedIPs += int64(1) << (32 - childPrefix.Bits())
+        }
+    }
+    if err := rows.Err(); err != nil {
+        return nil, err
+    }
+
+    // Count all descendants recursively
+    var totalChildCount int
+    var countDescendants func(parentID int64) (int, error)
+    countDescendants = func(parentID int64) (int, error) {
+        var count int
+        childRows, err := s.db.QueryContext(ctx, `SELECT id FROM pools WHERE parent_id=?`, parentID)
+        if err != nil {
+            return 0, err
+        }
+        defer childRows.Close()
+        for childRows.Next() {
+            var childID int64
+            if err := childRows.Scan(&childID); err != nil {
+                return 0, err
+            }
+            count++
+            subCount, err := countDescendants(childID)
+            if err != nil {
+                return 0, err
+            }
+            count += subCount
+        }
+        return count, childRows.Err()
+    }
+
+    totalChildCount, err = countDescendants(p.ID)
+    if err != nil {
+        return nil, err
+    }
+
+    // Calculate utilization percentage
+    var utilization float64
+    if totalIPs > 0 {
+        utilization = float64(usedIPs) / float64(totalIPs) * 100
+    }
+
+    return &domain.PoolStats{
+        TotalIPs:       totalIPs,
+        UsedIPs:        usedIPs,
+        AvailableIPs:   totalIPs - usedIPs,
+        Utilization:    utilization,
+        ChildCount:     totalChildCount,
+        DirectChildren: directChildren,
+    }, nil
+}
+
+// ipv4ToUint32 converts an IPv4 address to uint32.
+func ipv4ToUint32(a netip.Addr) uint32 {
+    b := a.As4()
+    return binary.BigEndian.Uint32(b[:])
+}
+
+// uint32ToIPv4 converts a uint32 to an IPv4 address.
+func uint32ToIPv4(u uint32) netip.Addr {
+    var b [4]byte
+    binary.BigEndian.PutUint32(b[:], u)
+    ip := net.IPv4(b[0], b[1], b[2], b[3])
+    addr, _ := netip.ParseAddr(ip.String())
+    return addr
 }
