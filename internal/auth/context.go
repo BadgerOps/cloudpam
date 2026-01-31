@@ -58,3 +58,50 @@ func RequireAnyScope(ctx context.Context, scopes ...string) error {
 	}
 	return nil
 }
+
+// Role context key
+const roleContextKey contextKey = "role"
+
+// ContextWithRole returns a new context with the role stored in it.
+func ContextWithRole(ctx context.Context, role Role) context.Context {
+	return context.WithValue(ctx, roleContextKey, role)
+}
+
+// RoleFromContext retrieves the role from the context.
+// Returns RoleNone if no role is present.
+func RoleFromContext(ctx context.Context) Role {
+	if ctx == nil {
+		return RoleNone
+	}
+	role, ok := ctx.Value(roleContextKey).(Role)
+	if !ok {
+		return RoleNone
+	}
+	return role
+}
+
+// GetEffectiveRole returns the effective role for the current context.
+// It first checks for an explicit role, then derives one from the API key scopes.
+func GetEffectiveRole(ctx context.Context) Role {
+	// Check for explicit role first (e.g., from session)
+	if role := RoleFromContext(ctx); role != RoleNone {
+		return role
+	}
+
+	// Derive role from API key scopes
+	if key := APIKeyFromContext(ctx); key != nil && key.IsValid() {
+		return GetRoleFromScopes(key.Scopes)
+	}
+
+	return RoleNone
+}
+
+// RequirePermission checks if the context has permission for a resource action.
+// Returns nil if permitted, or ErrInsufficientScopes if not.
+func RequirePermission(ctx context.Context, resource, action string) error {
+	role := GetEffectiveRole(ctx)
+	if !HasPermission(role, resource, action) {
+		return ErrInsufficientScopes
+	}
+	return nil
+}

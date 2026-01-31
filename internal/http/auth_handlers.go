@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -26,7 +27,8 @@ func NewAuthServer(s *Server, keyStore auth.KeyStore, auditLogger audit.AuditLog
 	}
 }
 
-// RegisterAuthRoutes registers the auth and audit API endpoints.
+// RegisterAuthRoutes registers the auth and audit API endpoints without RBAC.
+// For backward compatibility. Use RegisterProtectedAuthRoutes for RBAC enforcement.
 func (as *AuthServer) RegisterAuthRoutes() {
 	// API key management
 	as.mux.HandleFunc("/api/v1/auth/keys", as.handleAPIKeys)
@@ -34,6 +36,85 @@ func (as *AuthServer) RegisterAuthRoutes() {
 
 	// Audit endpoints
 	as.mux.HandleFunc("/api/v1/audit", as.handleAuditList)
+}
+
+// RegisterProtectedAuthRoutes registers the auth and audit API endpoints with RBAC.
+// Routes require authentication and appropriate permissions:
+// - /api/v1/auth/keys: requires apikeys:* permissions
+// - /api/v1/audit: requires audit:read permission
+func (as *AuthServer) RegisterProtectedAuthRoutes(logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	// Auth middleware (required for all these endpoints)
+	authMW := AuthMiddleware(as.keyStore, true, logger)
+
+	// API key management - requires apikeys permissions
+	as.mux.Handle("/api/v1/auth/keys", authMW(as.protectedAPIKeysHandler(logger)))
+	as.mux.Handle("/api/v1/auth/keys/", authMW(as.protectedAPIKeyByIDHandler(logger)))
+
+	// Audit endpoints - requires audit:read permission
+	auditReadMW := RequirePermissionMiddleware(auth.ResourceAudit, auth.ActionRead, logger)
+	as.mux.Handle("/api/v1/audit", authMW(auditReadMW(http.HandlerFunc(as.handleAuditList))))
+}
+
+// protectedAPIKeysHandler returns a handler for /api/v1/auth/keys with RBAC.
+func (as *AuthServer) protectedAPIKeysHandler(logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		role := auth.GetEffectiveRole(ctx)
+
+		switch r.Method {
+		case http.MethodPost:
+			// Create API key requires apikeys:create
+			if !auth.HasPermission(role, auth.ResourceAPIKeys, auth.ActionCreate) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			as.createAPIKey(w, r)
+		case http.MethodGet:
+			// List API keys requires apikeys:list or apikeys:read
+			if !auth.HasPermission(role, auth.ResourceAPIKeys, auth.ActionList) &&
+				!auth.HasPermission(role, auth.ResourceAPIKeys, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			as.listAPIKeys(w, r)
+		default:
+			w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
+			as.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+		}
+	})
+}
+
+// protectedAPIKeyByIDHandler returns a handler for /api/v1/auth/keys/{id} with RBAC.
+func (as *AuthServer) protectedAPIKeyByIDHandler(logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		role := auth.GetEffectiveRole(ctx)
+
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/auth/keys/")
+		id := strings.Trim(path, "/")
+
+		if id == "" {
+			as.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+			return
+		}
+
+		switch r.Method {
+		case http.MethodDelete:
+			// Revoke API key requires apikeys:delete
+			if !auth.HasPermission(role, auth.ResourceAPIKeys, auth.ActionDelete) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			as.revokeAPIKey(w, r, id)
+		default:
+			w.Header().Set("Allow", http.MethodDelete)
+			as.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+		}
+	})
 }
 
 // handleAPIKeys handles POST /api/v1/auth/keys (create) and GET /api/v1/auth/keys (list).
@@ -81,14 +162,14 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	// Validate scopes
 	if len(input.Scopes) > 0 {
 		validScopes := map[string]bool{
-			"pools:read":    true,
-			"pools:write":   true,
-			"accounts:read": true,
+			"pools:read":     true,
+			"pools:write":    true,
+			"accounts:read":  true,
 			"accounts:write": true,
-			"audit:read":    true,
-			"keys:read":     true,
-			"keys:write":    true,
-			"*":             true, // admin scope
+			"audit:read":     true,
+			"keys:read":      true,
+			"keys:write":     true,
+			"*":              true, // admin scope
 		}
 		for _, scope := range input.Scopes {
 			if !validScopes[scope] {

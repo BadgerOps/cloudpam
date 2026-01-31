@@ -54,11 +54,11 @@ var (
 // APIKey represents a stored API key with metadata.
 type APIKey struct {
 	ID         string     `json:"id"`
-	Prefix     string     `json:"prefix"`      // First 8 chars for identification
-	Name       string     `json:"name"`        // User-provided name
-	Hash       []byte     `json:"-"`           // Argon2id hash of the full key (never serialized)
-	Salt       []byte     `json:"-"`           // Salt used for hashing (never serialized)
-	Scopes     []string   `json:"scopes"`      // Permissions: ["pools:read", "pools:write", ...]
+	Prefix     string     `json:"prefix"` // First 8 chars for identification
+	Name       string     `json:"name"`   // User-provided name
+	Hash       []byte     `json:"-"`      // Argon2id hash of the full key (never serialized)
+	Salt       []byte     `json:"-"`      // Salt used for hashing (never serialized)
+	Scopes     []string   `json:"scopes"` // Permissions: ["pools:read", "pools:write", ...]
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"` // nil = no expiration
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`

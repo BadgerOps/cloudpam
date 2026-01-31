@@ -520,9 +520,9 @@ func AuditMiddleware(auditLogger AuditLogger, logger *slog.Logger) Middleware {
 
 	// Paths to skip auditing
 	skipPaths := map[string]bool{
-		"/healthz":     true,
-		"/readyz":      true,
-		"/metrics":     true,
+		"/healthz":      true,
+		"/readyz":       true,
+		"/metrics":      true,
 		"/openapi.yaml": true,
 	}
 
@@ -671,5 +671,161 @@ func methodToAction(method string) string {
 		return "delete"
 	default:
 		return ""
+	}
+}
+
+// RequirePermissionMiddleware returns middleware that checks for a specific RBAC permission.
+// It verifies that the authenticated user has the required permission for the resource and action.
+// Must be used after AuthMiddleware.
+//
+// If the user lacks the required permission, returns 403 Forbidden.
+// Authorization failures are logged for auditing purposes.
+func RequirePermissionMiddleware(resource, action string, logger *slog.Logger) Middleware {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
+			// Get the effective role from context
+			role := auth.GetEffectiveRole(ctx)
+			if role == auth.RoleNone {
+				// No role means not authenticated or no valid scopes
+				writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized"})
+				return
+			}
+
+			// Check permission
+			if !auth.HasPermission(role, resource, action) {
+				// Log authorization failure
+				attrs := appendRequestID(ctx, []any{
+					"method", r.Method,
+					"path", r.URL.Path,
+					"role", string(role),
+					"required_resource", resource,
+					"required_action", action,
+				})
+
+				// Include API key info if available
+				if key := auth.APIKeyFromContext(ctx); key != nil {
+					attrs = append(attrs, "api_key_id", key.ID)
+					attrs = append(attrs, "api_key_prefix", key.Prefix)
+				}
+
+				logger.WarnContext(ctx, "authorization denied", attrs...)
+
+				// Return generic forbidden message (don't leak permission details)
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+
+			// Permission granted, continue
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireAnyPermissionMiddleware returns middleware that checks for any of the specified permissions.
+// If the user has at least one of the required permissions, access is granted.
+// Must be used after AuthMiddleware.
+func RequireAnyPermissionMiddleware(permissions []auth.Permission, logger *slog.Logger) Middleware {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
+			role := auth.GetEffectiveRole(ctx)
+			if role == auth.RoleNone {
+				writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized"})
+				return
+			}
+
+			// Check if any permission is granted
+			for _, perm := range permissions {
+				if auth.HasPermission(role, perm.Resource, perm.Action) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// No permissions matched - log and deny
+			permStrings := make([]string, len(permissions))
+			for i, p := range permissions {
+				permStrings[i] = p.String()
+			}
+
+			attrs := appendRequestID(ctx, []any{
+				"method", r.Method,
+				"path", r.URL.Path,
+				"role", string(role),
+				"required_permissions", permStrings,
+			})
+
+			if key := auth.APIKeyFromContext(ctx); key != nil {
+				attrs = append(attrs, "api_key_id", key.ID)
+				attrs = append(attrs, "api_key_prefix", key.Prefix)
+			}
+
+			logger.WarnContext(ctx, "authorization denied", attrs...)
+			writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+		})
+	}
+}
+
+// RequireRoleMiddleware returns middleware that checks for a minimum role level.
+// It verifies that the authenticated user has at least the specified role.
+// Must be used after AuthMiddleware.
+func RequireRoleMiddleware(minRole auth.Role, logger *slog.Logger) Middleware {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	// Define role hierarchy (higher index = higher privilege)
+	roleLevel := map[auth.Role]int{
+		auth.RoleNone:     0,
+		auth.RoleAuditor:  1,
+		auth.RoleViewer:   2,
+		auth.RoleOperator: 3,
+		auth.RoleAdmin:    4,
+	}
+
+	minLevel := roleLevel[minRole]
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
+			role := auth.GetEffectiveRole(ctx)
+			if role == auth.RoleNone {
+				writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized"})
+				return
+			}
+
+			currentLevel := roleLevel[role]
+			if currentLevel < minLevel {
+				attrs := appendRequestID(ctx, []any{
+					"method", r.Method,
+					"path", r.URL.Path,
+					"role", string(role),
+					"required_role", string(minRole),
+				})
+
+				if key := auth.APIKeyFromContext(ctx); key != nil {
+					attrs = append(attrs, "api_key_id", key.ID)
+					attrs = append(attrs, "api_key_prefix", key.Prefix)
+				}
+
+				logger.WarnContext(ctx, "insufficient role", attrs...)
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
 	}
 }

@@ -647,3 +647,145 @@ func TestGeneratedKeysAreUnique(t *testing.T) {
 		prefixes[apiKey.Prefix] = true
 	}
 }
+
+func TestContextWithRole(t *testing.T) {
+	ctx := context.Background()
+
+	// Empty context should return RoleNone
+	if role := RoleFromContext(ctx); role != RoleNone {
+		t.Errorf("empty context should return RoleNone, got %q", role)
+	}
+
+	// With role
+	ctx = ContextWithRole(ctx, RoleAdmin)
+	if role := RoleFromContext(ctx); role != RoleAdmin {
+		t.Errorf("expected RoleAdmin, got %q", role)
+	}
+
+	// Nil context
+	if role := RoleFromContext(nil); role != RoleNone { //nolint:staticcheck // testing nil context handling
+		t.Errorf("nil context should return RoleNone, got %q", role)
+	}
+}
+
+func TestGetEffectiveRole(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     Role    // explicit role in context
+		apiKey   *APIKey // api key in context
+		wantRole Role
+	}{
+		{
+			name:     "explicit admin role",
+			role:     RoleAdmin,
+			apiKey:   nil,
+			wantRole: RoleAdmin,
+		},
+		{
+			name:     "explicit viewer role",
+			role:     RoleViewer,
+			apiKey:   nil,
+			wantRole: RoleViewer,
+		},
+		{
+			name:     "role from admin scopes",
+			role:     RoleNone,
+			apiKey:   &APIKey{Scopes: []string{"*"}},
+			wantRole: RoleAdmin,
+		},
+		{
+			name:     "role from operator scopes",
+			role:     RoleNone,
+			apiKey:   &APIKey{Scopes: []string{"pools:write"}},
+			wantRole: RoleOperator,
+		},
+		{
+			name:     "role from viewer scopes",
+			role:     RoleNone,
+			apiKey:   &APIKey{Scopes: []string{"pools:read"}},
+			wantRole: RoleViewer,
+		},
+		{
+			name:     "explicit role takes precedence",
+			role:     RoleViewer,                     // explicit viewer
+			apiKey:   &APIKey{Scopes: []string{"*"}}, // admin scopes
+			wantRole: RoleViewer,                     // explicit wins
+		},
+		{
+			name:     "no role or key",
+			role:     RoleNone,
+			apiKey:   nil,
+			wantRole: RoleNone,
+		},
+		{
+			name:     "revoked key",
+			role:     RoleNone,
+			apiKey:   &APIKey{Scopes: []string{"*"}, Revoked: true},
+			wantRole: RoleNone, // revoked key is not valid
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			if tt.role != RoleNone {
+				ctx = ContextWithRole(ctx, tt.role)
+			}
+			if tt.apiKey != nil {
+				ctx = ContextWithAPIKey(ctx, tt.apiKey)
+			}
+
+			got := GetEffectiveRole(ctx)
+			if got != tt.wantRole {
+				t.Errorf("GetEffectiveRole() = %q, want %q", got, tt.wantRole)
+			}
+		})
+	}
+}
+
+func TestRequirePermission(t *testing.T) {
+	tests := []struct {
+		name     string
+		role     Role
+		resource string
+		action   string
+		wantErr  error
+	}{
+		{
+			name:     "admin can read pools",
+			role:     RoleAdmin,
+			resource: ResourcePools,
+			action:   ActionRead,
+			wantErr:  nil,
+		},
+		{
+			name:     "viewer cannot create pools",
+			role:     RoleViewer,
+			resource: ResourcePools,
+			action:   ActionCreate,
+			wantErr:  ErrInsufficientScopes,
+		},
+		{
+			name:     "no role denied",
+			role:     RoleNone,
+			resource: ResourcePools,
+			action:   ActionRead,
+			wantErr:  ErrInsufficientScopes,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tt.role != RoleNone {
+				ctx = ContextWithRole(ctx, tt.role)
+			}
+
+			err := RequirePermission(ctx, tt.resource, tt.action)
+			if err != tt.wantErr {
+				t.Errorf("RequirePermission() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

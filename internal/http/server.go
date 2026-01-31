@@ -20,6 +20,7 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	apidocs "cloudpam/docs"
+	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
@@ -92,6 +93,8 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
 }
 
+// RegisterRoutes registers all HTTP routes without RBAC protection.
+// This is for backward compatibility. Use RegisterProtectedRoutes for RBAC enforcement.
 func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
@@ -110,6 +113,306 @@ func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/api/v1/export", s.handleExport)
 	// Static index
 	s.mux.HandleFunc("/", s.handleIndex)
+}
+
+// RegisterProtectedRoutes registers all HTTP routes with RBAC protection.
+// Routes are protected based on the resource and action being performed.
+// Public endpoints (health, metrics, static) remain unprotected.
+// API endpoints require authentication and appropriate permissions.
+func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, slogger *slog.Logger) {
+	if slogger == nil {
+		slogger = slog.Default()
+	}
+
+	// Public endpoints (no auth required)
+	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
+	s.mux.HandleFunc("/healthz", s.handleHealth)
+	s.mux.HandleFunc("/readyz", s.handleReady)
+	if s.metrics != nil {
+		s.mux.Handle("/metrics", s.metrics.Handler())
+	}
+	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
+	s.mux.HandleFunc("/", s.handleIndex)
+
+	// Auth middleware (required for all API endpoints below)
+	authMW := AuthMiddleware(keyStore, true, slogger)
+
+	// Pool endpoints - require pools permissions
+	s.mux.Handle("/api/v1/pools", authMW(s.protectedPoolsHandler(slogger)))
+	s.mux.Handle("/api/v1/pools/", authMW(s.protectedPoolsSubroutesHandler(slogger)))
+
+	// Account endpoints - require accounts permissions
+	s.mux.Handle("/api/v1/accounts", authMW(s.protectedAccountsHandler(slogger)))
+	s.mux.Handle("/api/v1/accounts/", authMW(s.protectedAccountsSubroutesHandler(slogger)))
+
+	// Blocks list - requires pools:read (read-only view of pool allocations)
+	poolsReadMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, slogger)
+	s.mux.Handle("/api/v1/blocks", authMW(poolsReadMW(http.HandlerFunc(s.handleBlocksList))))
+
+	// Export endpoint - requires pools:read and accounts:read
+	exportPermMW := RequireAnyPermissionMiddleware([]auth.Permission{
+		{Resource: auth.ResourcePools, Action: auth.ActionRead},
+	}, slogger)
+	s.mux.Handle("/api/v1/export", authMW(exportPermMW(http.HandlerFunc(s.handleExport))))
+}
+
+// protectedPoolsHandler returns a handler for /api/v1/pools with RBAC.
+func (s *Server) protectedPoolsHandler(logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		role := auth.GetEffectiveRole(ctx)
+
+		switch r.Method {
+		case http.MethodGet:
+			// List pools requires pools:list or pools:read
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionList) &&
+				!auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.listPools(w, r)
+		case http.MethodPost:
+			// Create pool requires pools:create
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionCreate) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.createPool(w, r)
+		default:
+			w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
+			s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+		}
+	})
+}
+
+// protectedPoolsSubroutesHandler returns a handler for /api/v1/pools/{id}/* with RBAC.
+func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		role := auth.GetEffectiveRole(ctx)
+
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/pools/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+			return
+		}
+
+		id64, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool id", "")
+			return
+		}
+
+		// Handle /pools/{id}/blocks
+		if len(parts) >= 2 && parts[1] == "blocks" {
+			if r.Method != http.MethodGet {
+				s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+				return
+			}
+			// Requires pools:read
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.blocksForPool(w, r, id64)
+			return
+		}
+
+		// Handle /pools/{id}
+		switch r.Method {
+		case http.MethodGet:
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			p, ok, err := s.store.GetPool(ctx, id64)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+				return
+			}
+			if !ok {
+				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+				return
+			}
+			writeJSON(w, http.StatusOK, p)
+
+		case http.MethodPatch:
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionUpdate) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			var payload struct {
+				AccountID *int64  `json:"account_id"`
+				Name      *string `json:"name"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
+				return
+			}
+			if payload.Name != nil {
+				trimmed := strings.TrimSpace(*payload.Name)
+				payload.Name = &trimmed
+				if err := validation.ValidateName(*payload.Name); err != nil {
+					s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+					return
+				}
+			}
+			p, ok, err := s.store.UpdatePoolMeta(ctx, id64, payload.Name, payload.AccountID)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+				return
+			}
+			if !ok {
+				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+				return
+			}
+			writeJSON(w, http.StatusOK, p)
+
+		case http.MethodDelete:
+			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionDelete) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			var ok bool
+			force := strings.ToLower(r.URL.Query().Get("force"))
+			if force == "1" || force == "true" || force == "yes" {
+				ok, err = s.store.DeletePoolCascade(ctx, id64)
+			} else {
+				ok, err = s.store.DeletePool(ctx, id64)
+			}
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
+				return
+			}
+			if !ok {
+				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+		}
+	})
+}
+
+// protectedAccountsHandler returns a handler for /api/v1/accounts with RBAC.
+func (s *Server) protectedAccountsHandler(logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		role := auth.GetEffectiveRole(ctx)
+
+		switch r.Method {
+		case http.MethodGet:
+			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionList) &&
+				!auth.HasPermission(role, auth.ResourceAccounts, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.listAccounts(w, r)
+		case http.MethodPost:
+			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionCreate) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			s.createAccount(w, r)
+		default:
+			w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
+			s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+		}
+	})
+}
+
+// protectedAccountsSubroutesHandler returns a handler for /api/v1/accounts/{id} with RBAC.
+func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		role := auth.GetEffectiveRole(ctx)
+
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/")
+		idStr := strings.Trim(path, "/")
+		if idStr == "" {
+			s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+			return
+		}
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, "invalid id", "")
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet:
+			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionRead) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			a, ok, err := s.store.GetAccount(ctx, id)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+				return
+			}
+			if !ok {
+				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+				return
+			}
+			writeJSON(w, http.StatusOK, a)
+
+		case http.MethodPatch:
+			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionUpdate) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			var in domain.Account
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
+				return
+			}
+			in.Name = strings.TrimSpace(in.Name)
+			if in.Name != "" {
+				if err := validation.ValidateName(in.Name); err != nil {
+					s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+					return
+				}
+			}
+			a, ok, err := s.store.UpdateAccount(ctx, id, in)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+				return
+			}
+			if !ok {
+				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+				return
+			}
+			writeJSON(w, http.StatusOK, a)
+
+		case http.MethodDelete:
+			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionDelete) {
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			var ok bool
+			force := strings.ToLower(r.URL.Query().Get("force"))
+			if force == "1" || force == "true" || force == "yes" {
+				ok, err = s.store.DeleteAccountCascade(ctx, id)
+			} else {
+				ok, err = s.store.DeleteAccount(ctx, id)
+			}
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
+				return
+			}
+			if !ok {
+				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			s.writeErr(ctx, w, http.StatusMethodNotAllowed, "method not allowed", "")
+		}
+	})
 }
 
 func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {

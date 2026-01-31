@@ -1229,9 +1229,9 @@ func TestAuditMiddlewareNilLogger(t *testing.T) {
 
 func TestParseResourceFromPath(t *testing.T) {
 	tests := []struct {
-		path         string
-		wantType     string
-		wantID       string
+		path     string
+		wantType string
+		wantID   string
 	}{
 		{"/api/v1/pools", "pool", ""},
 		{"/api/v1/pools/123", "pool", "123"},
@@ -1279,5 +1279,338 @@ func TestMethodToAction(t *testing.T) {
 				t.Errorf("methodToAction(%q) = %q, want %q", tt.method, got, tt.want)
 			}
 		})
+	}
+}
+
+// Tests for RBAC Authorization Middleware
+
+func TestRequirePermissionMiddleware_AllowsAuthorized(t *testing.T) {
+	logger := newTestLogger()
+
+	// Handler that should be called
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Apply middleware requiring pools:read permission
+	mw := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
+	// Set role as admin (has all permissions)
+	ctx := auth.ContextWithRole(req.Context(), auth.RoleAdmin)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if !handlerCalled {
+		t.Error("handler should have been called")
+	}
+}
+
+func TestRequirePermissionMiddleware_DeniesUnauthorized(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Require pools:create (viewer doesn't have this)
+	mw := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pools", nil)
+	// Set role as viewer (read-only)
+	ctx := auth.ContextWithRole(req.Context(), auth.RoleViewer)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+	if handlerCalled {
+		t.Error("handler should not have been called")
+	}
+
+	// Check response body
+	var resp apiError
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Error != "forbidden" {
+		t.Errorf("expected error 'forbidden', got '%s'", resp.Error)
+	}
+}
+
+func TestRequirePermissionMiddleware_DeniesNoRole(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
+	// No role set in context
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rr.Code)
+	}
+	if handlerCalled {
+		t.Error("handler should not have been called")
+	}
+}
+
+func TestRequirePermissionMiddleware_UsesAPIKeyScopes(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
+	// Set API key with read scope (should map to viewer role)
+	apiKey := &auth.APIKey{
+		ID:     "test-key",
+		Scopes: []string{"pools:read"},
+	}
+	ctx := auth.ContextWithAPIKey(req.Context(), apiKey)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if !handlerCalled {
+		t.Error("handler should have been called")
+	}
+}
+
+func TestRequireAnyPermissionMiddleware_AllowsWithOneMatch(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Require any of these permissions
+	perms := []auth.Permission{
+		{Resource: auth.ResourcePools, Action: auth.ActionCreate},
+		{Resource: auth.ResourceAccounts, Action: auth.ActionRead},
+	}
+	mw := RequireAnyPermissionMiddleware(perms, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	// Viewer can read accounts but not create pools
+	ctx := auth.ContextWithRole(req.Context(), auth.RoleViewer)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if !handlerCalled {
+		t.Error("handler should have been called")
+	}
+}
+
+func TestRequireAnyPermissionMiddleware_DeniesWithNoMatch(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Require permissions that auditor doesn't have
+	perms := []auth.Permission{
+		{Resource: auth.ResourcePools, Action: auth.ActionCreate},
+		{Resource: auth.ResourceAccounts, Action: auth.ActionCreate},
+	}
+	mw := RequireAnyPermissionMiddleware(perms, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	// Auditor can only access audit logs
+	ctx := auth.ContextWithRole(req.Context(), auth.RoleAuditor)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+	if handlerCalled {
+		t.Error("handler should not have been called")
+	}
+}
+
+func TestRequireRoleMiddleware_AllowsEqualRole(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Require operator role
+	mw := RequireRoleMiddleware(auth.RoleOperator, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	// User has operator role (equal to required)
+	ctx := auth.ContextWithRole(req.Context(), auth.RoleOperator)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if !handlerCalled {
+		t.Error("handler should have been called")
+	}
+}
+
+func TestRequireRoleMiddleware_AllowsHigherRole(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Require viewer role
+	mw := RequireRoleMiddleware(auth.RoleViewer, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	// User has admin role (higher than viewer)
+	ctx := auth.ContextWithRole(req.Context(), auth.RoleAdmin)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if !handlerCalled {
+		t.Error("handler should have been called")
+	}
+}
+
+func TestRequireRoleMiddleware_DeniesLowerRole(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Require admin role
+	mw := RequireRoleMiddleware(auth.RoleAdmin, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	// User has viewer role (lower than admin)
+	ctx := auth.ContextWithRole(req.Context(), auth.RoleViewer)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", rr.Code)
+	}
+	if handlerCalled {
+		t.Error("handler should not have been called")
+	}
+}
+
+func TestRequireRoleMiddleware_DeniesNoRole(t *testing.T) {
+	logger := newTestLogger()
+
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := RequireRoleMiddleware(auth.RoleViewer, logger)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	// No role set
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rr.Code)
+	}
+	if handlerCalled {
+		t.Error("handler should not have been called")
+	}
+}
+
+func TestRequirePermissionMiddleware_NilLoggerUsesDefault(t *testing.T) {
+	var handlerCalled bool
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Pass nil logger
+	mw := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, nil)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
+	ctx := auth.ContextWithRole(req.Context(), auth.RoleAdmin)
+	req = req.WithContext(ctx)
+
+	rr := httptest.NewRecorder()
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+	if !handlerCalled {
+		t.Error("handler should have been called")
 	}
 }
