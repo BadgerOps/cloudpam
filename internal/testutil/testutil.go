@@ -202,7 +202,7 @@ func CreateTestAPIKey(t *testing.T, keyStore auth.KeyStore, name string, scopes 
 		t.Fatalf("failed to generate API key: %v", err)
 	}
 
-	if err := keyStore.Create(nil, apiKey); err != nil {
+	if err := keyStore.Create(context.Background(), apiKey); err != nil {
 		t.Fatalf("failed to store API key: %v", err)
 	}
 
@@ -358,7 +358,7 @@ func JSONBody(t *testing.T, v interface{}) io.Reader {
 func ReadJSONResponse(t *testing.T, resp *http.Response, v interface{}) {
 	t.Helper()
 
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("failed to read response body: %v", err)

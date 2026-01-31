@@ -201,7 +201,7 @@ func TestMemorySessionStore_Get(t *testing.T) {
 		t.Fatalf("Create expired session error = %v", err)
 	}
 
-	got, err = store.Get(ctx, "expired")
+	_, err = store.Get(ctx, "expired")
 	if err != ErrSessionExpired {
 		t.Errorf("Get() expired should return ErrSessionExpired, got %v", err)
 	}
@@ -517,7 +517,7 @@ func TestSessionContext(t *testing.T) {
 	}
 
 	// Test with nil context
-	got = SessionFromContext(nil)
+	got = SessionFromContext(nil) //nolint:staticcheck // testing nil context handling
 	if got != nil {
 		t.Error("SessionFromContext(nil) should return nil")
 	}

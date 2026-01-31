@@ -63,7 +63,7 @@ func TestIntegration_FullAuthFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
@@ -123,7 +123,7 @@ func TestIntegration_FullAuthFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401 for revoked key, got %d", resp.StatusCode)
@@ -168,9 +168,10 @@ func TestIntegration_RateLimiting(t *testing.T) {
 			t.Fatalf("request %d failed: %v", i, err)
 		}
 
-		if resp.StatusCode == http.StatusOK {
+		switch resp.StatusCode {
+		case http.StatusOK:
 			atomic.AddInt32(&successCount, 1)
-		} else if resp.StatusCode == http.StatusTooManyRequests {
+		case http.StatusTooManyRequests:
 			atomic.AddInt32(&limitedCount, 1)
 
 			// Verify rate limit headers
@@ -181,7 +182,7 @@ func TestIntegration_RateLimiting(t *testing.T) {
 				t.Error("expected Retry-After header")
 			}
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
 	// We should have some successful requests and some rate-limited ones
@@ -246,7 +247,7 @@ func TestIntegration_MetricsEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("metrics request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 for /metrics, got %d", resp.StatusCode)
@@ -778,7 +779,7 @@ func TestIntegration_ErrorResponses(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != tc.expectedStatus {
 				t.Errorf("expected status %d, got %d", tc.expectedStatus, resp.StatusCode)
@@ -888,7 +889,7 @@ func TestIntegration_APIKeyExpiration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("expected 401 for expired key, got %d", resp.StatusCode)
