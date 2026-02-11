@@ -572,7 +572,9 @@ func TestProtectedAuth_AuditListMaxLimit(t *testing.T) {
 	var resp struct {
 		Limit int `json:"limit"`
 	}
-	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 	if resp.Limit != 1000 {
 		t.Errorf("expected limit capped at 1000, got %d", resp.Limit)
 	}
