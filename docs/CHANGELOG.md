@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved - Sprint 6: UI Accessibility
+
+- Modal accessibility and focus trapping (#22):
+  - Added `@alpinejs/focus` plugin for `x-trap` focus trapping in modals
+  - Global search modal: `role="dialog"`, `aria-modal`, `aria-label`, `x-trap.noscroll`, search input `aria-label`
+  - Data I/O modal: `role="dialog"`, `aria-modal`, `aria-label`, `x-trap.noscroll`, close/fullscreen `aria-label`
+  - Pool detail slide panel: ESC-to-close, `role="complementary"`, `aria-label`, close button `aria-label`
+  - Sidebar navigation: `aria-label="Main navigation"`, `:aria-current="page"` on active tab buttons
+
 ### Added - Sprint 6: Docker & Infrastructure
 
 - Multi-stage Docker build (#37):
