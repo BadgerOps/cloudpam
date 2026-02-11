@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 7: Production Readiness & API Documentation
+
+#### OpenAPI Spec v0.3.0
+- Updated OpenAPI spec from v0.1.0 to v0.3.0 with all implemented endpoints
+- Added 12+ missing endpoint definitions: `/readyz`, `/metrics`, `/api/v1/test-sentry`,
+  auth key management, audit log queries, CSV import, pool hierarchy, pool stats
+- Added `BearerAuth` security scheme for API key authentication
+- Updated Pool schema with Sprint 5 fields: `type`, `status`, `source`, `description`, `tags`, `updated_at`
+- Added new schemas: `ReadinessResponse`, `PoolStats`, `PoolWithStats`, `ImportResult`,
+  `CreateAPIKey`, `APIKeyCreated`, `APIKeyInfo`, `AuditEvent`, `AuditListResponse`
+- Added `include_stats` query parameter to pool list endpoint
+- Added tag definitions for all endpoint groups (System, Pools, Accounts, Blocks, Export, Import, Auth, Audit)
+
+#### SQLite-backed API Key Store
+- Migration `0005_api_keys.sql`: persistent `api_keys` table with prefix index
+- `internal/auth/sqlite.go`: full `KeyStore` interface implementation backed by SQLite
+  (Create, GetByPrefix, GetByID, List, Revoke, UpdateLastUsed, Delete)
+- `selectKeyStore()` added to both build-tag files for automatic backend selection
+- AuthServer and auth routes wired into `main.go` startup for both build modes
+- `CLOUDPAM_AUTH_ENABLED=true` env var to toggle RBAC enforcement
+- Comprehensive SQLite KeyStore test suite (CRUD, not-found, duplicate prefix, expiration, multiple keys)
+
 ### Improved - Sprint 6: UI Accessibility
 
 - Modal accessibility and focus trapping (#22):
@@ -187,6 +209,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
-[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/BadgerOps/cloudpam/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/BadgerOps/cloudpam/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/BadgerOps/cloudpam/releases/tag/v0.1.0
