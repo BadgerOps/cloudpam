@@ -47,5 +47,10 @@ coverage*
 # Planning documents and mockups (local only, not committed)
 .planning/
 
+# Nix
+result
+result-*
+.direnv/
+
 # Claude Code local config
 .claude/
