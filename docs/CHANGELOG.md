@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 6: Docker & Infrastructure
+
+- Multi-stage Docker build (#37):
+  - `Dockerfile` with `golang:1.24-alpine` build stage and `alpine:3.21` runtime stage
+  - Builds static binary with `-tags sqlite -trimpath -ldflags "-s -w"`
+  - Non-root `cloudpam` user in runtime image
+  - `.dockerignore` excludes `.git`, `node_modules`, `photos`, coverage files
+  - Added `just docker-build` and `just docker-run` recipes
+
 ### Fixed - Sprint 6: Code Quality & API Hardening
 
 - Raise `internal/http` test coverage from 60% to 80.6% (#67, #32, #33):
