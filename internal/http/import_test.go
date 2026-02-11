@@ -210,7 +210,9 @@ func TestImportPools_WithAccountKey(t *testing.T) {
 	srv, st := setupTestServer()
 
 	// Create an account first
-	st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:111111111111", Name: "Prod"})
+	if _, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:111111111111", Name: "Prod"}); err != nil {
+		t.Fatal(err)
+	}
 
 	body := "name,cidr,account_key\nnet,10.0.0.0/8,aws:111111111111\n"
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/import/pools", strings.NewReader(body))

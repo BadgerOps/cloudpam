@@ -194,7 +194,9 @@ func TestProtectedPoolSubroutes_ForceDelete(t *testing.T) {
 	mux, st, key := setupProtectedTestServer(t)
 
 	parent, _ := st.CreatePool(t.Context(), domain.CreatePool{Name: "net", CIDR: "10.0.0.0/8"})
-	st.CreatePool(t.Context(), domain.CreatePool{Name: "sub", CIDR: "10.0.0.0/16", ParentID: &parent.ID})
+	if _, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "sub", CIDR: "10.0.0.0/16", ParentID: &parent.ID}); err != nil {
+		t.Fatal(err)
+	}
 
 	rr := doProtected(t, mux, stdhttp.MethodDelete, "/api/v1/pools/"+itoa(parent.ID)+"?force=true", "", key)
 	if rr.Code != stdhttp.StatusNoContent {
@@ -476,7 +478,9 @@ func TestProtectedAuth_RevokeKey(t *testing.T) {
 		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
 	}
 	var resp struct{ ID string }
-	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 
 	rr = doProtected(t, mux, stdhttp.MethodDelete, "/api/v1/auth/keys/"+resp.ID, "", key)
 	if rr.Code != stdhttp.StatusNoContent {
@@ -517,7 +521,9 @@ func TestProtectedAuth_AuditList(t *testing.T) {
 		Total  int   `json:"total"`
 		Limit  int   `json:"limit"`
 	}
-	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 	if resp.Limit != 50 {
 		t.Errorf("expected default limit 50, got %d", resp.Limit)
 	}
@@ -535,7 +541,9 @@ func TestProtectedAuth_AuditListPagination(t *testing.T) {
 		Limit  int `json:"limit"`
 		Offset int `json:"offset"`
 	}
-	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
 	if resp.Limit != 10 {
 		t.Errorf("expected limit 10, got %d", resp.Limit)
 	}
