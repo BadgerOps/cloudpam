@@ -107,8 +107,24 @@ func main() {
 
 	mux := http.NewServeMux()
 	auditLogger := selectAuditLogger(logger)
+	keyStore := selectKeyStore(logger)
 	srv := ih.NewServer(mux, store, logger, metrics, auditLogger)
-	srv.RegisterRoutes()
+
+	// When CLOUDPAM_AUTH_ENABLED is set, use protected routes with RBAC.
+	// Otherwise use unprotected routes for development.
+	authEnabled := os.Getenv("CLOUDPAM_AUTH_ENABLED") == "true" || os.Getenv("CLOUDPAM_AUTH_ENABLED") == "1"
+	if authEnabled {
+		srv.RegisterProtectedRoutes(keyStore, logger.Slog())
+		authSrv := ih.NewAuthServer(srv, keyStore, auditLogger)
+		authSrv.RegisterProtectedAuthRoutes(logger.Slog())
+		logger.Info("authentication enabled (RBAC enforced)")
+	} else {
+		srv.RegisterRoutes()
+		authSrv := ih.NewAuthServer(srv, keyStore, auditLogger)
+		authSrv.RegisterAuthRoutes()
+		logger.Info("authentication disabled (all routes open)",
+			"hint", "set CLOUDPAM_AUTH_ENABLED=true to enable RBAC")
+	}
 
 	// Apply middleware stack (metrics, request ID, structured logging, rate limiting).
 	// Order: metrics (outermost) -> requestID -> logging -> rateLimiting (innermost before handler)

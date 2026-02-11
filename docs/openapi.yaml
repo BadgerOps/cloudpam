@@ -1,17 +1,38 @@
 openapi: 3.1.0
 info:
   title: CloudPAM API
-  version: "0.1.0"
+  version: "0.3.0"
   description: |
-    REST API for managing CloudPAM pools, accounts, blocks, and data exports.
+    REST API for managing CloudPAM pools, accounts, blocks, data exports,
+    authentication, and audit logging.
 servers:
   - url: http://localhost:8080
     description: Local development server
+security:
+  - BearerAuth: []
+tags:
+  - name: System
+    description: Health, readiness, and system endpoints
+  - name: Pools
+    description: IP address pool management
+  - name: Accounts
+    description: Cloud account management
+  - name: Blocks
+    description: Block enumeration and assignment
+  - name: Export
+    description: Data export (CSV in ZIP)
+  - name: Import
+    description: Data import (CSV)
+  - name: Auth
+    description: API key management
+  - name: Audit
+    description: Audit log queries
 paths:
   /healthz:
     get:
       summary: Liveness probe
       tags: [System]
+      security: []
       responses:
         "200":
           description: API is healthy
@@ -19,10 +40,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /readyz:
+    get:
+      summary: Readiness probe with dependency checks
+      tags: [System]
+      security: []
+      responses:
+        "200":
+          description: All checks pass
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: One or more checks failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+  /metrics:
+    get:
+      summary: Prometheus metrics endpoint
+      tags: [System]
+      security: []
+      responses:
+        "200":
+          description: Prometheus text format metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+  /api/v1/test-sentry:
+    get:
+      summary: Test Sentry integration
+      tags: [System]
+      security: []
+      parameters:
+        - name: type
+          in: query
+          description: "Test type: message, error, or panic"
+          schema:
+            type: string
+            enum: [message, error, panic]
+      responses:
+        "200":
+          description: Test executed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  usage:
+                    type: string
   /api/v1/pools:
     get:
       summary: List pools
       tags: [Pools]
+      parameters:
+        - name: include_stats
+          in: query
+          description: Include utilization statistics for each pool
+          schema:
+            type: boolean
       responses:
         "200":
           description: Pools returned successfully
@@ -50,6 +133,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Pool"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/pools/hierarchy:
+    get:
+      summary: Get pool hierarchy as nested tree with stats
+      tags: [Pools]
+      responses:
+        "200":
+          description: Hierarchical pool tree
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PoolWithStats"
         default:
           $ref: "#/components/responses/Error"
   /api/v1/pools/{poolId}:
@@ -100,7 +198,7 @@ paths:
       - $ref: "#/components/parameters/PoolId"
     get:
       summary: Enumerate candidate blocks within a pool CIDR
-      tags: [Pools]
+      tags: [Blocks]
       parameters:
         - $ref: "#/components/parameters/NewPrefixLen"
         - $ref: "#/components/parameters/Page"
@@ -112,6 +210,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BlocksResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/pools/{poolId}/stats:
+    parameters:
+      - $ref: "#/components/parameters/PoolId"
+    get:
+      summary: Get utilization statistics for a pool
+      tags: [Pools]
+      responses:
+        "200":
+          description: Pool stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PoolWithStats"
         default:
           $ref: "#/components/responses/Error"
   /api/v1/accounts:
@@ -246,7 +359,170 @@ paths:
                 format: binary
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/import/accounts:
+    post:
+      summary: Import accounts from CSV
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema:
+              type: string
+              description: CSV with header row. Required columns; key, name. Optional; provider, external_id, description, platform, tier, environment, regions.
+      responses:
+        "200":
+          description: Import results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/import/pools:
+    post:
+      summary: Import pools from CSV
+      tags: [Import]
+      requestBody:
+        required: true
+        content:
+          text/csv:
+            schema:
+              type: string
+              description: CSV with header row. Required columns; name, cidr. Optional; parent_id, account_id, account_key, type, status, source, description.
+      responses:
+        "200":
+          description: Import results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportResult"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/keys:
+    get:
+      summary: List API keys (without secrets)
+      tags: [Auth]
+      responses:
+        "200":
+          description: API keys listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/APIKeyInfo"
+                required: [keys]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create API key
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAPIKey"
+      responses:
+        "201":
+          description: API key created. The plaintext key is returned only once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKeyCreated"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/keys/{keyId}:
+    parameters:
+      - name: keyId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: API key identifier
+    delete:
+      summary: Revoke API key
+      tags: [Auth]
+      responses:
+        "204":
+          description: API key revoked
+        "404":
+          description: API key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/audit:
+    get:
+      summary: Query audit log
+      tags: [Audit]
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum events to return (default 50, max 1000)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+        - name: offset
+          in: query
+          description: Number of events to skip
+          schema:
+            type: integer
+            minimum: 0
+        - name: actor
+          in: query
+          description: Filter by actor (API key prefix or "anonymous")
+          schema:
+            type: string
+        - name: action
+          in: query
+          description: "Filter by action: create, update, delete, read"
+          schema:
+            type: string
+            enum: [create, update, delete, read]
+        - name: resource_type
+          in: query
+          description: "Filter by resource type: pool, account, api_key"
+          schema:
+            type: string
+            enum: [pool, account, api_key]
+        - name: since
+          in: query
+          description: Events on or after this time (RFC 3339)
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          description: Events on or before this time (RFC 3339)
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Audit events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditListResponse"
+        default:
+          $ref: "#/components/responses/Error"
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        API key authentication. Keys use the format `cpam_<base64url>`.
+        Pass in the Authorization header as `Bearer cpam_...`.
   parameters:
     PoolId:
       name: poolId
@@ -325,6 +601,20 @@ components:
           type: string
           example: ok
       required: [status]
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, unhealthy]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, error]
+          example:
+            database: ok
+      required: [status, checks]
     Error:
       type: object
       properties:
@@ -333,6 +623,15 @@ components:
         detail:
           type: string
       required: [error]
+    PoolType:
+      type: string
+      enum: [supernet, region, environment, vpc, subnet]
+    PoolStatus:
+      type: string
+      enum: [planned, active, deprecated]
+    PoolSource:
+      type: string
+      enum: [manual, discovered, imported]
     Pool:
       type: object
       properties:
@@ -351,10 +650,59 @@ components:
           type: integer
           format: int64
           nullable: true
+        type:
+          $ref: "#/components/schemas/PoolType"
+        status:
+          $ref: "#/components/schemas/PoolStatus"
+        source:
+          $ref: "#/components/schemas/PoolSource"
+        description:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
         created_at:
           type: string
           format: date-time
-      required: [id, name, cidr, created_at]
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, name, cidr, type, status, source, created_at, updated_at]
+    PoolStats:
+      type: object
+      properties:
+        total_ips:
+          type: integer
+          format: int64
+        used_ips:
+          type: integer
+          format: int64
+        available_ips:
+          type: integer
+          format: int64
+        utilization:
+          type: number
+          format: double
+          description: Utilization percentage (0-100)
+        child_count:
+          type: integer
+        direct_children:
+          type: integer
+      required: [total_ips, used_ips, available_ips, utilization, child_count, direct_children]
+    PoolWithStats:
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/Pool"
+        - type: object
+          properties:
+            stats:
+              $ref: "#/components/schemas/PoolStats"
+            children:
+              type: array
+              items:
+                $ref: "#/components/schemas/PoolWithStats"
+          required: [stats]
     CreatePool:
       type: object
       properties:
@@ -370,6 +718,18 @@ components:
           type: integer
           format: int64
           nullable: true
+        type:
+          $ref: "#/components/schemas/PoolType"
+        status:
+          $ref: "#/components/schemas/PoolStatus"
+        source:
+          $ref: "#/components/schemas/PoolSource"
+        description:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
       required: [name, cidr]
     UpdatePool:
       type: object
@@ -380,6 +740,18 @@ components:
         account_id:
           type: integer
           format: int64
+          nullable: true
+        type:
+          $ref: "#/components/schemas/PoolType"
+        status:
+          $ref: "#/components/schemas/PoolStatus"
+        description:
+          type: string
+          nullable: true
+        tags:
+          type: object
+          additionalProperties:
+            type: string
           nullable: true
     BlockInfo:
       type: object
@@ -549,3 +921,147 @@ components:
         page_size:
           type: integer
       required: [items, total, page, page_size]
+    ImportResult:
+      type: object
+      properties:
+        created:
+          type: integer
+          description: Number of records successfully created
+        skipped:
+          type: integer
+          description: Number of records skipped (duplicates)
+        errors:
+          type: array
+          items:
+            type: string
+          description: List of row-level error messages
+      required: [created, skipped, errors]
+    CreateAPIKey:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Human-readable name for the key
+        scopes:
+          type: array
+          items:
+            type: string
+            enum: ["pools:read", "pools:write", "accounts:read", "accounts:write", "audit:read", "keys:read", "keys:write", "*"]
+          description: Permissions granted to this key
+        expires_in_days:
+          type: integer
+          minimum: 1
+          description: Key expires after this many days (omit for no expiration)
+      required: [name]
+    APIKeyCreated:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+          description: Plaintext API key (shown only once)
+          example: "cpam_abc12345..."
+        prefix:
+          type: string
+          description: Key prefix for identification
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+      required: [id, key, prefix, name, scopes, created_at]
+    APIKeyInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        prefix:
+          type: string
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked:
+          type: boolean
+      required: [id, prefix, name, scopes, created_at, revoked]
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        actor:
+          type: string
+          description: API key prefix or "anonymous"
+        actor_type:
+          type: string
+          enum: [api_key, anonymous]
+        action:
+          type: string
+          enum: [create, update, delete, read]
+        resource_type:
+          type: string
+          enum: [pool, account, api_key]
+        resource_id:
+          type: string
+        resource_name:
+          type: string
+        changes:
+          type: object
+          nullable: true
+          properties:
+            before:
+              type: object
+              additionalProperties: true
+            after:
+              type: object
+              additionalProperties: true
+        request_id:
+          type: string
+        ip_address:
+          type: string
+        status_code:
+          type: integer
+      required: [id, timestamp, actor, actor_type, action, resource_type, resource_id, status_code]
+    AuditListResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required: [events, total, limit, offset]
