@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed - Sprint 6: Code Quality & API Hardening
 
+- Split `internal/http/server.go` (2277 lines) into 7 focused handler files (#68):
+  - `server.go` (185 lines) — Server struct, constructors, route registration, helpers
+  - `pool_handlers.go` (561 lines) — Pool CRUD, hierarchy, stats, RBAC handlers
+  - `account_handlers.go` (287 lines) — Account CRUD and RBAC handlers
+  - `block_handlers.go` (325 lines) — Block listing and subnet enumeration
+  - `export_handlers.go` (687 lines) — CSV export/import handlers
+  - `system_handlers.go` (169 lines) — Health, readiness, Sentry, OpenAPI, UI
+  - `cidr.go` (124 lines) — IPv4 CIDR validation and arithmetic utilities
 - Remove confusing `|| true` dead-code condition in `UpdatePoolMeta` (#70)
   - Affected both MemoryStore (`internal/storage/store.go`) and SQLite store (`internal/storage/sqlite/sqlite.go`)
   - The condition `accountID != nil || true` was always true, making the `if` guard misleading
