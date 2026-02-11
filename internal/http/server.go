@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -83,6 +84,22 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 		s.logger.WarnContext(ctx, "request failed", fields...)
 	}
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
+}
+
+// writeStoreErr maps a storage-layer error to the appropriate HTTP status code
+// and writes the error response. It uses errors.Is() to detect sentinel errors
+// from the storage package, falling back to 500 Internal Server Error for unknown errors.
+func (s *Server) writeStoreErr(ctx context.Context, w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+		s.writeErr(ctx, w, http.StatusNotFound, err.Error(), "")
+	case errors.Is(err, storage.ErrConflict):
+		s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
+	case errors.Is(err, storage.ErrValidation):
+		s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+	default:
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+	}
 }
 
 // logAudit logs an audit event for CRUD operations.

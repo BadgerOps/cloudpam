@@ -130,7 +130,7 @@ func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
 
 func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
     if in.Name == "" || in.CIDR == "" {
-        return domain.Pool{}, errors.New("name and cidr required")
+        return domain.Pool{}, fmt.Errorf("name and cidr required: %w", storage.ErrValidation)
     }
     now := time.Now().UTC()
 
@@ -162,7 +162,7 @@ func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Po
     res, err := s.db.ExecContext(ctx, `INSERT INTO pools(name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         in.Name, in.CIDR, in.ParentID, in.AccountID, string(poolType), string(poolStatus), string(poolSource), in.Description, tagsJSON, nowStr, nowStr)
     if err != nil {
-        return domain.Pool{}, err
+        return domain.Pool{}, storage.WrapIfConflict(err)
     }
     id, err := res.LastInsertId()
     if err != nil {
@@ -326,7 +326,7 @@ func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
     if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=?`, id).Scan(&cnt); err != nil {
         return false, err
     }
-    if cnt > 0 { return false, errors.New("pool has child pools") }
+    if cnt > 0 { return false, fmt.Errorf("pool has child pools: %w", storage.ErrConflict) }
     res, err := s.db.ExecContext(ctx, `DELETE FROM pools WHERE id=?`, id)
     if err != nil { return false, err }
     n, _ := res.RowsAffected()
@@ -398,13 +398,13 @@ func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
 
 func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error) {
     if in.Key == "" || in.Name == "" {
-        return domain.Account{}, errors.New("key and name required")
+        return domain.Account{}, fmt.Errorf("key and name required: %w", storage.ErrValidation)
     }
     var regions string
     if len(in.Regions) > 0 { if b, e := json.Marshal(in.Regions); e == nil { regions = string(b) } }
     res, err := s.db.ExecContext(ctx, `INSERT INTO accounts(key, name, provider, external_id, description, platform, tier, environment, regions, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, in.Key, in.Name, in.Provider, in.ExternalID, in.Description, in.Platform, in.Tier, in.Environment, regions, time.Now().UTC().Format(time.RFC3339))
     if err != nil {
-        return domain.Account{}, err
+        return domain.Account{}, storage.WrapIfConflict(err)
     }
     id, err := res.LastInsertId()
     if err != nil {
@@ -464,7 +464,7 @@ func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Accou
 func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
     var cnt int
     if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=?`, id).Scan(&cnt); err != nil { return false, err }
-    if cnt > 0 { return false, errors.New("account in use by pools") }
+    if cnt > 0 { return false, fmt.Errorf("account in use by pools: %w", storage.ErrConflict) }
     res, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id)
     if err != nil { return false, err }
     n, _ := res.RowsAffected()
@@ -510,7 +510,7 @@ func (s *Store) GetPoolWithStats(ctx context.Context, id int64) (*domain.PoolWit
         return nil, err
     }
     if !ok {
-        return nil, errors.New("pool not found")
+        return nil, fmt.Errorf("pool not found: %w", storage.ErrNotFound)
     }
     stats, err := s.calculatePoolStats(ctx, p)
     if err != nil {
@@ -568,7 +568,7 @@ func (s *Store) GetPoolHierarchy(ctx context.Context, rootID *int64) ([]domain.P
     if rootID != nil {
         // Return subtree from specific root
         if _, ok := poolMap[*rootID]; !ok {
-            return nil, errors.New("root pool not found")
+            return nil, fmt.Errorf("root pool not found: %w", storage.ErrNotFound)
         }
         tree, err := buildTree(*rootID)
         if err != nil {
@@ -599,7 +599,7 @@ func (s *Store) GetPoolChildren(ctx context.Context, parentID int64) ([]domain.P
         return nil, err
     }
     if !ok {
-        return nil, errors.New("parent pool not found")
+        return nil, fmt.Errorf("parent pool not found: %w", storage.ErrNotFound)
     }
 
     rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE parent_id=? ORDER BY id ASC`, parentID)
@@ -666,7 +666,7 @@ func (s *Store) CalculatePoolUtilization(ctx context.Context, id int64) (*domain
         return nil, err
     }
     if !ok {
-        return nil, errors.New("pool not found")
+        return nil, fmt.Errorf("pool not found: %w", storage.ErrNotFound)
     }
     return s.calculatePoolStats(ctx, p)
 }

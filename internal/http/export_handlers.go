@@ -3,6 +3,7 @@ package http
 import (
 	"archive/zip"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 // GET /api/v1/export?datasets=accounts,pools,blocks&accounts_fields=...&pools_fields=...&blocks_fields=...&accounts=1,2&pools=3,4
@@ -378,18 +380,18 @@ func (s *Server) handleImportAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var created, skipped int
-	var errors []string
+	var errs []string
 
 	for i, row := range records[1:] {
 		if len(row) <= keyIdx || len(row) <= nameIdx {
-			errors = append(errors, fmt.Sprintf("row %d: insufficient columns", i+2))
+			errs = append(errs, fmt.Sprintf("row %d: insufficient columns", i+2))
 			continue
 		}
 
 		key := strings.TrimSpace(row[keyIdx])
 		name := strings.TrimSpace(row[nameIdx])
 		if key == "" || name == "" {
-			errors = append(errors, fmt.Sprintf("row %d: key and name required", i+2))
+			errs = append(errs, fmt.Sprintf("row %d: key and name required", i+2))
 			continue
 		}
 
@@ -426,10 +428,10 @@ func (s *Server) handleImportAccounts(w http.ResponseWriter, r *http.Request) {
 
 		_, err := s.store.CreateAccount(r.Context(), acc)
 		if err != nil {
-			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+			if errors.Is(err, storage.ErrConflict) {
 				skipped++
 			} else {
-				errors = append(errors, fmt.Sprintf("row %d: %v", i+2, err))
+				errs = append(errs, fmt.Sprintf("row %d: %v", i+2, err))
 			}
 			continue
 		}
@@ -439,7 +441,7 @@ func (s *Server) handleImportAccounts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"created": created,
 		"skipped": skipped,
-		"errors":  errors,
+		"errors":  errs,
 	})
 }
 
@@ -578,7 +580,7 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 	})
 
 	var created, skipped int
-	var errors []string
+	var errs []string
 
 	// Map old IDs to new IDs for parent resolution
 	oldToNewID := make(map[int64]int64)
@@ -605,7 +607,7 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			} else {
 				s.logger.WarnContext(r.Context(), "pools:import account key not found",
 					"row", pr.rowNum, "account_key", pr.accountKey)
-				errors = append(errors, fmt.Sprintf("row %d: account_key '%s' not found", pr.rowNum, pr.accountKey))
+				errs = append(errs, fmt.Sprintf("row %d: account_key '%s' not found", pr.rowNum, pr.accountKey))
 				continue
 			}
 		} else if pr.oldAccountID != 0 {
@@ -617,7 +619,7 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 				s.logger.WarnContext(r.Context(), "pools:import account_id not found (stale reference)",
 					"row", pr.rowNum, "account_id", pr.oldAccountID,
 					"hint", "use account_key column instead of account_id for reliable imports")
-				errors = append(errors, fmt.Sprintf("row %d: account_id %d not found (use account_key column for imports)", pr.rowNum, pr.oldAccountID))
+				errs = append(errs, fmt.Sprintf("row %d: account_id %d not found (use account_key column for imports)", pr.rowNum, pr.oldAccountID))
 				continue
 			}
 		}
@@ -635,7 +637,7 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 				} else {
 					s.logger.WarnContext(r.Context(), "pools:import parent_id not found",
 						"row", pr.rowNum, "parent_id", pr.oldParentID)
-					errors = append(errors, fmt.Sprintf("row %d: parent_id %d not found", pr.rowNum, pr.oldParentID))
+					errs = append(errs, fmt.Sprintf("row %d: parent_id %d not found", pr.rowNum, pr.oldParentID))
 					continue
 				}
 			}
@@ -660,10 +662,10 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			s.logger.WarnContext(r.Context(), "pools:import create failed",
 				"row", pr.rowNum, "name", pool.Name, "error", err.Error())
-			if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "UNIQUE") {
+			if errors.Is(err, storage.ErrConflict) {
 				skipped++
 			} else {
-				errors = append(errors, fmt.Sprintf("row %d: %v", pr.rowNum, err))
+				errs = append(errs, fmt.Sprintf("row %d: %v", pr.rowNum, err))
 			}
 			continue
 		}
@@ -682,6 +684,6 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"created": created,
 		"skipped": skipped,
-		"errors":  errors,
+		"errors":  errs,
 	})
 }

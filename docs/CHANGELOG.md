@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed - Sprint 6: Code Quality & API Hardening
 
+- Standardize error handling with typed sentinel errors (#69):
+  - Added `internal/storage/errors.go` with `ErrNotFound`, `ErrConflict`, `ErrValidation` sentinels
+  - Added `WrapIfConflict()` helper to detect SQLite UNIQUE constraint violations
+  - Replaced fragile `strings.Contains(err.Error(), "not found")` with `errors.Is(err, storage.ErrNotFound)` in HTTP handlers
+  - Replaced `strings.Contains(err.Error(), "UNIQUE"/"duplicate")` with `errors.Is(err, storage.ErrConflict)` in import handlers
+  - Both MemoryStore and SQLite store now wrap errors with sentinel types via `fmt.Errorf("...: %w", ErrXxx)`
+  - Added `writeStoreErr()` helper in HTTP server for centralized error-to-status-code mapping
+  - Renamed `errors` local variables to `errs` in export handlers to avoid shadowing the `errors` package
+  - Added 9 new tests: sentinel error assertions for each error path, plus `WrapIfConflict` table-driven test
 - Split `internal/http/server.go` (2277 lines) into 7 focused handler files (#68):
   - `server.go` (185 lines) — Server struct, constructors, route registration, helpers
   - `pool_handlers.go` (561 lines) — Pool CRUD, hierarchy, stats, RBAC handlers

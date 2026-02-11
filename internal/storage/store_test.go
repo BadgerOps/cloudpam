@@ -3,6 +3,7 @@ package storage
 import (
 	"cloudpam/internal/domain"
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -1085,5 +1086,130 @@ func TestMemoryStore_TagsCopied(t *testing.T) {
 	got, _, _ := m.GetPool(ctx, p.ID)
 	if got.Tags["env"] != "prod" {
 		t.Error("tags should be copied, not shared")
+	}
+}
+
+// TestSentinelErrors_CreatePoolValidation verifies CreatePool returns ErrValidation for invalid input.
+func TestSentinelErrors_CreatePoolValidation(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.CreatePool(ctx, domain.CreatePool{Name: "", CIDR: "10.0.0.0/16"})
+	if !errors.Is(err, ErrValidation) {
+		t.Errorf("expected ErrValidation, got %v", err)
+	}
+}
+
+// TestSentinelErrors_CreateAccountValidation verifies CreateAccount returns ErrValidation for invalid input.
+func TestSentinelErrors_CreateAccountValidation(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.CreateAccount(ctx, domain.CreateAccount{Key: "", Name: "Test"})
+	if !errors.Is(err, ErrValidation) {
+		t.Errorf("expected ErrValidation, got %v", err)
+	}
+}
+
+// TestSentinelErrors_DeletePoolConflict verifies DeletePool returns ErrConflict when pool has children.
+func TestSentinelErrors_DeletePoolConflict(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	parent, _ := m.CreatePool(ctx, domain.CreatePool{Name: "parent", CIDR: "10.0.0.0/8"})
+	_, _ = m.CreatePool(ctx, domain.CreatePool{Name: "child", CIDR: "10.0.0.0/16", ParentID: &parent.ID})
+
+	_, err := m.DeletePool(ctx, parent.ID)
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("expected ErrConflict, got %v", err)
+	}
+}
+
+// TestSentinelErrors_DeleteAccountConflict verifies DeleteAccount returns ErrConflict when account is in use.
+func TestSentinelErrors_DeleteAccountConflict(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	acc, _ := m.CreateAccount(ctx, domain.CreateAccount{Key: "aws:123", Name: "Prod"})
+	_, _ = m.CreatePool(ctx, domain.CreatePool{Name: "pool", CIDR: "10.0.0.0/16", AccountID: &acc.ID})
+
+	_, err := m.DeleteAccount(ctx, acc.ID)
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("expected ErrConflict, got %v", err)
+	}
+}
+
+// TestSentinelErrors_GetPoolWithStatsNotFound verifies GetPoolWithStats returns ErrNotFound.
+func TestSentinelErrors_GetPoolWithStatsNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.GetPoolWithStats(ctx, 999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestSentinelErrors_GetPoolHierarchyNotFound verifies GetPoolHierarchy returns ErrNotFound.
+func TestSentinelErrors_GetPoolHierarchyNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	badID := int64(999)
+	_, err := m.GetPoolHierarchy(ctx, &badID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestSentinelErrors_GetPoolChildrenNotFound verifies GetPoolChildren returns ErrNotFound.
+func TestSentinelErrors_GetPoolChildrenNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.GetPoolChildren(ctx, 999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestSentinelErrors_CalculatePoolUtilizationNotFound verifies CalculatePoolUtilization returns ErrNotFound.
+func TestSentinelErrors_CalculatePoolUtilizationNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.CalculatePoolUtilization(ctx, 999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestWrapIfConflict tests the WrapIfConflict helper function.
+func TestWrapIfConflict(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantConflict bool
+	}{
+		{"nil error", nil, false},
+		{"UNIQUE constraint", errors.New("UNIQUE constraint failed: pools.name"), true},
+		{"duplicate key", errors.New("duplicate key value violates"), true},
+		{"unrelated error", errors.New("connection refused"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := WrapIfConflict(tt.err)
+			if tt.err == nil {
+				if result != nil {
+					t.Errorf("expected nil, got %v", result)
+				}
+				return
+			}
+			isConflict := errors.Is(result, ErrConflict)
+			if isConflict != tt.wantConflict {
+				t.Errorf("WrapIfConflict(%q): errors.Is(ErrConflict)=%v, want %v", tt.err, isConflict, tt.wantConflict)
+			}
+		})
 	}
 }

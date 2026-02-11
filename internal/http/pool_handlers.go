@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 	"cloudpam/internal/validation"
 )
 
@@ -278,7 +280,7 @@ func (s *Server) handlePoolsHierarchy(w http.ResponseWriter, r *http.Request) {
 
 	hierarchy, err := s.store.GetPoolHierarchy(ctx, rootID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, storage.ErrNotFound) {
 			s.writeErr(ctx, w, http.StatusNotFound, err.Error(), "")
 			return
 		}
@@ -299,7 +301,7 @@ func (s *Server) handlePoolStats(w http.ResponseWriter, r *http.Request, id int6
 
 	stats, err := s.store.CalculatePoolUtilization(ctx, id)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, storage.ErrNotFound) {
 			s.writeErr(ctx, w, http.StatusNotFound, err.Error(), "")
 			return
 		}
