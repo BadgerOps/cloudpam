@@ -261,8 +261,8 @@ func (s *Store) UpdatePoolMeta(ctx context.Context, id int64, name *string, acco
     p, ok, err := s.GetPool(ctx, id)
     if err != nil || !ok { return domain.Pool{}, ok, err }
     if name != nil { p.Name = *name }
-    // accountID can be nil to clear
-    if accountID != nil || true { p.AccountID = accountID }
+    // Always set accountID (caller controls whether to clear or set)
+    p.AccountID = accountID
     now := time.Now().UTC().Format(time.RFC3339)
     if _, err := s.db.ExecContext(ctx, `UPDATE pools SET name=?, account_id=?, updated_at=? WHERE id=?`, p.Name, p.AccountID, now, id); err != nil {
         return domain.Pool{}, false, err

@@ -524,7 +524,7 @@ func TestMemoryStore_UpdatePoolMetaPartial(t *testing.T) {
 		AccountID: &accID,
 	})
 
-	// Update only name (pass nil for accountID to keep it)
+	// Update only name — passing nil for accountID clears the association
 	newName := "updated"
 	updated, ok, _ := m.UpdatePoolMeta(ctx, pool.ID, &newName, nil)
 	if !ok {
@@ -533,8 +533,55 @@ func TestMemoryStore_UpdatePoolMetaPartial(t *testing.T) {
 	if updated.Name != "updated" {
 		t.Errorf("expected name 'updated', got %q", updated.Name)
 	}
-	// Note: based on code, accountID is always set even if nil is passed
-	// The current implementation sets accountID to nil when nil is passed
+	if updated.AccountID != nil {
+		t.Errorf("expected nil accountID when nil is passed, got %v", *updated.AccountID)
+	}
+}
+
+// TestMemoryStore_UpdatePoolMetaSetAndClearAccount tests setting and clearing account via UpdatePoolMeta
+func TestMemoryStore_UpdatePoolMetaSetAndClearAccount(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create pool without account
+	pool, err := m.CreatePool(ctx, domain.CreatePool{Name: "test", CIDR: "10.0.0.0/16"})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	if pool.AccountID != nil {
+		t.Fatal("expected nil accountID initially")
+	}
+
+	// Set account
+	accID := int64(42)
+	updated, ok, err := m.UpdatePoolMeta(ctx, pool.ID, nil, &accID)
+	if err != nil || !ok {
+		t.Fatalf("set account: %v ok=%v", err, ok)
+	}
+	if updated.AccountID == nil || *updated.AccountID != 42 {
+		t.Errorf("expected accountID=42, got %v", updated.AccountID)
+	}
+	if updated.Name != "test" {
+		t.Errorf("name should be unchanged, got %q", updated.Name)
+	}
+
+	// Clear account by passing nil
+	cleared, ok, err := m.UpdatePoolMeta(ctx, pool.ID, nil, nil)
+	if err != nil || !ok {
+		t.Fatalf("clear account: %v ok=%v", err, ok)
+	}
+	if cleared.AccountID != nil {
+		t.Errorf("expected nil accountID after clear, got %v", *cleared.AccountID)
+	}
+
+	// Verify via GetPool
+	got, ok, _ := m.GetPool(ctx, pool.ID)
+	if !ok {
+		t.Fatal("pool should exist")
+	}
+	if got.AccountID != nil {
+		t.Errorf("expected nil accountID persisted, got %v", *got.AccountID)
+	}
 }
 
 // TestMemoryStore_ListAccountsEmpty tests listing accounts when empty

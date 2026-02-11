@@ -141,10 +141,8 @@ func (m *MemoryStore) UpdatePoolMeta(ctx context.Context, id int64, name *string
 	if name != nil {
 		p.Name = *name
 	}
-	// Always set account if provided (including clearing with nil)
-	if accountID != nil || true {
-		p.AccountID = accountID
-	}
+	// Always set accountID (caller controls whether to clear or set)
+	p.AccountID = accountID
 	p.UpdatedAt = time.Now().UTC()
 	m.pools[id] = p
 	return p, true, nil

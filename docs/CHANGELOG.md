@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed - Sprint 6: Code Quality & API Hardening
+
+- Remove confusing `|| true` dead-code condition in `UpdatePoolMeta` (#70)
+  - Affected both MemoryStore (`internal/storage/store.go`) and SQLite store (`internal/storage/sqlite/sqlite.go`)
+  - The condition `accountID != nil || true` was always true, making the `if` guard misleading
+  - Replaced with unconditional assignment matching the newer `UpdatePool` method's behavior
+  - Added explicit set-and-clear test (`TestMemoryStore_UpdatePoolMetaSetAndClearAccount`)
+
 ### Added - Sprint 5: Enhanced Pool Model & UI
 
 #### Domain Model Enhancements
