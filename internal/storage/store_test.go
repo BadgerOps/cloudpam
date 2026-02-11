@@ -3,6 +3,7 @@ package storage
 import (
 	"cloudpam/internal/domain"
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -524,7 +525,7 @@ func TestMemoryStore_UpdatePoolMetaPartial(t *testing.T) {
 		AccountID: &accID,
 	})
 
-	// Update only name (pass nil for accountID to keep it)
+	// Update only name — passing nil for accountID clears the association
 	newName := "updated"
 	updated, ok, _ := m.UpdatePoolMeta(ctx, pool.ID, &newName, nil)
 	if !ok {
@@ -533,8 +534,55 @@ func TestMemoryStore_UpdatePoolMetaPartial(t *testing.T) {
 	if updated.Name != "updated" {
 		t.Errorf("expected name 'updated', got %q", updated.Name)
 	}
-	// Note: based on code, accountID is always set even if nil is passed
-	// The current implementation sets accountID to nil when nil is passed
+	if updated.AccountID != nil {
+		t.Errorf("expected nil accountID when nil is passed, got %v", *updated.AccountID)
+	}
+}
+
+// TestMemoryStore_UpdatePoolMetaSetAndClearAccount tests setting and clearing account via UpdatePoolMeta
+func TestMemoryStore_UpdatePoolMetaSetAndClearAccount(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	// Create pool without account
+	pool, err := m.CreatePool(ctx, domain.CreatePool{Name: "test", CIDR: "10.0.0.0/16"})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	if pool.AccountID != nil {
+		t.Fatal("expected nil accountID initially")
+	}
+
+	// Set account
+	accID := int64(42)
+	updated, ok, err := m.UpdatePoolMeta(ctx, pool.ID, nil, &accID)
+	if err != nil || !ok {
+		t.Fatalf("set account: %v ok=%v", err, ok)
+	}
+	if updated.AccountID == nil || *updated.AccountID != 42 {
+		t.Errorf("expected accountID=42, got %v", updated.AccountID)
+	}
+	if updated.Name != "test" {
+		t.Errorf("name should be unchanged, got %q", updated.Name)
+	}
+
+	// Clear account by passing nil
+	cleared, ok, err := m.UpdatePoolMeta(ctx, pool.ID, nil, nil)
+	if err != nil || !ok {
+		t.Fatalf("clear account: %v ok=%v", err, ok)
+	}
+	if cleared.AccountID != nil {
+		t.Errorf("expected nil accountID after clear, got %v", *cleared.AccountID)
+	}
+
+	// Verify via GetPool
+	got, ok, _ := m.GetPool(ctx, pool.ID)
+	if !ok {
+		t.Fatal("pool should exist")
+	}
+	if got.AccountID != nil {
+		t.Errorf("expected nil accountID persisted, got %v", *got.AccountID)
+	}
 }
 
 // TestMemoryStore_ListAccountsEmpty tests listing accounts when empty
@@ -1038,5 +1086,130 @@ func TestMemoryStore_TagsCopied(t *testing.T) {
 	got, _, _ := m.GetPool(ctx, p.ID)
 	if got.Tags["env"] != "prod" {
 		t.Error("tags should be copied, not shared")
+	}
+}
+
+// TestSentinelErrors_CreatePoolValidation verifies CreatePool returns ErrValidation for invalid input.
+func TestSentinelErrors_CreatePoolValidation(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.CreatePool(ctx, domain.CreatePool{Name: "", CIDR: "10.0.0.0/16"})
+	if !errors.Is(err, ErrValidation) {
+		t.Errorf("expected ErrValidation, got %v", err)
+	}
+}
+
+// TestSentinelErrors_CreateAccountValidation verifies CreateAccount returns ErrValidation for invalid input.
+func TestSentinelErrors_CreateAccountValidation(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.CreateAccount(ctx, domain.CreateAccount{Key: "", Name: "Test"})
+	if !errors.Is(err, ErrValidation) {
+		t.Errorf("expected ErrValidation, got %v", err)
+	}
+}
+
+// TestSentinelErrors_DeletePoolConflict verifies DeletePool returns ErrConflict when pool has children.
+func TestSentinelErrors_DeletePoolConflict(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	parent, _ := m.CreatePool(ctx, domain.CreatePool{Name: "parent", CIDR: "10.0.0.0/8"})
+	_, _ = m.CreatePool(ctx, domain.CreatePool{Name: "child", CIDR: "10.0.0.0/16", ParentID: &parent.ID})
+
+	_, err := m.DeletePool(ctx, parent.ID)
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("expected ErrConflict, got %v", err)
+	}
+}
+
+// TestSentinelErrors_DeleteAccountConflict verifies DeleteAccount returns ErrConflict when account is in use.
+func TestSentinelErrors_DeleteAccountConflict(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	acc, _ := m.CreateAccount(ctx, domain.CreateAccount{Key: "aws:123", Name: "Prod"})
+	_, _ = m.CreatePool(ctx, domain.CreatePool{Name: "pool", CIDR: "10.0.0.0/16", AccountID: &acc.ID})
+
+	_, err := m.DeleteAccount(ctx, acc.ID)
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("expected ErrConflict, got %v", err)
+	}
+}
+
+// TestSentinelErrors_GetPoolWithStatsNotFound verifies GetPoolWithStats returns ErrNotFound.
+func TestSentinelErrors_GetPoolWithStatsNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.GetPoolWithStats(ctx, 999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestSentinelErrors_GetPoolHierarchyNotFound verifies GetPoolHierarchy returns ErrNotFound.
+func TestSentinelErrors_GetPoolHierarchyNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	badID := int64(999)
+	_, err := m.GetPoolHierarchy(ctx, &badID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestSentinelErrors_GetPoolChildrenNotFound verifies GetPoolChildren returns ErrNotFound.
+func TestSentinelErrors_GetPoolChildrenNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.GetPoolChildren(ctx, 999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestSentinelErrors_CalculatePoolUtilizationNotFound verifies CalculatePoolUtilization returns ErrNotFound.
+func TestSentinelErrors_CalculatePoolUtilizationNotFound(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	_, err := m.CalculatePoolUtilization(ctx, 999)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// TestWrapIfConflict tests the WrapIfConflict helper function.
+func TestWrapIfConflict(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantConflict bool
+	}{
+		{"nil error", nil, false},
+		{"UNIQUE constraint", errors.New("UNIQUE constraint failed: pools.name"), true},
+		{"duplicate key", errors.New("duplicate key value violates"), true},
+		{"unrelated error", errors.New("connection refused"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := WrapIfConflict(tt.err)
+			if tt.err == nil {
+				if result != nil {
+					t.Errorf("expected nil, got %v", result)
+				}
+				return
+			}
+			isConflict := errors.Is(result, ErrConflict)
+			if isConflict != tt.wantConflict {
+				t.Errorf("WrapIfConflict(%q): errors.Is(ErrConflict)=%v, want %v", tt.err, isConflict, tt.wantConflict)
+			}
+		})
 	}
 }

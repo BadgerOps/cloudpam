@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Improved - Sprint 6: UI Accessibility
+
+- Modal accessibility and focus trapping (#22):
+  - Added `@alpinejs/focus` plugin for `x-trap` focus trapping in modals
+  - Global search modal: `role="dialog"`, `aria-modal`, `aria-label`, `x-trap.noscroll`, search input `aria-label`
+  - Data I/O modal: `role="dialog"`, `aria-modal`, `aria-label`, `x-trap.noscroll`, close/fullscreen `aria-label`
+  - Pool detail slide panel: ESC-to-close, `role="complementary"`, `aria-label`, close button `aria-label`
+  - Sidebar navigation: `aria-label="Main navigation"`, `:aria-current="page"` on active tab buttons
+
+### Added - Sprint 6: Docker & Infrastructure
+
+- Multi-stage Docker build (#37):
+  - `Dockerfile` with `golang:1.24-alpine` build stage and `alpine:3.21` runtime stage
+  - Builds static binary with `-tags sqlite -trimpath -ldflags "-s -w"`
+  - Non-root `cloudpam` user in runtime image
+  - `.dockerignore` excludes `.git`, `node_modules`, `photos`, coverage files
+  - Added `just docker-build` and `just docker-run` recipes
+
+### Fixed - Sprint 6: Code Quality & API Hardening
+
+- Raise `internal/http` test coverage from 60% to 80.6% (#67, #32, #33):
+  - Added `import_test.go` — 20+ tests covering CSV import handlers, `writeStoreErr`, `NewServerWithSlog`, `handleTestSentry`, and force-delete paths
+  - Added `protected_handlers_test.go` — 30+ tests exercising RBAC-protected pool, account, and auth handlers with admin and viewer API keys
+  - Tests cover `protectedPoolsHandler`, `protectedPoolsSubroutesHandler`, `protectedAccountsHandler`, `protectedAccountsSubroutesHandler`, `protectedAPIKeysHandler`, `protectedAPIKeyByIDHandler`, `RegisterProtectedRoutes`, `RegisterProtectedAuthRoutes`, `AuthServer.handleAuditList`, and `parseInt`
+  - Per-package coverage: http 80.6%, storage 91.8%, auth 96.6%, observability 96.8%, validation 100%, domain 100%
+- Standardize error handling with typed sentinel errors (#69):
+  - Added `internal/storage/errors.go` with `ErrNotFound`, `ErrConflict`, `ErrValidation` sentinels
+  - Added `WrapIfConflict()` helper to detect SQLite UNIQUE constraint violations
+  - Replaced fragile `strings.Contains(err.Error(), "not found")` with `errors.Is(err, storage.ErrNotFound)` in HTTP handlers
+  - Replaced `strings.Contains(err.Error(), "UNIQUE"/"duplicate")` with `errors.Is(err, storage.ErrConflict)` in import handlers
+  - Both MemoryStore and SQLite store now wrap errors with sentinel types via `fmt.Errorf("...: %w", ErrXxx)`
+  - Added `writeStoreErr()` helper in HTTP server for centralized error-to-status-code mapping
+  - Renamed `errors` local variables to `errs` in export handlers to avoid shadowing the `errors` package
+  - Added 9 new tests: sentinel error assertions for each error path, plus `WrapIfConflict` table-driven test
+- Split `internal/http/server.go` (2277 lines) into 7 focused handler files (#68):
+  - `server.go` (185 lines) — Server struct, constructors, route registration, helpers
+  - `pool_handlers.go` (561 lines) — Pool CRUD, hierarchy, stats, RBAC handlers
+  - `account_handlers.go` (287 lines) — Account CRUD and RBAC handlers
+  - `block_handlers.go` (325 lines) — Block listing and subnet enumeration
+  - `export_handlers.go` (687 lines) — CSV export/import handlers
+  - `system_handlers.go` (169 lines) — Health, readiness, Sentry, OpenAPI, UI
+  - `cidr.go` (124 lines) — IPv4 CIDR validation and arithmetic utilities
+- Remove confusing `|| true` dead-code condition in `UpdatePoolMeta` (#70)
+  - Affected both MemoryStore (`internal/storage/store.go`) and SQLite store (`internal/storage/sqlite/sqlite.go`)
+  - The condition `accountID != nil || true` was always true, making the `if` guard misleading
+  - Replaced with unconditional assignment matching the newer `UpdatePool` method's behavior
+  - Added explicit set-and-clear test (`TestMemoryStore_UpdatePoolMetaSetAndClearAccount`)
+
 ### Added - Sprint 5: Enhanced Pool Model & UI
 
 #### Domain Model Enhancements

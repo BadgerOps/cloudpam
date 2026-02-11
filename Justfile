@@ -64,6 +64,12 @@ cover-threshold thr="0": ensure-cache
 tidy: ensure-cache
     {{go-env}} go mod tidy
 
+docker-build tag="cloudpam:latest":
+    docker build -t {{tag}} .
+
+docker-run tag="cloudpam:latest": docker-build
+    docker run --rm -p 8080:8080 {{tag}}
+
 openapi-validate:
     ruby "{{justfile_directory()}}/scripts/openapi_validate.rb" "{{openapi_spec}}"
 

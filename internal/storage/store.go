@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net/netip"
 	"sync"
 	"time"
@@ -63,7 +63,7 @@ func (m *MemoryStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
 
 func (m *MemoryStore) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
 	if in.Name == "" || in.CIDR == "" {
-		return domain.Pool{}, errors.New("name and cidr required")
+		return domain.Pool{}, fmt.Errorf("name and cidr required: %w", ErrValidation)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -141,10 +141,8 @@ func (m *MemoryStore) UpdatePoolMeta(ctx context.Context, id int64, name *string
 	if name != nil {
 		p.Name = *name
 	}
-	// Always set account if provided (including clearing with nil)
-	if accountID != nil || true {
-		p.AccountID = accountID
-	}
+	// Always set accountID (caller controls whether to clear or set)
+	p.AccountID = accountID
 	p.UpdatedAt = time.Now().UTC()
 	m.pools[id] = p
 	return p, true, nil
@@ -193,7 +191,7 @@ func (m *MemoryStore) DeletePool(ctx context.Context, id int64) (bool, error) {
 	defer m.mu.Unlock()
 	for _, p := range m.pools {
 		if p.ParentID != nil && *p.ParentID == id {
-			return false, errors.New("pool has child pools")
+			return false, fmt.Errorf("pool has child pools: %w", ErrConflict)
 		}
 	}
 	if _, ok := m.pools[id]; !ok {
@@ -245,7 +243,7 @@ func (m *MemoryStore) ListAccounts(ctx context.Context) ([]domain.Account, error
 
 func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error) {
 	if in.Key == "" || in.Name == "" {
-		return domain.Account{}, errors.New("key and name required")
+		return domain.Account{}, fmt.Errorf("key and name required: %w", ErrValidation)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -297,7 +295,7 @@ func (m *MemoryStore) DeleteAccount(ctx context.Context, id int64) (bool, error)
 	defer m.mu.Unlock()
 	for _, p := range m.pools {
 		if p.AccountID != nil && *p.AccountID == id {
-			return false, errors.New("account in use by pools")
+			return false, fmt.Errorf("account in use by pools: %w", ErrConflict)
 		}
 	}
 	if _, ok := m.accounts[id]; !ok {
@@ -355,7 +353,7 @@ func (m *MemoryStore) GetPoolWithStats(ctx context.Context, id int64) (*domain.P
 	defer m.mu.RUnlock()
 	p, ok := m.pools[id]
 	if !ok {
-		return nil, errors.New("pool not found")
+		return nil, fmt.Errorf("pool not found: %w", ErrNotFound)
 	}
 	stats := m.calculatePoolStatsLocked(p)
 	return &domain.PoolWithStats{
@@ -398,7 +396,7 @@ func (m *MemoryStore) GetPoolHierarchy(ctx context.Context, rootID *int64) ([]do
 	if rootID != nil {
 		// Return subtree from specific root
 		if _, ok := m.pools[*rootID]; !ok {
-			return nil, errors.New("root pool not found")
+			return nil, fmt.Errorf("root pool not found: %w", ErrNotFound)
 		}
 		result = append(result, buildTree(*rootID))
 	} else {
@@ -419,7 +417,7 @@ func (m *MemoryStore) GetPoolChildren(ctx context.Context, parentID int64) ([]do
 	defer m.mu.RUnlock()
 
 	if _, ok := m.pools[parentID]; !ok {
-		return nil, errors.New("parent pool not found")
+		return nil, fmt.Errorf("parent pool not found: %w", ErrNotFound)
 	}
 
 	var children []domain.Pool
@@ -437,7 +435,7 @@ func (m *MemoryStore) CalculatePoolUtilization(ctx context.Context, id int64) (*
 	defer m.mu.RUnlock()
 	p, ok := m.pools[id]
 	if !ok {
-		return nil, errors.New("pool not found")
+		return nil, fmt.Errorf("pool not found: %w", ErrNotFound)
 	}
 	stats := m.calculatePoolStatsLocked(p)
 	return &stats, nil

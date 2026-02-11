@@ -32,6 +32,7 @@
         } catch (err) { console.error('Failed to initialize Sentry:', err); }
       })();
     </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/focus@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   </head>
   <body class="bg-gray-100">
@@ -46,13 +47,13 @@
     </div>
 
     <!-- Global Search Modal (Command-K) -->
-    <div x-data="globalSearch()" x-show="open" x-cloak @open-search.window="openSearch()" @keydown.window="handleKeydown($event)" @keydown.escape.window="open && (open=false)" class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/40">
-      <div @click.outside="open=false" class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
+    <div x-data="globalSearch()" x-show="open" x-cloak @open-search.window="openSearch()" @keydown.window="handleKeydown($event)" @keydown.escape.window="open && (open=false)" role="dialog" aria-modal="true" aria-label="Search pools and accounts" class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/40">
+      <div @click.outside="open=false" x-trap.noscroll="open" class="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden">
         <!-- Search Input -->
         <div class="px-4 py-3 border-b border-gray-200">
           <div class="flex items-center gap-3">
             <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            <input x-ref="searchInput" type="text" x-model="query" @input.debounce.200ms="search()" placeholder="Search pools, accounts, CIDRs..." class="flex-1 text-lg outline-none" autofocus />
+            <input x-ref="searchInput" type="text" x-model="query" @input.debounce.200ms="search()" placeholder="Search pools, accounts, CIDRs..." aria-label="Search pools, accounts, CIDRs" class="flex-1 text-lg outline-none" autofocus />
             <kbd class="px-2 py-1 text-xs bg-gray-100 text-gray-500 rounded">ESC</kbd>
           </div>
         </div>
@@ -154,28 +155,28 @@
           </div>
         </div>
 
-        <nav class="flex-1 p-4 space-y-1">
-          <button @click="tab='dashboard'" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='dashboard' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
+        <nav aria-label="Main navigation" class="flex-1 p-4 space-y-1">
+          <button @click="tab='dashboard'" :aria-current="tab==='dashboard' ? 'page' : false" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='dashboard' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" /></svg>
             <span>Dashboard</span>
           </button>
-          <button @click="tab='pools'" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='pools' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
+          <button @click="tab='pools'" :aria-current="tab==='pools' ? 'page' : false" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='pools' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" /></svg>
             <span>Address Pools</span>
           </button>
-          <button @click="tab='blocks'" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='blocks' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
+          <button @click="tab='blocks'" :aria-current="tab==='blocks' ? 'page' : false" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='blocks' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" /></svg>
             <span>Allocated Blocks</span>
           </button>
-          <button @click="tab='accounts'" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='accounts' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
+          <button @click="tab='accounts'" :aria-current="tab==='accounts' ? 'page' : false" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='accounts' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>
             <span>Cloud Accounts</span>
           </button>
-          <button @click="tab='discovery'" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='discovery' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
+          <button @click="tab='discovery'" :aria-current="tab==='discovery' ? 'page' : false" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='discovery' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
             <span>Discovery</span>
           </button>
-          <button @click="tab='audit'" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='audit' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
+          <button @click="tab='audit'" :aria-current="tab==='audit' ? 'page' : false" :class="'w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ' + (tab==='audit' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800')">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             <span>Audit Log</span>
           </button>
@@ -1159,10 +1160,10 @@
 
           <!-- Pool Detail Slide Panel (when selected from dashboard) -->
           <template x-if="selectedPool && tab === 'dashboard'">
-            <div class="w-96 bg-white border-l border-gray-200 overflow-auto flex-shrink-0">
+            <div class="w-96 bg-white border-l border-gray-200 overflow-auto flex-shrink-0" role="complementary" aria-label="Pool details" @keydown.escape.window="selectedPool = null">
               <div class="p-4 border-b border-gray-200 flex items-center justify-between">
                 <h3 class="font-semibold text-gray-900">Pool Details</h3>
-                <button @click="selectedPool = null" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+                <button @click="selectedPool = null" class="text-gray-400 hover:text-gray-600 text-xl" aria-label="Close pool details">&times;</button>
               </div>
               <div class="p-4 space-y-4">
                 <div>
@@ -1257,16 +1258,16 @@
     </div>
 
     <!-- Import/Export Modal -->
-    <div x-data="dataIO()" x-show="open" x-cloak @open-data-io.window="open=true" @click.self="!fullscreen && (open=false)" @keydown.escape.window="fullscreen ? fullscreen=false : open=false" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div :class="fullscreen ? 'fixed inset-4' : 'w-full max-w-5xl max-h-[90vh]'" class="bg-white rounded-xl shadow-xl overflow-auto transition-all duration-200">
+    <div x-data="dataIO()" x-show="open" x-cloak @open-data-io.window="open=true" @click.self="!fullscreen && (open=false)" @keydown.escape.window="fullscreen ? fullscreen=false : open=false" role="dialog" aria-modal="true" aria-label="Data import and export" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div x-trap.noscroll="open" :class="fullscreen ? 'fixed inset-4' : 'w-full max-w-5xl max-h-[90vh]'" class="bg-white rounded-xl shadow-xl overflow-auto transition-all duration-200">
         <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between sticky top-0 bg-white z-20">
           <h3 class="text-lg font-semibold">Data Import / Export</h3>
           <div class="flex items-center gap-2">
-            <button @click="fullscreen=!fullscreen" class="text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100" :title="fullscreen ? 'Exit fullscreen' : 'Fullscreen'">
+            <button @click="fullscreen=!fullscreen" class="text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100" :title="fullscreen ? 'Exit fullscreen' : 'Fullscreen'" :aria-label="fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'">
               <svg x-show="!fullscreen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
               <svg x-show="fullscreen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
-            <button @click="open=false;fullscreen=false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+            <button @click="open=false;fullscreen=false" class="text-gray-400 hover:text-gray-600 text-2xl leading-none" aria-label="Close">&times;</button>
           </div>
         </div>
         <div class="p-6">
