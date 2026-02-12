@@ -1,8 +1,8 @@
 package web
 
-import _ "embed"
+import "embed"
 
-// Index holds the single‑page UI served at the root route.
+// DistFS holds the Vite-built React SPA assets.
 //
-//go:embed index.html
-var Index []byte
+//go:embed all:dist
+var DistFS embed.FS

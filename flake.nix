@@ -74,6 +74,7 @@
             delve
             docker-client
             git
+            nodejs_22
           ];
 
           shellHook = ''
@@ -91,7 +92,7 @@
               fi
             }
             export PS1='\[\033[1;34m\]cloudpam\[\033[0;33m\]$(__cloudpam_ps1)\[\033[0m\] \w \$ '
-            echo "cloudpam dev shell – Go $(go version | awk '{print $3}')"
+            echo "cloudpam dev shell – Go $(go version | awk '{print $3}'), Node $(node --version)"
           '';
         };
       }

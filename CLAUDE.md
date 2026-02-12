@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CloudPAM is an intelligent IP Address Management (IPAM) platform designed to manage, analyze, and optimize network infrastructure across cloud providers (AWS, GCP, Azure) and on-premises environments. It features a Go backend, Alpine.js frontend, and supports both in-memory and SQLite/PostgreSQL storage backends.
+CloudPAM is an intelligent IP Address Management (IPAM) platform designed to manage, analyze, and optimize network infrastructure across cloud providers (AWS, GCP, Azure) and on-premises environments. It features a Go backend, React/Vite/TypeScript frontend, and supports both in-memory and SQLite/PostgreSQL storage backends.
 
 **Key Capabilities** (current + planned):
 - Centralized IP address management with hierarchical pools
@@ -17,20 +17,25 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 The project is currently at **Phase 1** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
-**Current State** (from code review in `REVIEW.md`):
-- 60% production ready, 52.5% test coverage
-- Core pool/account CRUD operational
-- Dual storage backends (in-memory, SQLite)
-- Basic graceful shutdown and Sentry integration
+**Current State** (Sprint 9 complete):
+- Unified React/Vite/TypeScript frontend replacing Alpine.js (Sprint 9)
+- Schema Planner wizard with conflict detection (Sprint 8)
+- OpenAPI v0.4.0 spec, SQLite-backed API Key Store (Sprint 7)
+- Code quality: handler file split, sentinel errors, 80%+ HTTP coverage (Sprint 6)
+- Enhanced pool model with hierarchy, stats, utilization tracking (Sprint 5)
+- Auth (API keys, RBAC), audit logging, observability (Sprints 1-4)
+- Dual storage backends (in-memory, SQLite) with migration system
+- Graceful shutdown, Sentry integration, structured logging (`slog`)
+- Input validation, rate limiting, `/healthz` + `/readyz` endpoints, Prometheus metrics
 
-**Critical Issues to Address First** (P0/P1):
+**Completed P0/P1 Issues:**
 1. ~~Resource leak in SQLite store~~ - Close() method exists
 2. ~~Missing graceful shutdown~~ - Implemented
-3. Input validation hardening (`internal/validation/`)
-4. Structured logging migration to `slog`
-5. Rate limiting middleware
-6. Health/readiness endpoints (`/healthz`, `/readyz`)
-7. Prometheus metrics
+3. ~~Input validation hardening~~ - `internal/validation/` implemented (Sprint 2)
+4. ~~Structured logging migration to `slog`~~ - Implemented (Sprint 1)
+5. ~~Rate limiting middleware~~ - Implemented (Sprint 1)
+6. ~~Health/readiness endpoints (`/healthz`, `/readyz`)~~ - Implemented (Sprint 1)
+7. ~~Prometheus metrics~~ - Implemented (Sprint 2)
 
 ## Planning Documentation
 
@@ -61,6 +66,15 @@ The project uses [Just](https://github.com/casey/just) as its command runner. In
 ```bash
 just dev              # Run server on :8080 (in-memory store)
 go run ./cmd/cloudpam # Direct Go command (alternative)
+```
+
+### Frontend Development
+```bash
+cd ui && npm install        # Install frontend dependencies
+cd ui && npm run dev        # Start Vite dev server (proxied to :8080)
+cd ui && npm run build      # Production build → web/dist/
+cd ui && npx vitest run     # Run all frontend tests
+cd ui && npx tsc --noEmit   # TypeScript type check only
 ```
 
 ### Building
@@ -118,11 +132,17 @@ APP_URL=http://localhost:8080 npm run screenshots  # Outputs to photos/
 │  ├── Sentry Integration                                     │
 │  └── Graceful Shutdown                                      │
 ├─────────────────────────────────────────────────────────────┤
-│  internal/http/server.go                                    │
-│  ├── Pool CRUD handlers                                     │
-│  ├── Account CRUD handlers                                  │
-│  ├── Block enumeration                                      │
-│  └── CSV export                                             │
+│  internal/http/                                             │
+│  ├── Pool, Account, Block CRUD handlers                     │
+│  ├── CSV export/import handlers                             │
+│  ├── Auth, audit handlers                                   │
+│  └── handleSPA() — unified React SPA serving                │
+├─────────────────────────────────────────────────────────────┤
+│  ui/ (React/Vite/TypeScript SPA)                            │
+│  ├── Pages: Dashboard, Pools, Blocks, Accounts, Audit       │
+│  ├── Schema Planner wizard                                  │
+│  ├── API hooks + shared components                          │
+│  └── Built to web/dist/ → embedded via go:embed             │
 ├─────────────────────────────────────────────────────────────┤
 │  internal/storage/                                          │
 │  ├── Store interface                                        │
@@ -212,9 +232,16 @@ These interfaces are defined and ready for implementation.
   - `/api/v1/accounts/{id}` - single account GET/PATCH/DELETE
   - `/api/v1/blocks` - list assigned blocks (sub-pools with filters)
   - `/api/v1/export` - data export as CSV in ZIP
+  - `/api/v1/import/{type}` - CSV import for accounts or pools
+  - `/api/v1/schema/check` - conflict detection for schema plans
+  - `/api/v1/schema/apply` - bulk pool creation from schema plans
+  - `/api/v1/audit` - audit event log with pagination
+  - `/api/v1/auth/keys` - API key management (CRUD)
   - `/api/v1/test-sentry` - Sentry integration test endpoint (use `?type=message|error|panic`)
+  - `/readyz` - readiness check with database health
+  - `/metrics` - Prometheus metrics endpoint
   - `/openapi.yaml` - OpenAPI spec served from embedded `docs/spec_embed.go`
-  - `/` - serves embedded UI from `web/embed.go`
+  - `/` - serves unified React SPA via `handleSPA()` with client-side routing fallback
 - **Middleware**: `LoggingMiddleware` logs requests and captures Sentry performance traces
 - **Error handling**: uses `apiError` struct with `error` and `detail` fields; 5xx errors are reported to Sentry
 
@@ -298,9 +325,17 @@ When adding endpoints:
 
 ### Frontend Development
 
-- Single-page UI uses Alpine.js
-- Static assets embedded at build time via `web/embed.go`
-- UI is served at `/` by `handleIndex()`
+- Unified React/Vite/TypeScript SPA in `ui/` directory
+- Uses `react-router-dom` for client-side routing with 7 page routes
+- Tailwind CSS for styling, `lucide-react` for icons
+- Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
+- UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
+- API hooks in `ui/src/hooks/` (usePools, useAccounts, useBlocks, useAudit, useToast)
+- Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
+- Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
+- Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)
+- Run `cd ui && npm run build` to produce production bundle in `web/dist/`
+- Run `cd ui && npx vitest run` for frontend tests
 - For UI changes, update screenshots with `npm run screenshots` (requires app running at `http://localhost:8080`)
 
 ## Environment Variables
@@ -331,7 +366,11 @@ The REST API contract is captured in `docs/openapi.yaml` (OpenAPI 3.1). The spec
 
 Common workflows:
 - Health check: `GET /healthz`
-- List pools: `GET /api/v1/pools`
+- Readiness check: `GET /readyz`
+- Prometheus metrics: `GET /metrics`
+- List pools: `GET /api/v1/pools` (add `?include_stats=true` for utilization data)
+- Get pool hierarchy: `GET /api/v1/pools/hierarchy`
+- Get pool stats: `GET /api/v1/pools/{id}/stats`
 - Get single pool: `GET /api/v1/pools/{id}`
 - Create pool: `POST /api/v1/pools` with JSON body `{"name":"...", "cidr":"...", "parent_id":..., "account_id":...}`
 - Update pool: `PATCH /api/v1/pools/{id}` with JSON body `{"name":"...", "account_id":...}`
@@ -342,6 +381,11 @@ Common workflows:
 - Delete account: `DELETE /api/v1/accounts/{id}` (add `?force=true` for cascade delete)
 - List assigned blocks: `GET /api/v1/blocks?accounts=1,2&pools=10,11&page_size=50&page=1`
 - Export data: `GET /api/v1/export?datasets=accounts,pools,blocks`
+- Import CSV: `POST /api/v1/import/accounts` or `POST /api/v1/import/pools` with CSV body
+- Schema check: `POST /api/v1/schema/check` with JSON body `{"pools":[...]}`
+- Schema apply: `POST /api/v1/schema/apply` with JSON body `{"pools":[...], "status":"planned", "tags":{}, "skip_conflicts":false}`
+- Audit log: `GET /api/v1/audit?limit=50&offset=0&action=create&resource_type=pool`
+- API key management: `POST /api/v1/auth/keys`, `GET /api/v1/auth/keys`, `DELETE /api/v1/auth/keys/{id}`
 - Test Sentry: `GET /api/v1/test-sentry?type=message|error|panic`
 
 ## Testing Across Storage Backends
@@ -486,9 +530,21 @@ cloudpam/
 │   ├── vector/             # Vector log shipping config
 │   │   └── vector.toml
 │   └── docker-compose.observability.yml
-├── web/                    # Frontend (Alpine.js SPA)
-│   ├── embed.go
-│   └── index.html
+├── ui/                     # Frontend (React/Vite/TypeScript SPA)
+│   ├── src/
+│   │   ├── App.tsx           # Router + layout
+│   │   ├── api/              # API client + types
+│   │   ├── hooks/            # React hooks (usePools, useAccounts, etc.)
+│   │   ├── components/       # Shared components (Layout, Sidebar, modals, etc.)
+│   │   ├── pages/            # Page components (Dashboard, Pools, Blocks, etc.)
+│   │   ├── utils/            # Utility functions (format, colors)
+│   │   ├── wizard/           # Schema Planner wizard
+│   │   └── __tests__/        # Frontend tests
+│   ├── package.json
+│   └── vite.config.ts
+├── web/                    # Embedded frontend assets
+│   ├── embed.go              # go:embed for dist/ directory
+│   └── dist/                 # Built frontend output (from ui/)
 ├── docs/                   # Documentation
 │   ├── openapi.yaml        # Core API spec
 │   ├── spec_embed.go

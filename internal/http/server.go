@@ -156,8 +156,11 @@ func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/api/v1/import/pools", s.handleImportPools)
 	// Audit logs (unprotected access)
 	s.mux.HandleFunc("/api/v1/audit", s.handleAuditList)
-	// Static index
-	s.mux.HandleFunc("/", s.handleIndex)
+	// Schema planner API
+	s.mux.HandleFunc("/api/v1/schema/check", s.handleSchemaCheck)
+	s.mux.HandleFunc("/api/v1/schema/apply", s.handleSchemaApply)
+	// Unified React SPA (catch-all)
+	s.mux.Handle("/", s.handleSPA())
 }
 
 // RegisterProtectedRoutes registers all HTTP routes with RBAC protection.
@@ -177,7 +180,8 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, slogger *slog.L
 		s.mux.Handle("/metrics", s.metrics.Handler())
 	}
 	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
-	s.mux.HandleFunc("/", s.handleIndex)
+	// Unified React SPA (catch-all)
+	s.mux.Handle("/", s.handleSPA())
 
 	// Auth middleware (required for all API endpoints below)
 	authMW := AuthMiddleware(keyStore, true, slogger)
@@ -199,4 +203,9 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, slogger *slog.L
 		{Resource: auth.ResourcePools, Action: auth.ActionRead},
 	}, slogger)
 	s.mux.Handle("/api/v1/export", authMW(exportPermMW(http.HandlerFunc(s.handleExport))))
+
+	// Schema planner endpoints - require pools:create
+	poolsCreateMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, slogger)
+	s.mux.Handle("/api/v1/schema/check", authMW(poolsReadMW(http.HandlerFunc(s.handleSchemaCheck))))
+	s.mux.Handle("/api/v1/schema/apply", authMW(poolsCreateMW(http.HandlerFunc(s.handleSchemaApply))))
 }

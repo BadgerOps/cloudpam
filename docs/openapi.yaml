@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: CloudPAM API
-  version: "0.3.0"
+  version: "0.4.0"
   description: |
     REST API for managing CloudPAM pools, accounts, blocks, data exports,
-    authentication, and audit logging.
+    authentication, audit logging, and schema planning.
 servers:
   - url: http://localhost:8080
     description: Local development server
@@ -23,6 +23,8 @@ tags:
     description: Data export (CSV in ZIP)
   - name: Import
     description: Data import (CSV)
+  - name: Schema
+    description: Schema planner endpoints for bulk IP address planning
   - name: Auth
     description: API key management
   - name: Audit
@@ -397,6 +399,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ImportResult"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/schema/check:
+    post:
+      summary: Check schema for conflicts with existing pools
+      tags: [Schema]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchemaCheckRequest"
+      responses:
+        "200":
+          description: Conflict check results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchemaCheckResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/schema/apply:
+    post:
+      summary: Bulk-create pools from a schema plan
+      tags: [Schema]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchemaApplyRequest"
+      responses:
+        "200":
+          description: Schema apply results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchemaApplyResponse"
+        "409":
+          description: Conflict with existing pools (when skip_conflicts is false)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
   /api/v1/auth/keys:
@@ -1051,6 +1097,107 @@ components:
         status_code:
           type: integer
       required: [id, timestamp, actor, actor_type, action, resource_type, resource_id, status_code]
+    SchemaPoolEntry:
+      type: object
+      properties:
+        ref:
+          type: string
+          description: Unique reference ID within this schema
+        name:
+          type: string
+        cidr:
+          type: string
+        type:
+          type: string
+          enum: [supernet, region, environment, vpc, subnet]
+        parent_ref:
+          type: string
+          description: Reference to parent pool's ref (empty for root)
+      required: [ref, name, cidr, type]
+    SchemaCheckRequest:
+      type: object
+      properties:
+        pools:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchemaPoolEntry"
+      required: [pools]
+    SchemaConflict:
+      type: object
+      properties:
+        planned_cidr:
+          type: string
+        planned_name:
+          type: string
+        existing_pool_id:
+          type: integer
+          format: int64
+        existing_pool_name:
+          type: string
+        existing_cidr:
+          type: string
+        overlap_type:
+          type: string
+          enum: [overlap, contains, contained_by]
+      required: [planned_cidr, planned_name, existing_pool_id, existing_pool_name, existing_cidr, overlap_type]
+    SchemaCheckResponse:
+      type: object
+      properties:
+        conflicts:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchemaConflict"
+        total_pools:
+          type: integer
+        conflict_count:
+          type: integer
+      required: [conflicts, total_pools, conflict_count]
+    SchemaApplyRequest:
+      type: object
+      properties:
+        pools:
+          type: array
+          items:
+            $ref: "#/components/schemas/SchemaPoolEntry"
+          description: Pools in topological order (parents before children)
+        status:
+          type: string
+          enum: [planned, active, deprecated]
+          description: Status to assign to all created pools (default "planned")
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+          description: Tags to apply to all created pools
+        skip_conflicts:
+          type: boolean
+          description: Skip conflict check with existing pools (default false)
+      required: [pools]
+    SchemaApplyResponse:
+      type: object
+      properties:
+        created:
+          type: integer
+          description: Number of pools successfully created
+        skipped:
+          type: integer
+          description: Number of pools skipped due to errors
+        errors:
+          type: array
+          items:
+            type: string
+          description: List of error messages for failed pools
+        root_pool_id:
+          type: integer
+          format: int64
+          description: ID of the root pool (first pool without a parent_ref)
+        pool_map:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          description: Mapping of ref to created pool ID
+      required: [created, skipped, errors, root_pool_id, pool_map]
     AuditListResponse:
       type: object
       properties:

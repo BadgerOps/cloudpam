@@ -28,9 +28,13 @@ coverage.out
 cloudpam.db
 docs/openapi-html/
 
-# Node/web (if added later)
+# Node/web
 node_modules/
-dist/
+# Ignore ui/dist (Vite output goes to web/dist/)
+ui/dist/
+# web/dist/ is tracked: contains go:embed placeholder (overwritten by ui build)
+# Built assets in web/dist/assets/ are not tracked
+web/dist/assets/
 
 # Editors/IDE
 .idea/

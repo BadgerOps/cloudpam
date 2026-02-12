@@ -7,78 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added - Sprint 9: SQLite Feature Parity & CI Multi-Backend Testing
+### Added - Sprint 9: Unified React Frontend
 
-#### SQLite Schema Parity
-- Migration `0006_organizations_roles_permissions.sql`: backport 5 tables from PostgreSQL schema
-  - `organizations` table with default org seed data (id=1, 'Default', 'default', 'free')
-  - `roles` table with 4 built-in roles: admin (10), operator (20), viewer (30), auditor (40)
-  - `permissions` table with 16 granular permissions (pools/accounts/apikeys/audit CRUD)
-  - `role_permissions` junction table with correct mappings per role
-  - `pool_utilization_cache` table for cached stats
-- `ALTER TABLE accounts ADD COLUMN updated_at` for account modification tracking
+#### Alpine.js → React Migration
+- Replaced Alpine.js SPA (`web/index.html`, ~2600 lines) with unified React/Vite/TypeScript SPA
+- Single React app now serves at `/` instead of separate Alpine.js (`/`) + React wizard (`/wizard/`)
+- Deleted `web/index.html`; all UI served from `ui/` build output via Go `embed.FS`
 
-#### Bug Fixes
-- Fix `GetAccount` in SQLite store scanning only 7 columns instead of 12 — was silently
-  dropping platform, tier, environment, regions, and updated_at fields (#69 follow-up)
-- Add `updated_at` field to `domain.Account` struct for consistency across all backends
-- Update account queries in all 3 backends (in-memory, SQLite, PostgreSQL) to read/write `updated_at`
+#### Go Backend — Unified SPA Serving
+- New `handleSPA()` handler replaces `handleIndex()` + `handleWizardAssets()`
+- SPA fallback: serves `index.html` for all non-file routes (client-side routing)
+- Sentry frontend DSN injection via `<meta>` tag at runtime
+- Removed `/wizard/` route registration from both `RegisterRoutes()` and `RegisterProtectedRoutes()`
+- Updated `web/embed.go`: removed `Index []byte`, kept `DistFS embed.FS`
 
-#### CI: Multi-Backend Testing
-- New `test-sqlite` CI job: runs `go test -tags sqlite -race` on every push/PR
-- New `test-postgres` CI job: PostgreSQL 16 service container with `DATABASE_URL` env var,
-  runs `go test -tags postgres -race` — no testcontainers overhead in CI
+#### React Router & Layout
+- Added `react-router-dom` with `BrowserRouter` and 7 routes
+- Sidebar navigation with `NavLink` active state (Dashboard, Pools, Blocks, Accounts, Discovery, Audit, Schema)
+- Header with Cmd+K search trigger
+- Layout component with sidebar + header + `<Outlet />`
+- Routes: `/` (Dashboard), `/pools`, `/blocks`, `/accounts`, `/audit`, `/discovery`, `/schema`
 
-#### Issue Housekeeping
-- Closed 7 previously-resolved issues: #22 (modal a11y), #26 (API auth), #37 (Docker build),
-  #68 (server.go refactor), #69 (error handling), #70 (UpdatePoolMeta), #92 (RBAC decision)
+#### Pages (7 new page components)
+- **DashboardPage**: stats cards (pools, IPs, accounts, alerts), hierarchical pool tree, utilization alerts, recent activity timeline, accounts summary
+- **PoolsPage**: pool CRUD with create form, search, table, detail panel with utilization stats, delete with confirmation
+- **BlocksPage**: blocks table with search, account filter, summary stats (total blocks, IPs, unique accounts) (#34)
+- **AccountsPage**: account CRUD with create form, search/filter by name/key/provider, provider+tier badges, delete (#36)
+- **AuditPage**: audit event timeline with expandable details (before/after diffs), action/resource filters, pagination (#34)
+- **DiscoveryPage**: placeholder for cloud discovery
+- **SchemaPage**: wraps existing Schema Planner wizard
 
-### Added - Sprint 8: PostgreSQL Storage Backend
+#### Components (9 new shared components)
+- `Layout.tsx`, `Sidebar.tsx`, `Header.tsx` — app shell
+- `SearchModal.tsx` — Cmd+K global search across pools and accounts
+- `ImportExportModal.tsx` — export ZIP + CSV import with preview table and results (#23)
+- `ToastContainer.tsx` + `useToast.ts` — toast notification system (info/error/success)
+- `PoolTree.tsx` — recursive hierarchical tree with expand/collapse, type-colored dots, utilization bars
+- `PoolDetailPanel.tsx` — slide-out panel with pool stats, utilization bar, child count
+- `StatusBadge.tsx` — reusable badge for status/provider/tier/type
 
-#### PostgreSQL Store (`-tags postgres`)
-- Full `storage.Store` implementation backed by `pgx/v5/pgxpool` (pure Go, no CGO)
-- Dual-ID strategy: UUID primary keys + BIGSERIAL `seq_id` for backward-compatible int64 API
-- All 18 Store interface methods: pool CRUD, hierarchy, stats, account CRUD, cascade deletes
-- Soft deletes via `deleted_at IS NULL` filtering on all queries
-- PostgreSQL-native INET type for CIDR storage, JSONB for tags/metadata/regions
-- Materialized path pattern for pool hierarchy (`path` + `depth` columns)
-- Trigger functions: `update_updated_at()`, `update_pool_path()`
-- Recursive CTEs for cascade delete and hierarchy queries
-- `storage.HealthCheck` interface: `Ping()` and `Stats()` for readiness checks
+#### API Layer (hooks + types)
+- 5 new React hooks: `usePools`, `useAccounts`, `useBlocks`, `useAudit`, `useToast`
+- Extended `api/types.ts` with Pool, PoolWithStats, PoolStats, Account, Block, AuditEvent, BlocksListResponse, AuditListResponse, ImportResult types
+- Added `patch()` and `del()` methods to API client
+- `utils/format.ts` — ported helpers: `formatHostCount`, `formatTimeAgo`, `getHostCount`, color/badge class helpers
 
-#### PostgreSQL Audit Logger
-- `audit.PostgresAuditLogger` with shared or owned connection pool
-- Log, List (with filters: actor, action, resource type, time range, pagination), GetByResource
-- UUID auto-generation for event IDs, JSONB changes storage
+#### Schema Planner Fixes
+- Fixed schema wizard generating invalid pool types (`root` → `supernet`, `account` → `vpc`)
+- Updated TreeNode type colors, blueprints hierarchy levels, and test assertions
 
-#### PostgreSQL Key Store
-- `auth.PostgresKeyStore` with full `KeyStore` interface
-- Create, GetByPrefix, GetByID, List, Revoke, UpdateLastUsed, Delete
-- Scopes stored as JSONB, token hash as BYTEA
+#### Tests
+- 34 frontend tests pass (15 format utils + 14 CIDR + 5 schema generator)
+- All Go tests pass (http, storage, auth, audit, observability, validation, domain)
+- Frontend production build: 274KB JS + 25KB CSS
 
-#### Migration System
-- `migrations/postgres/001_core_schema.up.sql`: 11 tables (organizations, accounts, pools,
-  pool_utilization_cache, roles, permissions, role_permissions, audit_events, api_tokens,
-  schema_migrations, schema_info)
-- Seed data: default organization, 16 permissions, 4 built-in roles (admin, operator, viewer, auditor)
-- Comprehensive indexes: GIN on tags, partial unique on CIDR/key where not deleted
-- Transaction-wrapped migration runner with embedded SQL files
+### Added - Sprint 8: Schema Planner Wizard + React/Vite Scaffold
 
-#### Build & Infrastructure
-- Build tag `-tags postgres` with `cmd/cloudpam/store_postgres.go`
-- Updated `store_default.go` build constraint: `!sqlite && !postgres`
-- `docker-compose.yml` with Chainguard PostgreSQL (`cgr.dev/chainguard/postgres:latest`)
-- Justfile commands: `postgres-build`, `postgres-run`, `postgres-up`, `postgres-down`, `postgres-test`
-- `/readyz` enhanced with `HealthCheck`-aware Ping (type assertion fallback to ListPools)
+#### Schema Planner Wizard
+- 4-step wizard: Template → Strategy → Dimensions → Preview
+- 3 blueprint templates: Enterprise Multi-Region, Medium Organization, Small Team
+- 3 layout strategies: region-first, environment-first, account-first
+- Configurable dimensions: regions, environments, accounts per environment, account tiers
+- Real-time CIDR subdivision preview with hierarchical tree view
+- Conflict detection against existing pools before apply
+- Bulk pool creation with topological ordering
 
-#### Testing (28 tests)
-- testcontainers-go with `postgres:16-alpine` for automatic container lifecycle
-- `DATABASE_URL` env var override for CI or existing PostgreSQL instances
-- Store: pool CRUD (7), updates (3), deletes (2), hierarchy/stats (4), account CRUD (5)
-- Audit logger: 12 subtests (log, list with filters, pagination, changes preservation)
-- Key store: 17 subtests (full lifecycle, expiration, nil key, multiple keys)
-- Edge cases: soft delete isolation, deep cascade, concurrent creation (20 goroutines),
-  empty tags, nullable fields, migration status
+#### Backend — Schema Endpoints
+- `POST /api/v1/schema/check` — conflict detection against existing pools
+- `POST /api/v1/schema/apply` — bulk pool creation with topological ordering
+- OpenAPI spec updated to v0.4.0 with Schema tag and 7 new types
+- 10 new Go tests for schema handlers
+
+#### React/Vite/TypeScript Scaffold
+- React/Vite/TypeScript project in `ui/` with Tailwind CSS
+- Wizard components: TemplateStep, StrategyStep, DimensionsStep, PreviewStep
+- CIDR utilities (`subdivide`, `usableHosts`, `formatHostCount`)
+- Hooks: `useSchemaGenerator`, `useConflictChecker`, `useApplySchema`
+- 19 vitest tests (14 CIDR + 5 schema generator)
+
+#### Infrastructure
+- Node.js 22 added to Nix flake devShell
+- Justfile recipes: `ui-install`, `ui-build`, `ui-dev`, `ui-test`, `build-full`, `dev-all`
+- `dev-all` runs Go backend + Vite dev server concurrently
+- `web/dist/index.html` placeholder for `go:embed` on clean checkout
 
 ### Added - Sprint 7: Production Readiness & API Documentation
 

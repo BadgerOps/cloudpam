@@ -778,13 +778,19 @@ func TestMetricsEndpointDisabled(t *testing.T) {
 	srv := NewServer(mux, st, logger, nil, nil)
 	srv.RegisterRoutes()
 
-	// Metrics endpoint should 404 when metrics is nil
+	// When metrics is nil, /metrics falls through to the SPA catch-all
+	// which returns 200 with index.html (SPA handles client-side routing).
 	req := httptest.NewRequest(stdhttp.MethodGet, "/metrics", nil)
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
 
-	if rr.Code != stdhttp.StatusNotFound {
-		t.Fatalf("expected 404 when metrics disabled, got %d", rr.Code)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200 (SPA fallback) when metrics disabled, got %d", rr.Code)
+	}
+	// Verify it's HTML, not a Prometheus response
+	ct := rr.Header().Get("Content-Type")
+	if ct != "text/html; charset=utf-8" {
+		t.Fatalf("expected text/html content-type, got %s", ct)
 	}
 }
 
@@ -1070,15 +1076,19 @@ func TestBlocksForPool_Pagination(t *testing.T) {
 	}
 }
 
-func TestIndexHandler_NotFoundPath(t *testing.T) {
+func TestSPAFallback(t *testing.T) {
 	srv, _ := setupTestServer()
 
-	// Non-root path should 404
+	// Non-root path should return 200 with SPA index.html (client-side routing)
 	req := httptest.NewRequest(stdhttp.MethodGet, "/nonexistent", nil)
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
-	if rr.Code != stdhttp.StatusNotFound {
-		t.Fatalf("expected 404, got %d", rr.Code)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200 (SPA fallback), got %d", rr.Code)
+	}
+	ct := rr.Header().Get("Content-Type")
+	if ct != "text/html; charset=utf-8" {
+		t.Fatalf("expected text/html content-type for SPA fallback, got %s", ct)
 	}
 }
 

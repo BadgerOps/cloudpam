@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"strconv"
@@ -114,28 +115,45 @@ func (s *Server) handleTestSentry(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
-		return
-	}
-	// Serve embedded single‑page UI to ensure release binaries include the frontend.
-	if len(webui.Index) == 0 {
-		s.writeErr(r.Context(), w, http.StatusNotFound, "not found", "index")
-		return
-	}
-
-	// Inject Sentry frontend DSN if configured
-	html := string(webui.Index)
-	if frontendDSN := os.Getenv("SENTRY_FRONTEND_DSN"); frontendDSN != "" {
-		// Inject meta tag before the Sentry script so it's available when the script runs
-		metaTag := fmt.Sprintf(`<meta name="sentry-dsn" content="%s">
-    `, frontendDSN)
-		html = strings.Replace(html, "<!-- Sentry Browser SDK -->", metaTag+"<!-- Sentry Browser SDK -->", 1)
+// handleSPA serves the Vite-built React SPA from the embedded dist/ directory.
+// Static assets (JS, CSS, images) are served directly; all other paths
+// fall back to index.html for client-side routing.
+// The Sentry frontend DSN is injected via a meta tag if SENTRY_FRONTEND_DSN is set.
+func (s *Server) handleSPA() http.Handler {
+	distSub, err := fs.Sub(webui.DistFS, "dist")
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "UI not built – run: just ui-build", http.StatusNotFound)
+		})
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(html))
+	// Cache index.html at init time for SPA fallback.
+	indexBytes, err := fs.ReadFile(distSub, "index.html")
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "UI not built – run: just ui-build", http.StatusNotFound)
+		})
+	}
+	fileServer := http.FileServer(http.FS(distSub))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Serve real files (JS, CSS, assets).
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		if path != "" {
+			if _, err := fs.Stat(distSub, path); err == nil {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		// SPA fallback: serve index.html with optional Sentry DSN injection.
+		html := string(indexBytes)
+		if dsn := os.Getenv("SENTRY_FRONTEND_DSN"); dsn != "" {
+			html = strings.Replace(html, "</head>",
+				fmt.Sprintf("<meta name=\"sentry-dsn\" content=\"%s\">\n</head>", dsn), 1)
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(html))
+	})
 }
 
 // GET /api/v1/audit - List audit events with optional filtering
@@ -184,3 +202,4 @@ func (s *Server) handleAuditList(w http.ResponseWriter, r *http.Request) {
 		"offset": offset,
 	})
 }
+
