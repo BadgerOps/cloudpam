@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
+	"cloudpam/internal/cidr"
 	"cloudpam/internal/domain"
 )
 
@@ -33,6 +35,8 @@ type Store interface {
 	DeleteAccount(ctx context.Context, id int64) (bool, error)
 	DeleteAccountCascade(ctx context.Context, id int64) (bool, error)
 	GetAccount(ctx context.Context, id int64) (domain.Account, bool, error)
+	// Search performs a paginated search across pools and accounts.
+	Search(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, error)
 	// Close releases resources held by the store
 	Close() error
 }
@@ -514,6 +518,164 @@ func (m *MemoryStore) calculatePoolStatsLocked(p domain.Pool) domain.PoolStats {
 		ChildCount:     totalChildCount,
 		DirectChildren: directChildren,
 	}
+}
+
+// Search performs a paginated search across pools and accounts in memory.
+func (m *MemoryStore) Search(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Parse CIDR filters once
+	var cidrContains, cidrWithin netip.Prefix
+	var hasCIDRContains, hasCIDRWithin bool
+	if req.CIDRContains != "" {
+		p, err := cidr.ParseCIDROrIP(req.CIDRContains)
+		if err != nil {
+			return domain.SearchResponse{}, fmt.Errorf("invalid cidr_contains: %w", err)
+		}
+		cidrContains = p
+		hasCIDRContains = true
+	}
+	if req.CIDRWithin != "" {
+		p, err := cidr.ParseCIDROrIP(req.CIDRWithin)
+		if err != nil {
+			return domain.SearchResponse{}, fmt.Errorf("invalid cidr_within: %w", err)
+		}
+		cidrWithin = p
+		hasCIDRWithin = true
+	}
+
+	// Determine which types to include
+	searchPools := true
+	searchAccounts := true
+	if len(req.Types) > 0 {
+		searchPools = false
+		searchAccounts = false
+		for _, t := range req.Types {
+			switch t {
+			case "pool":
+				searchPools = true
+			case "account":
+				searchAccounts = true
+			}
+		}
+	}
+
+	query := strings.ToLower(req.Query)
+	var items []domain.SearchResultItem
+
+	// Search pools
+	if searchPools {
+		for _, p := range m.pools {
+			if !m.matchPool(p, query, hasCIDRContains, cidrContains, hasCIDRWithin, cidrWithin) {
+				continue
+			}
+			items = append(items, domain.SearchResultItem{
+				Type:        "pool",
+				ID:          p.ID,
+				Name:        p.Name,
+				CIDR:        p.CIDR,
+				Description: p.Description,
+				Status:      string(p.Status),
+				PoolType:    string(p.Type),
+				ParentID:    p.ParentID,
+				AccountID:   p.AccountID,
+			})
+		}
+	}
+
+	// Search accounts (CIDR filters don't apply to accounts)
+	if searchAccounts && !hasCIDRContains && !hasCIDRWithin {
+		for _, a := range m.accounts {
+			if query != "" && !m.matchAccount(a, query) {
+				continue
+			}
+			items = append(items, domain.SearchResultItem{
+				Type:        "account",
+				ID:          a.ID,
+				Name:        a.Name,
+				Description: a.Description,
+				AccountKey:  a.Key,
+				Provider:    a.Provider,
+			})
+		}
+	}
+
+	// Paginate
+	total := len(items)
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	return domain.SearchResponse{
+		Items:    items[start:end],
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
+}
+
+func (m *MemoryStore) matchPool(p domain.Pool, query string, hasCIDRContains bool, cidrContains netip.Prefix, hasCIDRWithin bool, cidrWithin netip.Prefix) bool {
+	// CIDR containment: find pools whose CIDR contains the given IP/prefix
+	if hasCIDRContains {
+		poolPrefix, err := netip.ParsePrefix(p.CIDR)
+		if err != nil {
+			return false
+		}
+		if !cidr.PrefixContains(poolPrefix, cidrContains) {
+			return false
+		}
+	}
+
+	// CIDR within: find pools that are within (contained by) the given prefix
+	if hasCIDRWithin {
+		poolPrefix, err := netip.ParsePrefix(p.CIDR)
+		if err != nil {
+			return false
+		}
+		if !cidr.PrefixContains(cidrWithin, poolPrefix) {
+			return false
+		}
+	}
+
+	// Free-text search
+	if query != "" {
+		lower := strings.ToLower
+		if !strings.Contains(lower(p.Name), query) &&
+			!strings.Contains(lower(p.CIDR), query) &&
+			!strings.Contains(lower(p.Description), query) &&
+			!strings.Contains(lower(string(p.Type)), query) &&
+			!strings.Contains(lower(string(p.Status)), query) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (m *MemoryStore) matchAccount(a domain.Account, query string) bool {
+	lower := strings.ToLower
+	return strings.Contains(lower(a.Name), query) ||
+		strings.Contains(lower(a.Key), query) ||
+		strings.Contains(lower(a.Description), query) ||
+		strings.Contains(lower(a.Provider), query)
 }
 
 // Close is a no-op for MemoryStore as it holds no external resources.

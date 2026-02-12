@@ -33,6 +33,7 @@ type Server struct {
 	logger      observability.Logger
 	metrics     *observability.Metrics
 	auditLogger audit.AuditLogger
+	authEnabled bool
 }
 
 // NewServer creates a new HTTP server with the given dependencies.
@@ -159,6 +160,8 @@ func (s *Server) RegisterRoutes() {
 	// Schema planner API
 	s.mux.HandleFunc("/api/v1/schema/check", s.handleSchemaCheck)
 	s.mux.HandleFunc("/api/v1/schema/apply", s.handleSchemaApply)
+	// Search API
+	s.mux.HandleFunc("/api/v1/search", s.handleSearch)
 	// Unified React SPA (catch-all)
 	s.mux.Handle("/", s.handleSPA())
 }
@@ -168,6 +171,8 @@ func (s *Server) RegisterRoutes() {
 // Public endpoints (health, metrics, static) remain unprotected.
 // API endpoints require authentication and appropriate permissions.
 func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, slogger *slog.Logger) {
+	s.authEnabled = true
+
 	if slogger == nil {
 		slogger = slog.Default()
 	}
@@ -208,4 +213,7 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, slogger *slog.L
 	poolsCreateMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, slogger)
 	s.mux.Handle("/api/v1/schema/check", authMW(poolsReadMW(http.HandlerFunc(s.handleSchemaCheck))))
 	s.mux.Handle("/api/v1/schema/apply", authMW(poolsCreateMW(http.HandlerFunc(s.handleSchemaApply))))
+
+	// Search endpoint - requires pools:read
+	s.mux.Handle("/api/v1/search", authMW(poolsReadMW(http.HandlerFunc(s.handleSearch))))
 }

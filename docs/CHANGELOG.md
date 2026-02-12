@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 11: CIDR Search & Frontend Auth
+
+#### Server-side Search (M3)
+- `internal/cidr/` package: reusable CIDR math (`PrefixContains`, `PrefixContainsAddr`, `ParseCIDROrIP`) with 26 tests
+- `internal/domain/search.go`: `SearchRequest`, `SearchResultItem`, `SearchResponse` types
+- `Search()` method added to Store interface, implemented in MemoryStore, SQLite, and PostgreSQL backends
+- `GET /api/v1/search?q=&cidr_contains=&cidr_within=&type=&page=&page_size=` endpoint with RBAC (`pools:read`)
+- PostgreSQL uses native CIDR operators (`>>=`, `<<=`); SQLite/Memory filter in Go
+- OpenAPI spec bumped to v0.5.0 with Search tag, `SearchResultItem` and `SearchResponse` schemas
+
+#### Frontend Search Upgrade
+- `useSearch` hook with 300ms debounce, auto-detects CIDR/IP patterns
+- `SearchModal` upgraded from client-side filtering to server-side search via `/api/v1/search`
+
+#### Frontend Auth UI (M4)
+- `useAuth` context: login/logout, token persistence in localStorage, `auth_enabled` check via `/healthz`
+- API client injects `Authorization: Bearer` header; auto-clears token on 401
+- Login page (`/login`): API key input with masked toggle, error display, redirect on success
+- `ProtectedRoute` component: redirects unauthenticated users to `/login` when auth is enabled
+- API key management page (`/settings/api-keys`): create (name + scopes + expiry), revoke, delete
+- Sidebar: shows key name + role badge, API Keys link (admin only), Logout button
+- `/healthz` now returns `auth_enabled` boolean field
+
 ### Added - Sprint 10: Dark Mode
 
 #### Theme System

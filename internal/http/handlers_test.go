@@ -627,7 +627,7 @@ func TestHealthzEndpoint(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
 
-	var resp map[string]string
+	var resp map[string]any
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}

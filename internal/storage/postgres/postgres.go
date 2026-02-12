@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"cloudpam/internal/cidr"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 )
@@ -921,6 +922,208 @@ func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool,
 		return domain.Account{}, false, err
 	}
 	return a, true, nil
+}
+
+// =============================================================================
+// Search
+// =============================================================================
+
+// Search performs a paginated search across pools and accounts.
+// PostgreSQL supports native CIDR operators >> (contains) and << (within).
+func (s *Store) Search(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, error) {
+	// Validate CIDR filters
+	if req.CIDRContains != "" {
+		if _, err := cidr.ParseCIDROrIP(req.CIDRContains); err != nil {
+			return domain.SearchResponse{}, fmt.Errorf("invalid cidr_contains: %w", err)
+		}
+	}
+	if req.CIDRWithin != "" {
+		if _, err := cidr.ParseCIDROrIP(req.CIDRWithin); err != nil {
+			return domain.SearchResponse{}, fmt.Errorf("invalid cidr_within: %w", err)
+		}
+	}
+
+	// Determine which types to include
+	searchPools := true
+	searchAccounts := true
+	if len(req.Types) > 0 {
+		searchPools = false
+		searchAccounts = false
+		for _, t := range req.Types {
+			switch t {
+			case "pool":
+				searchPools = true
+			case "account":
+				searchAccounts = true
+			}
+		}
+	}
+
+	var items []domain.SearchResultItem
+
+	// Search pools using native PostgreSQL CIDR operators
+	if searchPools {
+		var conditions []string
+		var args []any
+		argIdx := 1
+
+		conditions = append(conditions, fmt.Sprintf("p.organization_id = $%d", argIdx))
+		args = append(args, s.orgID)
+		argIdx++
+
+		conditions = append(conditions, "p.deleted_at IS NULL")
+
+		if req.Query != "" {
+			like := "%" + strings.ToLower(req.Query) + "%"
+			conditions = append(conditions, fmt.Sprintf("(LOWER(p.name) LIKE $%d OR p.cidr::text LIKE $%d OR LOWER(p.description) LIKE $%d)", argIdx, argIdx, argIdx))
+			args = append(args, like)
+			argIdx++
+		}
+
+		if req.CIDRContains != "" {
+			// Find pools whose CIDR contains the given IP/prefix
+			conditions = append(conditions, fmt.Sprintf("p.cidr >>= $%d::inet", argIdx))
+			args = append(args, req.CIDRContains)
+			argIdx++
+		}
+
+		if req.CIDRWithin != "" {
+			// Find pools that are within the given prefix
+			conditions = append(conditions, fmt.Sprintf("p.cidr <<= $%d::inet", argIdx))
+			args = append(args, req.CIDRWithin)
+			argIdx++
+		}
+
+		query := fmt.Sprintf(`
+			SELECT p.seq_id, p.name, p.cidr::text,
+				(SELECT pp.seq_id FROM pools pp WHERE pp.id = p.parent_id),
+				(SELECT a.seq_id FROM accounts a WHERE a.id = p.account_id),
+				p.type, p.status, p.description
+			FROM pools p
+			WHERE %s
+			ORDER BY p.seq_id`, strings.Join(conditions, " AND "))
+
+		rows, err := s.pool.Query(ctx, query, args...)
+		if err != nil {
+			return domain.SearchResponse{}, err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id int64
+			var name, cidrStr string
+			var parentSeq, accountSeq *int64
+			var poolType, poolStatus string
+			var description *string
+			if err := rows.Scan(&id, &name, &cidrStr, &parentSeq, &accountSeq, &poolType, &poolStatus, &description); err != nil {
+				return domain.SearchResponse{}, err
+			}
+			item := domain.SearchResultItem{
+				Type:      "pool",
+				ID:        id,
+				Name:      name,
+				CIDR:      cidrStr,
+				PoolType:  poolType,
+				Status:    poolStatus,
+				ParentID:  parentSeq,
+				AccountID: accountSeq,
+			}
+			if description != nil {
+				item.Description = *description
+			}
+			items = append(items, item)
+		}
+		if err := rows.Err(); err != nil {
+			return domain.SearchResponse{}, err
+		}
+	}
+
+	// Search accounts (CIDR filters don't apply to accounts)
+	if searchAccounts && req.CIDRContains == "" && req.CIDRWithin == "" {
+		var conditions []string
+		var args []any
+		argIdx := 1
+
+		conditions = append(conditions, fmt.Sprintf("organization_id = $%d", argIdx))
+		args = append(args, s.orgID)
+		argIdx++
+
+		conditions = append(conditions, "deleted_at IS NULL")
+
+		if req.Query != "" {
+			like := "%" + strings.ToLower(req.Query) + "%"
+			conditions = append(conditions, fmt.Sprintf("(LOWER(name) LIKE $%d OR LOWER(key) LIKE $%d OR LOWER(description) LIKE $%d)", argIdx, argIdx, argIdx))
+			args = append(args, like)
+			argIdx++
+		}
+
+		query := fmt.Sprintf(`
+			SELECT seq_id, key, name, provider, description
+			FROM accounts
+			WHERE %s
+			ORDER BY seq_id`, strings.Join(conditions, " AND "))
+
+		rows, err := s.pool.Query(ctx, query, args...)
+		if err != nil {
+			return domain.SearchResponse{}, err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id int64
+			var key, name string
+			var provider, description *string
+			if err := rows.Scan(&id, &key, &name, &provider, &description); err != nil {
+				return domain.SearchResponse{}, err
+			}
+			item := domain.SearchResultItem{
+				Type:       "account",
+				ID:         id,
+				Name:       name,
+				AccountKey: key,
+			}
+			if provider != nil {
+				item.Provider = *provider
+			}
+			if description != nil {
+				item.Description = *description
+			}
+			items = append(items, item)
+		}
+		if err := rows.Err(); err != nil {
+			return domain.SearchResponse{}, err
+		}
+	}
+
+	// Paginate
+	total := len(items)
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize < 1 {
+		pageSize = 50
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	start := (page - 1) * pageSize
+	if start > total {
+		start = total
+	}
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	return domain.SearchResponse{
+		Items:    items[start:end],
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+	}, nil
 }
 
 // =============================================================================

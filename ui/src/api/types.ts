@@ -175,3 +175,60 @@ export interface ImportResult {
   skipped: number
   errors: string[]
 }
+
+// --- Search types ---
+
+export interface SearchResultItem {
+  type: 'pool' | 'account'
+  id: number
+  name: string
+  cidr?: string
+  description?: string
+  status?: string
+  pool_type?: string
+  account_key?: string
+  provider?: string
+  parent_id?: number | null
+  account_id?: number | null
+}
+
+export interface SearchResponse {
+  items: SearchResultItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+// --- Auth types ---
+
+export interface ApiKeyInfo {
+  id: string
+  prefix: string
+  name: string
+  scopes: string[]
+  created_at: string
+  expires_at?: string | null
+  last_used_at?: string | null
+  revoked: boolean
+}
+
+export interface ApiKeyCreateRequest {
+  name: string
+  scopes?: string[]
+  expires_in_days?: number
+}
+
+export interface ApiKeyCreateResponse {
+  id: string
+  key: string
+  prefix: string
+  name: string
+  scopes: string[]
+  created_at: string
+  expires_at?: string | null
+}
+
+export interface HealthResponse {
+  status: string
+  auth_enabled?: boolean
+}
