@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 8: PostgreSQL Storage Backend
+
+#### PostgreSQL Store (`-tags postgres`)
+- Full `storage.Store` implementation backed by `pgx/v5/pgxpool` (pure Go, no CGO)
+- Dual-ID strategy: UUID primary keys + BIGSERIAL `seq_id` for backward-compatible int64 API
+- All 18 Store interface methods: pool CRUD, hierarchy, stats, account CRUD, cascade deletes
+- Soft deletes via `deleted_at IS NULL` filtering on all queries
+- PostgreSQL-native INET type for CIDR storage, JSONB for tags/metadata/regions
+- Materialized path pattern for pool hierarchy (`path` + `depth` columns)
+- Trigger functions: `update_updated_at()`, `update_pool_path()`
+- Recursive CTEs for cascade delete and hierarchy queries
+- `storage.HealthCheck` interface: `Ping()` and `Stats()` for readiness checks
+
+#### PostgreSQL Audit Logger
+- `audit.PostgresAuditLogger` with shared or owned connection pool
+- Log, List (with filters: actor, action, resource type, time range, pagination), GetByResource
+- UUID auto-generation for event IDs, JSONB changes storage
+
+#### PostgreSQL Key Store
+- `auth.PostgresKeyStore` with full `KeyStore` interface
+- Create, GetByPrefix, GetByID, List, Revoke, UpdateLastUsed, Delete
+- Scopes stored as JSONB, token hash as BYTEA
+
+#### Migration System
+- `migrations/postgres/001_core_schema.up.sql`: 11 tables (organizations, accounts, pools,
+  pool_utilization_cache, roles, permissions, role_permissions, audit_events, api_tokens,
+  schema_migrations, schema_info)
+- Seed data: default organization, 16 permissions, 4 built-in roles (admin, operator, viewer, auditor)
+- Comprehensive indexes: GIN on tags, partial unique on CIDR/key where not deleted
+- Transaction-wrapped migration runner with embedded SQL files
+
+#### Build & Infrastructure
+- Build tag `-tags postgres` with `cmd/cloudpam/store_postgres.go`
+- Updated `store_default.go` build constraint: `!sqlite && !postgres`
+- `docker-compose.yml` with Chainguard PostgreSQL (`cgr.dev/chainguard/postgres:latest`)
+- Justfile commands: `postgres-build`, `postgres-run`, `postgres-up`, `postgres-down`, `postgres-test`
+- `/readyz` enhanced with `HealthCheck`-aware Ping (type assertion fallback to ListPools)
+
+#### Testing (28 tests)
+- testcontainers-go with `postgres:16-alpine` for automatic container lifecycle
+- `DATABASE_URL` env var override for CI or existing PostgreSQL instances
+- Store: pool CRUD (7), updates (3), deletes (2), hierarchy/stats (4), account CRUD (5)
+- Audit logger: 12 subtests (log, list with filters, pagination, changes preservation)
+- Key store: 17 subtests (full lifecycle, expiration, nil key, multiple keys)
+- Edge cases: soft delete isolation, deep cascade, concurrent creation (20 goroutines),
+  empty tags, nullable fields, migration status
+
 ### Added - Sprint 7: Production Readiness & API Documentation
 
 #### OpenAPI Spec v0.3.0

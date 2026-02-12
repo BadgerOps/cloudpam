@@ -74,3 +74,6 @@ func sqliteStatus(dsn string) string {
 	}
 	return s
 }
+
+// postgresStatus returns schema status string when not built with postgres tag.
+func postgresStatus() string { return "" }

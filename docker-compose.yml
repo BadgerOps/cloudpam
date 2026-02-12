@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: cgr.dev/chainguard/postgres:latest
+    environment:
+      POSTGRES_DB: cloudpam
+      POSTGRES_USER: cloudpam
+      POSTGRES_PASSWORD: cloudpam
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "cloudpam", "-d", "cloudpam"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

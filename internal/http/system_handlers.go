@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -48,17 +49,33 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	checks := make(map[string]string)
 	status := "ok"
 
-	// Database check: attempt to list pools to verify database connectivity
-	_, err := s.store.ListPools(ctx)
-	if err != nil {
-		checks["database"] = "error"
-		status = "unhealthy"
-		s.logger.ErrorContext(ctx, "readiness check failed", appendRequestID(ctx, []any{
-			"check", "database",
-			"error", err.Error(),
-		})...)
+	// Database check: use Ping if the store supports it, otherwise fall back to ListPools
+	type pinger interface {
+		Ping(ctx context.Context) error
+	}
+	if hc, ok := s.store.(pinger); ok {
+		if err := hc.Ping(ctx); err != nil {
+			checks["database"] = "error"
+			status = "unhealthy"
+			s.logger.ErrorContext(ctx, "readiness check failed", appendRequestID(ctx, []any{
+				"check", "database",
+				"error", err.Error(),
+			})...)
+		} else {
+			checks["database"] = "ok"
+		}
 	} else {
-		checks["database"] = "ok"
+		_, err := s.store.ListPools(ctx)
+		if err != nil {
+			checks["database"] = "error"
+			status = "unhealthy"
+			s.logger.ErrorContext(ctx, "readiness check failed", appendRequestID(ctx, []any{
+				"check", "database",
+				"error", err.Error(),
+			})...)
+		} else {
+			checks["database"] = "ok"
+		}
 	}
 
 	resp := ReadinessResponse{
