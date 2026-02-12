@@ -35,7 +35,7 @@ describe('useSchemaGenerator', () => {
 
     const root = result.current
     expect(root.id).toBe('root')
-    expect(root.type).toBe('root')
+    expect(root.type).toBe('supernet')
     expect(root.cidr).toBe('10.0.0.0/8')
 
     // Should have 2 regions
@@ -51,7 +51,7 @@ describe('useSchemaGenerator', () => {
 
     // Each environment should have accountsPerEnv accounts
     expect(root.children[0].children[0].children.length).toBe(2)
-    expect(root.children[0].children[0].children[0].type).toBe('account')
+    expect(root.children[0].children[0].children[0].type).toBe('vpc')
   })
 
   it('generates environment-first schema', () => {
@@ -72,7 +72,7 @@ describe('useSchemaGenerator', () => {
 
     // Environments have accounts directly
     expect(root.children[0].children.length).toBe(4) // 2 accounts * 2 regions
-    expect(root.children[0].children[0].type).toBe('account')
+    expect(root.children[0].children[0].type).toBe('vpc')
   })
 
   it('generates account-first schema', () => {
@@ -88,7 +88,7 @@ describe('useSchemaGenerator', () => {
     const root = result.current
     // Should have flat accounts
     expect(root.children.length).toBe(4) // 2 envs * 2 accounts
-    expect(root.children[0].type).toBe('account')
+    expect(root.children[0].type).toBe('vpc')
   })
 
   it('uses custom CIDR when blueprint is custom', () => {

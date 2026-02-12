@@ -21,7 +21,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
     const root: SchemaNode = {
       id: 'root',
       name: 'Root',
-      type: 'root',
+      type: 'supernet',
       cidr: rootCidr,
       children: [],
     }
@@ -54,7 +54,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
             envNode.children.push({
               id: `region-${ri}-env-${ei}-acct-${ai}`,
               name: `${dimensions.accountTiers[ai % dimensions.accountTiers.length]}-${ai + 1}`,
-              type: 'account',
+              type: 'vpc',
               cidr: accountBlocks[ai],
               children: [],
             })
@@ -86,7 +86,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
           envNode.children.push({
             id: `env-${ei}-acct-${ai}`,
             name: `${dimensions.accountTiers[ai % dimensions.accountTiers.length]}-${ai + 1}`,
-            type: 'account',
+            type: 'vpc',
             cidr: accountBlocks[ai],
             children: [],
           })
@@ -102,7 +102,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
         root.children.push({
           id: `acct-${ai}`,
           name: `account-${String(ai + 1).padStart(3, '0')}`,
-          type: 'account',
+          type: 'vpc',
           cidr: accountBlocks[ai],
           children: [],
         })

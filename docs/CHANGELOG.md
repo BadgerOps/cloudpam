@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 9: Unified React Frontend
+
+#### Alpine.js → React Migration
+- Replaced Alpine.js SPA (`web/index.html`, ~2600 lines) with unified React/Vite/TypeScript SPA
+- Single React app now serves at `/` instead of separate Alpine.js (`/`) + React wizard (`/wizard/`)
+- Deleted `web/index.html`; all UI served from `ui/` build output via Go `embed.FS`
+
+#### Go Backend — Unified SPA Serving
+- New `handleSPA()` handler replaces `handleIndex()` + `handleWizardAssets()`
+- SPA fallback: serves `index.html` for all non-file routes (client-side routing)
+- Sentry frontend DSN injection via `<meta>` tag at runtime
+- Removed `/wizard/` route registration from both `RegisterRoutes()` and `RegisterProtectedRoutes()`
+- Updated `web/embed.go`: removed `Index []byte`, kept `DistFS embed.FS`
+
+#### React Router & Layout
+- Added `react-router-dom` with `BrowserRouter` and 7 routes
+- Sidebar navigation with `NavLink` active state (Dashboard, Pools, Blocks, Accounts, Discovery, Audit, Schema)
+- Header with Cmd+K search trigger
+- Layout component with sidebar + header + `<Outlet />`
+- Routes: `/` (Dashboard), `/pools`, `/blocks`, `/accounts`, `/audit`, `/discovery`, `/schema`
+
+#### Pages (7 new page components)
+- **DashboardPage**: stats cards (pools, IPs, accounts, alerts), hierarchical pool tree, utilization alerts, recent activity timeline, accounts summary
+- **PoolsPage**: pool CRUD with create form, search, table, detail panel with utilization stats, delete with confirmation
+- **BlocksPage**: blocks table with search, account filter, summary stats (total blocks, IPs, unique accounts) (#34)
+- **AccountsPage**: account CRUD with create form, search/filter by name/key/provider, provider+tier badges, delete (#36)
+- **AuditPage**: audit event timeline with expandable details (before/after diffs), action/resource filters, pagination (#34)
+- **DiscoveryPage**: placeholder for cloud discovery
+- **SchemaPage**: wraps existing Schema Planner wizard
+
+#### Components (9 new shared components)
+- `Layout.tsx`, `Sidebar.tsx`, `Header.tsx` — app shell
+- `SearchModal.tsx` — Cmd+K global search across pools and accounts
+- `ImportExportModal.tsx` — export ZIP + CSV import with preview table and results (#23)
+- `ToastContainer.tsx` + `useToast.ts` — toast notification system (info/error/success)
+- `PoolTree.tsx` — recursive hierarchical tree with expand/collapse, type-colored dots, utilization bars
+- `PoolDetailPanel.tsx` — slide-out panel with pool stats, utilization bar, child count
+- `StatusBadge.tsx` — reusable badge for status/provider/tier/type
+
+#### API Layer (hooks + types)
+- 5 new React hooks: `usePools`, `useAccounts`, `useBlocks`, `useAudit`, `useToast`
+- Extended `api/types.ts` with Pool, PoolWithStats, PoolStats, Account, Block, AuditEvent, BlocksListResponse, AuditListResponse, ImportResult types
+- Added `patch()` and `del()` methods to API client
+- `utils/format.ts` — ported helpers: `formatHostCount`, `formatTimeAgo`, `getHostCount`, color/badge class helpers
+
+#### Schema Planner Fixes
+- Fixed schema wizard generating invalid pool types (`root` → `supernet`, `account` → `vpc`)
+- Updated TreeNode type colors, blueprints hierarchy levels, and test assertions
+
+#### Tests
+- 34 frontend tests pass (15 format utils + 14 CIDR + 5 schema generator)
+- All Go tests pass (http, storage, auth, audit, observability, validation, domain)
+- Frontend production build: 274KB JS + 25KB CSS
+
+### Added - Sprint 8: Schema Planner Wizard + React/Vite Scaffold
+
+#### Schema Planner Wizard
+- 4-step wizard: Template → Strategy → Dimensions → Preview
+- 3 blueprint templates: Enterprise Multi-Region, Medium Organization, Small Team
+- 3 layout strategies: region-first, environment-first, account-first
+- Configurable dimensions: regions, environments, accounts per environment, account tiers
+- Real-time CIDR subdivision preview with hierarchical tree view
+- Conflict detection against existing pools before apply
+- Bulk pool creation with topological ordering
+
+#### Backend — Schema Endpoints
+- `POST /api/v1/schema/check` — conflict detection against existing pools
+- `POST /api/v1/schema/apply` — bulk pool creation with topological ordering
+- OpenAPI spec updated to v0.4.0 with Schema tag and 7 new types
+- 10 new Go tests for schema handlers
+
+#### React/Vite/TypeScript Scaffold
+- React/Vite/TypeScript project in `ui/` with Tailwind CSS
+- Wizard components: TemplateStep, StrategyStep, DimensionsStep, PreviewStep
+- CIDR utilities (`subdivide`, `usableHosts`, `formatHostCount`)
+- Hooks: `useSchemaGenerator`, `useConflictChecker`, `useApplySchema`
+- 19 vitest tests (14 CIDR + 5 schema generator)
+
+#### Infrastructure
+- Node.js 22 added to Nix flake devShell
+- Justfile recipes: `ui-install`, `ui-build`, `ui-dev`, `ui-test`, `build-full`, `dev-all`
+- `dev-all` runs Go backend + Vite dev server concurrently
+- `web/dist/index.html` placeholder for `go:embed` on clean checkout
+
 ### Added - Sprint 7: Production Readiness & API Documentation
 
 #### OpenAPI Spec v0.3.0

@@ -4,10 +4,10 @@ import type { SchemaNode } from '../utils/cidr'
 import { usableHosts, formatHostCount } from '../utils/cidr'
 
 const TYPE_COLORS: Record<string, string> = {
-  root: 'bg-purple-500',
+  supernet: 'bg-purple-500',
   region: 'bg-blue-500',
   environment: 'bg-green-500',
-  account: 'bg-amber-500',
+  vpc: 'bg-amber-500',
   subnet: 'bg-gray-400',
 }
 

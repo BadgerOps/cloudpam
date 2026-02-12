@@ -27,7 +27,7 @@ export const BLUEPRINTS: Blueprint[] = [
     hierarchy: [
       { level: 'region', prefixSize: 12, description: '16 regions, 1M IPs each' },
       { level: 'environment', prefixSize: 16, description: '16 envs/region, 65K IPs' },
-      { level: 'account', prefixSize: 20, description: '16 accounts/env, 4K IPs' },
+      { level: 'vpc', prefixSize: 20, description: '16 accounts/env, 4K IPs' },
       { level: 'subnet', prefixSize: 24, description: '16 subnets/account, 254 hosts' },
     ],
     recommended: [
@@ -44,7 +44,7 @@ export const BLUEPRINTS: Blueprint[] = [
     rootCidr: '10.0.0.0/12',
     hierarchy: [
       { level: 'environment', prefixSize: 16, description: '16 environments, 65K IPs each' },
-      { level: 'account', prefixSize: 20, description: '16 accounts/env, 4K IPs' },
+      { level: 'vpc', prefixSize: 20, description: '16 accounts/env, 4K IPs' },
       { level: 'subnet', prefixSize: 24, description: '16 subnets/account, 254 hosts' },
     ],
     recommended: [

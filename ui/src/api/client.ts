@@ -35,3 +35,14 @@ export function post<T>(path: string, data: unknown): Promise<T> {
 export function get<T>(path: string): Promise<T> {
   return request<T>(path)
 }
+
+export function patch<T>(path: string, data: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  })
+}
+
+export function del<T = void>(path: string): Promise<T> {
+  return request<T>(path, { method: 'DELETE' })
+}

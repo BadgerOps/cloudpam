@@ -52,7 +52,7 @@ export function formatHostCount(count: number): string {
 export interface SchemaNode {
   id: string
   name: string
-  type: 'root' | 'region' | 'environment' | 'account' | 'subnet'
+  type: 'supernet' | 'region' | 'environment' | 'vpc' | 'subnet'
   cidr: string
   children: SchemaNode[]
   conflict?: boolean

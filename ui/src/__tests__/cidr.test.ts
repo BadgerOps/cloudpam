@@ -95,7 +95,7 @@ describe('countLeafNodes', () => {
     const tree: SchemaNode = {
       id: 'root',
       name: 'Root',
-      type: 'root',
+      type: 'supernet',
       cidr: '10.0.0.0/8',
       children: [
         {

@@ -45,3 +45,133 @@ export interface ApiError {
   error: string
   detail?: string
 }
+
+// --- Domain types ---
+
+export type PoolType = 'supernet' | 'region' | 'environment' | 'vpc' | 'subnet'
+export type PoolStatus = 'planned' | 'active' | 'deprecated'
+export type PoolSource = 'manual' | 'discovered' | 'imported'
+
+export interface Pool {
+  id: number
+  name: string
+  cidr: string
+  parent_id?: number | null
+  account_id?: number | null
+  type: PoolType
+  status: PoolStatus
+  source: PoolSource
+  description?: string
+  tags?: Record<string, string>
+  created_at: string
+  updated_at: string
+}
+
+export interface PoolStats {
+  total_ips: number
+  used_ips: number
+  available_ips: number
+  utilization: number
+  child_count: number
+  direct_children: number
+}
+
+export interface PoolWithStats extends Pool {
+  stats: PoolStats
+  children?: PoolWithStats[]
+}
+
+export interface CreatePoolRequest {
+  name: string
+  cidr: string
+  parent_id?: number | null
+  account_id?: number | null
+  type?: PoolType
+  status?: PoolStatus
+  source?: PoolSource
+  description?: string
+  tags?: Record<string, string>
+}
+
+export interface Account {
+  id: number
+  key: string
+  name: string
+  provider?: string
+  external_id?: string
+  description?: string
+  platform?: string
+  tier?: string
+  environment?: string
+  regions?: string[]
+  created_at: string
+}
+
+export interface CreateAccountRequest {
+  key: string
+  name: string
+  provider?: string
+  external_id?: string
+  description?: string
+  platform?: string
+  tier?: string
+  environment?: string
+  regions?: string[]
+}
+
+export interface Block {
+  id: number
+  name: string
+  cidr: string
+  parent_id: number
+  parent_name: string
+  account_id?: number
+  account_name?: string
+  account_platform?: string
+  account_tier?: string
+  account_environment?: string
+  account_regions?: string[]
+  type?: string
+  status?: string
+  created_at: string
+}
+
+export interface BlocksListResponse {
+  items: Block[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface AuditChanges {
+  before?: Record<string, unknown>
+  after?: Record<string, unknown>
+}
+
+export interface AuditEvent {
+  id: string
+  timestamp: string
+  actor: string
+  actor_type: string
+  action: string
+  resource_type: string
+  resource_id: string
+  resource_name?: string
+  changes?: AuditChanges
+  request_id?: string
+  ip_address?: string
+  status_code: number
+}
+
+export interface AuditListResponse {
+  events: AuditEvent[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface ImportResult {
+  created: number
+  skipped: number
+  errors: string[]
+}
