@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { get, post, del } from '../api/client'
 import type { ApiKeyInfo, ApiKeyCreateRequest, ApiKeyCreateResponse } from '../api/types'
 
+interface ApiKeysListResponse {
+  keys: ApiKeyInfo[]
+}
+
 export function useApiKeys() {
   const [keys, setKeys] = useState<ApiKeyInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -11,8 +15,8 @@ export function useApiKeys() {
     setLoading(true)
     setError(null)
     try {
-      const data = await get<ApiKeyInfo[]>('/api/v1/auth/keys')
-      setKeys(data ?? [])
+      const data = await get<ApiKeysListResponse>('/api/v1/auth/keys')
+      setKeys(data.keys ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load API keys')
     } finally {
@@ -29,14 +33,10 @@ export function useApiKeys() {
   }, [refresh])
 
   const revoke = useCallback(async (id: string) => {
-    await post<void>(`/api/v1/auth/keys/${id}/revoke`, {})
-    await refresh()
-  }, [refresh])
-
-  const remove = useCallback(async (id: string) => {
+    // Backend uses DELETE to revoke (soft delete)
     await del(`/api/v1/auth/keys/${id}`)
     await refresh()
   }, [refresh])
 
-  return { keys, loading, error, create, revoke, remove, refresh }
+  return { keys, loading, error, create, revoke, refresh }
 }

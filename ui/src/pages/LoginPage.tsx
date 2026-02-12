@@ -4,8 +4,14 @@ import { KeyRound, Eye, EyeOff, Server } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { login, isAuthenticated, authEnabled, authChecked } = useAuth()
   const navigate = useNavigate()
+
+  // If already authenticated, redirect to dashboard
+  if (isAuthenticated) {
+    navigate('/', { replace: true })
+    return null
+  }
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [error, setError] = useState('')
@@ -78,6 +84,16 @@ export default function LoginPage() {
             >
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
+
+            {authChecked && !authEnabled && (
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                className="w-full mt-2 px-4 py-2 text-gray-500 dark:text-gray-400 text-sm hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                Continue without key
+              </button>
+            )}
           </form>
         </div>
       </div>

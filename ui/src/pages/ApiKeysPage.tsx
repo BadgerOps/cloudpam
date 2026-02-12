@@ -1,16 +1,30 @@
 import { useState } from 'react'
-import { Key, Plus, Trash2, Ban, Copy, Check, AlertCircle } from 'lucide-react'
+import { Key, Plus, Ban, Copy, Check, AlertCircle } from 'lucide-react'
 import { useApiKeys } from '../hooks/useApiKeys'
 import type { ApiKeyCreateResponse } from '../api/types'
 
+// Must match backend validScopes in auth_handlers.go createAPIKey
 const SCOPE_OPTIONS = [
-  'pools:read', 'pools:create', 'pools:update', 'pools:delete',
-  'accounts:read', 'accounts:create', 'accounts:update', 'accounts:delete',
-  'apikeys:manage', 'audit:read',
+  'pools:read', 'pools:write',
+  'accounts:read', 'accounts:write',
+  'keys:read', 'keys:write',
+  'audit:read',
+  '*',
 ]
 
+const SCOPE_LABELS: Record<string, string> = {
+  'pools:read': 'Pools Read',
+  'pools:write': 'Pools Write',
+  'accounts:read': 'Accounts Read',
+  'accounts:write': 'Accounts Write',
+  'keys:read': 'Keys Read',
+  'keys:write': 'Keys Write',
+  'audit:read': 'Audit Read',
+  '*': 'Admin (all)',
+}
+
 export default function ApiKeysPage() {
-  const { keys, loading, error, create, revoke, remove } = useApiKeys()
+  const { keys, loading, error, create, revoke } = useApiKeys()
   const [showCreate, setShowCreate] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
   const [selectedScopes, setSelectedScopes] = useState<string[]>(['pools:read', 'accounts:read'])
@@ -38,9 +52,14 @@ export default function ApiKeysPage() {
   }
 
   function toggleScope(scope: string) {
-    setSelectedScopes(prev =>
-      prev.includes(scope) ? prev.filter(s => s !== scope) : [...prev, scope]
-    )
+    if (scope === '*') {
+      setSelectedScopes(prev => prev.includes('*') ? [] : ['*'])
+      return
+    }
+    setSelectedScopes(prev => {
+      const filtered = prev.filter(s => s !== '*')
+      return filtered.includes(scope) ? filtered.filter(s => s !== scope) : [...filtered, scope]
+    })
   }
 
   async function copyKey(key: string) {
@@ -129,7 +148,7 @@ export default function ApiKeysPage() {
                         : 'bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-600'
                     }`}
                   >
-                    {scope}
+                    {SCOPE_LABELS[scope] ?? scope}
                   </button>
                 ))}
               </div>
@@ -233,24 +252,15 @@ export default function ApiKeysPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {!k.revoked && (
-                        <button
-                          onClick={() => revoke(k.id)}
-                          title="Revoke key"
-                          className="p-1.5 text-gray-400 hover:text-amber-600 dark:hover:text-amber-400"
-                        >
-                          <Ban className="w-4 h-4" />
-                        </button>
-                      )}
+                    {!k.revoked && (
                       <button
-                        onClick={() => remove(k.id)}
-                        title="Delete key"
+                        onClick={() => revoke(k.id)}
+                        title="Revoke key"
                         className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Ban className="w-4 h-4" />
                       </button>
-                    </div>
+                    )}
                   </td>
                 </tr>
               ))

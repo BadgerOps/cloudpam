@@ -11,6 +11,7 @@ export interface AuthContextValue {
   role: string | null
   isAuthenticated: boolean
   authEnabled: boolean
+  authChecked: boolean
   login: (apiKey: string) => Promise<void>
   logout: () => void
 }
@@ -21,6 +22,7 @@ export const AuthContext = createContext<AuthContextValue>({
   role: null,
   isAuthenticated: false,
   authEnabled: false,
+  authChecked: false,
   login: async () => {},
   logout: () => {},
 })
@@ -34,6 +36,7 @@ export function useAuthState(): AuthContextValue {
   const [keyName, setKeyName] = useState<string | null>(() => localStorage.getItem(AUTH_NAME_KEY))
   const [role, setRole] = useState<string | null>(() => localStorage.getItem(AUTH_ROLE_KEY))
   const [authEnabled, setAuthEnabled] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
 
   // Check if auth is enabled on mount
   useEffect(() => {
@@ -43,8 +46,10 @@ export function useAuthState(): AuthContextValue {
         setAuthEnabled(data.auth_enabled === true)
       })
       .catch(() => {
-        // Default to false if health check fails
         setAuthEnabled(false)
+      })
+      .finally(() => {
+        setAuthChecked(true)
       })
   }, [])
 
@@ -63,33 +68,41 @@ export function useAuthState(): AuthContextValue {
   }, [])
 
   const login = useCallback(async (apiKey: string) => {
-    // Store the key and try to validate it
-    localStorage.setItem(AUTH_STORAGE_KEY, apiKey)
+    // Validate the key by making an authenticated request.
+    // Use /api/v1/pools (lightweight read) — if auth is enabled and key is bad, we get 401.
+    const res = await fetch('/api/v1/pools', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
 
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('Invalid API key')
+    }
+    if (!res.ok) {
+      throw new Error('Authentication failed')
+    }
+
+    // Key is valid — store it
+    const displayName = apiKey.startsWith('cpam_') ? apiKey.substring(0, 12) + '...' : 'API Key'
+
+    // Try to determine role by attempting to list auth keys (admin-only when RBAC is on)
+    let detectedRole = 'viewer'
     try {
-      const res = await fetch('/api/v1/auth/keys', {
+      const keysRes = await fetch('/api/v1/auth/keys', {
         headers: { Authorization: `Bearer ${apiKey}` },
       })
-      if (!res.ok) {
-        localStorage.removeItem(AUTH_STORAGE_KEY)
-        throw new Error(res.status === 401 ? 'Invalid API key' : 'Authentication failed')
+      if (keysRes.ok) {
+        detectedRole = 'admin'
       }
-
-      // Derive role from scopes in the response
-      // The key itself doesn't expose its scopes, but if it can list keys, it's admin
-      const name = apiKey.startsWith('cpam_') ? apiKey.substring(0, 12) + '...' : 'API Key'
-      const detectedRole = 'admin' // If it can access /auth/keys, it has admin permissions
-
-      setToken(apiKey)
-      setKeyName(name)
-      setRole(detectedRole)
-      localStorage.setItem(AUTH_NAME_KEY, name)
-      localStorage.setItem(AUTH_ROLE_KEY, detectedRole)
-    } catch (err) {
-      localStorage.removeItem(AUTH_STORAGE_KEY)
-      setToken(null)
-      throw err
+    } catch {
+      // If the request fails, assume non-admin
     }
+
+    setToken(apiKey)
+    setKeyName(displayName)
+    setRole(detectedRole)
+    localStorage.setItem(AUTH_STORAGE_KEY, apiKey)
+    localStorage.setItem(AUTH_NAME_KEY, displayName)
+    localStorage.setItem(AUTH_ROLE_KEY, detectedRole)
   }, [])
 
   const logout = useCallback(() => {
@@ -107,6 +120,7 @@ export function useAuthState(): AuthContextValue {
     role,
     isAuthenticated: token !== null,
     authEnabled,
+    authChecked,
     login,
     logout,
   }
