@@ -156,6 +156,11 @@ func (s *Server) RegisterRoutes() {
 	s.mux.HandleFunc("/api/v1/import/pools", s.handleImportPools)
 	// Audit logs (unprotected access)
 	s.mux.HandleFunc("/api/v1/audit", s.handleAuditList)
+	// Schema planner wizard SPA
+	s.mux.Handle("/wizard/", s.handleWizardAssets())
+	// Schema planner API
+	s.mux.HandleFunc("/api/v1/schema/check", s.handleSchemaCheck)
+	s.mux.HandleFunc("/api/v1/schema/apply", s.handleSchemaApply)
 	// Static index
 	s.mux.HandleFunc("/", s.handleIndex)
 }
@@ -177,6 +182,7 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, slogger *slog.L
 		s.mux.Handle("/metrics", s.metrics.Handler())
 	}
 	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
+	s.mux.Handle("/wizard/", s.handleWizardAssets())
 	s.mux.HandleFunc("/", s.handleIndex)
 
 	// Auth middleware (required for all API endpoints below)
@@ -199,4 +205,9 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, slogger *slog.L
 		{Resource: auth.ResourcePools, Action: auth.ActionRead},
 	}, slogger)
 	s.mux.Handle("/api/v1/export", authMW(exportPermMW(http.HandlerFunc(s.handleExport))))
+
+	// Schema planner endpoints - require pools:create
+	poolsCreateMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, slogger)
+	s.mux.Handle("/api/v1/schema/check", authMW(poolsReadMW(http.HandlerFunc(s.handleSchemaCheck))))
+	s.mux.Handle("/api/v1/schema/apply", authMW(poolsCreateMW(http.HandlerFunc(s.handleSchemaApply))))
 }

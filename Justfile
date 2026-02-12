@@ -70,6 +70,27 @@ docker-build tag="cloudpam:latest":
 docker-run tag="cloudpam:latest": docker-build
     docker run --rm -p 8080:8080 {{tag}}
 
+ui-install:
+    cd ui && npm install
+
+ui-build: ui-install
+    cd ui && npm run build
+
+ui-dev:
+    cd ui && npm run dev
+
+ui-test:
+    cd ui && npm test
+
+build-full: ui-build build
+
+# Run Go backend and Vite dev server concurrently (Ctrl-C stops both)
+dev-all: ensure-cache ui-install
+    trap 'kill 0' EXIT; \
+    {{go-env}} go run ./cmd/cloudpam & \
+    cd ui && npm run dev & \
+    wait
+
 openapi-validate:
     ruby "{{justfile_directory()}}/scripts/openapi_validate.rb" "{{openapi_spec}}"
 

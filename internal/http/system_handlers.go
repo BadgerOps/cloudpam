@@ -2,6 +2,7 @@ package http
 
 import (
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"strconv"
@@ -166,4 +167,33 @@ func (s *Server) handleAuditList(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	})
+}
+
+// handleWizardAssets serves the Vite-built Schema Planner SPA.
+// Any path under /wizard/ that doesn't match a real file falls back to
+// dist/index.html so that client-side routing works.
+func (s *Server) handleWizardAssets() http.Handler {
+	distSub, err := fs.Sub(webui.DistFS, "dist")
+	if err != nil {
+		// If dist is missing, serve a helpful message.
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "wizard UI not built – run: just ui-build", http.StatusNotFound)
+		})
+	}
+	fileServer := http.FileServer(http.FS(distSub))
+
+	return http.StripPrefix("/wizard/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Try to serve the exact file first.
+		path := strings.TrimPrefix(r.URL.Path, "/wizard/")
+		if path == "" {
+			path = "index.html"
+		}
+		if _, err := fs.Stat(distSub, path); err == nil {
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		// SPA fallback: serve index.html for any unknown path.
+		r.URL.Path = "/wizard/"
+		fileServer.ServeHTTP(w, r)
+	}))
 }
