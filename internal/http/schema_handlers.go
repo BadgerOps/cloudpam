@@ -254,7 +254,7 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 			Type:        poolType,
 			Status:      status,
 			Source:      domain.PoolSourceManual,
-			Description: fmt.Sprintf("Created by Schema Planner"),
+			Description: "Created by Schema Planner",
 			Tags:        tags,
 		}
 
