@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"cloudpam/internal/audit"
+	"cloudpam/internal/auth"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
 )
@@ -25,6 +26,11 @@ func selectStore(logger observability.Logger) storage.Store {
 // selectAuditLogger returns an in-memory audit logger when built without 'sqlite' tag.
 func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
 	return audit.NewMemoryAuditLogger()
+}
+
+// selectKeyStore returns an in-memory key store when built without 'sqlite' tag.
+func selectKeyStore(logger observability.Logger) auth.KeyStore {
+	return auth.NewMemoryKeyStore()
 }
 
 // sqliteStatus returns schema status string when not built with sqlite tag.
