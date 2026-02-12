@@ -17,13 +17,13 @@ export default function PoolTree({ nodes, selectedId, onSelect }: PoolTreeProps)
       <div className="flex gap-2 mb-3">
         <button
           onClick={() => setExpandAll(true)}
-          className="text-xs text-blue-600 hover:text-blue-800"
+          className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
         >
           Expand All
         </button>
         <button
           onClick={() => setExpandAll(false)}
-          className="text-xs text-blue-600 hover:text-blue-800"
+          className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
         >
           Collapse All
         </button>
@@ -65,29 +65,29 @@ function TreeNode({ node, depth, selectedId, onSelect, forceExpand }: TreeNodePr
     <div>
       <div
         className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-sm
-          ${isSelected ? 'bg-blue-50 border border-blue-200' : 'hover:bg-gray-50'}`}
+          ${isSelected ? 'bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
         style={{ paddingLeft: `${depth * 20 + 8}px` }}
         onClick={() => onSelect(node)}
       >
         {hasChildren ? (
           <button
             onClick={e => { e.stopPropagation(); setExpanded(!expanded) }}
-            className="p-0.5 hover:bg-gray-200 rounded"
+            className="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
           >
             {isExpanded
-              ? <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
-              : <ChevronRight className="w-3.5 h-3.5 text-gray-500" />}
+              ? <ChevronDown className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+              : <ChevronRight className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />}
           </button>
         ) : (
           <span className="w-4.5" />
         )}
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${getPoolTypeColor(node.type)}`} />
-        <span className="font-mono text-xs text-gray-500">{node.cidr}</span>
-        <span className="text-gray-900 truncate">{node.name}</span>
+        <span className="font-mono text-xs text-gray-500 dark:text-gray-400">{node.cidr}</span>
+        <span className="text-gray-900 dark:text-gray-100 truncate">{node.name}</span>
         <span className="ml-auto flex items-center gap-2 flex-shrink-0">
-          <span className="text-xs text-gray-400">{formatHostCount(totalIPs)} IPs</span>
+          <span className="text-xs text-gray-400 dark:text-gray-500">{formatHostCount(totalIPs)} IPs</span>
           {utilPct > 0 && (
-            <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+            <div className="w-16 h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full ${getUtilizationColor(utilPct)}`}
                 style={{ width: `${Math.min(utilPct, 100)}%` }}

@@ -24,7 +24,7 @@ export default function Layout() {
   }, [])
 
   return (
-    <div className="h-screen flex">
+    <div className="h-screen flex bg-gray-100 dark:bg-gray-900">
       <Sidebar onImportExport={() => setImportExportOpen(true)} />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header onSearchClick={openSearch} />

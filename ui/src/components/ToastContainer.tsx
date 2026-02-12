@@ -10,12 +10,12 @@ export default function ToastContainer() {
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`bg-white border rounded-lg shadow-lg px-4 py-3 min-w-60 ${
-            t.type === 'error' ? 'border-red-200' : t.type === 'success' ? 'border-green-200' : 'border-blue-200'
+          className={`bg-white dark:bg-gray-800 border rounded-lg shadow-lg px-4 py-3 min-w-60 ${
+            t.type === 'error' ? 'border-red-200 dark:border-red-800' : t.type === 'success' ? 'border-green-200 dark:border-green-800' : 'border-blue-200 dark:border-blue-800'
           }`}
         >
           <div className="font-medium text-sm">{t.type === 'error' ? 'Error' : t.type === 'success' ? 'Success' : 'Info'}</div>
-          <div className="text-sm text-gray-600">{t.message}</div>
+          <div className="text-sm text-gray-600 dark:text-gray-300">{t.message}</div>
         </div>
       ))}
     </div>

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 10: Dark Mode
+
+#### Theme System
+- Three-mode theme toggle: Light, Dark, System (follows OS preference)
+- Theme state managed via React context (`useTheme` hook) with localStorage persistence
+- Flash prevention script in `index.html` applies `.dark` class before first paint
+- Tailwind CSS v4 class-based dark mode via `@custom-variant dark (&:where(.dark, .dark *));`
+- Theme toggle button in sidebar footer with Sun/Moon/Monitor icons (lucide-react)
+
+#### Dark Mode Styling
+- All 7 pages dark-mode ready: Dashboard, Pools, Blocks, Accounts, Discovery, Audit, Schema Planner
+- All shared components: Header, Sidebar, SearchModal, ToastContainer, ImportExportModal, PoolTree, PoolDetailPanel, StatusBadge
+- All wizard components: SchemaPlanner, TemplateStep, StrategyStep, DimensionsStep, PreviewStep, TreeNode
+- Badge utility functions updated with `dark:` variants (provider, tier, status, action badges)
+- Root layout `dark:bg-gray-900` background, sidebar `dark:bg-gray-950` for depth contrast
+
 ### Added - Sprint 9: Unified React Frontend
 
 #### Alpine.js → React Migration

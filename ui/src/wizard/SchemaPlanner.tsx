@@ -124,29 +124,29 @@ export default function SchemaPlanner() {
 
   if (applyResult) {
     return (
-      <div className="min-h-screen bg-gray-100">
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
+      <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
+        <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
           <div className="max-w-5xl mx-auto flex items-center gap-3">
-            <Network className="w-8 h-8 text-blue-600" />
+            <Network className="w-8 h-8 text-blue-600 dark:text-blue-400" />
             <div>
-              <h1 className="text-xl font-bold text-gray-900">CloudPAM</h1>
-              <p className="text-sm text-gray-500">IP Schema Planner</p>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">CloudPAM</h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400">IP Schema Planner</p>
             </div>
           </div>
         </header>
         <main className="max-w-5xl mx-auto py-8 px-6">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle className="w-8 h-8 text-green-600" />
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 text-center">
+            <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
             </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">Schema Applied Successfully</h2>
-            <p className="text-gray-600 mb-6">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">Schema Applied Successfully</h2>
+            <p className="text-gray-600 dark:text-gray-300 mb-6">
               Created {applyResult.created} pools. Root pool ID: {applyResult.root_pool_id}
             </p>
             {applyResult.errors.length > 0 && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6 text-left">
-                <p className="font-medium text-yellow-800">Some items had issues:</p>
-                <ul className="mt-2 text-sm text-yellow-700 list-disc ml-4">
+              <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 mb-6 text-left">
+                <p className="font-medium text-yellow-800 dark:text-yellow-300">Some items had issues:</p>
+                <ul className="mt-2 text-sm text-yellow-700 dark:text-yellow-300 list-disc ml-4">
                   {applyResult.errors.map((e, i) => (
                     <li key={i}>{e}</li>
                   ))}
@@ -162,7 +162,7 @@ export default function SchemaPlanner() {
               </a>
               <button
                 onClick={() => window.location.reload()}
-                className="px-6 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                className="px-6 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50"
               >
                 Plan Another Schema
               </button>
@@ -174,18 +174,18 @@ export default function SchemaPlanner() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4">
+      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Network className="w-8 h-8 text-blue-600" />
+            <Network className="w-8 h-8 text-blue-600 dark:text-blue-400" />
             <div>
-              <h1 className="text-xl font-bold text-gray-900">CloudPAM</h1>
-              <p className="text-sm text-gray-500">IP Schema Planner</p>
+              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">CloudPAM</h1>
+              <p className="text-sm text-gray-500 dark:text-gray-400">IP Schema Planner</p>
             </div>
           </div>
-          <a href="/" className="text-gray-500 hover:text-gray-700 text-sm">
+          <a href="/" className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 text-sm">
             Back to Dashboard
           </a>
         </div>
@@ -203,8 +203,8 @@ export default function SchemaPlanner() {
                       i < currentStep
                         ? 'bg-blue-600 border-blue-600 text-white'
                         : i === currentStep
-                          ? 'border-blue-600 text-blue-600'
-                          : 'border-gray-300 text-gray-400'
+                          ? 'border-blue-600 dark:border-blue-500 text-blue-600 dark:text-blue-400'
+                          : 'border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
                     }`}
                   >
                     {i < currentStep ? (
@@ -214,14 +214,14 @@ export default function SchemaPlanner() {
                     )}
                   </div>
                   <div className="ml-3">
-                    <p className={`text-sm font-medium ${i <= currentStep ? 'text-gray-900' : 'text-gray-400'}`}>
+                    <p className={`text-sm font-medium ${i <= currentStep ? 'text-gray-900 dark:text-gray-100' : 'text-gray-400 dark:text-gray-500'}`}>
                       {step.name}
                     </p>
-                    <p className="text-xs text-gray-500">{step.description}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{step.description}</p>
                   </div>
                 </div>
                 {i < STEPS.length - 1 && (
-                  <div className={`w-24 h-0.5 mx-4 ${i < currentStep ? 'bg-blue-600' : 'bg-gray-200'}`} />
+                  <div className={`w-24 h-0.5 mx-4 ${i < currentStep ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-600'}`} />
                 )}
               </li>
             ))}
@@ -229,7 +229,7 @@ export default function SchemaPlanner() {
         </nav>
 
         {/* Step Content */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-6">
           {currentStep === 0 && (
             <TemplateStep
               selectedBlueprint={selectedBlueprint}
@@ -258,7 +258,7 @@ export default function SchemaPlanner() {
           <button
             onClick={() => setCurrentStep((prev) => prev - 1)}
             disabled={currentStep === 0}
-            className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ArrowLeft className="w-4 h-4" />
             Back
@@ -269,7 +269,7 @@ export default function SchemaPlanner() {
               <>
                 <button
                   onClick={handleSaveDraft}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50"
                 >
                   <Save className="w-4 h-4" />
                   Save Draft
@@ -297,7 +297,7 @@ export default function SchemaPlanner() {
         </div>
 
         {applyError && (
-          <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
+          <div className="mt-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg p-4 text-sm text-red-700 dark:text-red-300">
             Failed to apply schema: {applyError}
           </div>
         )}

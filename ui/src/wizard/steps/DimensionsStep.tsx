@@ -45,7 +45,7 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
 
   const renderDimensionList = (title: string, dimension: string, items: string[], icon: LucideIcon) => (
     <div className="space-y-2">
-      <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
+      <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
         {(() => { const I = icon; return <I className="w-4 h-4" /> })()}
         {title}
       </label>
@@ -53,10 +53,10 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
         {items.map((item, i) => (
           <span
             key={i}
-            className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"
+            className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300 rounded-full text-sm"
           >
             {item}
-            <button onClick={() => removeItem(dimension, i)} className="hover:bg-blue-200 rounded-full p-0.5">
+            <button onClick={() => removeItem(dimension, i)} className="hover:bg-blue-200 dark:hover:bg-blue-800 rounded-full p-0.5">
               <Trash2 className="w-3 h-3" />
             </button>
           </span>
@@ -74,13 +74,13 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
               onBlur={() => { if (!newValue.trim()) setAddingTo(null) }}
               onKeyDown={(e) => { if (e.key === 'Escape') setAddingTo(null) }}
               placeholder="Enter name..."
-              className="px-2 py-1 text-sm border border-gray-300 rounded-full w-32 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-full w-32 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-gray-100"
             />
           </form>
         ) : (
           <button
             onClick={() => handleAdd(dimension)}
-            className="inline-flex items-center gap-1 px-3 py-1 border-2 border-dashed border-gray-300 text-gray-500 rounded-full text-sm hover:border-gray-400 hover:text-gray-600"
+            className="inline-flex items-center gap-1 px-3 py-1 border-2 border-dashed border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 rounded-full text-sm hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
           >
             <Plus className="w-3 h-3" />
             Add
@@ -93,18 +93,18 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-semibold text-gray-900 mb-2">Define Your Dimensions</h2>
-        <p className="text-gray-600">What are the organizational boundaries for your IP space?</p>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Define Your Dimensions</h2>
+        <p className="text-gray-600 dark:text-gray-300">What are the organizational boundaries for your IP space?</p>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-6">
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 space-y-6">
         {strategy === 'region-first' && renderDimensionList('Regions', 'regions', dimensions.regions, Globe)}
         {renderDimensionList('Environments', 'environments', dimensions.environments, Server)}
         {renderDimensionList('Account Tiers', 'accountTiers', dimensions.accountTiers, Building)}
 
-        <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+        <div className="grid grid-cols-2 gap-4 pt-4 border-t dark:border-gray-700">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Accounts per environment (estimated)
             </label>
             <input
@@ -115,11 +115,11 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
               onChange={(e) =>
                 setDimensions((prev) => ({ ...prev, accountsPerEnv: parseInt(e.target.value) || 1 }))
               }
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Growth horizon (years)
             </label>
             <select
@@ -127,7 +127,7 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
               onChange={(e) =>
                 setDimensions((prev) => ({ ...prev, growthYears: parseInt(e.target.value) }))
               }
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-gray-100"
             >
               <option value={1}>1 year</option>
               <option value={3}>3 years</option>
@@ -138,10 +138,10 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
         </div>
       </div>
 
-      <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+      <div className="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg p-4">
         <div className="flex items-start gap-2">
           <Lightbulb className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-          <div className="text-sm text-amber-800">
+          <div className="text-sm text-amber-800 dark:text-amber-300">
             <p className="font-medium">Capacity Planning Tip</p>
             <p className="mt-1">
               Based on your inputs, you'll need approximately{' '}

@@ -80,7 +80,7 @@ export default function PoolsPage() {
       <div className="flex-1 overflow-auto p-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
-          <h1 className="text-xl font-semibold text-gray-900">Address Pools</h1>
+          <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Address Pools</h1>
           <button
             onClick={() => setShowCreate(!showCreate)}
             className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
@@ -92,34 +92,34 @@ export default function PoolsPage() {
 
         {/* Create form */}
         {showCreate && (
-          <form onSubmit={handleCreate} className="bg-white border rounded-lg p-4 mb-4 space-y-3">
+          <form onSubmit={handleCreate} className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-4 mb-4 space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Name</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Name</label>
                 <input
                   required
                   value={form.name}
                   onChange={e => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-3 py-1.5 border rounded text-sm"
+                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                   placeholder="e.g., prod-us-east-1"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">CIDR</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">CIDR</label>
                 <input
                   required
                   value={form.cidr}
                   onChange={e => setForm({ ...form, cidr: e.target.value })}
-                  className="w-full px-3 py-1.5 border rounded text-sm font-mono"
+                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm font-mono dark:bg-gray-700 dark:text-gray-100"
                   placeholder="e.g., 10.0.0.0/16"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Type</label>
                 <select
                   value={form.type}
                   onChange={e => setForm({ ...form, type: e.target.value as PoolType })}
-                  className="w-full px-3 py-1.5 border rounded text-sm"
+                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                 >
                   <option value="supernet">Supernet</option>
                   <option value="region">Region</option>
@@ -129,11 +129,11 @@ export default function PoolsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Status</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Status</label>
                 <select
                   value={form.status}
                   onChange={e => setForm({ ...form, status: e.target.value as PoolStatus })}
-                  className="w-full px-3 py-1.5 border rounded text-sm"
+                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                 >
                   <option value="active">Active</option>
                   <option value="planned">Planned</option>
@@ -141,11 +141,11 @@ export default function PoolsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Account</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Account</label>
                 <select
                   value={form.account_id ?? ''}
                   onChange={e => setForm({ ...form, account_id: e.target.value ? Number(e.target.value) : undefined })}
-                  className="w-full px-3 py-1.5 border rounded text-sm"
+                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                 >
                   <option value="">None</option>
                   {accounts.map(a => (
@@ -154,11 +154,11 @@ export default function PoolsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Parent Pool</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Parent Pool</label>
                 <select
                   value={form.parent_id ?? ''}
                   onChange={e => setForm({ ...form, parent_id: e.target.value ? Number(e.target.value) : undefined })}
-                  className="w-full px-3 py-1.5 border rounded text-sm"
+                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                 >
                   <option value="">None (root pool)</option>
                   {pools.map(p => (
@@ -168,11 +168,11 @@ export default function PoolsPage() {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Description</label>
               <textarea
                 value={form.description || ''}
                 onChange={e => setForm({ ...form, description: e.target.value })}
-                className="w-full px-3 py-1.5 border rounded text-sm"
+                className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                 rows={2}
                 placeholder="Optional description"
               />
@@ -188,7 +188,7 @@ export default function PoolsPage() {
               <button
                 type="button"
                 onClick={() => setShowCreate(false)}
-                className="px-4 py-1.5 border text-sm rounded hover:bg-gray-50"
+                className="px-4 py-1.5 border dark:border-gray-600 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300"
               >
                 Cancel
               </button>
@@ -198,63 +198,63 @@ export default function PoolsPage() {
 
         {/* Search */}
         <div className="relative mb-4">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search pools by name, CIDR, or description..."
-            className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm"
+            className="w-full pl-9 pr-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
           />
         </div>
 
         {/* Error */}
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded mb-4">
+          <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm p-3 rounded mb-4">
             {error}
           </div>
         )}
 
         {/* Table */}
         {loading ? (
-          <div className="text-center py-12 text-gray-400">Loading pools...</div>
+          <div className="text-center py-12 text-gray-400 dark:text-gray-500">Loading pools...</div>
         ) : filteredPools.length === 0 ? (
           <div className="text-center py-12">
-            <p className="text-gray-500">{search ? 'No pools match your search' : 'No pools yet. Create one to get started.'}</p>
+            <p className="text-gray-500 dark:text-gray-400">{search ? 'No pools match your search' : 'No pools yet. Create one to get started.'}</p>
           </div>
         ) : (
-          <div className="bg-white border rounded-lg overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+          <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg overflow-hidden">
+            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">CIDR</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">IPs</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
-                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">CIDR</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">IPs</th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Created</th>
+                  <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                 {filteredPools.map(p => (
-                  <tr key={p.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2 text-sm font-medium text-gray-900">{p.name}</td>
-                    <td className="px-4 py-2 text-sm font-mono text-gray-600">{p.cidr}</td>
+                  <tr key={p.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                    <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{p.name}</td>
+                    <td className="px-4 py-2 text-sm font-mono text-gray-600 dark:text-gray-300">{p.cidr}</td>
                     <td className="px-4 py-2"><StatusBadge label={p.type} variant="type" /></td>
                     <td className="px-4 py-2"><StatusBadge label={p.status} /></td>
-                    <td className="px-4 py-2 text-sm text-gray-500">{formatHostCount(getHostCount(p.cidr))}</td>
-                    <td className="px-4 py-2 text-sm text-gray-400">{formatTimeAgo(p.created_at)}</td>
+                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{formatHostCount(getHostCount(p.cidr))}</td>
+                    <td className="px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(p.created_at)}</td>
                     <td className="px-4 py-2 text-right">
                       <button
                         onClick={() => handleSelectPool(p)}
-                        className="text-blue-600 hover:text-blue-800 p-1"
+                        className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 p-1"
                         title="View details"
                       >
                         <ChevronRight className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDelete(p)}
-                        className="text-red-400 hover:text-red-600 p-1 ml-1"
+                        className="text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400 p-1 ml-1"
                         title="Delete"
                       >
                         <Trash2 className="w-4 h-4" />

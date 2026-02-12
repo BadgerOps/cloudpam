@@ -89,21 +89,21 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
-        className="bg-white rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] overflow-auto"
+        className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] overflow-auto"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b">
-          <h2 className="text-lg font-semibold text-gray-900">Import / Export</h2>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
-            <X className="w-5 h-5 text-gray-500" />
+        <div className="flex items-center justify-between px-6 py-4 border-b dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Import / Export</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded">
+            <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
           </button>
         </div>
 
-        <div className="grid grid-cols-2 divide-x">
+        <div className="grid grid-cols-2 divide-x dark:divide-gray-700">
           {/* Export */}
           <div className="p-6">
-            <h3 className="flex items-center gap-2 font-semibold text-gray-900 mb-4">
+            <h3 className="flex items-center gap-2 font-semibold text-gray-900 dark:text-gray-100 mb-4">
               <Download className="w-4 h-4" />
               Export Data
             </h3>
@@ -132,17 +132,17 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
 
           {/* Import */}
           <div className="p-6">
-            <h3 className="flex items-center gap-2 font-semibold text-gray-900 mb-4">
+            <h3 className="flex items-center gap-2 font-semibold text-gray-900 dark:text-gray-100 mb-4">
               <Upload className="w-4 h-4" />
               Import Data
             </h3>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Import Type</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Import Type</label>
                 <select
                   value={importType}
                   onChange={e => setImportType(e.target.value as 'accounts' | 'pools')}
-                  className="w-full px-3 py-1.5 border rounded text-sm"
+                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                 >
                   <option value="accounts">Accounts</option>
                   <option value="pools">Pools</option>
@@ -150,7 +150,7 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">CSV File</label>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">CSV File</label>
                 <input
                   ref={fileRef}
                   type="file"
@@ -160,7 +160,7 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
                 />
                 <button
                   onClick={() => fileRef.current?.click()}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded-lg text-sm text-gray-500 hover:border-blue-300 hover:text-blue-600"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed dark:border-gray-600 rounded-lg text-sm text-gray-500 dark:text-gray-400 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600 dark:hover:text-blue-400"
                 >
                   <FileText className="w-4 h-4" />
                   {importFile ? importFile.name : 'Choose CSV file...'}
@@ -170,19 +170,19 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
               {/* Preview */}
               {importPreview.length > 0 && (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full text-xs border rounded">
+                  <table className="min-w-full text-xs border dark:border-gray-600 rounded">
                     <thead>
-                      <tr className="bg-gray-50">
+                      <tr className="bg-gray-50 dark:bg-gray-800">
                         {importPreview[0].map((h, i) => (
-                          <th key={i} className="px-2 py-1 text-left font-medium text-gray-500">{h}</th>
+                          <th key={i} className="px-2 py-1 text-left font-medium text-gray-500 dark:text-gray-400">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
                       {importPreview.slice(1, 6).map((row, ri) => (
-                        <tr key={ri} className="border-t">
+                        <tr key={ri} className="border-t dark:border-gray-700">
                           {row.map((cell, ci) => (
-                            <td key={ci} className="px-2 py-1 text-gray-600 truncate max-w-[120px]">{cell}</td>
+                            <td key={ci} className="px-2 py-1 text-gray-600 dark:text-gray-300 truncate max-w-[120px]">{cell}</td>
                           ))}
                         </tr>
                       ))}
@@ -201,11 +201,11 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
 
               {/* Result */}
               {importResult && (
-                <div className="bg-gray-50 border rounded p-3 text-sm">
-                  <div className="text-green-700">Created: {importResult.created}</div>
-                  <div className="text-gray-500">Skipped: {importResult.skipped}</div>
+                <div className="bg-gray-50 dark:bg-gray-800 border dark:border-gray-600 rounded p-3 text-sm">
+                  <div className="text-green-700 dark:text-green-300">Created: {importResult.created}</div>
+                  <div className="text-gray-500 dark:text-gray-400">Skipped: {importResult.skipped}</div>
                   {importResult.errors.length > 0 && (
-                    <div className="text-red-600 mt-1">
+                    <div className="text-red-600 dark:text-red-400 mt-1">
                       Errors: {importResult.errors.join('; ')}
                     </div>
                   )}
@@ -216,7 +216,7 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
         </div>
 
         {/* CSV format help */}
-        <div className="px-6 py-4 bg-gray-50 border-t text-xs text-gray-500">
+        <div className="px-6 py-4 bg-gray-50 dark:bg-gray-800 border-t dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400">
           <strong>CSV Format:</strong> Accounts: key,name,provider,tier,environment,regions |
           Pools: name,cidr,parent_id,account_id,type,status,description
         </div>
