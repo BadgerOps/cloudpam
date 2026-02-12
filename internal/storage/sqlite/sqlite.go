@@ -364,7 +364,7 @@ func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
 
 // Accounts
 func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
-    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at FROM accounts ORDER BY id ASC`)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts ORDER BY id ASC`)
     if err != nil {
         return nil, err
     }
@@ -374,8 +374,8 @@ func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
         var a domain.Account
         var ts string
         var provider, extid, desc, platform, tier, env sql.NullString
-        var regions sql.NullString
-        if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts); err != nil {
+        var regions, updatedAt sql.NullString
+        if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
             return nil, err
         }
         if provider.Valid { a.Provider = provider.String }
@@ -390,6 +390,9 @@ func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
         }
         if t, e := time.Parse(time.RFC3339, ts); e == nil {
             a.CreatedAt = t
+        }
+        if updatedAt.Valid {
+            if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil { a.UpdatedAt = t }
         }
         out = append(out, a)
     }
@@ -414,28 +417,43 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
 }
 
 func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {
-    row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, created_at FROM accounts WHERE id=?`, id)
+    row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=?`, id)
     var a domain.Account
     var ts string
-    if err := row.Scan(&a.ID, &a.Key, &a.Name, &a.Provider, &a.ExternalID, &a.Description, &ts); err != nil {
+    var provider, extid, desc, platform, tier, env sql.NullString
+    var regions, updatedAt sql.NullString
+    if err := row.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
         if errors.Is(err, sql.ErrNoRows) { return domain.Account{}, false, nil }
         return domain.Account{}, false, err
     }
+    if provider.Valid { a.Provider = provider.String }
+    if extid.Valid { a.ExternalID = extid.String }
+    if desc.Valid { a.Description = desc.String }
+    if platform.Valid { a.Platform = platform.String }
+    if tier.Valid { a.Tier = tier.String }
+    if env.Valid { a.Environment = env.String }
+    if regions.Valid && regions.String != "" {
+        var arr []string
+        if err := json.Unmarshal([]byte(regions.String), &arr); err == nil { a.Regions = arr }
+    }
     if t, e := time.Parse(time.RFC3339, ts); e == nil { a.CreatedAt = t }
+    if updatedAt.Valid {
+        if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil { a.UpdatedAt = t }
+    }
     return a, true, nil
 }
 
 func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
     // Fetch current
-    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at FROM accounts WHERE id=?`, id)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=?`, id)
     if err != nil { return domain.Account{}, false, err }
     defer rows.Close()
     if !rows.Next() { return domain.Account{}, false, nil }
     var a domain.Account
     var ts string
     var provider, extid, desc, platform, tier, env sql.NullString
-    var regions sql.NullString
-    if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts); err != nil { return domain.Account{}, false, err }
+    var regions, updatedAt sql.NullString
+    if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil { return domain.Account{}, false, err }
     if provider.Valid { a.Provider = provider.String }
     if extid.Valid { a.ExternalID = extid.String }
     if desc.Valid { a.Description = desc.String }
@@ -453,9 +471,11 @@ func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Accou
     a.Environment = update.Environment
     if update.Regions != nil { a.Regions = append([]string(nil), update.Regions...) }
     // persist
+    now := time.Now().UTC()
+    a.UpdatedAt = now
     var regionsOut *string
     if a.Regions != nil { if b, e := json.Marshal(a.Regions); e == nil { s := string(b); regionsOut = &s } }
-    if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET name=?, provider=?, external_id=?, description=?, platform=?, tier=?, environment=?, regions=? WHERE id=?`, a.Name, a.Provider, a.ExternalID, a.Description, a.Platform, a.Tier, a.Environment, regionsOut, id); err != nil {
+    if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET name=?, provider=?, external_id=?, description=?, platform=?, tier=?, environment=?, regions=?, updated_at=? WHERE id=?`, a.Name, a.Provider, a.ExternalID, a.Description, a.Platform, a.Tier, a.Environment, regionsOut, now.Format(time.RFC3339), id); err != nil {
         return domain.Account{}, false, err
     }
     return a, true, nil

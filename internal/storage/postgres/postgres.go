@@ -697,7 +697,7 @@ func calculatePoolStatsFromMap(p domain.Pool, poolMap map[int64]domain.Pool) dom
 func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT seq_id, key, name, provider, external_id, description,
-			platform, tier, environment, regions, created_at
+			platform, tier, environment, regions, created_at, updated_at
 		FROM accounts
 		WHERE organization_id = $1 AND deleted_at IS NULL
 		ORDER BY seq_id ASC`, s.orgID)
@@ -721,13 +721,13 @@ func scanAccount(rows pgx.Rows) (domain.Account, error) {
 	var a domain.Account
 	var provider, externalID, description, platform, tier, environment *string
 	var regionsJSON []byte
-	var createdAt time.Time
+	var createdAt, updatedAt time.Time
 
 	if err := rows.Scan(
 		&a.ID, &a.Key, &a.Name,
 		&provider, &externalID, &description,
 		&platform, &tier, &environment,
-		&regionsJSON, &createdAt,
+		&regionsJSON, &createdAt, &updatedAt,
 	); err != nil {
 		return domain.Account{}, err
 	}
@@ -751,6 +751,7 @@ func scanAccount(rows pgx.Rows) (domain.Account, error) {
 		a.Environment = *environment
 	}
 	a.CreatedAt = createdAt
+	a.UpdatedAt = updatedAt
 
 	if len(regionsJSON) > 0 {
 		_ = json.Unmarshal(regionsJSON, &a.Regions)
@@ -774,10 +775,11 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
 	var regionsOut []byte
 	var createdAt time.Time
 
+	var updatedAt time.Time
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO accounts (organization_id, key, name, provider, external_id, description, platform, tier, environment, regions)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
-		RETURNING seq_id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at`,
+		RETURNING seq_id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at`,
 		s.orgID, in.Key, in.Name,
 		nullStr(in.Provider), nullStr(in.ExternalID), nullStr(in.Description),
 		nullStr(in.Platform), nullStr(in.Tier), nullStr(in.Environment),
@@ -786,7 +788,7 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
 		&a.ID, &a.Key, &a.Name,
 		&provider, &externalID, &description,
 		&platform, &tier, &environment,
-		&regionsOut, &createdAt,
+		&regionsOut, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -814,6 +816,7 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
 		a.Environment = *environment
 	}
 	a.CreatedAt = createdAt
+	a.UpdatedAt = updatedAt
 	if len(regionsOut) > 0 {
 		_ = json.Unmarshal(regionsOut, &a.Regions)
 	}
@@ -901,7 +904,7 @@ func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error
 func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT seq_id, key, name, provider, external_id, description,
-			platform, tier, environment, regions, created_at
+			platform, tier, environment, regions, created_at, updated_at
 		FROM accounts
 		WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID)
 	if err != nil {

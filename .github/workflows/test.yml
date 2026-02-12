@@ -40,6 +40,80 @@ jobs:
       - name: Test with -race
         run: go test -race ./... -v
 
+  test-sqlite:
+    name: SQLite Tests (race)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-sqlite-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-sqlite-
+            ${{ runner.os }}-go-
+
+      - name: Build (SQLite)
+        run: go build -tags sqlite ./...
+
+      - name: Test with -race (SQLite)
+        run: go test -tags sqlite -race ./... -v
+
+  test-postgres:
+    name: PostgreSQL Tests (race)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: cloudpam_test
+          POSTGRES_USER: cloudpam
+          POSTGRES_PASSWORD: cloudpam
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://cloudpam:cloudpam@localhost:5432/cloudpam_test?sslmode=disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
+      - name: Cache Go build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-postgres-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-postgres-
+            ${{ runner.os }}-go-
+
+      - name: Build (PostgreSQL)
+        run: go build -tags postgres ./...
+
+      - name: Test with -race (PostgreSQL)
+        run: go test -tags postgres -race ./... -v
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest

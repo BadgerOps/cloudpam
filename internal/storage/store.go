@@ -249,6 +249,7 @@ func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount
 	defer m.mu.Unlock()
 	id := m.nextAccount
 	m.nextAccount++
+	now := time.Now().UTC()
 	a := domain.Account{
 		ID:          id,
 		Key:         in.Key,
@@ -260,7 +261,8 @@ func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount
 		Tier:        in.Tier,
 		Environment: in.Environment,
 		Regions:     append([]string(nil), in.Regions...),
-		CreatedAt:   time.Now().UTC(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	m.accounts[id] = a
 	return a, nil
@@ -286,6 +288,7 @@ func (m *MemoryStore) UpdateAccount(ctx context.Context, id int64, update domain
 	if update.Regions != nil {
 		a.Regions = append([]string(nil), update.Regions...)
 	}
+	a.UpdatedAt = time.Now().UTC()
 	m.accounts[id] = a
 	return a, true, nil
 }
