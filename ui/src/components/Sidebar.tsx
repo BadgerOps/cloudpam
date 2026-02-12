@@ -9,7 +9,11 @@ import {
   Upload,
   Settings,
   Map,
+  Sun,
+  Moon,
+  Monitor,
 } from 'lucide-react'
+import { useTheme } from '../hooks/useTheme'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
@@ -26,8 +30,12 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ onImportExport }: SidebarProps) {
+  const { mode, cycle } = useTheme()
+  const ThemeIcon = mode === 'dark' ? Moon : mode === 'light' ? Sun : Monitor
+  const themeLabel = mode === 'system' ? 'System' : mode === 'dark' ? 'Dark' : 'Light'
+
   return (
-    <aside className="w-64 bg-gray-900 text-white flex flex-col flex-shrink-0">
+    <aside className="w-64 bg-gray-900 dark:bg-gray-950 text-white flex flex-col flex-shrink-0">
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-blue-600 rounded-lg">
@@ -69,6 +77,14 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
         <button className="w-full flex items-center gap-3 px-3 py-2 text-gray-300 hover:bg-gray-800 rounded-lg mt-1">
           <Settings className="w-5 h-5" />
           <span>Settings</span>
+        </button>
+        <button
+          onClick={cycle}
+          aria-label={`Theme: ${themeLabel}. Click to cycle.`}
+          className="w-full flex items-center gap-3 px-3 py-2 text-gray-300 hover:bg-gray-800 rounded-lg mt-1"
+        >
+          <ThemeIcon className="w-5 h-5" />
+          <span>{themeLabel}</span>
         </button>
       </div>
     </aside>

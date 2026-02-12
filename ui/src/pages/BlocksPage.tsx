@@ -45,24 +45,24 @@ export default function BlocksPage() {
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold text-gray-900">Allocated Blocks</h1>
+        <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Allocated Blocks</h1>
       </div>
 
       {/* Filters */}
       <div className="flex gap-3 mb-4">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search blocks by name, CIDR, account, or parent..."
-            className="w-full pl-9 pr-3 py-2 border rounded-lg text-sm"
+            className="w-full pl-9 pr-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
           />
         </div>
         <select
           value={accountFilter}
           onChange={e => setAccountFilter(e.target.value)}
-          className="px-3 py-2 border rounded-lg text-sm"
+          className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Accounts</option>
           {accounts.map(a => (
@@ -73,30 +73,30 @@ export default function BlocksPage() {
 
       {/* Summary */}
       <div className="grid grid-cols-3 gap-4 mb-4">
-        <div className="bg-white border rounded-lg p-3 text-center">
-          <div className="text-lg font-bold text-gray-900">{summaryStats.totalBlocks}</div>
-          <div className="text-xs text-gray-500">Total Blocks</div>
+        <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-3 text-center">
+          <div className="text-lg font-bold text-gray-900 dark:text-gray-100">{summaryStats.totalBlocks}</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400">Total Blocks</div>
         </div>
-        <div className="bg-white border rounded-lg p-3 text-center">
-          <div className="text-lg font-bold text-gray-900">{formatHostCount(summaryStats.totalIPs)}</div>
-          <div className="text-xs text-gray-500">Total IPs</div>
+        <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-3 text-center">
+          <div className="text-lg font-bold text-gray-900 dark:text-gray-100">{formatHostCount(summaryStats.totalIPs)}</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400">Total IPs</div>
         </div>
-        <div className="bg-white border rounded-lg p-3 text-center">
-          <div className="text-lg font-bold text-gray-900">{summaryStats.uniqueAccounts}</div>
-          <div className="text-xs text-gray-500">Unique Accounts</div>
+        <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-3 text-center">
+          <div className="text-lg font-bold text-gray-900 dark:text-gray-100">{summaryStats.uniqueAccounts}</div>
+          <div className="text-xs text-gray-500 dark:text-gray-400">Unique Accounts</div>
         </div>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm p-3 rounded mb-4">{error}</div>
+        <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm p-3 rounded mb-4">{error}</div>
       )}
 
       {loading ? (
-        <div className="text-center py-12 text-gray-400">Loading blocks...</div>
+        <div className="text-center py-12 text-gray-400 dark:text-gray-500">Loading blocks...</div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-12">
-          <LayoutGrid className="w-12 h-12 mx-auto mb-2 text-gray-300" />
-          <p className="text-gray-500">No blocks found</p>
+          <LayoutGrid className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-gray-600" />
+          <p className="text-gray-500 dark:text-gray-400">No blocks found</p>
           <button
             onClick={() => navigate('/pools')}
             className="mt-2 text-sm text-blue-600 hover:text-blue-800"
@@ -105,31 +105,31 @@ export default function BlocksPage() {
           </button>
         </div>
       ) : (
-        <div className="bg-white border rounded-lg overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-800">
               <tr>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">CIDR</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Parent</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Account</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Tier</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">IPs</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">CIDR</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Parent</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Account</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Tier</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">IPs</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
               {filtered.map(b => {
                 const hostCount = getHostCount(b.cidr)
                 return (
-                  <tr key={b.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-2 text-sm font-medium text-gray-900">{b.name}</td>
-                    <td className="px-4 py-2 text-sm font-mono text-gray-600">{b.cidr}</td>
-                    <td className="px-4 py-2 text-sm text-gray-500">{b.parent_name || '-'}</td>
-                    <td className="px-4 py-2 text-sm text-gray-500">{b.account_name || '-'}</td>
+                  <tr key={b.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                    <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{b.name}</td>
+                    <td className="px-4 py-2 text-sm font-mono text-gray-600 dark:text-gray-300">{b.cidr}</td>
+                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{b.parent_name || '-'}</td>
+                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{b.account_name || '-'}</td>
                     <td className="px-4 py-2">
                       {b.account_tier && <StatusBadge label={b.account_tier} variant="tier" />}
                     </td>
-                    <td className="px-4 py-2 text-sm text-gray-500">{formatHostCount(hostCount)}</td>
+                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{formatHostCount(hostCount)}</td>
                   </tr>
                 )
               })}

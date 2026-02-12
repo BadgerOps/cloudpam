@@ -8,7 +8,7 @@ const TYPE_COLORS: Record<string, string> = {
   region: 'bg-blue-500',
   environment: 'bg-green-500',
   vpc: 'bg-amber-500',
-  subnet: 'bg-gray-400',
+  subnet: 'bg-gray-400 dark:bg-gray-500',
 }
 
 interface Props {
@@ -25,32 +25,32 @@ export default function TreeNode({ node, depth = 0, defaultExpanded }: Props) {
   return (
     <div className="select-none">
       <div
-        className={`flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-100 cursor-pointer ${
-          node.conflict ? 'bg-red-50 hover:bg-red-100' : ''
+        className={`flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer ${
+          node.conflict ? 'bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50' : ''
         }`}
         style={{ paddingLeft: `${depth * 20 + 8}px` }}
         onClick={() => hasChildren && setExpanded(!expanded)}
       >
         {hasChildren ? (
           expanded ? (
-            <ChevronDown className="w-4 h-4 text-gray-400" />
+            <ChevronDown className="w-4 h-4 text-gray-400 dark:text-gray-500" />
           ) : (
-            <ChevronRight className="w-4 h-4 text-gray-400" />
+            <ChevronRight className="w-4 h-4 text-gray-400 dark:text-gray-500" />
           )
         ) : (
           <div className="w-4" />
         )}
 
-        <div className={`w-2 h-2 rounded-full ${TYPE_COLORS[node.type] ?? 'bg-gray-400'}`} />
+        <div className={`w-2 h-2 rounded-full ${TYPE_COLORS[node.type] ?? 'bg-gray-400 dark:bg-gray-500'}`} />
 
-        <span className="font-medium text-gray-900">{node.name}</span>
-        <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded font-mono text-gray-600">
+        <span className="font-medium text-gray-900 dark:text-gray-100">{node.name}</span>
+        <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded font-mono text-gray-600 dark:text-gray-300">
           {node.cidr}
         </code>
-        <span className="text-xs text-gray-400">({formatHostCount(hosts)} usable)</span>
+        <span className="text-xs text-gray-400 dark:text-gray-500">({formatHostCount(hosts)} usable)</span>
 
         {node.conflict && (
-          <span className="flex items-center gap-1 text-xs text-red-600 bg-red-100 px-2 py-0.5 rounded">
+          <span className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900 px-2 py-0.5 rounded">
             <AlertTriangle className="w-3 h-3" />
             Conflict
           </span>

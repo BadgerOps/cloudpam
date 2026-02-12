@@ -4,8 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CloudPAM - IP Schema Planner</title>
-    <script type="module" crossorigin src="/assets/index-Yic-O9R1.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-C58W6ouh.css">
+    <script>
+      (function() {
+        var t = localStorage.getItem('theme');
+        if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-D32VKEhq.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DvTcldxG.css">
   </head>
   <body>
     <div id="root"></div>

@@ -46,35 +46,35 @@ export function getUtilizationColor(util: number): string {
 
 export function getProviderBadgeClass(provider: string): string {
   const classes: Record<string, string> = {
-    aws: 'bg-amber-100 text-amber-700',
-    gcp: 'bg-blue-100 text-blue-700',
-    azure: 'bg-sky-100 text-sky-700',
+    aws: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
+    gcp: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
+    azure: 'bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300',
   }
-  return classes[provider] || 'bg-gray-100 text-gray-700'
+  return classes[provider] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
 }
 
 export function getTierBadgeClass(tier: string): string {
   const classes: Record<string, string> = {
-    prd: 'bg-red-100 text-red-700',
-    stg: 'bg-amber-100 text-amber-700',
-    dev: 'bg-green-100 text-green-700',
-    sbx: 'bg-gray-100 text-gray-700',
+    prd: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    stg: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
+    dev: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300',
+    sbx: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
   }
-  return classes[tier] || 'bg-gray-100 text-gray-700'
+  return classes[tier] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
 }
 
 export function getStatusBadgeClass(status: string): string {
   const classes: Record<string, string> = {
-    active: 'bg-green-100 text-green-700',
-    planned: 'bg-gray-100 text-gray-700',
-    deprecated: 'bg-red-100 text-red-700',
+    active: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300',
+    planned: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
+    deprecated: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
   }
-  return classes[status] || 'bg-gray-100 text-gray-700'
+  return classes[status] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
 }
 
 export function getActionBadgeClass(action: string): string {
-  if (action?.includes('create')) return 'bg-green-100 text-green-700'
-  if (action?.includes('update')) return 'bg-blue-100 text-blue-700'
-  if (action?.includes('delete')) return 'bg-red-100 text-red-700'
-  return 'bg-gray-100 text-gray-700'
+  if (action?.includes('create')) return 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+  if (action?.includes('update')) return 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+  if (action?.includes('delete')) return 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+  return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
 }

@@ -57,46 +57,46 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden"
+        className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Search input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b">
-          <Search className="w-5 h-5 text-gray-400 flex-shrink-0" />
+        <div className="flex items-center gap-3 px-4 py-3 border-b dark:border-gray-700">
+          <Search className="w-5 h-5 text-gray-400 dark:text-gray-500 flex-shrink-0" />
           <input
             ref={inputRef}
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search pools, accounts..."
-            className="flex-1 text-sm outline-none"
+            className="flex-1 text-sm outline-none dark:bg-gray-800 dark:text-gray-100 dark:placeholder-gray-400"
           />
-          <kbd className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">Esc</kbd>
+          <kbd className="text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">Esc</kbd>
         </div>
 
         {/* Results */}
         <div className="max-h-[50vh] overflow-auto">
           {!query.trim() ? (
-            <div className="p-6 text-center text-sm text-gray-400">
+            <div className="p-6 text-center text-sm text-gray-400 dark:text-gray-500">
               Start typing to search pools and accounts...
             </div>
           ) : results.pools.length === 0 && results.accounts.length === 0 ? (
-            <div className="p-6 text-center text-sm text-gray-400">
+            <div className="p-6 text-center text-sm text-gray-400 dark:text-gray-500">
               No results for "{query}"
             </div>
           ) : (
             <div>
               {results.pools.length > 0 && (
                 <div>
-                  <div className="px-4 py-2 text-xs font-medium text-gray-500 uppercase bg-gray-50">Pools</div>
+                  <div className="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-800">Pools</div>
                   {results.pools.map(p => (
                     <button
                       key={p.id}
                       onClick={() => handleSelect('pool')}
-                      className="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-blue-50 text-left"
+                      className="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-blue-50 dark:hover:bg-blue-900/30 text-left"
                     >
-                      <Server className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                      <span className="font-mono text-xs text-gray-500 w-32 flex-shrink-0">{p.cidr}</span>
-                      <span className="text-gray-900 truncate">{p.name}</span>
+                      <Server className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                      <span className="font-mono text-xs text-gray-500 dark:text-gray-400 w-32 flex-shrink-0">{p.cidr}</span>
+                      <span className="text-gray-900 dark:text-gray-100 truncate">{p.name}</span>
                       <span className="ml-auto flex gap-1.5 flex-shrink-0">
                         <StatusBadge label={p.type} variant="type" />
                         <StatusBadge label={p.status} />
@@ -107,17 +107,17 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
               )}
               {results.accounts.length > 0 && (
                 <div>
-                  <div className="px-4 py-2 text-xs font-medium text-gray-500 uppercase bg-gray-50">Accounts</div>
+                  <div className="px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-800">Accounts</div>
                   {results.accounts.map(a => (
                     <button
                       key={a.id}
                       onClick={() => handleSelect('account')}
-                      className="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-blue-50 text-left"
+                      className="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-blue-50 dark:hover:bg-blue-900/30 text-left"
                     >
-                      <Cloud className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                      <span className="text-gray-900">{a.name}</span>
+                      <Cloud className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
+                      <span className="text-gray-900 dark:text-gray-100">{a.name}</span>
                       <StatusBadge label={a.provider || 'other'} variant="provider" />
-                      <span className="ml-auto text-xs text-gray-400 font-mono">{a.key}</span>
+                      <span className="ml-auto text-xs text-gray-400 dark:text-gray-500 font-mono">{a.key}</span>
                     </button>
                   ))}
                 </div>
