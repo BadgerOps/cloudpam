@@ -25,6 +25,21 @@ sqlite-build: ensure-cache
 sqlite-run: sqlite-build
     SQLITE_DSN="file:cloudpam.db?cache=shared&_fk=1" ./cloudpam
 
+postgres-build: ensure-cache
+    {{go-env}} go build -tags postgres -o cloudpam ./cmd/cloudpam
+
+postgres-run: postgres-build
+    DATABASE_URL="postgres://cloudpam:cloudpam@localhost:5432/cloudpam?sslmode=disable" ./cloudpam
+
+postgres-up:
+    docker compose up -d postgres
+
+postgres-down:
+    docker compose down
+
+postgres-test: ensure-cache
+    {{go-env}} go test -tags postgres ./...
+
 fmt: ensure-cache
     {{go-env}} go fmt ./...
 
