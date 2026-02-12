@@ -27,7 +27,7 @@ func main() {
 		addr = ":" + p
 	}
 	flag.StringVar(&addr, "addr", addr, "listen address (host:port)")
-	migrate := flag.String("migrate", "", "run migrations: 'up' to apply, 'status' to show status (sqlite builds only)")
+	migrate := flag.String("migrate", "", "run migrations: 'up' to apply, 'status' to show status")
 	flag.Parse()
 
 	// Initialize Sentry if DSN is provided
@@ -199,20 +199,26 @@ func envOr(k, def string) string {
 	return def
 }
 
-// runMigrationsCLI executes migration commands (sqlite builds only).
+// runMigrationsCLI executes migration commands.
 func runMigrationsCLI(logger observability.Logger, cmd string) {
-	dsn := os.Getenv("SQLITE_DSN")
-	if dsn == "" {
-		dsn = "file:cloudpam.db?cache=shared&_fk=1"
-	}
 	switch cmd {
 	case "up":
-		// initialize store (runs migrations in sqlite build), then show status
-		_ = selectStore(logger)
-		fallthrough
+		// Initialize store (runs migrations automatically), then show status
+		st := selectStore(logger)
+		_ = st.Close()
+		runMigrationsCLI(logger, "status")
 	case "status":
 		status := "migrations status not available in this build"
+		// Try SQLite status first
+		dsn := os.Getenv("SQLITE_DSN")
+		if dsn == "" {
+			dsn = "file:cloudpam.db?cache=shared&_fk=1"
+		}
 		if s := sqliteStatus(dsn); s != "" {
+			status = s
+		}
+		// Try PostgreSQL status
+		if s := postgresStatus(); s != "" {
 			status = s
 		}
 		logger.Info("migrations status", "status", status)
