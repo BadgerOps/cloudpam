@@ -66,6 +66,36 @@ func selectKeyStore(logger observability.Logger) auth.KeyStore {
 	return ks
 }
 
+// selectUserStore returns a SQLite-backed user store.
+func selectUserStore(logger observability.Logger) auth.UserStore {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	dsn := sqliteDSN()
+	us, err := auth.NewSQLiteUserStore(dsn)
+	if err != nil {
+		logger.Error("sqlite user store init failed; falling back to memory", "error", err)
+		return auth.NewMemoryUserStore()
+	}
+	logger.Info("using sqlite user store")
+	return us
+}
+
+// selectSessionStore returns a SQLite-backed session store.
+func selectSessionStore(logger observability.Logger) auth.SessionStore {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	dsn := sqliteDSN()
+	ss, err := auth.NewSQLiteSessionStore(dsn)
+	if err != nil {
+		logger.Error("sqlite session store init failed; falling back to memory", "error", err)
+		return auth.NewMemorySessionStore()
+	}
+	logger.Info("using sqlite session store")
+	return ss
+}
+
 // sqliteStatus returns migration status when built with sqlite tag.
 func sqliteStatus(dsn string) string {
 	s, err := sqlitestore.Status(dsn)

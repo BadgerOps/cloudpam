@@ -36,6 +36,16 @@ func selectKeyStore(logger observability.Logger) auth.KeyStore {
 	return auth.NewMemoryKeyStore()
 }
 
+// selectUserStore returns an in-memory user store.
+func selectUserStore(_ observability.Logger) auth.UserStore {
+	return auth.NewMemoryUserStore()
+}
+
+// selectSessionStore returns an in-memory session store.
+func selectSessionStore(_ observability.Logger) auth.SessionStore {
+	return auth.NewMemorySessionStore()
+}
+
 // sqliteStatus returns schema status string when not built with sqlite tag.
 func sqliteStatus(dsn string) string { return "" }
 

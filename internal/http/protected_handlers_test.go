@@ -40,7 +40,7 @@ func setupProtectedTestServer(t *testing.T) (*stdhttp.ServeMux, storage.Store, s
 		t.Fatalf("store api key: %v", err)
 	}
 
-	srv.RegisterProtectedRoutes(keyStore, slogger)
+	srv.RegisterProtectedRoutes(keyStore, auth.NewMemorySessionStore(), auth.NewMemoryUserStore(), slogger)
 	return mux, st, plaintext
 }
 
@@ -352,7 +352,7 @@ func setupViewerProtectedTestServer(t *testing.T) (*stdhttp.ServeMux, storage.St
 		t.Fatalf("store api key: %v", err)
 	}
 
-	srv.RegisterProtectedRoutes(keyStore, slogger)
+	srv.RegisterProtectedRoutes(keyStore, auth.NewMemorySessionStore(), auth.NewMemoryUserStore(), slogger)
 	return mux, st, plaintext
 }
 
@@ -627,7 +627,7 @@ func TestRegisterProtectedRoutes_NilLogger(t *testing.T) {
 
 	keyStore := auth.NewMemoryKeyStore()
 	// Pass nil logger — should use slog.Default() and not panic
-	srv.RegisterProtectedRoutes(keyStore, nil)
+	srv.RegisterProtectedRoutes(keyStore, auth.NewMemorySessionStore(), auth.NewMemoryUserStore(), nil)
 
 	// Verify health endpoint still works (public route)
 	req := httptest.NewRequest(stdhttp.MethodGet, "/healthz", nil)

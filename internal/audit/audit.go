@@ -65,10 +65,20 @@ const (
 	ResourcePool    = "pool"
 	ResourceAccount = "account"
 	ResourceAPIKey  = "api_key"
+	ResourceUser    = "user"
+	ResourceSession = "session"
 )
 
 // Valid actor types.
 const (
 	ActorTypeAPIKey    = "api_key"
 	ActorTypeAnonymous = "anonymous"
+	ActorTypeUser      = "user"
+)
+
+// Additional action constants for auth events.
+const (
+	ActionLogin       = "login"
+	ActionLoginFailed = "login_failed"
+	ActionLogout      = "logout"
 )

@@ -29,8 +29,9 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       "ok",
-		"auth_enabled": s.authEnabled,
+		"status":             "ok",
+		"auth_enabled":       s.authEnabled,
+		"local_auth_enabled": s.localAuthEnabled,
 	})
 }
 

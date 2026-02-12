@@ -12,6 +12,7 @@ import AuditPage from './pages/AuditPage'
 import DiscoveryPage from './pages/DiscoveryPage'
 import SchemaPage from './pages/SchemaPage'
 import ApiKeysPage from './pages/ApiKeysPage'
+import UsersPage from './pages/UsersPage'
 
 export default function App() {
   const toastState = useToastState()
@@ -33,6 +34,7 @@ export default function App() {
                 <Route path="discovery" element={<DiscoveryPage />} />
                 <Route path="schema" element={<SchemaPage />} />
                 <Route path="settings/api-keys" element={<ApiKeysPage />} />
+                <Route path="settings/users" element={<UsersPage />} />
               </Route>
             </Route>
           </Routes>

@@ -14,8 +14,10 @@ import (
 // AuthServer extends Server with API key management and audit functionality.
 type AuthServer struct {
 	*Server
-	keyStore    auth.KeyStore
-	auditLogger audit.AuditLogger
+	keyStore     auth.KeyStore
+	sessionStore auth.SessionStore
+	userStore    auth.UserStore
+	auditLogger  audit.AuditLogger
 }
 
 // NewAuthServer creates a new AuthServer with auth and audit capabilities.
@@ -24,6 +26,17 @@ func NewAuthServer(s *Server, keyStore auth.KeyStore, auditLogger audit.AuditLog
 		Server:      s,
 		keyStore:    keyStore,
 		auditLogger: auditLogger,
+	}
+}
+
+// NewAuthServerWithStores creates a new AuthServer with full store access.
+func NewAuthServerWithStores(s *Server, keyStore auth.KeyStore, sessionStore auth.SessionStore, userStore auth.UserStore, auditLogger audit.AuditLogger) *AuthServer {
+	return &AuthServer{
+		Server:       s,
+		keyStore:     keyStore,
+		sessionStore: sessionStore,
+		userStore:    userStore,
+		auditLogger:  auditLogger,
 	}
 }
 
@@ -45,8 +58,14 @@ func (as *AuthServer) RegisterProtectedAuthRoutes(logger *slog.Logger) {
 		logger = slog.Default()
 	}
 
-	// Auth middleware (required for all these endpoints)
-	authMW := AuthMiddleware(as.keyStore, true, logger)
+	// Use dual auth middleware when session/user stores are available,
+	// otherwise fall back to API key only.
+	var authMW Middleware
+	if as.sessionStore != nil && as.userStore != nil {
+		authMW = DualAuthMiddleware(as.keyStore, as.sessionStore, as.userStore, true, logger)
+	} else {
+		authMW = AuthMiddleware(as.keyStore, true, logger)
+	}
 
 	// API key management - requires apikeys permissions
 	as.mux.Handle("/api/v1/auth/keys", authMW(as.protectedAPIKeysHandler(logger)))
@@ -195,6 +214,11 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set owner if created by a session-authenticated user.
+	if user := auth.UserFromContext(ctx); user != nil {
+		apiKey.OwnerID = &user.ID
+	}
+
 	// Store the key
 	if err := as.keyStore.Create(ctx, apiKey); err != nil {
 		as.writeErr(ctx, w, http.StatusInternalServerError, "failed to store key", err.Error())
@@ -207,6 +231,9 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		"key_prefix", apiKey.Prefix,
 		"key_name", apiKey.Name,
 	})
+	if apiKey.OwnerID != nil {
+		fields = append(fields, "owner_id", *apiKey.OwnerID)
+	}
 	as.logger.InfoContext(ctx, "api key created", fields...)
 
 	// Return the key with the plaintext (only time it's shown)
@@ -216,6 +243,7 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		Prefix    string     `json:"prefix"`
 		Name      string     `json:"name"`
 		Scopes    []string   `json:"scopes"`
+		OwnerID   *string    `json:"owner_id,omitempty"`
 		CreatedAt time.Time  `json:"created_at"`
 		ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	}{
@@ -224,6 +252,7 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		Prefix:    apiKey.Prefix,
 		Name:      apiKey.Name,
 		Scopes:    apiKey.Scopes,
+		OwnerID:   apiKey.OwnerID,
 		CreatedAt: apiKey.CreatedAt,
 		ExpiresAt: apiKey.ExpiresAt,
 	}
@@ -231,12 +260,24 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, response)
 }
 
-// listAPIKeys lists all API keys (without secrets).
+// listAPIKeys lists API keys (without secrets).
+// Admins see all keys; non-admin session users see only their own keys.
 // GET /api/v1/auth/keys
 func (as *AuthServer) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	keys, err := as.keyStore.List(ctx)
+	role := auth.GetEffectiveRole(ctx)
+	user := auth.UserFromContext(ctx)
+
+	var keys []*auth.APIKey
+	var err error
+
+	// Non-admin session users only see their own keys.
+	if user != nil && role != auth.RoleAdmin {
+		keys, err = as.keyStore.ListByOwner(ctx, user.ID)
+	} else {
+		keys, err = as.keyStore.List(ctx)
+	}
 	if err != nil {
 		as.writeErr(ctx, w, http.StatusInternalServerError, "failed to list keys", err.Error())
 		return
@@ -248,6 +289,7 @@ func (as *AuthServer) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		Prefix     string     `json:"prefix"`
 		Name       string     `json:"name"`
 		Scopes     []string   `json:"scopes"`
+		OwnerID    *string    `json:"owner_id,omitempty"`
 		CreatedAt  time.Time  `json:"created_at"`
 		ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 		LastUsedAt *time.Time `json:"last_used_at,omitempty"`
@@ -266,6 +308,7 @@ func (as *AuthServer) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 			Prefix:     k.Prefix,
 			Name:       k.Name,
 			Scopes:     k.Scopes,
+			OwnerID:    k.OwnerID,
 			CreatedAt:  k.CreatedAt,
 			ExpiresAt:  k.ExpiresAt,
 			LastUsedAt: k.LastUsedAt,
@@ -296,6 +339,7 @@ func (as *AuthServer) handleAPIKeyByID(w http.ResponseWriter, r *http.Request) {
 }
 
 // revokeAPIKey revokes an API key (soft delete).
+// Non-admin session users can only revoke their own keys.
 // DELETE /api/v1/auth/keys/{id}
 func (as *AuthServer) revokeAPIKey(w http.ResponseWriter, r *http.Request, id string) {
 	ctx := r.Context()
@@ -309,6 +353,16 @@ func (as *AuthServer) revokeAPIKey(w http.ResponseWriter, r *http.Request, id st
 	if key == nil {
 		as.writeErr(ctx, w, http.StatusNotFound, "not found", "")
 		return
+	}
+
+	// Non-admin session users can only revoke their own keys.
+	role := auth.GetEffectiveRole(ctx)
+	user := auth.UserFromContext(ctx)
+	if user != nil && role != auth.RoleAdmin {
+		if key.OwnerID == nil || *key.OwnerID != user.ID {
+			writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden", Detail: "can only revoke your own keys"})
+			return
+		}
 	}
 
 	// Revoke the key

@@ -231,4 +231,61 @@ export interface ApiKeyCreateResponse {
 export interface HealthResponse {
   status: string
   auth_enabled?: boolean
+  local_auth_enabled?: boolean
+}
+
+// --- User types ---
+
+export interface UserInfo {
+  id: string
+  username: string
+  email?: string
+  display_name?: string
+  role: string
+  is_active: boolean
+  created_at: string
+  updated_at?: string
+  last_login_at?: string | null
+}
+
+export interface LoginRequest {
+  username: string
+  password: string
+}
+
+export interface LoginResponse {
+  user: UserInfo
+  expires_at: string
+}
+
+export interface MeResponse {
+  auth_type: 'session' | 'api_key'
+  role: string
+  user?: UserInfo
+  key_id?: string
+  key_name?: string
+}
+
+export interface CreateUserRequest {
+  username: string
+  email?: string
+  display_name?: string
+  role: string
+  password: string
+}
+
+export interface UpdateUserRequest {
+  email?: string
+  display_name?: string
+  role?: string
+  is_active?: boolean
+}
+
+export interface ChangePasswordRequest {
+  current_password?: string
+  new_password: string
+}
+
+export interface UsersListResponse {
+  users: UserInfo[]
 }

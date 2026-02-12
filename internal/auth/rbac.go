@@ -31,6 +31,7 @@ const (
 	ResourceAccounts = "accounts"
 	ResourceAPIKeys  = "apikeys"
 	ResourceAudit    = "audit"
+	ResourceUsers    = "users"
 )
 
 // Action constants for permission checks.
@@ -75,6 +76,11 @@ var RolePermissions = map[Role][]Permission{
 		{ResourceAPIKeys, ActionList},
 		{ResourceAudit, ActionRead},
 		{ResourceAudit, ActionList},
+		{ResourceUsers, ActionCreate},
+		{ResourceUsers, ActionRead},
+		{ResourceUsers, ActionUpdate},
+		{ResourceUsers, ActionDelete},
+		{ResourceUsers, ActionList},
 	},
 	RoleOperator: {
 		// Read/write access to pools and accounts

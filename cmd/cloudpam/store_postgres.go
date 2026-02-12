@@ -66,6 +66,36 @@ func selectKeyStore(logger observability.Logger) auth.KeyStore {
 	return ks
 }
 
+// selectUserStore returns a PostgreSQL-backed user store.
+func selectUserStore(logger observability.Logger) auth.UserStore {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	url := databaseURL()
+	us, err := auth.NewPostgresUserStore(url)
+	if err != nil {
+		logger.Error("postgres user store init failed; falling back to memory", "error", err)
+		return auth.NewMemoryUserStore()
+	}
+	logger.Info("using postgres user store")
+	return us
+}
+
+// selectSessionStore returns a PostgreSQL-backed session store.
+func selectSessionStore(logger observability.Logger) auth.SessionStore {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	url := databaseURL()
+	ss, err := auth.NewPostgresSessionStore(url)
+	if err != nil {
+		logger.Error("postgres session store init failed; falling back to memory", "error", err)
+		return auth.NewMemorySessionStore()
+	}
+	logger.Info("using postgres session store")
+	return ss
+}
+
 // sqliteStatus is a no-op for postgres builds.
 func sqliteStatus(_ string) string { return "" }
 

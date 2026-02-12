@@ -4,7 +4,10 @@ import "context"
 
 type contextKey string
 
-const apiKeyContextKey contextKey = "apiKey"
+const (
+	apiKeyContextKey contextKey = "apiKey"
+	userContextKey   contextKey = "user"
+)
 
 // ContextWithAPIKey returns a new context with the API key stored in it.
 func ContextWithAPIKey(ctx context.Context, key *APIKey) context.Context {
@@ -27,10 +30,36 @@ func APIKeyFromContext(ctx context.Context) *APIKey {
 	return key
 }
 
-// IsAuthenticated returns true if the context contains a valid API key.
+// ContextWithUser returns a new context with the user stored in it.
+func ContextWithUser(ctx context.Context, user *User) context.Context {
+	if user == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, userContextKey, user)
+}
+
+// UserFromContext retrieves the user from the context.
+// Returns nil if no user is present.
+func UserFromContext(ctx context.Context) *User {
+	if ctx == nil {
+		return nil
+	}
+	user, ok := ctx.Value(userContextKey).(*User)
+	if !ok {
+		return nil
+	}
+	return user
+}
+
+// IsAuthenticated returns true if the context contains a valid API key or session.
 func IsAuthenticated(ctx context.Context) bool {
-	key := APIKeyFromContext(ctx)
-	return key != nil && key.IsValid()
+	if key := APIKeyFromContext(ctx); key != nil && key.IsValid() {
+		return true
+	}
+	if session := SessionFromContext(ctx); session != nil && session.IsValid() {
+		return true
+	}
+	return false
 }
 
 // RequireScope checks if the context's API key has the required scope.
@@ -81,11 +110,16 @@ func RoleFromContext(ctx context.Context) Role {
 }
 
 // GetEffectiveRole returns the effective role for the current context.
-// It first checks for an explicit role, then derives one from the API key scopes.
+// It checks: explicit role > session role > API key scopes.
 func GetEffectiveRole(ctx context.Context) Role {
-	// Check for explicit role first (e.g., from session)
+	// Check for explicit role first
 	if role := RoleFromContext(ctx); role != RoleNone {
 		return role
+	}
+
+	// Check for session role
+	if session := SessionFromContext(ctx); session != nil && session.IsValid() {
+		return session.Role
 	}
 
 	// Derive role from API key scopes

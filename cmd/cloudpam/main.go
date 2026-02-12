@@ -13,8 +13,11 @@ import (
 
 	"github.com/getsentry/sentry-go"
 
+	"cloudpam/internal/auth"
 	ih "cloudpam/internal/http"
 	"cloudpam/internal/observability"
+
+	"github.com/google/uuid"
 )
 
 func main() {
@@ -108,23 +111,53 @@ func main() {
 	mux := http.NewServeMux()
 	auditLogger := selectAuditLogger(logger)
 	keyStore := selectKeyStore(logger)
+	userStore := selectUserStore(logger)
+	sessionStore := selectSessionStore(logger)
 	srv := ih.NewServer(mux, store, logger, metrics, auditLogger)
+
+	// Bootstrap admin user from environment variables (idempotent).
+	if adminUser := os.Getenv("CLOUDPAM_ADMIN_USERNAME"); adminUser != "" {
+		adminPass := os.Getenv("CLOUDPAM_ADMIN_PASSWORD")
+		if adminPass == "" {
+			logger.Error("CLOUDPAM_ADMIN_USERNAME set but CLOUDPAM_ADMIN_PASSWORD is empty")
+		} else {
+			bootstrapAdmin(logger, userStore, adminUser, adminPass)
+		}
+	}
 
 	// When CLOUDPAM_AUTH_ENABLED is set, use protected routes with RBAC.
 	// Otherwise use unprotected routes for development.
 	authEnabled := os.Getenv("CLOUDPAM_AUTH_ENABLED") == "true" || os.Getenv("CLOUDPAM_AUTH_ENABLED") == "1"
 	if authEnabled {
-		srv.RegisterProtectedRoutes(keyStore, logger.Slog())
-		authSrv := ih.NewAuthServer(srv, keyStore, auditLogger)
+		srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
+		authSrv := ih.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
 		authSrv.RegisterProtectedAuthRoutes(logger.Slog())
+		userSrv := ih.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
+		userSrv.RegisterProtectedUserRoutes(logger.Slog())
 		logger.Info("authentication enabled (RBAC enforced)")
 	} else {
 		srv.RegisterRoutes()
-		authSrv := ih.NewAuthServer(srv, keyStore, auditLogger)
+		authSrv := ih.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
 		authSrv.RegisterAuthRoutes()
+		userSrv := ih.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
+		userSrv.RegisterUserRoutes()
 		logger.Info("authentication disabled (all routes open)",
 			"hint", "set CLOUDPAM_AUTH_ENABLED=true to enable RBAC")
 	}
+
+	// Background session cleanup every 15 minutes.
+	go func() {
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			n, err := sessionStore.Cleanup(context.Background())
+			if err != nil {
+				logger.Warn("session cleanup error", "error", err)
+			} else if n > 0 {
+				logger.Info("cleaned up expired sessions", "count", n)
+			}
+		}
+	}()
 
 	// Apply middleware stack (metrics, request ID, structured logging, rate limiting).
 	// Order: metrics (outermost) -> requestID -> logging -> rateLimiting (innermost before handler)
@@ -197,6 +230,40 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// bootstrapAdmin creates the initial admin user if it doesn't already exist.
+func bootstrapAdmin(logger observability.Logger, userStore auth.UserStore, username, password string) {
+	existing, _ := userStore.GetByUsername(context.Background(), username)
+	if existing != nil {
+		logger.Info("bootstrap admin already exists", "username", username)
+		return
+	}
+
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		logger.Error("failed to hash admin password", "error", err)
+		return
+	}
+
+	now := time.Now().UTC()
+	user := &auth.User{
+		ID:           uuid.New().String(),
+		Username:     username,
+		Email:        envOr("CLOUDPAM_ADMIN_EMAIL", username+"@localhost"),
+		DisplayName:  username,
+		Role:         auth.RoleAdmin,
+		PasswordHash: hash,
+		IsActive:     true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	if err := userStore.Create(context.Background(), user); err != nil {
+		logger.Error("failed to create bootstrap admin", "error", err)
+		return
+	}
+	logger.Info("bootstrap admin user created", "username", username)
 }
 
 // runMigrationsCLI executes migration commands.

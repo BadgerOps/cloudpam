@@ -59,6 +59,7 @@ type APIKey struct {
 	Hash       []byte     `json:"-"`      // Argon2id hash of the full key (never serialized)
 	Salt       []byte     `json:"-"`      // Salt used for hashing (never serialized)
 	Scopes     []string   `json:"scopes"` // Permissions: ["pools:read", "pools:write", ...]
+	OwnerID    *string    `json:"owner_id,omitempty"` // nil = bot/standalone key
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"` // nil = no expiration
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`

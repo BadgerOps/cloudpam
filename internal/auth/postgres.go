@@ -55,10 +55,10 @@ func (s *PostgresKeyStore) Create(ctx context.Context, key *APIKey) error {
 	}
 
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO api_tokens (id, organization_id, name, prefix, token_hash, token_salt, scopes, created_at, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)`,
+		INSERT INTO api_tokens (id, organization_id, name, prefix, token_hash, token_salt, scopes, created_at, expires_at, owner_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
 		key.ID, s.orgID, key.Name, key.Prefix, key.Hash, key.Salt,
-		string(scopesJSON), key.CreatedAt, key.ExpiresAt,
+		string(scopesJSON), key.CreatedAt, key.ExpiresAt, key.OwnerID,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -72,7 +72,7 @@ func (s *PostgresKeyStore) Create(ctx context.Context, key *APIKey) error {
 // GetByPrefix retrieves an API key by its prefix.
 func (s *PostgresKeyStore) GetByPrefix(ctx context.Context, prefix string) (*APIKey, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, prefix, name, token_hash, token_salt, scopes, created_at, expires_at, last_used_at, revoked_at
+		SELECT id, prefix, name, token_hash, token_salt, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id
 		FROM api_tokens
 		WHERE prefix = $1 AND organization_id = $2`, prefix, s.orgID)
 
@@ -82,7 +82,7 @@ func (s *PostgresKeyStore) GetByPrefix(ctx context.Context, prefix string) (*API
 // GetByID retrieves an API key by its ID.
 func (s *PostgresKeyStore) GetByID(ctx context.Context, id string) (*APIKey, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, prefix, name, token_hash, token_salt, scopes, created_at, expires_at, last_used_at, revoked_at
+		SELECT id, prefix, name, token_hash, token_salt, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id
 		FROM api_tokens
 		WHERE id = $1 AND organization_id = $2`, id, s.orgID)
 
@@ -92,7 +92,7 @@ func (s *PostgresKeyStore) GetByID(ctx context.Context, id string) (*APIKey, err
 // List returns all API keys (without sensitive data).
 func (s *PostgresKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked_at
+		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id
 		FROM api_tokens
 		WHERE organization_id = $1
 		ORDER BY created_at DESC`, s.orgID)
@@ -101,13 +101,33 @@ func (s *PostgresKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 	}
 	defer rows.Close()
 
+	return scanAPIKeyList(rows)
+}
+
+// ListByOwner returns API keys owned by a specific user.
+func (s *PostgresKeyStore) ListByOwner(ctx context.Context, ownerID string) ([]*APIKey, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id
+		FROM api_tokens
+		WHERE organization_id = $1 AND owner_id = $2
+		ORDER BY created_at DESC`, s.orgID, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanAPIKeyList(rows)
+}
+
+func scanAPIKeyList(rows pgx.Rows) ([]*APIKey, error) {
 	var keys []*APIKey
 	for rows.Next() {
 		var k APIKey
 		var scopesJSON []byte
 		var expiresAt, lastUsedAt, revokedAt *time.Time
+		var ownerID *string
 
-		if err := rows.Scan(&k.ID, &k.Prefix, &k.Name, &scopesJSON, &k.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt); err != nil {
+		if err := rows.Scan(&k.ID, &k.Prefix, &k.Name, &scopesJSON, &k.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt, &ownerID); err != nil {
 			return nil, err
 		}
 
@@ -117,6 +137,7 @@ func (s *PostgresKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 		k.ExpiresAt = expiresAt
 		k.LastUsedAt = lastUsedAt
 		k.Revoked = revokedAt != nil
+		k.OwnerID = ownerID
 
 		keys = append(keys, &k)
 	}
@@ -169,8 +190,9 @@ func scanAPIKey(row pgx.Row) (*APIKey, error) {
 	var k APIKey
 	var scopesJSON []byte
 	var expiresAt, lastUsedAt, revokedAt *time.Time
+	var ownerID *string
 
-	err := row.Scan(&k.ID, &k.Prefix, &k.Name, &k.Hash, &k.Salt, &scopesJSON, &k.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt)
+	err := row.Scan(&k.ID, &k.Prefix, &k.Name, &k.Hash, &k.Salt, &scopesJSON, &k.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt, &ownerID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -184,6 +206,7 @@ func scanAPIKey(row pgx.Row) (*APIKey, error) {
 	k.ExpiresAt = expiresAt
 	k.LastUsedAt = lastUsedAt
 	k.Revoked = revokedAt != nil
+	k.OwnerID = ownerID
 
 	return &k, nil
 }

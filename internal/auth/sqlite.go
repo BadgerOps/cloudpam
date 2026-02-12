@@ -56,9 +56,14 @@ func (s *SQLiteKeyStore) Create(ctx context.Context, key *APIKey) error {
 		expiresAt = sql.NullString{String: key.ExpiresAt.Format(time.RFC3339Nano), Valid: true}
 	}
 
+	var ownerID sql.NullString
+	if key.OwnerID != nil {
+		ownerID = sql.NullString{String: *key.OwnerID, Valid: true}
+	}
+
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO api_keys (id, prefix, name, hash, salt, scopes, created_at, expires_at, revoked)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO api_keys (id, prefix, name, hash, salt, scopes, created_at, expires_at, revoked, owner_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		key.ID,
 		key.Prefix,
@@ -69,6 +74,7 @@ func (s *SQLiteKeyStore) Create(ctx context.Context, key *APIKey) error {
 		key.CreatedAt.Format(time.RFC3339Nano),
 		expiresAt,
 		boolToInt(key.Revoked),
+		ownerID,
 	)
 	if err != nil {
 		// Check for unique constraint violation on prefix
@@ -84,7 +90,7 @@ func (s *SQLiteKeyStore) Create(ctx context.Context, key *APIKey) error {
 // GetByPrefix retrieves an API key by its prefix.
 func (s *SQLiteKeyStore) GetByPrefix(ctx context.Context, prefix string) (*APIKey, error) {
 	return s.scanKey(s.db.QueryRowContext(ctx, `
-		SELECT id, prefix, name, hash, salt, scopes, created_at, expires_at, last_used_at, revoked
+		SELECT id, prefix, name, hash, salt, scopes, created_at, expires_at, last_used_at, revoked, owner_id
 		FROM api_keys WHERE prefix = ?
 	`, prefix))
 }
@@ -92,7 +98,7 @@ func (s *SQLiteKeyStore) GetByPrefix(ctx context.Context, prefix string) (*APIKe
 // GetByID retrieves an API key by its ID.
 func (s *SQLiteKeyStore) GetByID(ctx context.Context, id string) (*APIKey, error) {
 	return s.scanKey(s.db.QueryRowContext(ctx, `
-		SELECT id, prefix, name, hash, salt, scopes, created_at, expires_at, last_used_at, revoked
+		SELECT id, prefix, name, hash, salt, scopes, created_at, expires_at, last_used_at, revoked, owner_id
 		FROM api_keys WHERE id = ?
 	`, id))
 }
@@ -100,7 +106,7 @@ func (s *SQLiteKeyStore) GetByID(ctx context.Context, id string) (*APIKey, error
 // List returns all API keys (without hash/salt for security).
 func (s *SQLiteKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked
+		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked, owner_id
 		FROM api_keys ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -108,6 +114,25 @@ func (s *SQLiteKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 	}
 	defer rows.Close()
 
+	return s.scanKeyList(rows)
+}
+
+// ListByOwner returns API keys owned by a specific user.
+func (s *SQLiteKeyStore) ListByOwner(ctx context.Context, ownerID string) ([]*APIKey, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked, owner_id
+		FROM api_keys WHERE owner_id = ? ORDER BY created_at DESC
+	`, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("query api keys by owner: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanKeyList(rows)
+}
+
+// scanKeyList scans rows into a list of API keys (without hash/salt).
+func (s *SQLiteKeyStore) scanKeyList(rows *sql.Rows) ([]*APIKey, error) {
 	var keys []*APIKey
 	for rows.Next() {
 		var (
@@ -116,9 +141,10 @@ func (s *SQLiteKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 			createdAt                    string
 			expiresAt, lastUsedAt        sql.NullString
 			revoked                      int
+			ownerID                      sql.NullString
 		)
 
-		if err := rows.Scan(&key.ID, &key.Prefix, &key.Name, &scopesJSON, &createdAt, &expiresAt, &lastUsedAt, &revoked); err != nil {
+		if err := rows.Scan(&key.ID, &key.Prefix, &key.Name, &scopesJSON, &createdAt, &expiresAt, &lastUsedAt, &revoked, &ownerID); err != nil {
 			return nil, fmt.Errorf("scan api key: %w", err)
 		}
 
@@ -137,6 +163,10 @@ func (s *SQLiteKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 		if lastUsedAt.Valid {
 			t, _ := time.Parse(time.RFC3339Nano, lastUsedAt.String)
 			key.LastUsedAt = &t
+		}
+
+		if ownerID.Valid {
+			key.OwnerID = &ownerID.String
 		}
 
 		keys = append(keys, &key)
@@ -194,10 +224,11 @@ func (s *SQLiteKeyStore) scanKey(row *sql.Row) (*APIKey, error) {
 		createdAt                    string
 		expiresAt, lastUsedAt        sql.NullString
 		revoked                      int
+		ownerID                      sql.NullString
 	)
 
 	err := row.Scan(&key.ID, &key.Prefix, &key.Name, &key.Hash, &key.Salt,
-		&scopesJSON, &createdAt, &expiresAt, &lastUsedAt, &revoked)
+		&scopesJSON, &createdAt, &expiresAt, &lastUsedAt, &revoked, &ownerID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -220,6 +251,10 @@ func (s *SQLiteKeyStore) scanKey(row *sql.Row) (*APIKey, error) {
 	if lastUsedAt.Valid {
 		t, _ := time.Parse(time.RFC3339Nano, lastUsedAt.String)
 		key.LastUsedAt = &t
+	}
+
+	if ownerID.Valid {
+		key.OwnerID = &ownerID.String
 	}
 
 	return &key, nil

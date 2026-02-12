@@ -15,6 +15,8 @@ import {
   Monitor,
   LogOut,
   Shield,
+  Users,
+  User,
 } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
@@ -35,7 +37,7 @@ interface SidebarProps {
 
 export default function Sidebar({ onImportExport }: SidebarProps) {
   const { mode, cycle } = useTheme()
-  const { isAuthenticated, keyName, role, logout } = useAuth()
+  const { isAuthenticated, keyName, role, authType, currentUser, logout } = useAuth()
   const navigate = useNavigate()
   const ThemeIcon = mode === 'dark' ? Moon : mode === 'light' ? Sun : Monitor
   const themeLabel = mode === 'system' ? 'System' : mode === 'dark' ? 'Dark' : 'Light'
@@ -92,6 +94,19 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
             <Key className="w-5 h-5" />
             <span>API Keys</span>
           </NavLink>
+          {role === 'admin' && (
+            <NavLink
+              to="/settings/users"
+              className={({ isActive }) =>
+                `w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                  isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800'
+                }`
+              }
+            >
+              <Users className="w-5 h-5" />
+              <span>Users</span>
+            </NavLink>
+          )}
         </div>
       </nav>
 
@@ -100,9 +115,15 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
         {isAuthenticated && (
           <div className="px-3 py-2 mb-2">
             <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-gray-400" />
+              {authType === 'session' ? (
+                <User className="w-4 h-4 text-gray-400" />
+              ) : (
+                <Shield className="w-4 h-4 text-gray-400" />
+              )}
               <span className="text-xs text-gray-400 truncate" title={keyName ?? undefined}>
-                {keyName ?? 'API Key'}
+                {authType === 'session' && currentUser
+                  ? currentUser.display_name || currentUser.username
+                  : keyName ?? 'API Key'}
               </span>
               {role && (
                 <span className="ml-auto px-1.5 py-0.5 bg-blue-600/30 text-blue-300 rounded text-[10px] font-medium uppercase">

@@ -30,6 +30,9 @@ type KeyStore interface {
 
 	// Delete permanently removes an API key.
 	Delete(ctx context.Context, id string) error
+
+	// ListByOwner returns API keys owned by a specific user.
+	ListByOwner(ctx context.Context, ownerID string) ([]*APIKey, error)
 }
 
 // MemoryKeyStore is an in-memory implementation of KeyStore.
@@ -118,6 +121,7 @@ func (s *MemoryKeyStore) List(_ context.Context) ([]*APIKey, error) {
 			Prefix:     key.Prefix,
 			Name:       key.Name,
 			Scopes:     append([]string(nil), key.Scopes...),
+			OwnerID:    key.OwnerID,
 			CreatedAt:  key.CreatedAt,
 			ExpiresAt:  key.ExpiresAt,
 			LastUsedAt: key.LastUsedAt,
@@ -172,6 +176,34 @@ func (s *MemoryKeyStore) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+// ListByOwner returns API keys owned by a specific user.
+func (s *MemoryKeyStore) ListByOwner(_ context.Context, ownerID string) ([]*APIKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*APIKey
+	for _, key := range s.keys {
+		if key.OwnerID != nil && *key.OwnerID == ownerID {
+			k := &APIKey{
+				ID:         key.ID,
+				Prefix:     key.Prefix,
+				Name:       key.Name,
+				Scopes:     append([]string(nil), key.Scopes...),
+				OwnerID:    key.OwnerID,
+				CreatedAt:  key.CreatedAt,
+				ExpiresAt:  key.ExpiresAt,
+				LastUsedAt: key.LastUsedAt,
+				Revoked:    key.Revoked,
+			}
+			result = append(result, k)
+		}
+	}
+	if result == nil {
+		result = []*APIKey{}
+	}
+	return result, nil
+}
+
 // copyAPIKey creates a deep copy of an APIKey.
 func copyAPIKey(key *APIKey) *APIKey {
 	if key == nil {
@@ -182,6 +214,7 @@ func copyAPIKey(key *APIKey) *APIKey {
 		ID:        key.ID,
 		Prefix:    key.Prefix,
 		Name:      key.Name,
+		OwnerID:   key.OwnerID,
 		CreatedAt: key.CreatedAt,
 		Revoked:   key.Revoked,
 	}

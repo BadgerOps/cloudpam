@@ -410,6 +410,137 @@ func AuthMiddleware(keyStore auth.KeyStore, required bool, logger *slog.Logger) 
 	}
 }
 
+// DualAuthMiddleware validates both session-based and API key authentication.
+// It tries these strategies in order:
+// 1. "session" cookie -> session lookup
+// 2. Authorization: Bearer with "cpam_" prefix -> API key (existing flow)
+// 3. Authorization: Bearer without prefix -> session token lookup
+// If required is true, unauthenticated requests get 401.
+func DualAuthMiddleware(
+	keyStore auth.KeyStore,
+	sessionStore auth.SessionStore,
+	userStore auth.UserStore,
+	required bool,
+	logger *slog.Logger,
+) Middleware {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
+			// Strategy 1: Check session cookie
+			if cookie, err := r.Cookie("session"); err == nil && cookie.Value != "" {
+				session, err := sessionStore.Get(ctx, cookie.Value)
+				if err == nil && session != nil && session.IsValid() {
+					ctx = auth.ContextWithSession(ctx, session)
+					ctx = auth.ContextWithRole(ctx, session.Role)
+					if user, _ := userStore.GetByID(ctx, session.UserID); user != nil {
+						ctx = auth.ContextWithUser(ctx, user)
+					}
+					r = r.WithContext(ctx)
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+
+			// Strategy 2 & 3: Check Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+				token := strings.TrimPrefix(authHeader, "Bearer ")
+				token = strings.TrimSpace(token)
+
+				if strings.HasPrefix(token, "cpam_") {
+					// Strategy 2: API key authentication
+					prefix, err := auth.ParseAPIKeyPrefix(token)
+					if err != nil {
+						if required {
+							logAuthFailure(logger, r, "invalid API key format")
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid API key format"})
+							return
+						}
+						next.ServeHTTP(w, r)
+						return
+					}
+
+					storedKey, err := keyStore.GetByPrefix(ctx, prefix)
+					if err != nil {
+						logAuthError(logger, r, "key store error", err)
+						writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal error"})
+						return
+					}
+					if storedKey == nil {
+						if required {
+							logAuthFailure(logger, r, "API key not found")
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid API key"})
+							return
+						}
+						next.ServeHTTP(w, r)
+						return
+					}
+
+					if err := auth.ValidateAPIKey(token, storedKey); err != nil {
+						switch err {
+						case auth.ErrKeyRevoked:
+							logAuthFailure(logger, r, "API key revoked")
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "API key has been revoked"})
+						case auth.ErrKeyExpired:
+							logAuthFailure(logger, r, "API key expired")
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "API key has expired"})
+						case auth.ErrInvalidKey:
+							logAuthFailure(logger, r, "invalid API key")
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid API key"})
+						default:
+							logAuthError(logger, r, "key validation error", err)
+							writeJSON(w, http.StatusInternalServerError, apiError{Error: "internal error"})
+						}
+						return
+					}
+
+					keyID := storedKey.ID
+					go func() {
+						_ = keyStore.UpdateLastUsed(context.Background(), keyID, time.Now())
+					}()
+
+					ctx = auth.ContextWithAPIKey(ctx, storedKey)
+					r = r.WithContext(ctx)
+					next.ServeHTTP(w, r)
+					return
+				}
+
+				// Strategy 3: Bearer token as session token
+				session, err := sessionStore.Get(ctx, token)
+				if err == nil && session != nil && session.IsValid() {
+					ctx = auth.ContextWithSession(ctx, session)
+					ctx = auth.ContextWithRole(ctx, session.Role)
+					if user, _ := userStore.GetByID(ctx, session.UserID); user != nil {
+						ctx = auth.ContextWithUser(ctx, user)
+					}
+					r = r.WithContext(ctx)
+					next.ServeHTTP(w, r)
+					return
+				}
+
+				if required {
+					logAuthFailure(logger, r, "invalid session token")
+					writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid or expired session"})
+					return
+				}
+			}
+
+			if required {
+				logAuthFailure(logger, r, "missing authentication")
+				writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "missing authentication"})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireScopeMiddleware checks that the authenticated API key has the required scope.
 // This middleware must be used after AuthMiddleware.
 // Returns 403 Forbidden if the scope is missing.
@@ -554,10 +685,13 @@ func AuditMiddleware(auditLogger AuditLogger, logger *slog.Logger) Middleware {
 				return
 			}
 
-			// Extract actor from auth context
+			// Extract actor from auth context (prefer user over API key)
 			actor := "anonymous"
 			actorType := "anonymous"
-			if key := auth.APIKeyFromContext(ctx); key != nil {
+			if user := auth.UserFromContext(ctx); user != nil {
+				actor = user.Username
+				actorType = "user"
+			} else if key := auth.APIKeyFromContext(ctx); key != nil {
 				actor = key.Prefix
 				actorType = "api_key"
 			}
@@ -649,11 +783,23 @@ func parseResourceFromPath(path string) (resourceType, resourceID string) {
 		}
 		return "account", ""
 	case "auth":
-		if len(parts) >= 4 && parts[3] == "keys" {
-			if len(parts) >= 5 && parts[4] != "" {
-				return "api_key", parts[4]
+		if len(parts) >= 4 {
+			switch parts[3] {
+			case "keys":
+				if len(parts) >= 5 && parts[4] != "" {
+					return "api_key", parts[4]
+				}
+				return "api_key", ""
+			case "users":
+				if len(parts) >= 5 && parts[4] != "" {
+					return "user", parts[4]
+				}
+				return "user", ""
+			case "login":
+				return "session", ""
+			case "logout":
+				return "session", ""
 			}
-			return "api_key", ""
 		}
 	}
 

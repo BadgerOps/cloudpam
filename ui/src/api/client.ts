@@ -25,6 +25,7 @@ function getAuthHeaders(): Record<string, string> {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, {
+    credentials: 'same-origin',
     headers: getAuthHeaders(),
     ...options,
   })
