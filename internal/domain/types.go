@@ -154,6 +154,7 @@ type Account struct {
 	Environment string    `json:"environment,omitempty"`
 	Regions     []string  `json:"regions,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // CreateAccount is the input for creating an account.

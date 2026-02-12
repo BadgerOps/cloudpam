@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 9: SQLite Feature Parity & CI Multi-Backend Testing
+
+#### SQLite Schema Parity
+- Migration `0006_organizations_roles_permissions.sql`: backport 5 tables from PostgreSQL schema
+  - `organizations` table with default org seed data (id=1, 'Default', 'default', 'free')
+  - `roles` table with 4 built-in roles: admin (10), operator (20), viewer (30), auditor (40)
+  - `permissions` table with 16 granular permissions (pools/accounts/apikeys/audit CRUD)
+  - `role_permissions` junction table with correct mappings per role
+  - `pool_utilization_cache` table for cached stats
+- `ALTER TABLE accounts ADD COLUMN updated_at` for account modification tracking
+
+#### Bug Fixes
+- Fix `GetAccount` in SQLite store scanning only 7 columns instead of 12 — was silently
+  dropping platform, tier, environment, regions, and updated_at fields (#69 follow-up)
+- Add `updated_at` field to `domain.Account` struct for consistency across all backends
+- Update account queries in all 3 backends (in-memory, SQLite, PostgreSQL) to read/write `updated_at`
+
+#### CI: Multi-Backend Testing
+- New `test-sqlite` CI job: runs `go test -tags sqlite -race` on every push/PR
+- New `test-postgres` CI job: PostgreSQL 16 service container with `DATABASE_URL` env var,
+  runs `go test -tags postgres -race` — no testcontainers overhead in CI
+
+#### Issue Housekeeping
+- Closed 7 previously-resolved issues: #22 (modal a11y), #26 (API auth), #37 (Docker build),
+  #68 (server.go refactor), #69 (error handling), #70 (UpdatePoolMeta), #92 (RBAC decision)
+
 ### Added - Sprint 8: PostgreSQL Storage Backend
 
 #### PostgreSQL Store (`-tags postgres`)
