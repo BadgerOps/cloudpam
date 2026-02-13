@@ -151,7 +151,7 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
           <span>{themeLabel}</span>
         </button>
 
-        {/* Logout button — show whenever user has a stored token */}
+        {/* Logout button — show when user has an active session */}
         {isAuthenticated && (
           <button
             onClick={handleLogout}

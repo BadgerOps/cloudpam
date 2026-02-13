@@ -1,7 +1,5 @@
 import type { ApiError } from './types'
 
-const AUTH_STORAGE_KEY = 'cloudpam_api_key'
-
 export class ApiRequestError extends Error {
   constructor(
     public status: number,
@@ -12,27 +10,15 @@ export class ApiRequestError extends Error {
   }
 }
 
-function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  }
-  const token = sessionStorage.getItem(AUTH_STORAGE_KEY)
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`
-  }
-  return headers
-}
-
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: 'same-origin',
-    headers: getAuthHeaders(),
+    headers: { 'Content-Type': 'application/json' },
     ...options,
   })
 
-  // On 401, clear token and dispatch logout event
+  // On 401, dispatch logout event so the auth context can clear state
   if (res.status === 401) {
-    sessionStorage.removeItem(AUTH_STORAGE_KEY)
     window.dispatchEvent(new CustomEvent('auth:logout'))
   }
 
