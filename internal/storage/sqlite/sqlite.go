@@ -11,10 +11,12 @@ import (
     "fmt"
     "net"
     "net/netip"
+    "strings"
     "time"
 
     _ "modernc.org/sqlite" // CGO-less SQLite driver
 
+    "cloudpam/internal/cidr"
     "cloudpam/internal/domain"
     "cloudpam/internal/storage"
 )
@@ -784,6 +786,194 @@ func (s *Store) calculatePoolStats(ctx context.Context, p domain.Pool) (*domain.
         Utilization:    utilization,
         ChildCount:     totalChildCount,
         DirectChildren: directChildren,
+    }, nil
+}
+
+// Search performs a paginated search across pools and accounts.
+// SQLite has no native CIDR type, so containment is done in Go after loading.
+func (s *Store) Search(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, error) {
+    // Parse CIDR filters once
+    var cidrContains, cidrWithin netip.Prefix
+    var hasCIDRContains, hasCIDRWithin bool
+    if req.CIDRContains != "" {
+        p, err := cidr.ParseCIDROrIP(req.CIDRContains)
+        if err != nil {
+            return domain.SearchResponse{}, fmt.Errorf("invalid cidr_contains: %w", err)
+        }
+        cidrContains = p
+        hasCIDRContains = true
+    }
+    if req.CIDRWithin != "" {
+        p, err := cidr.ParseCIDROrIP(req.CIDRWithin)
+        if err != nil {
+            return domain.SearchResponse{}, fmt.Errorf("invalid cidr_within: %w", err)
+        }
+        cidrWithin = p
+        hasCIDRWithin = true
+    }
+
+    // Determine which types to include
+    searchPools := true
+    searchAccounts := true
+    if len(req.Types) > 0 {
+        searchPools = false
+        searchAccounts = false
+        for _, t := range req.Types {
+            switch t {
+            case "pool":
+                searchPools = true
+            case "account":
+                searchAccounts = true
+            }
+        }
+    }
+
+    query := strings.ToLower(req.Query)
+    var items []domain.SearchResultItem
+
+    // Search pools — use SQL LIKE for text search, then filter CIDR in Go
+    if searchPools {
+        var poolRows *sql.Rows
+        var err error
+        if query != "" {
+            like := "%" + query + "%"
+            poolRows, err = s.db.QueryContext(ctx,
+                `SELECT id, name, cidr, parent_id, account_id, type, status, source, description FROM pools WHERE name LIKE ? OR cidr LIKE ? OR description LIKE ? ORDER BY id`,
+                like, like, like)
+        } else {
+            poolRows, err = s.db.QueryContext(ctx,
+                `SELECT id, name, cidr, parent_id, account_id, type, status, source, description FROM pools ORDER BY id`)
+        }
+        if err != nil {
+            return domain.SearchResponse{}, err
+        }
+        defer poolRows.Close()
+
+        for poolRows.Next() {
+            var id int64
+            var name, cidrStr string
+            var parent, account sql.NullInt64
+            var poolType, poolStatus, poolSource, description sql.NullString
+            if err := poolRows.Scan(&id, &name, &cidrStr, &parent, &account, &poolType, &poolStatus, &poolSource, &description); err != nil {
+                return domain.SearchResponse{}, err
+            }
+
+            // Apply CIDR filters in Go
+            if hasCIDRContains || hasCIDRWithin {
+                poolPrefix, err := netip.ParsePrefix(cidrStr)
+                if err != nil {
+                    continue
+                }
+                if hasCIDRContains && !cidr.PrefixContains(poolPrefix, cidrContains) {
+                    continue
+                }
+                if hasCIDRWithin && !cidr.PrefixContains(cidrWithin, poolPrefix) {
+                    continue
+                }
+            }
+
+            item := domain.SearchResultItem{
+                Type: "pool",
+                ID:   id,
+                Name: name,
+                CIDR: cidrStr,
+            }
+            if parent.Valid {
+                v := parent.Int64
+                item.ParentID = &v
+            }
+            if account.Valid {
+                v := account.Int64
+                item.AccountID = &v
+            }
+            if poolType.Valid {
+                item.PoolType = poolType.String
+            }
+            if poolStatus.Valid {
+                item.Status = poolStatus.String
+            }
+            if description.Valid {
+                item.Description = description.String
+            }
+            items = append(items, item)
+        }
+        if err := poolRows.Err(); err != nil {
+            return domain.SearchResponse{}, err
+        }
+    }
+
+    // Search accounts — CIDR filters don't apply to accounts
+    if searchAccounts && !hasCIDRContains && !hasCIDRWithin {
+        var accRows *sql.Rows
+        var err error
+        if query != "" {
+            like := "%" + query + "%"
+            accRows, err = s.db.QueryContext(ctx,
+                `SELECT id, key, name, provider, description FROM accounts WHERE name LIKE ? OR key LIKE ? OR description LIKE ? ORDER BY id`,
+                like, like, like)
+        } else {
+            accRows, err = s.db.QueryContext(ctx,
+                `SELECT id, key, name, provider, description FROM accounts ORDER BY id`)
+        }
+        if err != nil {
+            return domain.SearchResponse{}, err
+        }
+        defer accRows.Close()
+
+        for accRows.Next() {
+            var id int64
+            var key, name string
+            var provider, description sql.NullString
+            if err := accRows.Scan(&id, &key, &name, &provider, &description); err != nil {
+                return domain.SearchResponse{}, err
+            }
+            item := domain.SearchResultItem{
+                Type:       "account",
+                ID:         id,
+                Name:       name,
+                AccountKey: key,
+            }
+            if provider.Valid {
+                item.Provider = provider.String
+            }
+            if description.Valid {
+                item.Description = description.String
+            }
+            items = append(items, item)
+        }
+        if err := accRows.Err(); err != nil {
+            return domain.SearchResponse{}, err
+        }
+    }
+
+    // Paginate
+    total := len(items)
+    page := req.Page
+    if page < 1 {
+        page = 1
+    }
+    pageSize := req.PageSize
+    if pageSize < 1 {
+        pageSize = 50
+    }
+    if pageSize > 200 {
+        pageSize = 200
+    }
+
+    start := (page - 1) * pageSize
+    if start > total {
+        start = total
+    }
+    end := start + pageSize
+    if end > total {
+        end = total
+    }
+
+    return domain.SearchResponse{
+        Items:    items[start:end],
+        Total:    total,
+        Page:     page,
+        PageSize: pageSize,
     }, nil
 }
 

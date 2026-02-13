@@ -28,7 +28,11 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":             "ok",
+		"auth_enabled":       s.authEnabled,
+		"local_auth_enabled": s.localAuthEnabled,
+	})
 }
 
 // ReadinessResponse represents the JSON response for the readiness check endpoint.

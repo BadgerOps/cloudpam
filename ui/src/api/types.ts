@@ -175,3 +175,117 @@ export interface ImportResult {
   skipped: number
   errors: string[]
 }
+
+// --- Search types ---
+
+export interface SearchResultItem {
+  type: 'pool' | 'account'
+  id: number
+  name: string
+  cidr?: string
+  description?: string
+  status?: string
+  pool_type?: string
+  account_key?: string
+  provider?: string
+  parent_id?: number | null
+  account_id?: number | null
+}
+
+export interface SearchResponse {
+  items: SearchResultItem[]
+  total: number
+  page: number
+  page_size: number
+}
+
+// --- Auth types ---
+
+export interface ApiKeyInfo {
+  id: string
+  prefix: string
+  name: string
+  scopes: string[]
+  created_at: string
+  expires_at?: string | null
+  last_used_at?: string | null
+  revoked: boolean
+}
+
+export interface ApiKeyCreateRequest {
+  name: string
+  scopes?: string[]
+  expires_in_days?: number
+}
+
+export interface ApiKeyCreateResponse {
+  id: string
+  key: string
+  prefix: string
+  name: string
+  scopes: string[]
+  created_at: string
+  expires_at?: string | null
+}
+
+export interface HealthResponse {
+  status: string
+  auth_enabled?: boolean
+  local_auth_enabled?: boolean
+}
+
+// --- User types ---
+
+export interface UserInfo {
+  id: string
+  username: string
+  email?: string
+  display_name?: string
+  role: string
+  is_active: boolean
+  created_at: string
+  updated_at?: string
+  last_login_at?: string | null
+}
+
+export interface LoginRequest {
+  username: string
+  password: string
+}
+
+export interface LoginResponse {
+  user: UserInfo
+  expires_at: string
+}
+
+export interface MeResponse {
+  auth_type: 'session' | 'api_key'
+  role: string
+  user?: UserInfo
+  key_id?: string
+  key_name?: string
+}
+
+export interface CreateUserRequest {
+  username: string
+  email?: string
+  display_name?: string
+  role: string
+  password: string
+}
+
+export interface UpdateUserRequest {
+  email?: string
+  display_name?: string
+  role?: string
+  is_active?: boolean
+}
+
+export interface ChangePasswordRequest {
+  current_password?: string
+  new_password: string
+}
+
+export interface UsersListResponse {
+  users: UserInfo[]
+}

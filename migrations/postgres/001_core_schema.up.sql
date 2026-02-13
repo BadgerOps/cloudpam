@@ -264,6 +264,7 @@ CREATE TABLE api_tokens (
     token_hash      BYTEA NOT NULL,
     token_salt      BYTEA NOT NULL,
     scopes          JSONB NOT NULL DEFAULT '[]',
+    owner_id        TEXT,
     last_used_at    TIMESTAMPTZ,
     expires_at      TIMESTAMPTZ,
     revoked_at      TIMESTAMPTZ,

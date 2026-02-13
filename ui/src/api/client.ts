@@ -12,9 +12,15 @@ export class ApiRequestError extends Error {
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, {
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     ...options,
   })
+
+  // On 401, dispatch logout event so the auth context can clear state
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent('auth:logout'))
+  }
 
   const body = await res.json()
 

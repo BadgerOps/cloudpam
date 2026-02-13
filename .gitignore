@@ -58,3 +58,4 @@ result-*
 
 # Claude Code local config
 .claude/
+*.tsbuildinfo

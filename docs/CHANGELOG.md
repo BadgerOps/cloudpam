@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 12: Local User Management & Dual Auth
+
+#### User Management
+- `internal/auth/` user types: `User`, `UserStore`, `SessionStore` interfaces with SQLite implementations
+- Password hashing with Argon2id (`HashPassword`, `VerifyPassword`)
+- Session management: create, validate, delete, delete-by-user-ID, auto-expiry cleanup
+- Bootstrap admin from environment variables (`CLOUDPAM_ADMIN_USERNAME`, `CLOUDPAM_ADMIN_PASSWORD`)
+- User CRUD endpoints: `GET/POST /api/v1/auth/users`, `GET/PATCH/DELETE /api/v1/auth/users/{id}`
+- Self-service password change: `PATCH /api/v1/auth/users/{id}/password`
+- User management page (`/settings/users`): create, edit role, deactivate (admin only)
+
+#### Dual Authentication
+- `DualAuthMiddleware`: accepts both session cookies (browser) and Bearer API keys (programmatic)
+- Login endpoint (`POST /api/v1/auth/login`): validates credentials, creates HttpOnly+Secure session cookie
+- Logout endpoint (`POST /api/v1/auth/logout`): invalidates session, clears cookie
+- `GET /api/v1/auth/me`: returns current user or API key identity
+- `/healthz` returns `local_auth_enabled` boolean when user store is configured
+
+#### Browser Auth — Cookie-Only
+- Browser authentication uses HttpOnly + Secure + SameSite=Strict session cookies exclusively
+- No API keys or tokens stored in browser storage (localStorage/sessionStorage)
+- Login page is username/password only — API keys are for programmatic use (curl, scripts, CI)
+- API client uses `credentials: 'same-origin'` for automatic cookie handling
+- `ProtectedRoute` redirects unauthenticated users when any auth mode is enabled
+
+#### Security Hardening
+- Session cookies set `Secure: true`, `HttpOnly: true`, `SameSite: Strict`
+- Removed all sensitive credential storage from browser (CodeQL HIGH findings resolved)
+- API key `owner_id` column links keys to users (nullable for standalone/bot keys)
+
+### Added - Sprint 11: CIDR Search & Frontend Search
+
+#### Server-side Search (M3)
+- `internal/cidr/` package: reusable CIDR math (`PrefixContains`, `PrefixContainsAddr`, `ParseCIDROrIP`) with 26 tests
+- `internal/domain/search.go`: `SearchRequest`, `SearchResultItem`, `SearchResponse` types
+- `Search()` method added to Store interface, implemented in MemoryStore, SQLite, and PostgreSQL backends
+- `GET /api/v1/search?q=&cidr_contains=&cidr_within=&type=&page=&page_size=` endpoint with RBAC (`pools:read`)
+- PostgreSQL uses native CIDR operators (`>>=`, `<<=`); SQLite/Memory filter in Go
+- OpenAPI spec bumped to v0.5.0 with Search tag, `SearchResultItem` and `SearchResponse` schemas
+
+#### Frontend Search Upgrade
+- `useSearch` hook with 300ms debounce, auto-detects CIDR/IP patterns
+- `SearchModal` upgraded from client-side filtering to server-side search via `/api/v1/search`
+
+#### Frontend Auth UI (M4)
+- API key management page (`/settings/api-keys`): create (name + scopes + expiry), revoke, delete
+- Sidebar: shows username + role badge for session users, API Keys link (admin only), Logout button
+- `/healthz` now returns `auth_enabled` boolean field
+
 ### Added - Sprint 10: Dark Mode
 
 #### Theme System

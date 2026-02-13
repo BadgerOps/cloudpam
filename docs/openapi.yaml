@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: CloudPAM API
-  version: "0.4.0"
+  version: "0.5.0"
   description: |
     REST API for managing CloudPAM pools, accounts, blocks, data exports,
     authentication, audit logging, and schema planning.
@@ -25,6 +25,8 @@ tags:
     description: Data import (CSV)
   - name: Schema
     description: Schema planner endpoints for bulk IP address planning
+  - name: Search
+    description: Unified search across pools and accounts with CIDR containment queries
   - name: Auth
     description: API key management
   - name: Audit
@@ -439,6 +441,49 @@ paths:
                 $ref: "#/components/schemas/SchemaApplyResponse"
         "409":
           description: Conflict with existing pools (when skip_conflicts is false)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/search:
+    get:
+      summary: Search across pools and accounts with CIDR containment queries
+      tags: [Search]
+      parameters:
+        - name: q
+          in: query
+          description: Free-text search matching name, CIDR, key, or description
+          schema:
+            type: string
+        - name: cidr_contains
+          in: query
+          description: Find pools whose CIDR contains this IP or prefix (e.g., "10.1.2.5" or "10.1.0.0/16")
+          schema:
+            type: string
+        - name: cidr_within
+          in: query
+          description: Find pools within this prefix (e.g., "10.0.0.0/8")
+          schema:
+            type: string
+        - name: type
+          in: query
+          description: "Comma-separated entity types to search: pool, account"
+          schema:
+            type: string
+            example: "pool,account"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          description: Invalid search parameters (e.g., bad CIDR format)
           content:
             application/json:
               schema:
@@ -1212,3 +1257,54 @@ components:
         offset:
           type: integer
       required: [events, total, limit, offset]
+    SearchResultItem:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [pool, account]
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        cidr:
+          type: string
+          description: Pool CIDR (only for pool results)
+        description:
+          type: string
+        status:
+          type: string
+          description: Pool status (only for pool results)
+        pool_type:
+          type: string
+          description: Pool type (only for pool results)
+        account_key:
+          type: string
+          description: Account key (only for account results)
+        provider:
+          type: string
+          description: Account provider (only for account results)
+        parent_id:
+          type: integer
+          format: int64
+          nullable: true
+        account_id:
+          type: integer
+          format: int64
+          nullable: true
+      required: [type, id, name]
+    SearchResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResultItem"
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+      required: [items, total, page, page_size]

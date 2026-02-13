@@ -824,11 +824,11 @@ func TestIntegration_HealthEndpoints(t *testing.T) {
 		t.Errorf("expected 200 for /healthz, got %d", resp.StatusCode)
 	}
 
-	var healthResp map[string]string
+	var healthResp map[string]any
 	testutil.ReadJSONResponse(t, resp, &healthResp)
 
 	if healthResp["status"] != "ok" {
-		t.Errorf("expected status 'ok', got %q", healthResp["status"])
+		t.Errorf("expected status 'ok', got %v", healthResp["status"])
 	}
 
 	// Test /readyz
