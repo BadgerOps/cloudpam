@@ -171,14 +171,14 @@ export function useAuthState(): AuthContextValue {
 
     // Store a non-sensitive marker instead of the raw API key.
     setToken('__api_key__')
-    setKeyName(me.key_name || apiKey.substring(0, 12) + '...')
+    setKeyName(me.key_name || 'API key')
     setRole(me.role)
     setAuthType('api_key')
     setCurrentUser(null)
 
     // Avoid persisting the API key itself in sessionStorage.
     sessionStorage.setItem(AUTH_STORAGE_KEY, '__api_key__')
-    localStorage.setItem(AUTH_NAME_KEY, me.key_name || apiKey.substring(0, 12) + '...')
+    localStorage.setItem(AUTH_NAME_KEY, me.key_name || 'API key')
     localStorage.setItem(AUTH_ROLE_KEY, me.role)
     localStorage.setItem(AUTH_TYPE_KEY, 'api_key')
   }, [])
