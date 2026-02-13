@@ -41,7 +41,7 @@ export function useAuth() {
 }
 
 export function useAuthState(): AuthContextValue {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(AUTH_STORAGE_KEY))
+  const [token, setToken] = useState<string | null>(() => sessionStorage.getItem(AUTH_STORAGE_KEY))
   const [keyName, setKeyName] = useState<string | null>(() => localStorage.getItem(AUTH_NAME_KEY))
   const [role, setRole] = useState<string | null>(() => localStorage.getItem(AUTH_ROLE_KEY))
   const [authType, setAuthType] = useState<'session' | 'api_key' | null>(
@@ -65,7 +65,7 @@ export function useAuthState(): AuthContextValue {
         setLocalAuthEnabled(health.local_auth_enabled === true)
 
         // If we have an existing session (cookie) or API key, validate it
-        const storedToken = localStorage.getItem(AUTH_STORAGE_KEY)
+        const storedToken = sessionStorage.getItem(AUTH_STORAGE_KEY)
         const headers: Record<string, string> = {}
         if (storedToken && storedToken !== '__session__') {
           headers['Authorization'] = `Bearer ${storedToken}`
@@ -89,7 +89,7 @@ export function useAuthState(): AuthContextValue {
             localStorage.setItem(AUTH_NAME_KEY, me.user.display_name || me.user.username)
             if (!storedToken) {
               setToken('__session__')
-              localStorage.setItem(AUTH_STORAGE_KEY, '__session__')
+              sessionStorage.setItem(AUTH_STORAGE_KEY, '__session__')
             }
           } else if (me.auth_type === 'api_key') {
             setKeyName(me.key_name || localStorage.getItem(AUTH_NAME_KEY))
@@ -115,7 +115,7 @@ export function useAuthState(): AuthContextValue {
     setRole(null)
     setAuthType(null)
     setCurrentUser(null)
-    localStorage.removeItem(AUTH_STORAGE_KEY)
+    sessionStorage.removeItem(AUTH_STORAGE_KEY)
     localStorage.removeItem(AUTH_NAME_KEY)
     localStorage.removeItem(AUTH_ROLE_KEY)
     localStorage.removeItem(AUTH_TYPE_KEY)
@@ -149,7 +149,7 @@ export function useAuthState(): AuthContextValue {
     setAuthType('session')
     setToken('__session__')
 
-    localStorage.setItem(AUTH_STORAGE_KEY, '__session__')
+    sessionStorage.setItem(AUTH_STORAGE_KEY, '__session__')
     localStorage.setItem(AUTH_NAME_KEY, data.user.display_name || data.user.username)
     localStorage.setItem(AUTH_ROLE_KEY, data.user.role)
     localStorage.setItem(AUTH_TYPE_KEY, 'session')
@@ -175,7 +175,7 @@ export function useAuthState(): AuthContextValue {
     setAuthType('api_key')
     setCurrentUser(null)
 
-    localStorage.setItem(AUTH_STORAGE_KEY, apiKey)
+    sessionStorage.setItem(AUTH_STORAGE_KEY, apiKey)
     localStorage.setItem(AUTH_NAME_KEY, me.key_name || apiKey.substring(0, 12) + '...')
     localStorage.setItem(AUTH_ROLE_KEY, me.role)
     localStorage.setItem(AUTH_TYPE_KEY, 'api_key')

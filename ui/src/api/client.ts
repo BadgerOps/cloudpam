@@ -16,7 +16,7 @@ function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   }
-  const token = localStorage.getItem(AUTH_STORAGE_KEY)
+  const token = sessionStorage.getItem(AUTH_STORAGE_KEY)
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
@@ -32,7 +32,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   // On 401, clear token and dispatch logout event
   if (res.status === 401) {
-    localStorage.removeItem(AUTH_STORAGE_KEY)
+    sessionStorage.removeItem(AUTH_STORAGE_KEY)
     window.dispatchEvent(new CustomEvent('auth:logout'))
   }
 
