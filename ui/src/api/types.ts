@@ -289,3 +289,51 @@ export interface ChangePasswordRequest {
 export interface UsersListResponse {
   users: UserInfo[]
 }
+
+// --- Discovery types ---
+
+export type CloudResourceType = 'vpc' | 'subnet' | 'network_interface' | 'elastic_ip'
+export type DiscoveryStatus = 'active' | 'stale' | 'deleted'
+export type SyncJobStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface DiscoveredResource {
+  id: string
+  account_id: number
+  provider: string
+  region: string
+  resource_type: CloudResourceType
+  resource_id: string
+  name: string
+  cidr?: string
+  parent_resource_id?: string | null
+  pool_id?: number | null
+  status: DiscoveryStatus
+  metadata?: Record<string, string>
+  discovered_at: string
+  last_seen_at: string
+}
+
+export interface DiscoveryResourcesResponse {
+  items: DiscoveredResource[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface SyncJob {
+  id: string
+  account_id: number
+  status: SyncJobStatus
+  started_at?: string | null
+  completed_at?: string | null
+  resources_found: number
+  resources_created: number
+  resources_updated: number
+  resources_deleted: number
+  error_message?: string
+  created_at: string
+}
+
+export interface SyncJobsResponse {
+  items: SyncJob[]
+}

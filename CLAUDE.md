@@ -15,12 +15,16 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 ## Implementation Status
 
-The project is currently at **Phase 1** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
+The project is entering **Phase 2** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
-**Current State** (Sprint 9 complete):
+**Current State** (Sprint 13 complete):
+- Cloud resource discovery: AWS collector, sync service, approval workflow (Sprint 13)
+- Local user management with dual auth (session cookies + API keys) (Sprint 12)
+- CIDR search API with containment queries, frontend search modal (Sprint 11)
+- Dark mode with three-mode toggle (Light/Dark/System) (Sprint 10)
 - Unified React/Vite/TypeScript frontend replacing Alpine.js (Sprint 9)
 - Schema Planner wizard with conflict detection (Sprint 8)
-- OpenAPI v0.4.0 spec, SQLite-backed API Key Store (Sprint 7)
+- OpenAPI v0.6.0 spec, SQLite-backed API Key Store (Sprint 7)
 - Code quality: handler file split, sentinel errors, 80%+ HTTP coverage (Sprint 6)
 - Enhanced pool model with hierarchy, stats, utilization tracking (Sprint 5)
 - Auth (API keys, RBAC), audit logging, observability (Sprints 1-4)
@@ -52,6 +56,8 @@ Recent planning session produced these design documents:
 | `API_EXAMPLES.md` | API usage examples |
 | `DEPLOYMENT.md` | Kubernetes and cloud deployment guides |
 | `CLEANUP.md` | Documentation consolidation notes |
+| `docs/DISCOVERY.md` | Cloud discovery setup, AWS config, API reference |
+| `docs/DISCOVERY_AGENT_PLAN.md` | Standalone discovery agent architecture plan |
 
 **OpenAPI Specifications**:
 - `docs/openapi.yaml` - Core IPAM API (current)
@@ -79,8 +85,9 @@ cd ui && npx tsc --noEmit   # TypeScript type check only
 
 ### Building
 ```bash
-just build            # Build binary without SQLite
+just build            # Build binary (in-memory store only)
 just sqlite-build     # Build with SQLite support (-tags sqlite)
+go build -tags postgres ./cmd/cloudpam  # Build with PostgreSQL support
 ```
 
 ### SQLite Mode
@@ -184,38 +191,39 @@ APP_URL=http://localhost:8080 npm run screenshots  # Outputs to photos/
 The storage layer uses build tags to switch between implementations:
 
 - **Build Tags**: The binary selects storage at compile time via Go build tags
-  - Without `-tags sqlite`: uses in-memory store (`cmd/cloudpam/store_default.go`)
+  - Without tags: uses in-memory store (`cmd/cloudpam/store_default.go`)
   - With `-tags sqlite`: uses SQLite store (`cmd/cloudpam/store_sqlite.go`)
+  - With `-tags postgres`: uses PostgreSQL store (`cmd/cloudpam/store_postgres.go`)
 
-- **Storage Interface**: `internal/storage/store.go` defines the `Store` interface
+- **Storage Interface**: `internal/storage/store.go` defines the `Store` and `DiscoveryStore` interfaces
   - `MemoryStore`: in-memory implementation in same file
   - SQLite implementation: `internal/storage/sqlite/sqlite.go`
+  - PostgreSQL implementation: `internal/storage/postgres/postgres.go`
   - All stores must implement `Close() error` to release resources on shutdown
 
 - **Migration System**: SQLite builds embed SQL migrations from `migrations/` directory
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
-  - Current migrations: `0001_init.sql`, `0002_accounts_meta.sql`
+  - Current migrations: `0001_init.sql` through `0008_discovered_resources.sql`
 
-- **Planned: PostgreSQL Support** (Phase 1-2)
+- **PostgreSQL Support** (`-tags postgres`)
   - Production-grade database with native CIDR operations
-  - Separate migration files in `migrations/postgres/`
-  - Row-level security for multi-tenancy
+  - Build with `-tags postgres`: `cmd/cloudpam/store_postgres.go`
+  - Implementation: `internal/storage/postgres/postgres.go`
+  - Configure with `DATABASE_URL` env var
   - See `DATABASE_SCHEMA.md` for complete schema
 
-### Planned Packages
+### Implemented & Planned Packages
 
-New Go packages defined with interfaces (see `internal/*/interfaces.go`):
-
-| Package | Purpose | Key Interfaces |
-|---------|---------|----------------|
-| `internal/planning` | Smart planning engine | `DiscoveryService`, `AnalysisService`, `RecommendationService`, `AIPlanningService`, `SchemaWizardService`, `LLMProvider` |
-| `internal/observability` | Logging, metrics, tracing | `Logger`, `Metrics`, `Tracer`, `AuditLogger`, `HealthChecker` |
-| `internal/auth` | Authentication/authorization | (planned) `AuthProvider`, `SessionStore`, `Authorizer` |
-| `internal/discovery` | Cloud resource discovery | (planned) `Collector`, `SyncEngine` |
-
-These interfaces are defined and ready for implementation.
+| Package | Purpose | Status |
+|---------|---------|--------|
+| `internal/auth` | Authentication, RBAC, users, sessions | Implemented |
+| `internal/audit` | Audit logging | Implemented |
+| `internal/discovery` | Cloud resource discovery (Collector, SyncService) | Implemented (AWS) |
+| `internal/observability` | Logging, metrics, tracing | Implemented |
+| `internal/cidr` | CIDR math utilities | Implemented |
+| `internal/planning` | Smart planning engine | Interfaces defined |
 
 ### HTTP Layer
 
@@ -237,6 +245,17 @@ These interfaces are defined and ready for implementation.
   - `/api/v1/schema/apply` - bulk pool creation from schema plans
   - `/api/v1/audit` - audit event log with pagination
   - `/api/v1/auth/keys` - API key management (CRUD)
+  - `/api/v1/auth/login` - session login (POST)
+  - `/api/v1/auth/logout` - session logout (POST)
+  - `/api/v1/auth/me` - current user/key identity (GET)
+  - `/api/v1/auth/users` - user management (GET/POST)
+  - `/api/v1/auth/users/{id}` - user CRUD (GET/PATCH/DELETE)
+  - `/api/v1/search` - unified search with CIDR containment queries
+  - `/api/v1/discovery/resources` - list discovered cloud resources (filterable)
+  - `/api/v1/discovery/resources/{id}` - get single discovered resource
+  - `/api/v1/discovery/resources/{id}/link` - link/unlink resource to pool (POST/DELETE)
+  - `/api/v1/discovery/sync` - trigger sync (POST) or list sync jobs (GET)
+  - `/api/v1/discovery/sync/{id}` - get sync job status
   - `/api/v1/test-sentry` - Sentry integration test endpoint (use `?type=message|error|panic`)
   - `/readyz` - readiness check with database health
   - `/metrics` - Prometheus metrics endpoint
@@ -307,10 +326,10 @@ The HTTP server (`internal/http/server.go`) implements IPv4 CIDR logic:
 When modifying storage:
 
 - Update the `Store` interface in `internal/storage/store.go`
-- Implement methods in both `MemoryStore` (same file) and SQLite store (`internal/storage/sqlite/sqlite.go`)
+- Implement methods in MemoryStore, SQLite store (`internal/storage/sqlite/`), and PostgreSQL store (`internal/storage/postgres/`)
 - Ensure the `Close() error` method is implemented to release resources
-- For SQLite schema changes: add new migration file to `migrations/` with sequential prefix (e.g., `0003_description.sql`)
-- Test both storage backends: run `just test` (in-memory) and `just sqlite-build && just test` (SQLite)
+- For schema changes: add new migration file to `migrations/` with sequential prefix (e.g., `0009_description.sql`)
+- Test all storage backends: `just test` (in-memory), `just sqlite-build && just test` (SQLite)
 
 ### HTTP API Development
 
@@ -330,7 +349,7 @@ When adding endpoints:
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` (usePools, useAccounts, useBlocks, useAudit, useToast)
+- API hooks in `ui/src/hooks/` (usePools, useAccounts, useBlocks, useAudit, useDiscovery, useAuth, useToast)
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)
@@ -340,25 +359,34 @@ When adding endpoints:
 
 ## Environment Variables
 
-### Current
+### Server & Storage
 - `ADDR` or `PORT`: listen address (default `:8080`)
 - `SQLITE_DSN`: SQLite connection string (default `file:cloudpam.db?cache=shared&_fk=1`)
-- `APP_VERSION`: optional version stamp for migrations and Sentry release tracking
-- `SENTRY_DSN`: Sentry DSN for backend error tracking (optional)
-- `SENTRY_FRONTEND_DSN`: Sentry DSN for frontend error tracking (optional, can be different from backend DSN)
-- `SENTRY_ENVIRONMENT`: Sentry environment name (default: `production`)
+- `DATABASE_URL`: PostgreSQL connection string (default `postgres://cloudpam:cloudpam@localhost:5432/cloudpam?sslmode=disable`)
 
-### Planned (from OBSERVABILITY.md)
+### Auth
+- `CLOUDPAM_AUTH_ENABLED`: Enable RBAC auth (`true` or `1` to enable)
+- `CLOUDPAM_ADMIN_USERNAME`: Bootstrap admin username
+- `CLOUDPAM_ADMIN_PASSWORD`: Bootstrap admin password
+- `CLOUDPAM_ADMIN_EMAIL`: Bootstrap admin email (default: `{username}@localhost`)
+
+### Observability
 - `CLOUDPAM_LOG_LEVEL`: Log level - debug, info, warn, error (default: `info`)
 - `CLOUDPAM_LOG_FORMAT`: Log format - json, text (default: `json`)
 - `CLOUDPAM_METRICS_ENABLED`: Enable Prometheus metrics (default: `true`)
-- `CLOUDPAM_METRICS_PORT`: Metrics endpoint port (default: `8889`)
-- `CLOUDPAM_TRACING_ENABLED`: Enable distributed tracing (default: `true`)
+- `APP_VERSION`: version stamp for migrations and Sentry release tracking
+- `SENTRY_DSN`: Sentry DSN for backend error tracking (optional)
+- `SENTRY_FRONTEND_DSN`: Sentry DSN for frontend error tracking (optional)
+- `SENTRY_ENVIRONMENT`: Sentry environment name (default: `production`)
+
+### Rate Limiting
+- `RATE_LIMIT_RPS`: Requests per second (default: `10.0`; set to `0` to disable)
+- `RATE_LIMIT_BURST`: Burst size (default: `20`)
+
+### Planned
+- `CLOUDPAM_TRACING_ENABLED`: Enable distributed tracing
 - `CLOUDPAM_TRACING_ENDPOINT`: Jaeger collector endpoint
-- `CLOUDPAM_TRACING_SAMPLE_RATE`: Trace sampling rate (default: `0.01`)
-- `DATABASE_URL`: PostgreSQL connection string (planned)
-- `RATE_LIMIT_RPS`: Rate limit requests per second (planned)
-- `RATE_LIMIT_BURST`: Rate limit burst size (planned)
+- `CLOUDPAM_TRACING_SAMPLE_RATE`: Trace sampling rate
 
 ## API Contract
 
@@ -386,14 +414,23 @@ Common workflows:
 - Schema apply: `POST /api/v1/schema/apply` with JSON body `{"pools":[...], "status":"planned", "tags":{}, "skip_conflicts":false}`
 - Audit log: `GET /api/v1/audit?limit=50&offset=0&action=create&resource_type=pool`
 - API key management: `POST /api/v1/auth/keys`, `GET /api/v1/auth/keys`, `DELETE /api/v1/auth/keys/{id}`
+- Search: `GET /api/v1/search?q=prod&cidr_contains=10.1.2.5&type=pool,account`
+- Discovery resources: `GET /api/v1/discovery/resources?account_id=1&status=active&resource_type=vpc`
+- Discovery resource detail: `GET /api/v1/discovery/resources/{id}`
+- Link resource to pool: `POST /api/v1/discovery/resources/{id}/link` with `{"pool_id":1}`
+- Unlink resource: `DELETE /api/v1/discovery/resources/{id}/link`
+- Trigger sync: `POST /api/v1/discovery/sync` with `{"account_id":1}`
+- List sync jobs: `GET /api/v1/discovery/sync?account_id=1`
+- Get sync job: `GET /api/v1/discovery/sync/{id}`
 - Test Sentry: `GET /api/v1/test-sentry?type=message|error|panic`
 
 ## Testing Across Storage Backends
 
-CloudPAM's architecture allows the same test suite to run against both storage implementations:
+CloudPAM's architecture allows the same test suite to run against all three storage implementations:
 
-1. Run without SQLite: `just test` (tests use in-memory store)
-2. Run with SQLite: `just sqlite-build && just test` (tests use SQLite store if available)
+1. In-memory: `just test` (default, no build tags)
+2. SQLite: `just sqlite-build && just test` (`-tags sqlite`)
+3. PostgreSQL: `go test -tags postgres ./...` (requires running PostgreSQL; configure `DATABASE_URL`)
 
 When writing tests, avoid assumptions about storage persistence or specific implementation details.
 
@@ -488,41 +525,62 @@ cloudpam/
 ├── cmd/cloudpam/           # Main entrypoint and storage selection
 │   ├── main.go             # Server startup, flags, graceful shutdown
 │   ├── store_default.go    # In-memory store selection (default build)
-│   └── store_sqlite.go     # SQLite store selection (-tags sqlite)
+│   ├── store_sqlite.go     # SQLite store selection (-tags sqlite)
+│   └── store_postgres.go   # PostgreSQL store selection (-tags postgres)
 ├── internal/
-│   ├── domain/             # Core types (Pool, Account)
-│   │   ├── types.go        # Current types
+│   ├── domain/             # Core types (Pool, Account, DiscoveredResource, SyncJob)
+│   │   ├── types.go        # Pool, Account types
+│   │   ├── discovery.go    # Discovery domain types
 │   │   └── models.go       # Extended models (planned)
 │   ├── http/               # HTTP server, routes, handlers
-│   │   ├── server.go       # Server implementation and all handlers
+│   │   ├── server.go       # Server struct, route registration, helpers
+│   │   ├── pool_handlers.go       # Pool CRUD, hierarchy, stats
+│   │   ├── account_handlers.go    # Account CRUD
+│   │   ├── block_handlers.go      # Block listing, subnet enumeration
+│   │   ├── export_handlers.go     # CSV export/import
+│   │   ├── system_handlers.go     # Health, readiness, Sentry, SPA
+│   │   ├── discovery_handlers.go  # Discovery API (resources, sync)
+│   │   ├── auth_handlers.go       # Auth (login, logout, keys, users)
+│   │   ├── user_handlers.go       # User management
 │   │   ├── middleware.go   # Middleware (logging, auth, rate limit)
 │   │   ├── context.go      # Request context helpers
+│   │   ├── cidr.go         # IPv4 CIDR validation utilities
 │   │   └── *_test.go       # Tests
 │   ├── storage/            # Storage interface and implementations
 │   │   ├── store.go        # Store interface and MemoryStore
-│   │   ├── interfaces.go   # Extended storage interfaces (planned)
-│   │   ├── cidr.go         # CIDR utility functions (planned)
-│   │   └── sqlite/         # SQLite implementation
-│   │       ├── sqlite.go
+│   │   ├── discovery.go    # DiscoveryStore interface
+│   │   ├── discovery_memory.go  # In-memory DiscoveryStore
+│   │   ├── errors.go       # Sentinel errors (ErrNotFound, etc.)
+│   │   ├── sqlite/         # SQLite implementation
+│   │   │   ├── sqlite.go
+│   │   │   ├── discovery.go    # SQLite DiscoveryStore
+│   │   │   └── migrator.go
+│   │   └── postgres/       # PostgreSQL implementation
+│   │       ├── postgres.go
 │   │       └── migrator.go
-│   ├── validation/         # Input validation (partial)
-│   │   └── validation.go
+│   ├── discovery/          # Cloud resource discovery
+│   │   ├── collector.go    # Collector interface + SyncService
+│   │   └── aws/            # AWS collector (VPCs, subnets, EIPs)
+│   │       └── collector.go
+│   ├── auth/               # Authentication/authorization
+│   │   ├── rbac.go         # Roles, permissions, RBAC middleware
+│   │   ├── keys.go         # API key types and store interfaces
+│   │   ├── users.go        # User types and store interfaces
+│   │   ├── sessions.go     # Session management
+│   │   └── sqlite.go       # SQLite implementations
+│   ├── audit/              # Audit logging
+│   ├── cidr/               # Reusable CIDR math utilities
+│   ├── validation/         # Input validation
 │   ├── planning/           # Smart planning engine (interfaces defined)
-│   │   └── interfaces.go   # DiscoveryService, AnalysisService, etc.
-│   ├── observability/      # Logging, metrics, tracing (interfaces defined)
-│   │   └── interfaces.go   # Logger, Metrics, Tracer, AuditLogger
+│   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-│       └── handler.go
-├── migrations/             # SQL migrations
+├── migrations/             # SQL migrations (0001-0008)
 │   ├── embed.go
-│   ├── 0001_init.sql       # Current SQLite migrations
+│   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
-│   ├── postgres/           # PostgreSQL migrations (planned)
-│   │   ├── 001_initial_schema.up.sql
-│   │   └── 001_initial_schema.down.sql
-│   └── sqlite/             # SQLite migrations (new structure)
-│       ├── 001_initial_schema.up.sql
-│       └── 001_initial_schema.down.sql
+│   ├── ...
+│   ├── 0008_discovered_resources.sql  # Discovery tables
+│   └── postgres/           # PostgreSQL migrations
 ├── deploy/                 # Deployment configurations (planned)
 │   ├── k8s/                # Kubernetes manifests
 │   │   ├── observability-stack.yaml
@@ -534,9 +592,9 @@ cloudpam/
 │   ├── src/
 │   │   ├── App.tsx           # Router + layout
 │   │   ├── api/              # API client + types
-│   │   ├── hooks/            # React hooks (usePools, useAccounts, etc.)
+│   │   ├── hooks/            # React hooks (usePools, useAccounts, useDiscovery, etc.)
 │   │   ├── components/       # Shared components (Layout, Sidebar, modals, etc.)
-│   │   ├── pages/            # Page components (Dashboard, Pools, Blocks, etc.)
+│   │   ├── pages/            # Page components (Dashboard, Pools, Discovery, etc.)
 │   │   ├── utils/            # Utility functions (format, colors)
 │   │   ├── wizard/           # Schema Planner wizard
 │   │   └── __tests__/        # Frontend tests
