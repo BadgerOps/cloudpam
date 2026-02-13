@@ -23,13 +23,25 @@ func seedSearchData(t *testing.T, store *storage.MemoryStore) {
 	t.Helper()
 	ctx := t.Context()
 	// Create pools
-	store.CreatePool(ctx, domain.CreatePool{Name: "Corporate", CIDR: "10.0.0.0/8", Type: domain.PoolTypeSupernet})
-	store.CreatePool(ctx, domain.CreatePool{Name: "US East", CIDR: "10.1.0.0/16", Type: domain.PoolTypeRegion, ParentID: int64Ptr(1)})
-	store.CreatePool(ctx, domain.CreatePool{Name: "Production VPC", CIDR: "10.1.1.0/24", Type: domain.PoolTypeVPC, ParentID: int64Ptr(2)})
-	store.CreatePool(ctx, domain.CreatePool{Name: "Staging", CIDR: "172.16.0.0/16", Type: domain.PoolTypeEnvironment})
+	if _, err := store.CreatePool(ctx, domain.CreatePool{Name: "Corporate", CIDR: "10.0.0.0/8", Type: domain.PoolTypeSupernet}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{Name: "US East", CIDR: "10.1.0.0/16", Type: domain.PoolTypeRegion, ParentID: int64Ptr(1)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{Name: "Production VPC", CIDR: "10.1.1.0/24", Type: domain.PoolTypeVPC, ParentID: int64Ptr(2)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{Name: "Staging", CIDR: "172.16.0.0/16", Type: domain.PoolTypeEnvironment}); err != nil {
+		t.Fatal(err)
+	}
 	// Create accounts
-	store.CreateAccount(ctx, domain.CreateAccount{Key: "aws:prod", Name: "AWS Production", Provider: "aws"})
-	store.CreateAccount(ctx, domain.CreateAccount{Key: "gcp:dev", Name: "GCP Development", Provider: "gcp"})
+	if _, err := store.CreateAccount(ctx, domain.CreateAccount{Key: "aws:prod", Name: "AWS Production", Provider: "aws"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateAccount(ctx, domain.CreateAccount{Key: "gcp:dev", Name: "GCP Development", Provider: "gcp"}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func int64Ptr(v int64) *int64 {
@@ -152,7 +164,9 @@ func TestSearchTypeFilter(t *testing.T) {
 	}
 
 	var resp domain.SearchResponse
-	json.NewDecoder(w.Body).Decode(&resp)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
 
 	for _, item := range resp.Items {
 		if item.Type != "pool" {
@@ -201,7 +215,9 @@ func TestSearchPagination(t *testing.T) {
 	}
 
 	var resp domain.SearchResponse
-	json.NewDecoder(w.Body).Decode(&resp)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
 
 	if resp.PageSize != 2 {
 		t.Errorf("expected page_size=2, got %d", resp.PageSize)
@@ -241,7 +257,9 @@ func TestSearchCombinedQueryAndCIDR(t *testing.T) {
 	}
 
 	var resp domain.SearchResponse
-	json.NewDecoder(w.Body).Decode(&resp)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
 
 	// Only "US East" matches both text query and CIDR filter
 	if resp.Total != 1 {
