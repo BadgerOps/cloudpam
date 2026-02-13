@@ -25,6 +25,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			hash BLOB NOT NULL,
 			salt BLOB NOT NULL,
 			scopes TEXT NOT NULL DEFAULT '[]',
+			owner_id TEXT,
 			created_at TIMESTAMP NOT NULL,
 			expires_at TIMESTAMP,
 			last_used_at TIMESTAMP,
