@@ -17,7 +17,8 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 The project is entering **Phase 3** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
-**Current State** (Sprint 14 complete):
+**Current State** (Sprint 15 complete):
+- Recommendation generator: allocation & compliance recs, scoring, apply/dismiss workflow (Sprint 15)
 - Analysis engine: gap analysis, fragmentation scoring, compliance checks (Sprint 14)
 - Cloud resource discovery: AWS collector, sync service, approval workflow (Sprint 13)
 - Local user management with dual auth (session cookies + API keys) (Sprint 12)
@@ -148,7 +149,8 @@ APP_URL=http://localhost:8080 npm run screenshots  # Outputs to photos/
 │  └── handleSPA() — unified React SPA serving                │
 ├─────────────────────────────────────────────────────────────┤
 │  ui/ (React/Vite/TypeScript SPA)                            │
-│  ├── Pages: Dashboard, Pools, Blocks, Accounts, Audit       │
+│  ├── Pages: Dashboard, Pools, Blocks, Accounts, Audit,      │
+│  │         Discovery, Schema, Recommendations               │
 │  ├── Schema Planner wizard                                  │
 │  ├── API hooks + shared components                          │
 │  └── Built to web/dist/ → embedded via go:embed             │
@@ -207,7 +209,7 @@ The storage layer uses build tags to switch between implementations:
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
-  - Current migrations: `0001_init.sql` through `0008_discovered_resources.sql`
+  - Current migrations: `0001_init.sql` through `0011_recommendations.sql`
 
 - **PostgreSQL Support** (`-tags postgres`)
   - Production-grade database with native CIDR operations
@@ -225,7 +227,7 @@ The storage layer uses build tags to switch between implementations:
 | `internal/discovery` | Cloud resource discovery (Collector, SyncService) | Implemented (AWS) |
 | `internal/observability` | Logging, metrics, tracing | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
-| `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance) | Implemented (Phase 3 analysis) |
+| `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
 
 ### HTTP Layer
 
@@ -262,6 +264,11 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/analysis/gaps` - gap analysis for a pool (POST)
   - `/api/v1/analysis/fragmentation` - fragmentation scoring (POST)
   - `/api/v1/analysis/compliance` - compliance checks (POST)
+  - `/api/v1/recommendations/generate` - generate recommendations for pools (POST)
+  - `/api/v1/recommendations` - list recommendations with filters (GET)
+  - `/api/v1/recommendations/{id}` - get single recommendation (GET)
+  - `/api/v1/recommendations/{id}/apply` - apply a recommendation (POST)
+  - `/api/v1/recommendations/{id}/dismiss` - dismiss a recommendation (POST)
   - `/api/v1/test-sentry` - Sentry integration test endpoint (use `?type=message|error|panic`)
   - `/readyz` - readiness check with database health
   - `/metrics` - Prometheus metrics endpoint
@@ -355,7 +362,7 @@ When adding endpoints:
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` (usePools, useAccounts, useBlocks, useAudit, useDiscovery, useAuth, useToast)
+- API hooks in `ui/src/hooks/` (usePools, useAccounts, useBlocks, useAudit, useDiscovery, useAuth, useToast, useRecommendations)
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)
@@ -432,6 +439,11 @@ Common workflows:
 - Gap analysis: `POST /api/v1/analysis/gaps` with `{"pool_id":1}`
 - Fragmentation: `POST /api/v1/analysis/fragmentation` with `{"pool_ids":[1,2]}`
 - Compliance: `POST /api/v1/analysis/compliance` with `{"pool_ids":[1,2], "include_children":true}`
+- Generate recommendations: `POST /api/v1/recommendations/generate` with `{"pool_ids":[1], "include_children":true}`
+- List recommendations: `GET /api/v1/recommendations?pool_id=1&type=allocation&status=pending`
+- Get recommendation: `GET /api/v1/recommendations/{id}`
+- Apply recommendation: `POST /api/v1/recommendations/{id}/apply` with `{"name":"New Subnet"}`
+- Dismiss recommendation: `POST /api/v1/recommendations/{id}/dismiss` with `{"reason":"not needed"}`
 - Test Sentry: `GET /api/v1/test-sentry?type=message|error|panic`
 
 ## Testing Across Storage Backends
@@ -538,9 +550,10 @@ cloudpam/
 │   ├── store_sqlite.go     # SQLite store selection (-tags sqlite)
 │   └── store_postgres.go   # PostgreSQL store selection (-tags postgres)
 ├── internal/
-│   ├── domain/             # Core types (Pool, Account, DiscoveredResource, SyncJob)
+│   ├── domain/             # Core types (Pool, Account, DiscoveredResource, SyncJob, Recommendation)
 │   │   ├── types.go        # Pool, Account types
 │   │   ├── discovery.go    # Discovery domain types
+│   │   ├── recommendations.go # Recommendation types
 │   │   └── models.go       # Extended models (planned)
 │   ├── http/               # HTTP server, routes, handlers
 │   │   ├── server.go       # Server struct, route registration, helpers
@@ -552,6 +565,7 @@ cloudpam/
 │   │   ├── discovery_handlers.go  # Discovery API (resources, sync)
 │   │   ├── auth_handlers.go       # Auth (login, logout, keys, users)
 │   │   ├── user_handlers.go       # User management
+│   │   ├── recommendation_handlers.go # Recommendation API (generate, apply, dismiss)
 │   │   ├── middleware.go   # Middleware (logging, auth, rate limit)
 │   │   ├── context.go      # Request context helpers
 │   │   ├── cidr.go         # IPv4 CIDR validation utilities
@@ -560,10 +574,13 @@ cloudpam/
 │   │   ├── store.go        # Store interface and MemoryStore
 │   │   ├── discovery.go    # DiscoveryStore interface
 │   │   ├── discovery_memory.go  # In-memory DiscoveryStore
+│   │   ├── recommendations.go   # RecommendationStore interface
+│   │   ├── recommendations_memory.go # In-memory RecommendationStore
 │   │   ├── errors.go       # Sentinel errors (ErrNotFound, etc.)
 │   │   ├── sqlite/         # SQLite implementation
 │   │   │   ├── sqlite.go
 │   │   │   ├── discovery.go    # SQLite DiscoveryStore
+│   │   │   ├── recommendations.go # SQLite RecommendationStore
 │   │   │   └── migrator.go
 │   │   └── postgres/       # PostgreSQL implementation
 │   │       ├── postgres.go
@@ -581,10 +598,10 @@ cloudpam/
 │   ├── audit/              # Audit logging
 │   ├── cidr/               # Reusable CIDR math utilities
 │   ├── validation/         # Input validation
-│   ├── planning/           # Smart planning engine (analysis, gaps, fragmentation, compliance)
+│   ├── planning/           # Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0008)
+├── migrations/             # SQL migrations (0001-0011)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
@@ -602,9 +619,9 @@ cloudpam/
 │   ├── src/
 │   │   ├── App.tsx           # Router + layout
 │   │   ├── api/              # API client + types
-│   │   ├── hooks/            # React hooks (usePools, useAccounts, useDiscovery, etc.)
+│   │   ├── hooks/            # React hooks (usePools, useAccounts, useDiscovery, useRecommendations, etc.)
 │   │   ├── components/       # Shared components (Layout, Sidebar, modals, etc.)
-│   │   ├── pages/            # Page components (Dashboard, Pools, Discovery, etc.)
+│   │   ├── pages/            # Page components (Dashboard, Pools, Discovery, Recommendations, etc.)
 │   │   ├── utils/            # Utility functions (format, colors)
 │   │   ├── wizard/           # Schema Planner wizard
 │   │   └── __tests__/        # Frontend tests

@@ -107,6 +107,15 @@ func selectDiscoveryStore(logger observability.Logger, mainStore storage.Store) 
 	return storage.NewMemoryDiscoveryStore(storage.NewMemoryStore())
 }
 
+// selectRecommendationStore returns a SQLite-backed recommendation store if the main store supports it.
+func selectRecommendationStore(logger observability.Logger, mainStore storage.Store) storage.RecommendationStore {
+	if rs, ok := mainStore.(storage.RecommendationStore); ok {
+		return rs
+	}
+	logger.Warn("main store does not implement RecommendationStore; using in-memory fallback")
+	return storage.NewMemoryRecommendationStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus returns migration status when built with sqlite tag.
 func sqliteStatus(dsn string) string {
 	s, err := sqlitestore.Status(dsn)
