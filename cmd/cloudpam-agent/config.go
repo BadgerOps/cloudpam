@@ -1,12 +1,16 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"cloudpam/internal/domain"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,6 +27,10 @@ type Config struct {
 	MaxRetries        int           `yaml:"max_retries"`
 	RetryBackoff      time.Duration `yaml:"retry_backoff"`
 	RequestTimeout    time.Duration `yaml:"request_timeout"`
+	BootstrapToken    string        `yaml:"bootstrap_token"`
+
+	// Bootstrapped is set to true when config was populated from a bootstrap token.
+	Bootstrapped bool `yaml:"-"`
 }
 
 // LoadConfig loads configuration from a YAML file and environment variables.
@@ -76,6 +84,9 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("CLOUDPAM_AWS_REGIONS"); v != "" {
 		cfg.AWSRegions = strings.Split(v, ",")
 	}
+	if v := os.Getenv("CLOUDPAM_BOOTSTRAP_TOKEN"); v != "" {
+		cfg.BootstrapToken = v
+	}
 
 	// Validate required fields
 	if err := cfg.Validate(); err != nil {
@@ -86,7 +97,21 @@ func LoadConfig(path string) (*Config, error) {
 }
 
 // Validate checks that required configuration fields are set.
+// If a bootstrap token is provided and api_key is not already set,
+// the token is decoded to populate ServerURL, APIKey, and AgentName.
 func (c *Config) Validate() error {
+	// Decode bootstrap token if api_key is not explicitly set
+	if c.BootstrapToken != "" && c.APIKey == "" {
+		bundle, err := decodeBootstrapToken(c.BootstrapToken)
+		if err != nil {
+			return fmt.Errorf("invalid bootstrap token: %w", err)
+		}
+		c.ServerURL = bundle.ServerURL
+		c.APIKey = bundle.APIKey
+		c.AgentName = bundle.AgentName
+		c.Bootstrapped = true
+	}
+
 	if c.ServerURL == "" {
 		return errors.New("server_url is required (set CLOUDPAM_SERVER_URL or yaml)")
 	}
@@ -106,4 +131,20 @@ func (c *Config) Validate() error {
 		return errors.New("heartbeat_interval must be at least 10 seconds")
 	}
 	return nil
+}
+
+// decodeBootstrapToken decodes a base64-encoded JSON provisioning bundle.
+func decodeBootstrapToken(token string) (*domain.AgentProvisionBundle, error) {
+	data, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode: %w", err)
+	}
+	var bundle domain.AgentProvisionBundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return nil, fmt.Errorf("json decode: %w", err)
+	}
+	if bundle.APIKey == "" || bundle.ServerURL == "" || bundle.AgentName == "" {
+		return nil, errors.New("bundle missing required fields (api_key, server_url, agent_name)")
+	}
+	return &bundle, nil
 }

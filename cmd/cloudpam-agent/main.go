@@ -56,6 +56,21 @@ func main() {
 	// Create pusher
 	pusher := NewPusher(cfg.ServerURL, cfg.APIKey, agentID, cfg.RequestTimeout, logger)
 
+	// Register with server if bootstrapped from a provisioning token
+	if cfg.Bootstrapped {
+		logger.Info("registering with server (bootstrap token)")
+		regResp, err := pusher.Register(context.Background(), cfg.AgentName, cfg.AccountID, version, hostname)
+		if err != nil {
+			logger.Error("agent registration failed", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("agent registered",
+			"agent_id", regResp.AgentID,
+			"approval_status", regResp.ApprovalStatus,
+			"message", regResp.Message,
+		)
+	}
+
 	// Create AWS collector
 	collector := aws.New()
 
