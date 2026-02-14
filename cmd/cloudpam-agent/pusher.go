@@ -87,10 +87,10 @@ func (p *Pusher) PushResources(ctx context.Context, accountID int64, resources [
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			var ingestResp domain.IngestResponse
 			if err := json.NewDecoder(resp.Body).Decode(&ingestResp); err != nil {
-				resp.Body.Close()
+				_ = resp.Body.Close()
 				return fmt.Errorf("decode response: %w", err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			p.logger.Info("pushed resources",
 				"job_id", ingestResp.JobID,
@@ -109,12 +109,12 @@ func (p *Pusher) PushResources(ctx context.Context, accountID int64, resources [
 				Detail string `json:"detail"`
 			}
 			_ = json.NewDecoder(resp.Body).Decode(&errBody)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return fmt.Errorf("server rejected request (status %d): %s - %s", resp.StatusCode, errBody.Error, errBody.Detail)
 		}
 
 		// Server error (5xx) - retry
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		lastErr = fmt.Errorf("server error (status %d)", resp.StatusCode)
 		p.logger.Error("push failed", "error", lastErr, "attempt", attempt+1)
 	}
@@ -150,7 +150,7 @@ func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, ve
 	if err != nil {
 		return fmt.Errorf("http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		p.logger.Debug("heartbeat sent", "agent_id", p.agentID)

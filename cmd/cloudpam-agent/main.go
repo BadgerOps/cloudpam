@@ -61,7 +61,6 @@ func main() {
 
 	// Setup signal handling
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -75,9 +74,11 @@ func main() {
 	// Run scheduler
 	if err := runScheduler(ctx, cfg, collector, pusher, agentID, hostname, logger); err != nil {
 		logger.Error("scheduler failed", "error", err)
+		cancel()
 		os.Exit(1)
 	}
 
+	cancel()
 	logger.Info("cloudpam-agent stopped")
 }
 
