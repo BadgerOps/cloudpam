@@ -28,53 +28,74 @@ func (c *Collector) Provider() string { return "aws" }
 
 // Discover discovers VPCs, subnets, and Elastic IPs for the given account.
 // Authentication uses the default AWS credential chain (env vars, instance profile, etc.).
-// The account's Regions field determines which region to query.
+// The account's Regions field determines which regions to query. If empty, uses default config region.
 func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]domain.DiscoveredResource, error) {
-	cfg, err := c.loadConfig(ctx, account)
-	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
+	regions := account.Regions
+	if len(regions) == 0 {
+		// If no regions specified, use default config (single region)
+		regions = []string{""}
 	}
 
-	client := ec2.NewFromConfig(cfg)
-	var resources []domain.DiscoveredResource
+	var allResources []domain.DiscoveredResource
 	now := time.Now().UTC()
 
-	// Discover VPCs
-	vpcs, err := c.discoverVPCs(ctx, client, account, now)
-	if err != nil {
-		return nil, fmt.Errorf("discover vpcs: %w", err)
-	}
-	resources = append(resources, vpcs...)
+	// Discover in each region
+	for _, region := range regions {
+		cfg, err := c.loadConfigForRegion(ctx, region)
+		if err != nil {
+			// Log error but continue with other regions
+			fmt.Printf("failed to load config for region %s: %v\n", region, err)
+			continue
+		}
 
-	// Discover subnets
-	subnets, err := c.discoverSubnets(ctx, client, account, now)
-	if err != nil {
-		return nil, fmt.Errorf("discover subnets: %w", err)
-	}
-	resources = append(resources, subnets...)
+		client := ec2.NewFromConfig(cfg)
 
-	// Discover Elastic IPs
-	eips, err := c.discoverElasticIPs(ctx, client, account, now)
-	if err != nil {
-		return nil, fmt.Errorf("discover elastic ips: %w", err)
-	}
-	resources = append(resources, eips...)
+		// Get actual region from config (in case it was empty)
+		actualRegion := cfg.Region
+		if actualRegion == "" {
+			actualRegion = region
+		}
 
-	return resources, nil
+		// Discover VPCs
+		vpcs, err := c.discoverVPCs(ctx, client, account, actualRegion, now)
+		if err != nil {
+			fmt.Printf("failed to discover VPCs in region %s: %v\n", actualRegion, err)
+			continue
+		}
+		allResources = append(allResources, vpcs...)
+
+		// Discover subnets
+		subnets, err := c.discoverSubnets(ctx, client, account, actualRegion, now)
+		if err != nil {
+			fmt.Printf("failed to discover subnets in region %s: %v\n", actualRegion, err)
+			continue
+		}
+		allResources = append(allResources, subnets...)
+
+		// Discover Elastic IPs
+		eips, err := c.discoverElasticIPs(ctx, client, account, actualRegion, now)
+		if err != nil {
+			fmt.Printf("failed to discover Elastic IPs in region %s: %v\n", actualRegion, err)
+			continue
+		}
+		allResources = append(allResources, eips...)
+	}
+
+	return allResources, nil
 }
 
-func (c *Collector) loadConfig(ctx context.Context, account domain.Account) (aws.Config, error) {
+func (c *Collector) loadConfigForRegion(ctx context.Context, region string) (aws.Config, error) {
 	var opts []func(*config.LoadOptions) error
 
-	// Use first region from account if set
-	if len(account.Regions) > 0 {
-		opts = append(opts, config.WithRegion(account.Regions[0]))
+	// Set region if provided
+	if region != "" {
+		opts = append(opts, config.WithRegion(region))
 	}
 
 	return config.LoadDefaultConfig(ctx, opts...)
 }
 
-func (c *Collector) discoverVPCs(ctx context.Context, client *ec2.Client, account domain.Account, now time.Time) ([]domain.DiscoveredResource, error) {
+func (c *Collector) discoverVPCs(ctx context.Context, client *ec2.Client, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
 	out, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
 	if err != nil {
 		return nil, err
@@ -83,7 +104,6 @@ func (c *Collector) discoverVPCs(ctx context.Context, client *ec2.Client, accoun
 	var resources []domain.DiscoveredResource
 	for _, vpc := range out.Vpcs {
 		name := extractTagName(vpc.Tags)
-		region := firstRegion(account)
 		meta := map[string]string{
 			"state": string(vpc.State),
 		}
@@ -109,7 +129,7 @@ func (c *Collector) discoverVPCs(ctx context.Context, client *ec2.Client, accoun
 	return resources, nil
 }
 
-func (c *Collector) discoverSubnets(ctx context.Context, client *ec2.Client, account domain.Account, now time.Time) ([]domain.DiscoveredResource, error) {
+func (c *Collector) discoverSubnets(ctx context.Context, client *ec2.Client, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
 	out, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{})
 	if err != nil {
 		return nil, err
@@ -132,7 +152,7 @@ func (c *Collector) discoverSubnets(ctx context.Context, client *ec2.Client, acc
 			ID:               uuid.New(),
 			AccountID:        account.ID,
 			Provider:         "aws",
-			Region:           az,
+			Region:           region,
 			ResourceType:     domain.ResourceTypeSubnet,
 			ResourceID:       aws.ToString(subnet.SubnetId),
 			Name:             name,
@@ -147,7 +167,7 @@ func (c *Collector) discoverSubnets(ctx context.Context, client *ec2.Client, acc
 	return resources, nil
 }
 
-func (c *Collector) discoverElasticIPs(ctx context.Context, client *ec2.Client, account domain.Account, now time.Time) ([]domain.DiscoveredResource, error) {
+func (c *Collector) discoverElasticIPs(ctx context.Context, client *ec2.Client, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
 	out, err := client.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
 	if err != nil {
 		return nil, err
@@ -158,7 +178,6 @@ func (c *Collector) discoverElasticIPs(ctx context.Context, client *ec2.Client, 
 		name := extractTagName(addr.Tags)
 		allocID := aws.ToString(addr.AllocationId)
 		publicIP := aws.ToString(addr.PublicIp)
-		region := firstRegion(account)
 
 		cidr := ""
 		if publicIP != "" {
@@ -199,14 +218,6 @@ func extractTagName(tags []ec2types.Tag) string {
 		if aws.ToString(tag.Key) == "Name" {
 			return aws.ToString(tag.Value)
 		}
-	}
-	return ""
-}
-
-// firstRegion returns the first region from account or empty string.
-func firstRegion(account domain.Account) string {
-	if len(account.Regions) > 0 {
-		return account.Regions[0]
 	}
 	return ""
 }
