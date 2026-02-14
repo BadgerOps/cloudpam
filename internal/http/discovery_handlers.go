@@ -23,11 +23,12 @@ type DiscoveryServer struct {
 	srv         *Server
 	store       storage.DiscoveryStore
 	syncService *discovery.SyncService
+	keyStore    auth.KeyStore
 }
 
 // NewDiscoveryServer creates a new DiscoveryServer.
-func NewDiscoveryServer(srv *Server, store storage.DiscoveryStore, syncService *discovery.SyncService) *DiscoveryServer {
-	return &DiscoveryServer{srv: srv, store: store, syncService: syncService}
+func NewDiscoveryServer(srv *Server, store storage.DiscoveryStore, syncService *discovery.SyncService, keyStore auth.KeyStore) *DiscoveryServer {
+	return &DiscoveryServer{srv: srv, store: store, syncService: syncService, keyStore: keyStore}
 }
 
 // RegisterDiscoveryRoutes registers discovery routes without RBAC.
@@ -36,6 +37,9 @@ func (d *DiscoveryServer) RegisterDiscoveryRoutes() {
 	d.srv.mux.HandleFunc("/api/v1/discovery/resources/", d.handleResourcesSubroutes)
 	d.srv.mux.HandleFunc("/api/v1/discovery/sync", d.handleSync)
 	d.srv.mux.HandleFunc("/api/v1/discovery/sync/", d.handleSyncSubroutes)
+	d.srv.mux.HandleFunc("/api/v1/discovery/ingest", d.handleIngest)
+	d.srv.mux.HandleFunc("/api/v1/discovery/agents", d.handleListAgents)
+	d.srv.mux.HandleFunc("/api/v1/discovery/agents/", d.handleAgentsSubroutes)
 }
 
 // RegisterProtectedDiscoveryRoutes registers discovery routes with RBAC.
@@ -48,11 +52,37 @@ func (d *DiscoveryServer) RegisterProtectedDiscoveryRoutes(dualMW Middleware, lo
 	d.srv.mux.Handle("/api/v1/discovery/sync", dualMW(d.protectedSyncHandler(logger)))
 	d.srv.mux.Handle("/api/v1/discovery/sync/", dualMW(readMW(http.HandlerFunc(d.handleSyncSubroutes))))
 
-	// Agent endpoints
+	// Agent endpoints — all go through dualMW (API key or session auth)
 	d.srv.mux.Handle("/api/v1/discovery/ingest", dualMW(createMW(http.HandlerFunc(d.handleIngest))))
-	d.srv.mux.Handle("/api/v1/discovery/agents/heartbeat", dualMW(createMW(http.HandlerFunc(d.handleAgentHeartbeat))))
 	d.srv.mux.Handle("/api/v1/discovery/agents", dualMW(readMW(http.HandlerFunc(d.handleListAgents))))
-	d.srv.mux.Handle("/api/v1/discovery/agents/", dualMW(readMW(http.HandlerFunc(d.handleGetAgent))))
+	d.srv.mux.Handle("/api/v1/discovery/agents/", dualMW(d.protectedAgentsSubroutes(logger)))
+}
+
+// protectedAgentsSubroutes returns a handler for /api/v1/discovery/agents/ with RBAC.
+func (d *DiscoveryServer) protectedAgentsSubroutes(logger *slog.Logger) http.Handler {
+	readMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionRead, logger)
+	createMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionCreate, logger)
+	updateMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionUpdate, logger)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/discovery/agents/")
+		path = strings.TrimRight(path, "/")
+
+		switch {
+		case path == "provision":
+			// Only admins/operators can provision agents
+			createMW(http.HandlerFunc(d.handleProvisionAgent)).ServeHTTP(w, r)
+		case path == "register":
+			// Agents register with their provisioned API key (discovery:write → create)
+			createMW(http.HandlerFunc(d.handleAgentRegister)).ServeHTTP(w, r)
+		case path == "heartbeat":
+			createMW(http.HandlerFunc(d.handleAgentHeartbeat)).ServeHTTP(w, r)
+		case strings.HasSuffix(path, "/approve"), strings.HasSuffix(path, "/reject"):
+			updateMW(http.HandlerFunc(d.handleAgentsSubroutes)).ServeHTTP(w, r)
+		default:
+			readMW(http.HandlerFunc(d.handleGetAgent)).ServeHTTP(w, r)
+		}
+	})
 }
 
 // handleResources handles GET /api/v1/discovery/resources
