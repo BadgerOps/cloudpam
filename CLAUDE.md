@@ -15,9 +15,10 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 ## Implementation Status
 
-The project is entering **Phase 2** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
+The project is entering **Phase 3** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
-**Current State** (Sprint 13 complete):
+**Current State** (Sprint 14 complete):
+- Analysis engine: gap analysis, fragmentation scoring, compliance checks (Sprint 14)
 - Cloud resource discovery: AWS collector, sync service, approval workflow (Sprint 13)
 - Local user management with dual auth (session cookies + API keys) (Sprint 12)
 - CIDR search API with containment queries, frontend search modal (Sprint 11)
@@ -109,8 +110,9 @@ just cover-threshold thr=80  # Check coverage meets threshold
 ### Linting & Formatting
 ```bash
 just fmt              # Format code with go fmt
-just lint             # Run golangci-lint (requires v1.61.0+ for Go 1.24)
+just lint             # Run golangci-lint v2.1.6 (same as CI)
 just tidy             # Run go mod tidy
+just install-hooks    # Install pre-commit hook (runs golangci-lint on staged Go files)
 ```
 
 ### OpenAPI Tooling
@@ -223,7 +225,7 @@ The storage layer uses build tags to switch between implementations:
 | `internal/discovery` | Cloud resource discovery (Collector, SyncService) | Implemented (AWS) |
 | `internal/observability` | Logging, metrics, tracing | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
-| `internal/planning` | Smart planning engine | Interfaces defined |
+| `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance) | Implemented (Phase 3 analysis) |
 
 ### HTTP Layer
 
@@ -256,6 +258,10 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/discovery/resources/{id}/link` - link/unlink resource to pool (POST/DELETE)
   - `/api/v1/discovery/sync` - trigger sync (POST) or list sync jobs (GET)
   - `/api/v1/discovery/sync/{id}` - get sync job status
+  - `/api/v1/analysis` - full network analysis report (POST)
+  - `/api/v1/analysis/gaps` - gap analysis for a pool (POST)
+  - `/api/v1/analysis/fragmentation` - fragmentation scoring (POST)
+  - `/api/v1/analysis/compliance` - compliance checks (POST)
   - `/api/v1/test-sentry` - Sentry integration test endpoint (use `?type=message|error|panic`)
   - `/readyz` - readiness check with database health
   - `/metrics` - Prometheus metrics endpoint
@@ -422,6 +428,10 @@ Common workflows:
 - Trigger sync: `POST /api/v1/discovery/sync` with `{"account_id":1}`
 - List sync jobs: `GET /api/v1/discovery/sync?account_id=1`
 - Get sync job: `GET /api/v1/discovery/sync/{id}`
+- Full analysis: `POST /api/v1/analysis` with `{"pool_ids":[1], "include_children":true}`
+- Gap analysis: `POST /api/v1/analysis/gaps` with `{"pool_id":1}`
+- Fragmentation: `POST /api/v1/analysis/fragmentation` with `{"pool_ids":[1,2]}`
+- Compliance: `POST /api/v1/analysis/compliance` with `{"pool_ids":[1,2], "include_children":true}`
 - Test Sentry: `GET /api/v1/test-sentry?type=message|error|panic`
 
 ## Testing Across Storage Backends
@@ -571,7 +581,7 @@ cloudpam/
 │   ├── audit/              # Audit logging
 │   ├── cidr/               # Reusable CIDR math utilities
 │   ├── validation/         # Input validation
-│   ├── planning/           # Smart planning engine (interfaces defined)
+│   ├── planning/           # Smart planning engine (analysis, gaps, fragmentation, compliance)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
 ├── migrations/             # SQL migrations (0001-0008)
