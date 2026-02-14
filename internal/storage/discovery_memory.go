@@ -13,9 +13,10 @@ import (
 
 // MemoryDiscoveryStore is an in-memory implementation of DiscoveryStore.
 type MemoryDiscoveryStore struct {
-	store    *MemoryStore // embed reference for shared mutex
+	store     *MemoryStore // embed reference for shared mutex
 	resources map[uuid.UUID]domain.DiscoveredResource
 	syncJobs  map[uuid.UUID]domain.SyncJob
+	agents    map[uuid.UUID]domain.DiscoveryAgent
 }
 
 // NewMemoryDiscoveryStore creates a new in-memory discovery store.
@@ -24,6 +25,7 @@ func NewMemoryDiscoveryStore(store *MemoryStore) *MemoryDiscoveryStore {
 		store:     store,
 		resources: make(map[uuid.UUID]domain.DiscoveredResource),
 		syncJobs:  make(map[uuid.UUID]domain.SyncJob),
+		agents:    make(map[uuid.UUID]domain.DiscoveryAgent),
 	}
 }
 
@@ -231,4 +233,53 @@ func (m *MemoryDiscoveryStore) ListSyncJobs(_ context.Context, accountID int64, 
 		jobs = jobs[:limit]
 	}
 	return jobs, nil
+}
+
+func (m *MemoryDiscoveryStore) UpsertAgent(_ context.Context, agent domain.DiscoveryAgent) error {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+
+	if agent.ID == uuid.Nil {
+		agent.ID = uuid.New()
+	}
+	if agent.CreatedAt.IsZero() {
+		// Preserve existing creation time if already exists
+		if existing, ok := m.agents[agent.ID]; ok {
+			agent.CreatedAt = existing.CreatedAt
+		} else {
+			agent.CreatedAt = time.Now().UTC()
+		}
+	}
+	m.agents[agent.ID] = agent
+	return nil
+}
+
+func (m *MemoryDiscoveryStore) GetAgent(_ context.Context, id uuid.UUID) (*domain.DiscoveryAgent, error) {
+	m.store.mu.RLock()
+	defer m.store.mu.RUnlock()
+
+	a, ok := m.agents[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return &a, nil
+}
+
+func (m *MemoryDiscoveryStore) ListAgents(_ context.Context, accountID int64) ([]domain.DiscoveryAgent, error) {
+	m.store.mu.RLock()
+	defer m.store.mu.RUnlock()
+
+	var agents []domain.DiscoveryAgent
+	for _, a := range m.agents {
+		if accountID == 0 || a.AccountID == accountID {
+			agents = append(agents, a)
+		}
+	}
+
+	// Sort by created_at desc
+	sort.Slice(agents, func(i, j int) bool {
+		return agents[i].CreatedAt.After(agents[j].CreatedAt)
+	})
+
+	return agents, nil
 }

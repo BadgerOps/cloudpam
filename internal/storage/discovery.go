@@ -43,4 +43,13 @@ type DiscoveryStore interface {
 
 	// ListSyncJobs returns recent sync jobs for an account, ordered by created_at desc.
 	ListSyncJobs(ctx context.Context, accountID int64, limit int) ([]domain.SyncJob, error)
+
+	// UpsertAgent inserts or updates a discovery agent (upserts by agent ID).
+	UpsertAgent(ctx context.Context, agent domain.DiscoveryAgent) error
+
+	// GetAgent returns a discovery agent by ID.
+	GetAgent(ctx context.Context, id uuid.UUID) (*domain.DiscoveryAgent, error)
+
+	// ListAgents returns all discovery agents, optionally filtered by account ID.
+	ListAgents(ctx context.Context, accountID int64) ([]domain.DiscoveryAgent, error)
 }

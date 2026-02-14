@@ -242,10 +242,16 @@ func (s *Store) CreateSyncJob(ctx context.Context, job domain.SyncJob) (domain.S
 		completedAt = &s
 	}
 
+	var agentID *string
+	if job.AgentID != nil {
+		s := job.AgentID.String()
+		agentID = &s
+	}
+
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sync_jobs (id, account_id, status, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		job.ID.String(), job.AccountID, string(job.Status), startedAt, completedAt,
+		`INSERT INTO sync_jobs (id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		job.ID.String(), job.AccountID, string(job.Status), job.Source, agentID, startedAt, completedAt,
 		job.ResourcesFound, job.ResourcesCreated, job.ResourcesUpdated, job.ResourcesDeleted,
 		job.ErrorMessage, job.CreatedAt.Format(time.RFC3339),
 	)
@@ -267,9 +273,15 @@ func (s *Store) UpdateSyncJob(ctx context.Context, job domain.SyncJob) error {
 		completedAt = &s
 	}
 
+	var agentID *string
+	if job.AgentID != nil {
+		s := job.AgentID.String()
+		agentID = &s
+	}
+
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE sync_jobs SET status = ?, started_at = ?, completed_at = ?, resources_found = ?, resources_created = ?, resources_updated = ?, resources_deleted = ?, error_message = ? WHERE id = ?`,
-		string(job.Status), startedAt, completedAt,
+		`UPDATE sync_jobs SET status = ?, source = ?, agent_id = ?, started_at = ?, completed_at = ?, resources_found = ?, resources_created = ?, resources_updated = ?, resources_deleted = ?, error_message = ? WHERE id = ?`,
+		string(job.Status), job.Source, agentID, startedAt, completedAt,
 		job.ResourcesFound, job.ResourcesCreated, job.ResourcesUpdated, job.ResourcesDeleted,
 		job.ErrorMessage, job.ID.String(),
 	)
@@ -286,7 +298,7 @@ func (s *Store) UpdateSyncJob(ctx context.Context, job domain.SyncJob) error {
 // GetSyncJob returns a sync job by UUID.
 func (s *Store) GetSyncJob(ctx context.Context, id uuid.UUID) (*domain.SyncJob, error) {
 	row := s.db.QueryRowContext(ctx,
-		"SELECT id, account_id, status, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at FROM sync_jobs WHERE id = ?",
+		"SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at FROM sync_jobs WHERE id = ?",
 		id.String(),
 	)
 	return scanSyncJob(row)
@@ -298,7 +310,7 @@ func (s *Store) ListSyncJobs(ctx context.Context, accountID int64, limit int) ([
 		limit = 20
 	}
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, account_id, status, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at FROM sync_jobs WHERE account_id = ? ORDER BY created_at DESC LIMIT ?",
+		"SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at FROM sync_jobs WHERE account_id = ? ORDER BY created_at DESC LIMIT ?",
 		accountID, limit,
 	)
 	if err != nil {
@@ -310,12 +322,16 @@ func (s *Store) ListSyncJobs(ctx context.Context, accountID int64, limit int) ([
 	for rows.Next() {
 		var j domain.SyncJob
 		var idStr, createdAt string
-		var startedAt, completedAt sql.NullString
-		if err := rows.Scan(&idStr, &j.AccountID, &j.Status, &startedAt, &completedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &createdAt); err != nil {
+		var startedAt, completedAt, agentID sql.NullString
+		if err := rows.Scan(&idStr, &j.AccountID, &j.Status, &j.Source, &agentID, &startedAt, &completedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &createdAt); err != nil {
 			return nil, err
 		}
 		j.ID = uuid.MustParse(idStr)
 		j.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		if agentID.Valid {
+			aid := uuid.MustParse(agentID.String)
+			j.AgentID = &aid
+		}
 		if startedAt.Valid {
 			t, _ := time.Parse(time.RFC3339, startedAt.String)
 			j.StartedAt = &t
@@ -358,8 +374,8 @@ func scanDiscoveredResource(rows *sql.Rows) (domain.DiscoveredResource, error) {
 func scanSyncJob(row *sql.Row) (*domain.SyncJob, error) {
 	var j domain.SyncJob
 	var idStr, createdAt string
-	var startedAt, completedAt sql.NullString
-	if err := row.Scan(&idStr, &j.AccountID, &j.Status, &startedAt, &completedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &createdAt); err != nil {
+	var startedAt, completedAt, agentID sql.NullString
+	if err := row.Scan(&idStr, &j.AccountID, &j.Status, &j.Source, &agentID, &startedAt, &completedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &createdAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, storage.ErrNotFound
 		}
@@ -367,6 +383,10 @@ func scanSyncJob(row *sql.Row) (*domain.SyncJob, error) {
 	}
 	j.ID = uuid.MustParse(idStr)
 	j.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	if agentID.Valid {
+		aid := uuid.MustParse(agentID.String)
+		j.AgentID = &aid
+	}
 	if startedAt.Valid {
 		t, _ := time.Parse(time.RFC3339, startedAt.String)
 		j.StartedAt = &t
@@ -376,4 +396,89 @@ func scanSyncJob(row *sql.Row) (*domain.SyncJob, error) {
 		j.CompletedAt = &t
 	}
 	return &j, nil
+}
+
+// UpsertAgent inserts or updates a discovery agent.
+func (s *Store) UpsertAgent(ctx context.Context, agent domain.DiscoveryAgent) error {
+	if agent.ID == uuid.Nil {
+		agent.ID = uuid.New()
+	}
+	if agent.CreatedAt.IsZero() {
+		agent.CreatedAt = time.Now().UTC()
+	}
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO discovery_agents (id, name, account_id, api_key_id, version, hostname, last_seen_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   name = excluded.name,
+		   account_id = excluded.account_id,
+		   api_key_id = excluded.api_key_id,
+		   version = excluded.version,
+		   hostname = excluded.hostname,
+		   last_seen_at = excluded.last_seen_at`,
+		agent.ID.String(), agent.Name, agent.AccountID, agent.APIKeyID,
+		agent.Version, agent.Hostname, agent.LastSeenAt.Format(time.RFC3339),
+		agent.CreatedAt.Format(time.RFC3339),
+	)
+	return err
+}
+
+// GetAgent returns a discovery agent by ID.
+func (s *Store) GetAgent(ctx context.Context, id uuid.UUID) (*domain.DiscoveryAgent, error) {
+	row := s.db.QueryRowContext(ctx,
+		"SELECT id, name, account_id, api_key_id, version, hostname, last_seen_at, created_at FROM discovery_agents WHERE id = ?",
+		id.String(),
+	)
+
+	var a domain.DiscoveryAgent
+	var idStr, lastSeenAt, createdAt string
+	if err := row.Scan(&idStr, &a.Name, &a.AccountID, &a.APIKeyID, &a.Version, &a.Hostname, &lastSeenAt, &createdAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, storage.ErrNotFound
+		}
+		return nil, err
+	}
+
+	a.ID = uuid.MustParse(idStr)
+	a.LastSeenAt, _ = time.Parse(time.RFC3339, lastSeenAt)
+	a.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+	return &a, nil
+}
+
+// ListAgents returns all discovery agents, optionally filtered by account ID.
+func (s *Store) ListAgents(ctx context.Context, accountID int64) ([]domain.DiscoveryAgent, error) {
+	query := "SELECT id, name, account_id, api_key_id, version, hostname, last_seen_at, created_at FROM discovery_agents"
+	args := []any{}
+
+	if accountID > 0 {
+		query += " WHERE account_id = ?"
+		args = append(args, accountID)
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var agents []domain.DiscoveryAgent
+	for rows.Next() {
+		var a domain.DiscoveryAgent
+		var idStr, lastSeenAt, createdAt string
+		if err := rows.Scan(&idStr, &a.Name, &a.AccountID, &a.APIKeyID, &a.Version, &a.Hostname, &lastSeenAt, &createdAt); err != nil {
+			return nil, err
+		}
+		a.ID = uuid.MustParse(idStr)
+		a.LastSeenAt, _ = time.Parse(time.RFC3339, lastSeenAt)
+		a.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		agents = append(agents, a)
+	}
+
+	if agents == nil {
+		agents = []domain.DiscoveryAgent{}
+	}
+	return agents, rows.Err()
 }

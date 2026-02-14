@@ -54,6 +54,7 @@ func (s *SyncService) Sync(ctx context.Context, account domain.Account) (*domain
 		ID:        uuid.New(),
 		AccountID: account.ID,
 		Status:    domain.SyncJobStatusRunning,
+		Source:    "local",
 		StartedAt: &now,
 		CreatedAt: now,
 	}
@@ -74,24 +75,8 @@ func (s *SyncService) Sync(ctx context.Context, account domain.Account) (*domain
 		return &job, fmt.Errorf("discovery failed: %w", discoverErr)
 	}
 
-	// Upsert discovered resources
-	created, updated := 0, 0
-	for _, res := range resources {
-		// Check if resource already exists
-		existing, _ := s.findByAccountAndResourceID(ctx, account.ID, res.ResourceID)
-		if existing != nil {
-			updated++
-		} else {
-			created++
-		}
-		if err := s.store.UpsertDiscoveredResource(ctx, res); err != nil {
-			// Log and continue — don't fail the entire sync
-			job.ErrorMessage = fmt.Sprintf("upsert error: %v", err)
-		}
-	}
-
-	// Mark resources not seen in this run as stale
-	staleCount, _ := s.store.MarkStaleResources(ctx, account.ID, now)
+	// Process resources (upsert and mark stale)
+	created, updated, staleCount, processErr := s.ProcessResources(ctx, account.ID, resources, now)
 
 	completedAt := time.Now().UTC()
 	job.Status = domain.SyncJobStatusCompleted
@@ -100,9 +85,47 @@ func (s *SyncService) Sync(ctx context.Context, account domain.Account) (*domain
 	job.ResourcesCreated = created
 	job.ResourcesUpdated = updated
 	job.ResourcesDeleted = staleCount
+	if processErr != nil {
+		job.ErrorMessage = processErr.Error()
+	}
 	_ = s.store.UpdateSyncJob(ctx, job)
 
 	return &job, nil
+}
+
+// ProcessResources upserts discovered resources and marks stale resources.
+// This is shared logic used by both local sync and agent ingest.
+// Returns created, updated, stale counts and any error.
+func (s *SyncService) ProcessResources(
+	ctx context.Context,
+	accountID int64,
+	resources []domain.DiscoveredResource,
+	syncTime time.Time,
+) (created, updated, stale int, err error) {
+	// Upsert discovered resources
+	for _, res := range resources {
+		// Check if resource already exists
+		existing, _ := s.findByAccountAndResourceID(ctx, accountID, res.ResourceID)
+		if existing != nil {
+			updated++
+		} else {
+			created++
+		}
+		if upsertErr := s.store.UpsertDiscoveredResource(ctx, res); upsertErr != nil {
+			// Log and continue — don't fail the entire sync
+			if err == nil {
+				err = fmt.Errorf("upsert errors: %w", upsertErr)
+			}
+		}
+	}
+
+	// Mark resources not seen in this run as stale
+	staleCount, markErr := s.store.MarkStaleResources(ctx, accountID, syncTime)
+	if markErr != nil && err == nil {
+		err = fmt.Errorf("mark stale: %w", markErr)
+	}
+
+	return created, updated, staleCount, err
 }
 
 // findByAccountAndResourceID checks if a resource exists (helper for counting creates vs updates).

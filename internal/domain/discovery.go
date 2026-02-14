@@ -93,6 +93,8 @@ type SyncJob struct {
 	ID               uuid.UUID     `json:"id"`
 	AccountID        int64         `json:"account_id"`
 	Status           SyncJobStatus `json:"status"`
+	Source           string        `json:"source"` // "local" or "agent"
+	AgentID          *uuid.UUID    `json:"agent_id,omitempty"`
 	StartedAt        *time.Time    `json:"started_at,omitempty"`
 	CompletedAt      *time.Time    `json:"completed_at,omitempty"`
 	ResourcesFound   int           `json:"resources_found"`
@@ -125,4 +127,56 @@ type DiscoveryResourcesResponse struct {
 // SyncJobsResponse is the response for listing sync jobs.
 type SyncJobsResponse struct {
 	Items []SyncJob `json:"items"`
+}
+
+// AgentStatus represents the health status of a discovery agent.
+type AgentStatus string
+
+const (
+	AgentStatusHealthy AgentStatus = "healthy" // last_seen < 5 minutes ago
+	AgentStatusStale   AgentStatus = "stale"   // last_seen 5-15 minutes ago
+	AgentStatusOffline AgentStatus = "offline" // last_seen > 15 minutes ago
+)
+
+// DiscoveryAgent represents a remote discovery agent.
+type DiscoveryAgent struct {
+	ID         uuid.UUID   `json:"id"`
+	Name       string      `json:"name"`
+	AccountID  int64       `json:"account_id"`
+	APIKeyID   string      `json:"api_key_id"`
+	Status     AgentStatus `json:"status"` // computed at read time
+	Version    string      `json:"version"`
+	Hostname   string      `json:"hostname"`
+	LastSeenAt time.Time   `json:"last_seen_at"`
+	CreatedAt  time.Time   `json:"created_at"`
+}
+
+// IngestRequest is the request body for the /api/v1/discovery/ingest endpoint.
+type IngestRequest struct {
+	AccountID int64                `json:"account_id"`
+	Resources []DiscoveredResource `json:"resources"`
+	AgentID   *uuid.UUID           `json:"agent_id,omitempty"`
+}
+
+// IngestResponse is the response body for the /api/v1/discovery/ingest endpoint.
+type IngestResponse struct {
+	JobID            uuid.UUID `json:"job_id"`
+	ResourcesFound   int       `json:"resources_found"`
+	ResourcesCreated int       `json:"resources_created"`
+	ResourcesUpdated int       `json:"resources_updated"`
+	ResourcesDeleted int       `json:"resources_deleted"`
+}
+
+// AgentHeartbeatRequest is the request body for agent heartbeat.
+type AgentHeartbeatRequest struct {
+	AgentID   uuid.UUID `json:"agent_id"`
+	Name      string    `json:"name"`
+	AccountID int64     `json:"account_id"`
+	Version   string    `json:"version"`
+	Hostname  string    `json:"hostname"`
+}
+
+// DiscoveryAgentsResponse is the response for listing discovery agents.
+type DiscoveryAgentsResponse struct {
+	Items []DiscoveryAgent `json:"items"`
 }
