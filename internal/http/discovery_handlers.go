@@ -1,12 +1,14 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -21,11 +23,12 @@ type DiscoveryServer struct {
 	srv         *Server
 	store       storage.DiscoveryStore
 	syncService *discovery.SyncService
+	keyStore    auth.KeyStore
 }
 
 // NewDiscoveryServer creates a new DiscoveryServer.
-func NewDiscoveryServer(srv *Server, store storage.DiscoveryStore, syncService *discovery.SyncService) *DiscoveryServer {
-	return &DiscoveryServer{srv: srv, store: store, syncService: syncService}
+func NewDiscoveryServer(srv *Server, store storage.DiscoveryStore, syncService *discovery.SyncService, keyStore auth.KeyStore) *DiscoveryServer {
+	return &DiscoveryServer{srv: srv, store: store, syncService: syncService, keyStore: keyStore}
 }
 
 // RegisterDiscoveryRoutes registers discovery routes without RBAC.
@@ -34,16 +37,52 @@ func (d *DiscoveryServer) RegisterDiscoveryRoutes() {
 	d.srv.mux.HandleFunc("/api/v1/discovery/resources/", d.handleResourcesSubroutes)
 	d.srv.mux.HandleFunc("/api/v1/discovery/sync", d.handleSync)
 	d.srv.mux.HandleFunc("/api/v1/discovery/sync/", d.handleSyncSubroutes)
+	d.srv.mux.HandleFunc("/api/v1/discovery/ingest", d.handleIngest)
+	d.srv.mux.HandleFunc("/api/v1/discovery/agents", d.handleListAgents)
+	d.srv.mux.HandleFunc("/api/v1/discovery/agents/", d.handleAgentsSubroutes)
 }
 
 // RegisterProtectedDiscoveryRoutes registers discovery routes with RBAC.
 func (d *DiscoveryServer) RegisterProtectedDiscoveryRoutes(dualMW Middleware, logger *slog.Logger) {
 	readMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionRead, logger)
+	createMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionCreate, logger)
 
 	d.srv.mux.Handle("/api/v1/discovery/resources", dualMW(readMW(http.HandlerFunc(d.handleResources))))
 	d.srv.mux.Handle("/api/v1/discovery/resources/", dualMW(d.protectedResourcesSubroutes(logger)))
 	d.srv.mux.Handle("/api/v1/discovery/sync", dualMW(d.protectedSyncHandler(logger)))
 	d.srv.mux.Handle("/api/v1/discovery/sync/", dualMW(readMW(http.HandlerFunc(d.handleSyncSubroutes))))
+
+	// Agent endpoints — all go through dualMW (API key or session auth)
+	d.srv.mux.Handle("/api/v1/discovery/ingest", dualMW(createMW(http.HandlerFunc(d.handleIngest))))
+	d.srv.mux.Handle("/api/v1/discovery/agents", dualMW(readMW(http.HandlerFunc(d.handleListAgents))))
+	d.srv.mux.Handle("/api/v1/discovery/agents/", dualMW(d.protectedAgentsSubroutes(logger)))
+}
+
+// protectedAgentsSubroutes returns a handler for /api/v1/discovery/agents/ with RBAC.
+func (d *DiscoveryServer) protectedAgentsSubroutes(logger *slog.Logger) http.Handler {
+	readMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionRead, logger)
+	createMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionCreate, logger)
+	updateMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionUpdate, logger)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/discovery/agents/")
+		path = strings.TrimRight(path, "/")
+
+		switch {
+		case path == "provision":
+			// Only admins/operators can provision agents
+			createMW(http.HandlerFunc(d.handleProvisionAgent)).ServeHTTP(w, r)
+		case path == "register":
+			// Agents register with their provisioned API key (discovery:write → create)
+			createMW(http.HandlerFunc(d.handleAgentRegister)).ServeHTTP(w, r)
+		case path == "heartbeat":
+			createMW(http.HandlerFunc(d.handleAgentHeartbeat)).ServeHTTP(w, r)
+		case strings.HasSuffix(path, "/approve"), strings.HasSuffix(path, "/reject"):
+			updateMW(http.HandlerFunc(d.handleAgentsSubroutes)).ServeHTTP(w, r)
+		default:
+			readMW(http.HandlerFunc(d.handleGetAgent)).ServeHTTP(w, r)
+		}
+	})
 }
 
 // handleResources handles GET /api/v1/discovery/resources
@@ -336,4 +375,206 @@ func (d *DiscoveryServer) protectedSyncHandler(logger *slog.Logger) http.Handler
 			d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 		}
 	})
+}
+
+// handleIngest handles POST /api/v1/discovery/ingest
+// Accepts discovered resources from remote agents and creates a sync job.
+func (d *DiscoveryServer) handleIngest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	var req domain.IngestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	if req.AccountID < 1 {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "account_id is required and must be a positive integer", "")
+		return
+	}
+
+	// Verify account exists
+	account, found, err := d.srv.store.GetAccount(r.Context(), req.AccountID)
+	if err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "account lookup failed", err.Error())
+		return
+	}
+	if !found {
+		d.srv.writeErr(r.Context(), w, http.StatusNotFound, "account not found", "")
+		return
+	}
+
+	// Create sync job
+	nowTime := time.Now().UTC()
+	job := domain.SyncJob{
+		ID:        uuid.New(),
+		AccountID: account.ID,
+		Status:    domain.SyncJobStatusRunning,
+		Source:    "agent",
+		AgentID:   req.AgentID,
+		StartedAt: &nowTime,
+		CreatedAt: nowTime,
+	}
+	job, err = d.store.CreateSyncJob(r.Context(), job)
+	if err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "create sync job failed", err.Error())
+		return
+	}
+
+	// Process resources using shared logic
+	created, updated, staleCount, processErr := d.syncService.ProcessResources(r.Context(), account.ID, req.Resources, nowTime)
+
+	// Update job with results
+	completedAtTime := time.Now().UTC()
+	completedAt := &completedAtTime
+	job.Status = domain.SyncJobStatusCompleted
+	job.CompletedAt = completedAt
+	job.ResourcesFound = len(req.Resources)
+	job.ResourcesCreated = created
+	job.ResourcesUpdated = updated
+	job.ResourcesDeleted = staleCount
+	if processErr != nil {
+		job.ErrorMessage = processErr.Error()
+	}
+	_ = d.store.UpdateSyncJob(r.Context(), job)
+
+	resp := domain.IngestResponse{
+		JobID:            job.ID,
+		ResourcesFound:   job.ResourcesFound,
+		ResourcesCreated: job.ResourcesCreated,
+		ResourcesUpdated: job.ResourcesUpdated,
+		ResourcesDeleted: job.ResourcesDeleted,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleAgentHeartbeat handles POST /api/v1/discovery/agents/heartbeat
+func (d *DiscoveryServer) handleAgentHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	var req domain.AgentHeartbeatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	if req.Name == "" || req.AccountID < 1 {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "name and account_id are required", "")
+		return
+	}
+
+	// Get API key ID from context
+	apiKeyID, ok := getAPIKeyIDFromContext(r.Context())
+	if !ok {
+		d.srv.writeErr(r.Context(), w, http.StatusUnauthorized, "api key required", "")
+		return
+	}
+
+	// Upsert agent
+	lastSeenTime := time.Now().UTC()
+	agent := domain.DiscoveryAgent{
+		ID:         req.AgentID,
+		Name:       req.Name,
+		AccountID:  req.AccountID,
+		APIKeyID:   apiKeyID,
+		Version:    req.Version,
+		Hostname:   req.Hostname,
+		LastSeenAt: lastSeenTime,
+	}
+
+	if err := d.store.UpsertAgent(r.Context(), agent); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "upsert agent failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleListAgents handles GET /api/v1/discovery/agents
+func (d *DiscoveryServer) handleListAgents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	q := r.URL.Query()
+	accountID, _ := strconv.ParseInt(q.Get("account_id"), 10, 64)
+
+	agents, err := d.store.ListAgents(r.Context(), accountID)
+	if err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list agents failed", err.Error())
+		return
+	}
+
+	// Compute status for each agent
+	now := time.Now().UTC()
+	for i := range agents {
+		agents[i].Status = computeAgentStatus(agents[i].LastSeenAt, now)
+	}
+
+	if agents == nil {
+		agents = []domain.DiscoveryAgent{}
+	}
+	writeJSON(w, http.StatusOK, domain.DiscoveryAgentsResponse{Items: agents})
+}
+
+// handleGetAgent handles GET /api/v1/discovery/agents/{id}
+func (d *DiscoveryServer) handleGetAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/discovery/agents/")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid agent id", "")
+		return
+	}
+
+	agent, err := d.store.GetAgent(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			d.srv.writeErr(r.Context(), w, http.StatusNotFound, "agent not found", "")
+			return
+		}
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "get agent failed", err.Error())
+		return
+	}
+
+	// Compute status
+	now := time.Now().UTC()
+	agent.Status = computeAgentStatus(agent.LastSeenAt, now)
+
+	writeJSON(w, http.StatusOK, agent)
+}
+
+// computeAgentStatus determines agent health based on last_seen_at.
+func computeAgentStatus(lastSeen time.Time, now time.Time) domain.AgentStatus {
+	elapsed := now.Sub(lastSeen)
+	if elapsed < 5*time.Minute {
+		return domain.AgentStatusHealthy
+	} else if elapsed < 15*time.Minute {
+		return domain.AgentStatusStale
+	}
+	return domain.AgentStatusOffline
+}
+
+// getAPIKeyIDFromContext extracts the API key ID from the context.
+func getAPIKeyIDFromContext(ctx context.Context) (string, bool) {
+	key := auth.APIKeyFromContext(ctx)
+	if key == nil {
+		return "", false
+	}
+	return key.ID, true
 }

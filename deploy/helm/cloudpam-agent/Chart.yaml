@@ -1,0 +1,15 @@
+apiVersion: v2
+name: cloudpam-agent
+description: CloudPAM Discovery Agent - Remote cloud resource discovery
+type: application
+version: 0.1.0
+appVersion: "dev"
+keywords:
+  - ipam
+  - cloud
+  - discovery
+  - aws
+home: https://github.com/yourorg/cloudpam
+maintainers:
+  - name: CloudPAM Team
+    email: noreply@example.com

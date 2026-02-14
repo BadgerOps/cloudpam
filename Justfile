@@ -19,6 +19,12 @@ dev: ensure-cache
 build: ensure-cache
     {{go-env}} go build -o cloudpam ./cmd/cloudpam
 
+agent-build: ensure-cache
+    {{go-env}} go build -o cloudpam-agent ./cmd/cloudpam-agent
+
+agent-run config="agent.yaml": agent-build
+    ./cloudpam-agent -config {{config}}
+
 sqlite-build: ensure-cache
     {{go-env}} go build -tags sqlite -o cloudpam ./cmd/cloudpam
 

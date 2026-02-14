@@ -131,7 +131,7 @@ func main() {
 	discoveryStore := selectDiscoveryStore(logger, store)
 	syncService := discovery.NewSyncService(discoveryStore)
 	syncService.RegisterCollector(awscollector.New())
-	discoverySrv := ih.NewDiscoveryServer(srv, discoveryStore, syncService)
+	discoverySrv := ih.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
 	logger.Info("discovery subsystem initialized", "collectors", "aws")
 
 	// When CLOUDPAM_AUTH_ENABLED is set, use protected routes with RBAC.

@@ -8,6 +8,7 @@ const SCOPE_OPTIONS = [
   'pools:read', 'pools:write',
   'accounts:read', 'accounts:write',
   'keys:read', 'keys:write',
+  'discovery:read', 'discovery:write',
   'audit:read',
   '*',
 ]
@@ -19,6 +20,8 @@ const SCOPE_LABELS: Record<string, string> = {
   'accounts:write': 'Accounts Write',
   'keys:read': 'Keys Read',
   'keys:write': 'Keys Write',
+  'discovery:read': 'Discovery Read',
+  'discovery:write': 'Discovery Write',
   'audit:read': 'Audit Read',
   '*': 'Admin (all)',
 }

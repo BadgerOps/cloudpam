@@ -337,3 +337,21 @@ export interface SyncJob {
 export interface SyncJobsResponse {
   items: SyncJob[]
 }
+
+export type AgentStatus = 'healthy' | 'stale' | 'offline'
+
+export interface DiscoveryAgent {
+  id: string
+  name: string
+  account_id: number
+  api_key_id: string
+  status: AgentStatus
+  version: string
+  hostname: string
+  last_seen_at: string
+  created_at: string
+}
+
+export interface DiscoveryAgentsResponse {
+  items: DiscoveryAgent[]
+}
