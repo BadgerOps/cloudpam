@@ -666,21 +666,29 @@ function AgentsTab({
             <p className="font-medium text-gray-900 dark:text-gray-100 mb-2">
               Quick Start:
             </p>
-            <ol className="list-decimal pl-5 space-y-1">
+            <ol className="list-decimal pl-5 space-y-2">
               <li>
-                Create an API key with <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">discovery:create</code> scope
+                Provision an agent via the API:
+                <pre className="mt-1 bg-gray-100 dark:bg-gray-800 rounded px-2 py-1.5 text-xs font-mono overflow-x-auto whitespace-pre">
+{`curl -X POST /api/v1/discovery/agents/provision \\
+  -H 'Content-Type: application/json' \\
+  -d '{"name": "my-agent"}'`}
+                </pre>
               </li>
               <li>
-                Deploy the agent with environment variables:{' '}
-                <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
-                  CLOUDPAM_SERVER_URL
-                </code>
-                ,{' '}
-                <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
-                  CLOUDPAM_API_KEY
-                </code>
+                Copy the{' '}
+                <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">token</code>{' '}
+                from the response (shown only once)
               </li>
-              <li>Agents will appear here once they send their first heartbeat</li>
+              <li>
+                Deploy the agent with the token:
+                <pre className="mt-1 bg-gray-100 dark:bg-gray-800 rounded px-2 py-1.5 text-xs font-mono overflow-x-auto whitespace-pre">
+{`CLOUDPAM_BOOTSTRAP_TOKEN=<token> \\
+CLOUDPAM_ACCOUNT_ID=1 \\
+./cloudpam-agent`}
+                </pre>
+              </li>
+              <li>The agent registers automatically and appears here once it sends its first heartbeat</li>
             </ol>
           </div>
         </div>
@@ -947,6 +955,72 @@ ec2:DescribeAddresses`}
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-500">
               GCP and Azure collectors are planned for a future release.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Agent Deployment */}
+      <div className={sectionClass}>
+        <button onClick={() => toggle('agent')} className={headerClass}>
+          {openSection === 'agent' ? (
+            <ChevronDown className="w-4 h-4 text-gray-400" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-gray-400" />
+          )}
+          Deploying a Discovery Agent
+        </button>
+        {openSection === 'agent' && (
+          <div className={bodyClass}>
+            <p>
+              For production use, deploy the <strong>cloudpam-agent</strong>{' '}
+              binary near your cloud resources. It discovers VPCs, subnets, and
+              Elastic IPs, then pushes data to this server over HTTPS.
+            </p>
+            <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <span className="font-mono text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 rounded mt-0.5">
+                  1
+                </span>
+                <span>
+                  <strong>Provision</strong> &mdash;{' '}
+                  <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
+                    POST /api/v1/discovery/agents/provision
+                  </code>{' '}
+                  to get a bootstrap token
+                </span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="font-mono text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 rounded mt-0.5">
+                  2
+                </span>
+                <span>
+                  <strong>Deploy</strong> &mdash; set{' '}
+                  <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
+                    CLOUDPAM_BOOTSTRAP_TOKEN
+                  </code>{' '}
+                  and{' '}
+                  <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
+                    CLOUDPAM_ACCOUNT_ID
+                  </code>
+                </span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="font-mono text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 rounded mt-0.5">
+                  3
+                </span>
+                <span>
+                  <strong>Monitor</strong> &mdash; agents register automatically
+                  and appear in the Agents tab
+                </span>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-500">
+              The token contains the server URL, API key, and agent name. See{' '}
+              <code className="bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
+                docs/DISCOVERY.md
+              </code>{' '}
+              for Docker, Helm, and Terraform deployment guides.
             </p>
           </div>
         )}

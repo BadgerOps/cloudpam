@@ -40,6 +40,53 @@ func NewPusher(serverURL, apiKey string, agentID uuid.UUID, timeout time.Duratio
 	}
 }
 
+// Register calls the server's agent registration endpoint.
+// This is used on first startup when the agent was configured via a bootstrap token.
+func (p *Pusher) Register(ctx context.Context, name string, accountID int64, version, hostname string) (*domain.AgentRegisterResponse, error) {
+	req := domain.AgentRegisterRequest{
+		AgentID:   p.agentID,
+		Name:      name,
+		AccountID: accountID,
+		Version:   version,
+		Hostname:  hostname,
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal register request: %w", err)
+	}
+
+	url := p.serverURL + "/api/v1/discovery/agents/register"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var regResp domain.AgentRegisterResponse
+		if err := json.NewDecoder(resp.Body).Decode(&regResp); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+		return &regResp, nil
+	}
+
+	var errBody struct {
+		Error  string `json:"error"`
+		Detail string `json:"detail"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&errBody)
+	return nil, fmt.Errorf("registration failed (status %d): %s - %s", resp.StatusCode, errBody.Error, errBody.Detail)
+}
+
 // PushResources sends discovered resources to the server with retry logic.
 func (p *Pusher) PushResources(ctx context.Context, accountID int64, resources []domain.DiscoveredResource, maxRetries int, backoff time.Duration) error {
 	req := domain.IngestRequest{
