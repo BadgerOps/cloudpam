@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 14: Analysis Engine (Phase 3 — Smart Planning)
+
+#### Analysis Package (`internal/planning/`)
+- `types.go`: request/response types — `AnalysisRequest`, `GapAnalysis`, `FragmentationAnalysis`, `ComplianceReport`, `NetworkAnalysisReport`, `AnalysisSummary`
+- `cidr_helpers.go`: CIDR math utilities — `ipv4ToUint32`, `uint32ToIPv4`, `rangeToCIDRs` (range → minimal CIDR decomposition), `isRFC1918`, `prefixesOverlap`, `prefixAddressCount`
+- `gaps.go`: gap analysis via interval subtraction on uint32 address space — finds unused CIDRs within a parent pool by comparing against children
+- `fragmentation.go`: fragmentation scoring (0–100) with 4 weighted factors — scattered (40%), oversized (20%), undersized (20%), misaligned (20%) — plus actionable recommendations
+- `compliance.go`: 5 compliance rules: `OVERLAP-001` (sibling overlap, error), `RFC1918-001` (non-private space, warning), `EMPTY-001` (empty parent pool, warning), `NAME-001`/`NAME-002` (missing name/description, info)
+- `analysis.go`: `AnalysisService` orchestrator combining gaps + fragmentation + compliance into a health-scored `NetworkAnalysisReport`
+
+#### Analysis API Endpoints
+- `POST /api/v1/analysis` — full network analysis report (gap + fragmentation + compliance + health score)
+- `POST /api/v1/analysis/gaps` — gap analysis for a single pool (body: `{"pool_id": 1}`)
+- `POST /api/v1/analysis/fragmentation` — fragmentation scoring (body: `{"pool_ids": [1,2]}`)
+- `POST /api/v1/analysis/compliance` — compliance checks (body: `{"pool_ids": [1,2], "include_children": true}`)
+- RBAC: requires `pools:read` permission (reuses existing pool RBAC)
+
+#### Tests
+- `gaps_test.go`: `rangeToCIDRs` unit tests (aligned/non-aligned/edge), `findFreeRanges`, full `AnalyzeGaps` integration
+- `fragmentation_test.go`: score calculation, scattered/misaligned issue detection
+- `compliance_test.go`: overlap detection, RFC1918, empty pool, naming checks
+- `analysis_test.go`: full `Analyze()` with realistic hierarchy, health score deduction
+- `analysis_handlers_test.go`: HTTP endpoint tests (200/400/404/405 cases)
+
+#### Documentation
+- `CLAUDE.md` updated: Phase 3 status, analysis endpoints in API list, planning package status
+
 ### Added - Sprint 13: Cloud Discovery — Data Model, AWS Collector & API
 
 #### Discovery Domain & Storage

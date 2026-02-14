@@ -18,6 +18,7 @@ import (
 	awscollector "cloudpam/internal/discovery/aws"
 	ih "cloudpam/internal/http"
 	"cloudpam/internal/observability"
+	"cloudpam/internal/planning"
 
 	"github.com/google/uuid"
 )
@@ -134,6 +135,11 @@ func main() {
 	discoverySrv := ih.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
 	logger.Info("discovery subsystem initialized", "collectors", "aws")
 
+	// Initialize analysis subsystem
+	analysisService := planning.NewAnalysisService(store)
+	analysisSrv := ih.NewAnalysisServer(srv, analysisService)
+	logger.Info("analysis subsystem initialized")
+
 	// When CLOUDPAM_AUTH_ENABLED is set, use protected routes with RBAC.
 	// Otherwise use unprotected routes for development.
 	authEnabled := os.Getenv("CLOUDPAM_AUTH_ENABLED") == "true" || os.Getenv("CLOUDPAM_AUTH_ENABLED") == "1"
@@ -145,6 +151,7 @@ func main() {
 		userSrv.RegisterProtectedUserRoutes(logger.Slog())
 		dualMW := ih.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
 		discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
+		analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 		logger.Info("authentication enabled (RBAC enforced)")
 	} else {
 		srv.RegisterRoutes()
@@ -153,6 +160,7 @@ func main() {
 		userSrv := ih.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
 		userSrv.RegisterUserRoutes()
 		discoverySrv.RegisterDiscoveryRoutes()
+		analysisSrv.RegisterAnalysisRoutes()
 		logger.Info("authentication disabled (all routes open)",
 			"hint", "set CLOUDPAM_AUTH_ENABLED=true to enable RBAC")
 	}
