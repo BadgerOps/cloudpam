@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   RefreshCw,
   Link2,
@@ -8,15 +8,26 @@ import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  Activity,
 } from 'lucide-react'
-import { useDiscoveryResources, useSyncJobs } from '../hooks/useDiscovery'
+import {
+  useDiscoveryResources,
+  useSyncJobs,
+  useDiscoveryAgents,
+} from '../hooks/useDiscovery'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
 import StatusBadge from '../components/StatusBadge'
 import { formatTimeAgo } from '../utils/format'
-import type { Account, DiscoveredResource, SyncJob } from '../api/types'
+import type {
+  Account,
+  DiscoveredResource,
+  SyncJob,
+  DiscoveryAgent,
+  AgentStatus,
+} from '../api/types'
 
-type Tab = 'resources' | 'sync'
+type Tab = 'resources' | 'sync' | 'agents'
 
 export default function DiscoveryPage() {
   const [tab, setTab] = useState<Tab>('resources')
@@ -43,7 +54,14 @@ export default function DiscoveryPage() {
     fetch: fetchJobs,
     triggerSync,
   } = useSyncJobs()
+  const {
+    agents,
+    loading: agentsLoading,
+    error: agentsError,
+    fetch: fetchAgents,
+  } = useDiscoveryAgents()
   const { showToast } = useToast()
+  const agentsRefreshInterval = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     fetchAccounts()
@@ -76,6 +94,26 @@ export default function DiscoveryPage() {
       fetchJobs(selectedAccountId)
     }
   }, [selectedAccountId, tab, fetchJobs])
+
+  // Auto-refresh agents every 30 seconds when on agents tab
+  useEffect(() => {
+    if (tab === 'agents') {
+      fetchAgents(selectedAccountId ?? undefined)
+      agentsRefreshInterval.current = setInterval(() => {
+        fetchAgents(selectedAccountId ?? undefined)
+      }, 30000)
+    } else {
+      if (agentsRefreshInterval.current) {
+        clearInterval(agentsRefreshInterval.current)
+        agentsRefreshInterval.current = null
+      }
+    }
+    return () => {
+      if (agentsRefreshInterval.current) {
+        clearInterval(agentsRefreshInterval.current)
+      }
+    }
+  }, [tab, selectedAccountId, fetchAgents])
 
   async function handleSync() {
     if (!selectedAccountId) return
@@ -221,6 +259,21 @@ export default function DiscoveryPage() {
         >
           Sync History
         </button>
+        <button
+          onClick={() => setTab('agents')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+            tab === 'agents'
+              ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          }`}
+        >
+          Agents
+          {agents.length > 0 && (
+            <span className="ml-2 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded-full">
+              {agents.length}
+            </span>
+          )}
+        </button>
       </div>
 
       {tab === 'resources' && (
@@ -243,6 +296,14 @@ export default function DiscoveryPage() {
 
       {tab === 'sync' && (
         <SyncTab jobs={jobs} loading={jobsLoading} error={jobsError} />
+      )}
+
+      {tab === 'agents' && (
+        <AgentsTab
+          agents={agents}
+          loading={agentsLoading}
+          error={agentsError}
+        />
       )}
     </div>
   )
@@ -560,6 +621,137 @@ function ResourceTypeBadge({ type }: { type: string }) {
       className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${colors[type] || colors.network_interface}`}
     >
       {labels[type] || type}
+    </span>
+  )
+}
+
+function AgentsTab({
+  agents,
+  loading,
+  error,
+}: {
+  agents: DiscoveryAgent[]
+  loading: boolean
+  error: string | null
+}) {
+  if (error) {
+    return (
+      <div className="p-3 rounded bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-sm">
+        {error}
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+        Loading...
+      </div>
+    )
+  }
+
+  if (agents.length === 0) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <div className="text-center">
+          <Activity className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+            No Agents Registered
+          </h3>
+          <p className="text-gray-500 dark:text-gray-400 mb-4">
+            Deploy cloudpam-agent to start remote discovery. Agents run close to
+            your cloud resources and push discovered data to this server.
+          </p>
+          <div className="bg-gray-50 dark:bg-gray-900 rounded p-4 text-left text-sm text-gray-600 dark:text-gray-400">
+            <p className="font-medium text-gray-900 dark:text-gray-100 mb-2">
+              Quick Start:
+            </p>
+            <ol className="list-decimal pl-5 space-y-1">
+              <li>
+                Create an API key with <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">discovery:create</code> scope
+              </li>
+              <li>
+                Deploy the agent with environment variables:{' '}
+                <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
+                  CLOUDPAM_SERVER_URL
+                </code>
+                ,{' '}
+                <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">
+                  CLOUDPAM_API_KEY
+                </code>
+              </li>
+              <li>Agents will appear here once they send their first heartbeat</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+              Name
+            </th>
+            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+              Status
+            </th>
+            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+              Version
+            </th>
+            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+              Hostname
+            </th>
+            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+              Last Seen
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {agents.map((agent) => (
+            <tr
+              key={agent.id}
+              className="border-b border-gray-100 dark:border-gray-700/50"
+            >
+              <td className="px-4 py-2 text-gray-900 dark:text-gray-100 font-medium">
+                {agent.name}
+              </td>
+              <td className="px-4 py-2">
+                <AgentStatusBadge status={agent.status} />
+              </td>
+              <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+                {agent.version || 'unknown'}
+              </td>
+              <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+                {agent.hostname || '-'}
+              </td>
+              <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+                {formatTimeAgo(agent.last_seen_at)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function AgentStatusBadge({ status }: { status: AgentStatus }) {
+  const colors: Record<AgentStatus, string> = {
+    healthy:
+      'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+    stale:
+      'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+    offline: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  }
+  return (
+    <span
+      className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${colors[status]}`}
+    >
+      {status}
     </span>
   )
 }

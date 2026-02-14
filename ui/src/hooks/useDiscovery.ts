@@ -2,6 +2,8 @@ import { useState, useCallback } from 'react'
 import { get, post, del } from '../api/client'
 import type {
   DiscoveryResourcesResponse,
+  DiscoveryAgent,
+  DiscoveryAgentsResponse,
   SyncJob,
   SyncJobsResponse,
 } from '../api/types'
@@ -95,4 +97,30 @@ export function useSyncJobs() {
   }, [])
 
   return { jobs, loading, error, fetch, triggerSync }
+}
+
+export function useDiscoveryAgents() {
+  const [agents, setAgents] = useState<DiscoveryAgent[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetch = useCallback(async (accountId?: number) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = accountId
+        ? new URLSearchParams({ account_id: String(accountId) })
+        : ''
+      const resp = await get<DiscoveryAgentsResponse>(
+        `/api/v1/discovery/agents${params ? '?' + params : ''}`,
+      )
+      setAgents(resp.items)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load agents')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  return { agents, loading, error, fetch }
 }
