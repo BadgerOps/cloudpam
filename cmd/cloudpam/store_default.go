@@ -46,6 +46,15 @@ func selectSessionStore(_ observability.Logger) auth.SessionStore {
 	return auth.NewMemorySessionStore()
 }
 
+// selectDiscoveryStore returns an in-memory discovery store.
+func selectDiscoveryStore(_ observability.Logger, mainStore storage.Store) storage.DiscoveryStore {
+	if ms, ok := mainStore.(*storage.MemoryStore); ok {
+		return storage.NewMemoryDiscoveryStore(ms)
+	}
+	// Fallback: create a standalone MemoryDiscoveryStore backed by a new MemoryStore.
+	return storage.NewMemoryDiscoveryStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus returns schema status string when not built with sqlite tag.
 func sqliteStatus(dsn string) string { return "" }
 

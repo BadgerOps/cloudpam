@@ -96,6 +96,15 @@ func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	return ss
 }
 
+// selectDiscoveryStore returns a PostgreSQL-backed discovery store if the main store implements it.
+func selectDiscoveryStore(logger observability.Logger, mainStore storage.Store) storage.DiscoveryStore {
+	if ds, ok := mainStore.(storage.DiscoveryStore); ok {
+		return ds
+	}
+	logger.Warn("main store does not implement DiscoveryStore; using in-memory fallback")
+	return storage.NewMemoryDiscoveryStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus is a no-op for postgres builds.
 func sqliteStatus(_ string) string { return "" }
 

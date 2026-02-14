@@ -22,6 +22,13 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     window.dispatchEvent(new CustomEvent('auth:logout'))
   }
 
+  const contentType = res.headers.get('content-type') || ''
+  if (!contentType.includes('application/json')) {
+    throw new ApiRequestError(res.status, {
+      error: `Unexpected response (${res.status}): server returned ${contentType || 'non-JSON'}`,
+    })
+  }
+
   const body = await res.json()
 
   if (!res.ok) {

@@ -27,11 +27,12 @@ const (
 
 // Resource constants for permission checks.
 const (
-	ResourcePools    = "pools"
-	ResourceAccounts = "accounts"
-	ResourceAPIKeys  = "apikeys"
-	ResourceAudit    = "audit"
-	ResourceUsers    = "users"
+	ResourcePools     = "pools"
+	ResourceAccounts  = "accounts"
+	ResourceAPIKeys   = "apikeys"
+	ResourceAudit     = "audit"
+	ResourceUsers     = "users"
+	ResourceDiscovery = "discovery"
 )
 
 // Action constants for permission checks.
@@ -81,9 +82,14 @@ var RolePermissions = map[Role][]Permission{
 		{ResourceUsers, ActionUpdate},
 		{ResourceUsers, ActionDelete},
 		{ResourceUsers, ActionList},
+		{ResourceDiscovery, ActionCreate},
+		{ResourceDiscovery, ActionRead},
+		{ResourceDiscovery, ActionUpdate},
+		{ResourceDiscovery, ActionDelete},
+		{ResourceDiscovery, ActionList},
 	},
 	RoleOperator: {
-		// Read/write access to pools and accounts
+		// Read/write access to pools, accounts, and discovery
 		{ResourcePools, ActionCreate},
 		{ResourcePools, ActionRead},
 		{ResourcePools, ActionUpdate},
@@ -94,13 +100,19 @@ var RolePermissions = map[Role][]Permission{
 		{ResourceAccounts, ActionUpdate},
 		{ResourceAccounts, ActionDelete},
 		{ResourceAccounts, ActionList},
+		{ResourceDiscovery, ActionCreate},
+		{ResourceDiscovery, ActionRead},
+		{ResourceDiscovery, ActionUpdate},
+		{ResourceDiscovery, ActionList},
 	},
 	RoleViewer: {
-		// Read-only access to pools and accounts
+		// Read-only access to pools, accounts, and discovery
 		{ResourcePools, ActionRead},
 		{ResourcePools, ActionList},
 		{ResourceAccounts, ActionRead},
 		{ResourceAccounts, ActionList},
+		{ResourceDiscovery, ActionRead},
+		{ResourceDiscovery, ActionList},
 	},
 	RoleAuditor: {
 		// Access to audit logs only
@@ -188,7 +200,7 @@ func GetRoleFromScopes(scopes []string) Role {
 		if strings.HasSuffix(scope, ":*") {
 			resource := strings.TrimSuffix(scope, ":*")
 			switch resource {
-			case "pools", "accounts", "keys":
+			case "pools", "accounts", "keys", "discovery":
 				hasWrite = true
 			case "audit":
 				hasAudit = true
@@ -205,7 +217,7 @@ func GetRoleFromScopes(scopes []string) Role {
 		action := parts[1]
 
 		switch resource {
-		case "pools", "accounts", "keys":
+		case "pools", "accounts", "keys", "discovery":
 			switch action {
 			case "write":
 				hasWrite = true

@@ -14,6 +14,8 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	"cloudpam/internal/auth"
+	"cloudpam/internal/discovery"
+	awscollector "cloudpam/internal/discovery/aws"
 	ih "cloudpam/internal/http"
 	"cloudpam/internal/observability"
 
@@ -125,6 +127,13 @@ func main() {
 		}
 	}
 
+	// Initialize discovery subsystem
+	discoveryStore := selectDiscoveryStore(logger, store)
+	syncService := discovery.NewSyncService(discoveryStore)
+	syncService.RegisterCollector(awscollector.New())
+	discoverySrv := ih.NewDiscoveryServer(srv, discoveryStore, syncService)
+	logger.Info("discovery subsystem initialized", "collectors", "aws")
+
 	// When CLOUDPAM_AUTH_ENABLED is set, use protected routes with RBAC.
 	// Otherwise use unprotected routes for development.
 	authEnabled := os.Getenv("CLOUDPAM_AUTH_ENABLED") == "true" || os.Getenv("CLOUDPAM_AUTH_ENABLED") == "1"
@@ -134,6 +143,8 @@ func main() {
 		authSrv.RegisterProtectedAuthRoutes(logger.Slog())
 		userSrv := ih.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
 		userSrv.RegisterProtectedUserRoutes(logger.Slog())
+		dualMW := ih.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
+		discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
 		logger.Info("authentication enabled (RBAC enforced)")
 	} else {
 		srv.RegisterRoutes()
@@ -141,6 +152,7 @@ func main() {
 		authSrv.RegisterAuthRoutes()
 		userSrv := ih.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
 		userSrv.RegisterUserRoutes()
+		discoverySrv.RegisterDiscoveryRoutes()
 		logger.Info("authentication disabled (all routes open)",
 			"hint", "set CLOUDPAM_AUTH_ENABLED=true to enable RBAC")
 	}

@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
   title: CloudPAM API
-  version: "0.5.0"
+  version: "0.6.0"
   description: |
     REST API for managing CloudPAM pools, accounts, blocks, data exports,
-    authentication, audit logging, and schema planning.
+    authentication, audit logging, schema planning, and cloud resource discovery.
 servers:
   - url: http://localhost:8080
     description: Local development server
@@ -27,6 +27,8 @@ tags:
     description: Schema planner endpoints for bulk IP address planning
   - name: Search
     description: Unified search across pools and accounts with CIDR containment queries
+  - name: Discovery
+    description: Cloud resource discovery and sync
   - name: Auth
     description: API key management
   - name: Audit
@@ -490,6 +492,221 @@ paths:
                 $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/discovery/resources:
+    get:
+      summary: List discovered cloud resources
+      tags: [Discovery]
+      parameters:
+        - name: account_id
+          in: query
+          required: true
+          description: Account to list resources for
+          schema:
+            type: integer
+            format: int64
+        - name: provider
+          in: query
+          description: Filter by cloud provider (aws, gcp, azure)
+          schema:
+            type: string
+        - name: region
+          in: query
+          description: Filter by cloud region
+          schema:
+            type: string
+        - name: resource_type
+          in: query
+          description: Filter by resource type (vpc, subnet, elastic_ip, network_interface)
+          schema:
+            type: string
+            enum: [vpc, subnet, elastic_ip, network_interface]
+        - name: status
+          in: query
+          description: Filter by discovery status
+          schema:
+            type: string
+            enum: [active, stale, deleted]
+        - name: linked
+          in: query
+          description: Filter by pool link status (true=linked, false=unlinked)
+          schema:
+            type: string
+            enum: ["true", "false"]
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Discovered resources listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveryResourcesResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/discovery/resources/{resourceId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceId"
+    get:
+      summary: Get a single discovered resource
+      tags: [Discovery]
+      responses:
+        "200":
+          description: Resource found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveredResource"
+        "404":
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/discovery/resources/{resourceId}/link:
+    parameters:
+      - $ref: "#/components/parameters/ResourceId"
+    post:
+      summary: Link a discovered resource to a pool
+      tags: [Discovery]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pool_id:
+                  type: integer
+                  format: int64
+                  description: Pool to link the resource to
+              required: [pool_id]
+      responses:
+        "200":
+          description: Resource linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: linked
+        "404":
+          description: Resource or pool not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Unlink a discovered resource from its pool
+      tags: [Discovery]
+      responses:
+        "200":
+          description: Resource unlinked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: unlinked
+        "404":
+          description: Resource not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/discovery/sync:
+    get:
+      summary: List sync jobs for an account
+      tags: [Discovery]
+      parameters:
+        - name: account_id
+          in: query
+          required: true
+          description: Account to list sync jobs for
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          description: Maximum jobs to return (default 20)
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Sync jobs listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncJobsResponse"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Trigger a discovery sync for an account
+      tags: [Discovery]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account_id:
+                  type: integer
+                  format: int64
+                  description: Account to sync
+              required: [account_id]
+      responses:
+        "200":
+          description: Sync job created (may already be completed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncJob"
+        "404":
+          description: Account not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/discovery/sync/{syncJobId}:
+    parameters:
+      - name: syncJobId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Sync job identifier
+    get:
+      summary: Get sync job status
+      tags: [Discovery]
+      responses:
+        "200":
+          description: Sync job found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncJob"
+        "404":
+          description: Sync job not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/auth/keys:
     get:
       summary: List API keys (without secrets)
@@ -631,6 +848,14 @@ components:
         type: integer
         format: int64
       description: Account identifier
+    ResourceId:
+      name: resourceId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Discovered resource identifier
     ForceFlag:
       name: force
       in: query
@@ -1308,3 +1533,113 @@ components:
         page_size:
           type: integer
       required: [items, total, page, page_size]
+    CloudResourceType:
+      type: string
+      enum: [vpc, subnet, elastic_ip, network_interface]
+    DiscoveryStatus:
+      type: string
+      enum: [active, stale, deleted]
+    SyncJobStatus:
+      type: string
+      enum: [pending, running, completed, failed]
+    DiscoveredResource:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: integer
+          format: int64
+        provider:
+          type: string
+        region:
+          type: string
+        resource_type:
+          $ref: "#/components/schemas/CloudResourceType"
+        resource_id:
+          type: string
+          description: Cloud-native resource identifier (ARN, resource ID)
+        name:
+          type: string
+        cidr:
+          type: string
+          nullable: true
+        parent_resource_id:
+          type: string
+          nullable: true
+          description: Parent resource ID (e.g., VPC ID for a subnet)
+        pool_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Linked pool ID (null if unlinked)
+        status:
+          $ref: "#/components/schemas/DiscoveryStatus"
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Cloud-specific metadata and tags
+        discovered_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+      required: [id, account_id, provider, region, resource_type, resource_id, name, status, discovered_at, last_seen_at]
+    DiscoveryResourcesResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiscoveredResource"
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+      required: [items, total, page, page_size]
+    SyncJob:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/SyncJobStatus"
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        resources_found:
+          type: integer
+        resources_created:
+          type: integer
+        resources_updated:
+          type: integer
+        resources_deleted:
+          type: integer
+        error_message:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required: [id, account_id, status, resources_found, resources_created, resources_updated, resources_deleted, created_at]
+    SyncJobsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SyncJob"
+      required: [items]

@@ -96,6 +96,17 @@ func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	return ss
 }
 
+// selectDiscoveryStore returns a SQLite-backed discovery store.
+// The SQLite Store already implements storage.DiscoveryStore.
+func selectDiscoveryStore(logger observability.Logger, mainStore storage.Store) storage.DiscoveryStore {
+	if ds, ok := mainStore.(storage.DiscoveryStore); ok {
+		return ds
+	}
+	// Fallback: use in-memory
+	logger.Warn("main store does not implement DiscoveryStore; using in-memory fallback")
+	return storage.NewMemoryDiscoveryStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus returns migration status when built with sqlite tag.
 func sqliteStatus(dsn string) string {
 	s, err := sqlitestore.Status(dsn)

@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 13: Cloud Discovery — Data Model, AWS Collector & API
+
+#### Discovery Domain & Storage
+- `internal/domain/discovery.go`: `DiscoveredResource`, `SyncJob`, `DiscoveryFilters`, status enums (active/stale/deleted, pending/running/completed/failed)
+- `internal/storage/discovery.go`: `DiscoveryStore` interface with 11 methods (CRUD, upsert, link/unlink, mark stale, sync jobs)
+- `internal/storage/discovery_memory.go`: in-memory `DiscoveryStore` implementation
+- `internal/storage/sqlite/discovery.go`: SQLite `DiscoveryStore` with `ON CONFLICT` upserts
+- `migrations/0008_discovered_resources.sql`: `discovered_resources` and `sync_jobs` tables with UUID primary keys
+
+#### Collector Framework & AWS Collector
+- `internal/discovery/collector.go`: `Collector` interface + `SyncService` orchestrator
+- `internal/discovery/aws/collector.go`: AWS collector using `aws-sdk-go-v2` — discovers VPCs, subnets, and Elastic IPs via `ec2:DescribeVpcs`, `ec2:DescribeSubnets`, `ec2:DescribeAddresses`
+- Sync flow: create job → discover → upsert resources → mark stale → update job with counts
+
+#### Discovery API Endpoints
+- `GET /api/v1/discovery/resources` — list discovered resources with filters (account, provider, type, status, linked)
+- `GET /api/v1/discovery/resources/{id}` — get single resource
+- `POST /api/v1/discovery/resources/{id}/link` — link resource to a pool
+- `DELETE /api/v1/discovery/resources/{id}/link` — unlink resource from pool
+- `POST /api/v1/discovery/sync` — trigger discovery sync for an account
+- `GET /api/v1/discovery/sync` — list sync jobs
+- `GET /api/v1/discovery/sync/{id}` — get sync job status
+- RBAC: `discovery` resource with read/create/update permissions for admin, operator, viewer roles
+
+#### Frontend — Discovery Page
+- `ui/src/pages/DiscoveryPage.tsx`: replaced placeholder with full discovery UI
+  - Account selector, Sync Now button, Resources tab (table with filters, link/unlink actions), Sync History tab
+  - `ResourceTypeBadge` component with color-coded badges for VPC/Subnet/EIP/NIC
+- `ui/src/hooks/useDiscovery.ts`: `useDiscoveryResources` and `useSyncJobs` hooks
+- Discovery types added to `ui/src/api/types.ts`
+- Status badge colors added for discovery/sync statuses (stale, deleted, completed, running, pending, failed)
+- API client improved: detects non-JSON responses and gives clear error messages
+
+#### In-App Setup Guide
+- Discovery page shows an interactive setup guide with collapsible sections:
+  - How Discovery Works (sync/review/link workflow)
+  - AWS Configuration (step-by-step: account, credentials, IAM, sync)
+  - What Gets Discovered (VPC/Subnet/EIP cards with field details)
+  - Linking Resources to Pools (link/unlink instructions)
+- Guide auto-opens when no resources are discovered; accessible anytime via book icon in header
+
+#### Documentation
+- `docs/DISCOVERY.md`: comprehensive discovery documentation — architecture, AWS setup, IAM permissions, API reference with curl examples, RBAC, frontend walkthrough, how to add new providers
+- `docs/DISCOVERY_AGENT_PLAN.md`: architecture plan for deploying the discovery agent as a separate binary — push-based ingest API, agent binary design, multi-region, Docker/Helm, security model
+- GitHub issues #107–#112: phased implementation plan for agent separation
+
+#### OpenAPI & Docs
+- `docs/openapi.yaml` bumped to v0.6.0 with Discovery tag, 7 new endpoints, and schemas
+- `CLAUDE.md` updated for Phase 2 state: PostgreSQL support, auth env vars, all new API endpoints, discovery/auth/cidr packages
+- New dependencies: `aws-sdk-go-v2` (config, credentials, ec2 service)
+
 ### Added - Sprint 12: Local User Management & Dual Auth
 
 #### User Management
