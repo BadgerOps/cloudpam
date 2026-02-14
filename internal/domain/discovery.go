@@ -138,17 +138,31 @@ const (
 	AgentStatusOffline AgentStatus = "offline" // last_seen > 15 minutes ago
 )
 
+// AgentApprovalStatus represents the approval state of a discovery agent.
+type AgentApprovalStatus string
+
+const (
+	AgentApprovalPending  AgentApprovalStatus = "pending_approval"
+	AgentApprovalApproved AgentApprovalStatus = "approved"
+	AgentApprovalRejected AgentApprovalStatus = "rejected"
+)
+
 // DiscoveryAgent represents a remote discovery agent.
 type DiscoveryAgent struct {
-	ID         uuid.UUID   `json:"id"`
-	Name       string      `json:"name"`
-	AccountID  int64       `json:"account_id"`
-	APIKeyID   string      `json:"api_key_id"`
-	Status     AgentStatus `json:"status"` // computed at read time
-	Version    string      `json:"version"`
-	Hostname   string      `json:"hostname"`
-	LastSeenAt time.Time   `json:"last_seen_at"`
-	CreatedAt  time.Time   `json:"created_at"`
+	ID                uuid.UUID           `json:"id"`
+	Name              string              `json:"name"`
+	AccountID         int64               `json:"account_id"`
+	APIKeyID          string              `json:"api_key_id"`
+	Status            AgentStatus         `json:"status"` // computed at read time (healthy/stale/offline)
+	ApprovalStatus    AgentApprovalStatus `json:"approval_status"`
+	BootstrapTokenID  *string             `json:"bootstrap_token_id,omitempty"`
+	Version           string              `json:"version"`
+	Hostname          string              `json:"hostname"`
+	LastSeenAt        time.Time           `json:"last_seen_at"`
+	RegisteredAt      *time.Time          `json:"registered_at,omitempty"`
+	ApprovedAt        *time.Time          `json:"approved_at,omitempty"`
+	ApprovedBy        *string             `json:"approved_by,omitempty"`
+	CreatedAt         time.Time           `json:"created_at"`
 }
 
 // IngestRequest is the request body for the /api/v1/discovery/ingest endpoint.
@@ -179,4 +193,68 @@ type AgentHeartbeatRequest struct {
 // DiscoveryAgentsResponse is the response for listing discovery agents.
 type DiscoveryAgentsResponse struct {
 	Items []DiscoveryAgent `json:"items"`
+}
+
+// BootstrapToken represents a token for agent self-registration.
+type BootstrapToken struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Token     string     `json:"token,omitempty"` // only returned on creation
+	TokenHash []byte     `json:"-"`
+	AccountID *int64     `json:"account_id,omitempty"` // nil = any account
+	CreatedBy string     `json:"created_by"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Revoked   bool       `json:"revoked"`
+	UsedCount int        `json:"used_count"`
+	MaxUses   *int       `json:"max_uses,omitempty"` // nil = unlimited
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// IsValid returns true if the token can still be used.
+func (t *BootstrapToken) IsValid() bool {
+	if t.Revoked {
+		return false
+	}
+	if t.ExpiresAt != nil && time.Now().UTC().After(*t.ExpiresAt) {
+		return false
+	}
+	if t.MaxUses != nil && t.UsedCount >= *t.MaxUses {
+		return false
+	}
+	return true
+}
+
+// AgentRegisterRequest is the request body for agent self-registration.
+type AgentRegisterRequest struct {
+	Name           string `json:"name"`
+	AccountID      int64  `json:"account_id"`
+	BootstrapToken string `json:"bootstrap_token"`
+	Version        string `json:"version,omitempty"`
+	Hostname       string `json:"hostname,omitempty"`
+}
+
+// AgentRegisterResponse is the response body for agent self-registration.
+type AgentRegisterResponse struct {
+	AgentID        uuid.UUID           `json:"agent_id"`
+	APIKey         string              `json:"api_key,omitempty"` // returned if auto-approved
+	ApprovalStatus AgentApprovalStatus `json:"approval_status"`
+	Message        string              `json:"message,omitempty"`
+}
+
+// BootstrapTokenCreateRequest is the request body for creating a bootstrap token.
+type BootstrapTokenCreateRequest struct {
+	Name       string  `json:"name"`
+	AccountID  *int64  `json:"account_id,omitempty"`
+	ExpiresIn  *string `json:"expires_in,omitempty"` // duration string like "24h", "7d"
+	MaxUses    *int    `json:"max_uses,omitempty"`
+}
+
+// BootstrapTokensResponse is the response for listing bootstrap tokens.
+type BootstrapTokensResponse struct {
+	Items []BootstrapToken `json:"items"`
+}
+
+// AgentConfigTemplateResponse is the response for the config template endpoint.
+type AgentConfigTemplateResponse struct {
+	Config string `json:"config"` // YAML content
 }

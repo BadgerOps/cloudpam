@@ -52,4 +52,22 @@ type DiscoveryStore interface {
 
 	// ListAgents returns all discovery agents, optionally filtered by account ID.
 	ListAgents(ctx context.Context, accountID int64) ([]domain.DiscoveryAgent, error)
+
+	// CreateBootstrapToken creates a new bootstrap token for agent registration.
+	CreateBootstrapToken(ctx context.Context, token domain.BootstrapToken) (domain.BootstrapToken, error)
+
+	// GetBootstrapToken returns a bootstrap token by ID.
+	GetBootstrapToken(ctx context.Context, id string) (*domain.BootstrapToken, error)
+
+	// GetBootstrapTokenByToken returns a bootstrap token by the actual token string (after hashing).
+	GetBootstrapTokenByToken(ctx context.Context, tokenHash []byte) (*domain.BootstrapToken, error)
+
+	// ListBootstrapTokens returns all bootstrap tokens.
+	ListBootstrapTokens(ctx context.Context) ([]domain.BootstrapToken, error)
+
+	// RevokeBootstrapToken marks a token as revoked.
+	RevokeBootstrapToken(ctx context.Context, id string) error
+
+	// IncrementBootstrapTokenUses increments the used count for a token.
+	IncrementBootstrapTokenUses(ctx context.Context, id string) error
 }

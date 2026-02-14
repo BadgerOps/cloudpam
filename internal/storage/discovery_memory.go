@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"sort"
 	"time"
@@ -13,19 +14,21 @@ import (
 
 // MemoryDiscoveryStore is an in-memory implementation of DiscoveryStore.
 type MemoryDiscoveryStore struct {
-	store     *MemoryStore // embed reference for shared mutex
-	resources map[uuid.UUID]domain.DiscoveredResource
-	syncJobs  map[uuid.UUID]domain.SyncJob
-	agents    map[uuid.UUID]domain.DiscoveryAgent
+	store           *MemoryStore // embed reference for shared mutex
+	resources       map[uuid.UUID]domain.DiscoveredResource
+	syncJobs        map[uuid.UUID]domain.SyncJob
+	agents          map[uuid.UUID]domain.DiscoveryAgent
+	bootstrapTokens map[string]domain.BootstrapToken
 }
 
 // NewMemoryDiscoveryStore creates a new in-memory discovery store.
 func NewMemoryDiscoveryStore(store *MemoryStore) *MemoryDiscoveryStore {
 	return &MemoryDiscoveryStore{
-		store:     store,
-		resources: make(map[uuid.UUID]domain.DiscoveredResource),
-		syncJobs:  make(map[uuid.UUID]domain.SyncJob),
-		agents:    make(map[uuid.UUID]domain.DiscoveryAgent),
+		store:           store,
+		resources:       make(map[uuid.UUID]domain.DiscoveredResource),
+		syncJobs:        make(map[uuid.UUID]domain.SyncJob),
+		agents:          make(map[uuid.UUID]domain.DiscoveryAgent),
+		bootstrapTokens: make(map[string]domain.BootstrapToken),
 	}
 }
 
@@ -282,4 +285,92 @@ func (m *MemoryDiscoveryStore) ListAgents(_ context.Context, accountID int64) ([
 	})
 
 	return agents, nil
+}
+
+func (m *MemoryDiscoveryStore) CreateBootstrapToken(_ context.Context, token domain.BootstrapToken) (domain.BootstrapToken, error) {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+
+	if token.ID == "" {
+		token.ID = uuid.New().String()
+	}
+	if token.CreatedAt.IsZero() {
+		token.CreatedAt = time.Now().UTC()
+	}
+
+	m.bootstrapTokens[token.ID] = token
+	return token, nil
+}
+
+func (m *MemoryDiscoveryStore) GetBootstrapToken(_ context.Context, id string) (*domain.BootstrapToken, error) {
+	m.store.mu.RLock()
+	defer m.store.mu.RUnlock()
+
+	token, ok := m.bootstrapTokens[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	// Don't return the plaintext token
+	token.Token = ""
+	return &token, nil
+}
+
+func (m *MemoryDiscoveryStore) GetBootstrapTokenByToken(_ context.Context, tokenHash []byte) (*domain.BootstrapToken, error) {
+	m.store.mu.RLock()
+	defer m.store.mu.RUnlock()
+
+	// Linear search through tokens to find matching hash
+	for _, t := range m.bootstrapTokens {
+		if subtle.ConstantTimeCompare(t.TokenHash, tokenHash) == 1 {
+			t.Token = "" // Don't return plaintext
+			return &t, nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (m *MemoryDiscoveryStore) ListBootstrapTokens(_ context.Context) ([]domain.BootstrapToken, error) {
+	m.store.mu.RLock()
+	defer m.store.mu.RUnlock()
+
+	var tokens []domain.BootstrapToken
+	for _, t := range m.bootstrapTokens {
+		t.Token = "" // Don't return plaintext
+		tokens = append(tokens, t)
+	}
+
+	// Sort by created_at desc
+	sort.Slice(tokens, func(i, j int) bool {
+		return tokens[i].CreatedAt.After(tokens[j].CreatedAt)
+	})
+
+	return tokens, nil
+}
+
+func (m *MemoryDiscoveryStore) RevokeBootstrapToken(_ context.Context, id string) error {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+
+	token, ok := m.bootstrapTokens[id]
+	if !ok {
+		return ErrNotFound
+	}
+
+	token.Revoked = true
+	m.bootstrapTokens[id] = token
+	return nil
+}
+
+func (m *MemoryDiscoveryStore) IncrementBootstrapTokenUses(_ context.Context, id string) error {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+
+	token, ok := m.bootstrapTokens[id]
+	if !ok {
+		return ErrNotFound
+	}
+
+	token.UsedCount++
+	m.bootstrapTokens[id] = token
+	return nil
 }
