@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cloudpam-agent.fullname" . }}
+  labels:
+    {{- include "cloudpam-agent.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "cloudpam-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "cloudpam-agent.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cloudpam-agent.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: agent
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args:
+          - -config
+          - /etc/cloudpam/agent.yaml
+        env:
+          - name: CLOUDPAM_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "cloudpam-agent.secretName" . }}
+                key: api-key
+          {{- if not .Values.config.agentName }}
+          - name: CLOUDPAM_AGENT_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          {{- end }}
+          {{- with .Values.env }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        volumeMounts:
+          - name: config
+            mountPath: /etc/cloudpam
+            readOnly: true
+          {{- with .Values.extraVolumeMounts }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "cloudpam-agent.fullname" . }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

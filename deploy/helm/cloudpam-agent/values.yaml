@@ -1,0 +1,103 @@
+# Default values for cloudpam-agent
+
+# Image configuration
+image:
+  repository: ghcr.io/yourorg/cloudpam-agent
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+
+# Agent configuration
+config:
+  # CloudPAM server URL (required)
+  serverUrl: "https://cloudpam.example.com"
+
+  # Account ID to discover (required)
+  accountId: 1
+
+  # Agent name (defaults to pod name if not set)
+  agentName: ""
+
+  # Sync interval (default: 15m)
+  syncInterval: "15m"
+
+  # Heartbeat interval (default: 1m)
+  heartbeatInterval: "1m"
+
+  # AWS regions to discover (empty = default region)
+  awsRegions: []
+  # Example:
+  # awsRegions:
+  #   - us-east-1
+  #   - us-west-2
+
+  # HTTP settings
+  maxRetries: 3
+  retryBackoff: "5s"
+  requestTimeout: "30s"
+
+# API key for authentication (required)
+# Can be provided directly or via existingSecret
+apiKey: ""
+
+# Use existing secret for API key
+# The secret must have a key named "api-key"
+existingSecret: ""
+
+# Service account
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account (for IRSA, Workload Identity, etc.)
+  annotations: {}
+  # Example for AWS IRSA:
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/cloudpam-discovery
+  # The name of the service account to use
+  name: ""
+
+# Resource limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Security context for pod
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Security context for container
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Environment variables
+env: []
+# Example:
+# env:
+#   - name: AWS_REGION
+#     value: us-east-1
+
+# Extra volumes
+extraVolumes: []
+
+# Extra volume mounts
+extraVolumeMounts: []

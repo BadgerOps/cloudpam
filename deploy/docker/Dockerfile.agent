@@ -1,0 +1,47 @@
+# Multi-stage build for cloudpam-agent
+
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /build
+
+# Copy go mod files and download dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the agent binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o cloudpam-agent ./cmd/cloudpam-agent
+
+# Final stage: minimal runtime image
+FROM alpine:latest
+
+# Install CA certificates for HTTPS
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /app
+
+# Copy the binary from builder
+COPY --from=builder /build/cloudpam-agent /app/cloudpam-agent
+
+# Create non-root user
+RUN addgroup -g 1000 cloudpam && \
+    adduser -D -u 1000 -G cloudpam cloudpam && \
+    chown -R cloudpam:cloudpam /app
+
+# Switch to non-root user
+USER cloudpam
+
+# Health check (agent doesn't have HTTP server, so this is just a process check)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD pgrep -x cloudpam-agent || exit 1
+
+# Entrypoint
+ENTRYPOINT ["/app/cloudpam-agent"]
+
+# Default args (can be overridden)
+CMD ["-config", "/etc/cloudpam/agent.yaml"]
