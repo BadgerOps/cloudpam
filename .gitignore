@@ -9,9 +9,11 @@ Thumbs.db
 
 # Go build/cache
 bin/
-# Ignore only the root-level binary, not cmd/cloudpam/
+# Ignore only the root-level binaries, not cmd/cloudpam*/
 /cloudpam
 /cloudpam.exe
+/cloudpam-agent
+/cloudpam-agent.exe
 tmp/
 .gocache/
 .gopath/
