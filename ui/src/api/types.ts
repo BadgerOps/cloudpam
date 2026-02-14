@@ -355,3 +355,39 @@ export interface DiscoveryAgent {
 export interface DiscoveryAgentsResponse {
   items: DiscoveryAgent[]
 }
+
+// --- Recommendation types ---
+
+export type RecommendationType = 'allocation' | 'compliance'
+export type RecommendationStatus = 'pending' | 'applied' | 'dismissed'
+export type RecommendationPriority = 'high' | 'medium' | 'low'
+
+export interface Recommendation {
+  id: string
+  pool_id: number
+  type: RecommendationType
+  status: RecommendationStatus
+  priority: RecommendationPriority
+  title: string
+  description: string
+  suggested_cidr?: string
+  rule_id?: string
+  score: number
+  metadata?: Record<string, string>
+  dismiss_reason?: string
+  applied_pool_id?: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RecommendationsListResponse {
+  items: Recommendation[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface GenerateRecommendationsResponse {
+  items: Recommendation[]
+  total: number
+}

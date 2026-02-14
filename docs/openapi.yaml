@@ -1,10 +1,11 @@
 openapi: 3.1.0
 info:
   title: CloudPAM API
-  version: "0.6.0"
+  version: "0.7.0"
   description: |
     REST API for managing CloudPAM pools, accounts, blocks, data exports,
-    authentication, audit logging, schema planning, and cloud resource discovery.
+    authentication, audit logging, schema planning, cloud resource discovery,
+    and actionable recommendations.
 servers:
   - url: http://localhost:8080
     description: Local development server
@@ -33,6 +34,8 @@ tags:
     description: API key management
   - name: Audit
     description: Audit log queries
+  - name: Recommendations
+    description: Actionable recommendations from analysis
 paths:
   /healthz:
     get:
@@ -821,6 +824,158 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuditListResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/recommendations/generate:
+    post:
+      summary: Generate recommendations for pools
+      tags: [Recommendations]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pool_ids]
+              properties:
+                pool_ids:
+                  type: array
+                  items:
+                    type: integer
+                    format: int64
+                include_children:
+                  type: boolean
+                  default: false
+                desired_prefix_len:
+                  type: integer
+      responses:
+        "200":
+          description: Generated recommendations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateRecommendationsResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/recommendations:
+    get:
+      summary: List recommendations
+      tags: [Recommendations]
+      parameters:
+        - name: pool_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [allocation, compliance]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, applied, dismissed]
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [high, medium, low]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+      responses:
+        "200":
+          description: Paginated recommendations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationsListResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/recommendations/{recommendationId}:
+    get:
+      summary: Get a recommendation
+      tags: [Recommendations]
+      parameters:
+        - name: recommendationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Recommendation details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recommendation"
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/v1/recommendations/{recommendationId}/apply:
+    post:
+      summary: Apply a recommendation
+      tags: [Recommendations]
+      parameters:
+        - name: recommendationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                account_id:
+                  type: integer
+                  format: int64
+      responses:
+        "200":
+          description: Applied recommendation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recommendation"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/recommendations/{recommendationId}/dismiss:
+    post:
+      summary: Dismiss a recommendation
+      tags: [Recommendations]
+      parameters:
+        - name: recommendationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Dismissed recommendation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Recommendation"
         default:
           $ref: "#/components/responses/Error"
 components:
@@ -1643,3 +1798,72 @@ components:
           items:
             $ref: "#/components/schemas/SyncJob"
       required: [items]
+    Recommendation:
+      type: object
+      properties:
+        id:
+          type: string
+        pool_id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          enum: [allocation, compliance]
+        status:
+          type: string
+          enum: [pending, applied, dismissed]
+        priority:
+          type: string
+          enum: [high, medium, low]
+        title:
+          type: string
+        description:
+          type: string
+        suggested_cidr:
+          type: string
+        rule_id:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        dismiss_reason:
+          type: string
+        applied_pool_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, pool_id, type, status, priority, title, score, created_at, updated_at]
+    GenerateRecommendationsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Recommendation"
+        total:
+          type: integer
+      required: [items, total]
+    RecommendationsListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Recommendation"
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+      required: [items, total, page, page_size]

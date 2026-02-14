@@ -55,6 +55,14 @@ func selectDiscoveryStore(_ observability.Logger, mainStore storage.Store) stora
 	return storage.NewMemoryDiscoveryStore(storage.NewMemoryStore())
 }
 
+// selectRecommendationStore returns an in-memory recommendation store.
+func selectRecommendationStore(_ observability.Logger, mainStore storage.Store) storage.RecommendationStore {
+	if ms, ok := mainStore.(*storage.MemoryStore); ok {
+		return storage.NewMemoryRecommendationStore(ms)
+	}
+	return storage.NewMemoryRecommendationStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus returns schema status string when not built with sqlite tag.
 func sqliteStatus(dsn string) string { return "" }
 

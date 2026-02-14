@@ -17,6 +17,7 @@ import {
   Shield,
   Users,
   User,
+  Lightbulb,
 } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
@@ -29,6 +30,7 @@ const navItems = [
   { to: '/discovery', icon: RefreshCw, label: 'Discovery' },
   { to: '/audit', icon: Clock, label: 'Audit Log' },
   { to: '/schema', icon: Map, label: 'Schema Planner' },
+  { to: '/recommendations', icon: Lightbulb, label: 'Recommendations' },
 ]
 
 interface SidebarProps {

@@ -140,6 +140,12 @@ func main() {
 	analysisSrv := ih.NewAnalysisServer(srv, analysisService)
 	logger.Info("analysis subsystem initialized")
 
+	// Initialize recommendation subsystem
+	recStore := selectRecommendationStore(logger, store)
+	recService := planning.NewRecommendationService(analysisService, recStore, store)
+	recSrv := ih.NewRecommendationServer(srv, recService, recStore)
+	logger.Info("recommendation subsystem initialized")
+
 	// When CLOUDPAM_AUTH_ENABLED is set, use protected routes with RBAC.
 	// Otherwise use unprotected routes for development.
 	authEnabled := os.Getenv("CLOUDPAM_AUTH_ENABLED") == "true" || os.Getenv("CLOUDPAM_AUTH_ENABLED") == "1"
@@ -152,6 +158,7 @@ func main() {
 		dualMW := ih.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
 		discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
 		analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
+		recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
 		logger.Info("authentication enabled (RBAC enforced)")
 	} else {
 		srv.RegisterRoutes()
@@ -161,6 +168,7 @@ func main() {
 		userSrv.RegisterUserRoutes()
 		discoverySrv.RegisterDiscoveryRoutes()
 		analysisSrv.RegisterAnalysisRoutes()
+		recSrv.RegisterRecommendationRoutes()
 		logger.Info("authentication disabled (all routes open)",
 			"hint", "set CLOUDPAM_AUTH_ENABLED=true to enable RBAC")
 	}
