@@ -179,14 +179,16 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	// Validate scopes
 	if len(input.Scopes) > 0 {
 		validScopes := map[string]bool{
-			"pools:read":     true,
-			"pools:write":    true,
-			"accounts:read":  true,
-			"accounts:write": true,
-			"audit:read":     true,
-			"keys:read":      true,
-			"keys:write":     true,
-			"*":              true, // admin scope
+			"pools:read":      true,
+			"pools:write":     true,
+			"accounts:read":   true,
+			"accounts:write":  true,
+			"audit:read":      true,
+			"keys:read":       true,
+			"keys:write":      true,
+			"discovery:read":  true,
+			"discovery:write": true,
+			"*":               true, // admin scope
 		}
 		for _, scope := range input.Scopes {
 			if !validScopes[scope] {
