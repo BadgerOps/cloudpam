@@ -110,8 +110,9 @@ just cover-threshold thr=80  # Check coverage meets threshold
 ### Linting & Formatting
 ```bash
 just fmt              # Format code with go fmt
-just lint             # Run golangci-lint (requires v1.61.0+ for Go 1.24)
+just lint             # Run golangci-lint v2.1.6 (same as CI)
 just tidy             # Run go mod tidy
+just install-hooks    # Install pre-commit hook (runs golangci-lint on staged Go files)
 ```
 
 ### OpenAPI Tooling
