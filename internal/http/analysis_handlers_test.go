@@ -38,9 +38,11 @@ func TestAnalysisHandler_FullReport(t *testing.T) {
 		Name: "Net", CIDR: "10.0.0.0/16", Type: domain.PoolTypeSupernet,
 	})
 	parentID := parent.ID
-	st.CreatePool(context.Background(), domain.CreatePool{
+	if _, err := st.CreatePool(context.Background(), domain.CreatePool{
 		Name: "Sub", CIDR: "10.0.0.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	body := `{"pool_ids":[` + int64Str(parent.ID) + `],"include_children":true}`
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/analysis", strings.NewReader(body))
@@ -197,12 +199,16 @@ func TestAnalysisHandler_Compliance(t *testing.T) {
 func TestAnalysisHandler_Compliance_AllPools(t *testing.T) {
 	mux, st := setupAnalysisServer()
 
-	st.CreatePool(context.Background(), domain.CreatePool{
+	if _, err := st.CreatePool(context.Background(), domain.CreatePool{
 		Name: "Pool A", CIDR: "10.0.0.0/24", Type: domain.PoolTypeSubnet,
-	})
-	st.CreatePool(context.Background(), domain.CreatePool{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreatePool(context.Background(), domain.CreatePool{
 		Name: "Pool B", CIDR: "172.16.0.0/16", Type: domain.PoolTypeSubnet,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Empty pool_ids means all pools.
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/analysis/compliance", strings.NewReader(`{}`))

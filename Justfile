@@ -50,18 +50,19 @@ fmt: ensure-cache
     {{go-env}} go fmt ./...
 
 lint:
-    # Ensure golangci-lint is installed and new enough for Go 1.24
-    if ! command -v golangci-lint >/dev/null 2>&1; then \
-      echo "golangci-lint not found. Install from https://golangci-lint.run/ or use Docker image golangci/golangci-lint"; \
-      exit 1; \
-    fi; \
-    v=$(golangci-lint --version 2>/dev/null | awk '{print $4}' | sed 's/^v//'); \
-    req=1.61.0; \
-    if [ -n "$v" ] && [ "$req" != "$(printf '%s\n' "$req" "$v" | sort -V | head -n1)" ]; then \
-      echo "golangci-lint $v is too old; need >= $req for Go 1.24. Upgrade: https://golangci-lint.run/welcome/install/"; \
-      exit 1; \
-    fi; \
-    golangci-lint run
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Find golangci-lint: PATH, ~/go/bin, or GOPATH/bin
+    LINT=""
+    for candidate in golangci-lint "$HOME/go/bin/golangci-lint" "$(go env GOPATH 2>/dev/null)/bin/golangci-lint"; do
+      if command -v "$candidate" >/dev/null 2>&1; then LINT="$candidate"; break; fi
+    done
+    if [ -z "$LINT" ]; then
+      echo "golangci-lint not found. Install: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b \$(go env GOPATH)/bin v2.1.6"
+      exit 1
+    fi
+    echo "Using $($LINT --version 2>&1)"
+    $LINT run --timeout=5m
 
 test: ensure-cache
     {{go-env}} go test ./...
@@ -111,6 +112,12 @@ dev-all: ensure-cache ui-install
     {{go-env}} go run ./cmd/cloudpam & \
     cd ui && npm run dev & \
     wait
+
+# Install git hooks (pre-commit lint check)
+install-hooks:
+    cp scripts/pre-commit .git/hooks/pre-commit
+    chmod +x .git/hooks/pre-commit
+    @echo "pre-commit hook installed"
 
 openapi-validate:
     ruby "{{justfile_directory()}}/scripts/openapi_validate.rb" "{{openapi_spec}}"

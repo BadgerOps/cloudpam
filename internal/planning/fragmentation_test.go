@@ -44,15 +44,21 @@ func TestAnalyzeFragmentation_Scattered(t *testing.T) {
 
 	// Create non-contiguous children to produce gaps.
 	parentID := parent.ID
-	store.CreatePool(ctx, domain.CreatePool{
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "A", CIDR: "10.0.0.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
-	store.CreatePool(ctx, domain.CreatePool{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "B", CIDR: "10.0.10.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
-	store.CreatePool(ctx, domain.CreatePool{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "C", CIDR: "10.0.20.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	svc := NewAnalysisService(store)
 	result, err := svc.AnalyzeFragmentation(ctx, parent.ID)
@@ -87,15 +93,21 @@ func TestAnalyzeFragmentation_MixedPrefixLengths(t *testing.T) {
 	})
 
 	parentID := parent.ID
-	store.CreatePool(ctx, domain.CreatePool{
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Big", CIDR: "10.0.0.0/20", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
-	store.CreatePool(ctx, domain.CreatePool{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Small", CIDR: "10.0.16.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
-	store.CreatePool(ctx, domain.CreatePool{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Tiny", CIDR: "10.0.17.0/28", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	svc := NewAnalysisService(store)
 	result, err := svc.AnalyzeFragmentation(ctx, parent.ID)

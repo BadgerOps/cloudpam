@@ -108,12 +108,17 @@ func TestAnalyze_SpecificPools(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
 
-	p1, _ := store.CreatePool(ctx, domain.CreatePool{
+	p1, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Pool A", CIDR: "10.0.0.0/24", Type: domain.PoolTypeSubnet,
 	})
-	store.CreatePool(ctx, domain.CreatePool{
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Pool B", CIDR: "172.16.0.0/16", Type: domain.PoolTypeSubnet,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	svc := NewAnalysisService(store)
 	report, err := svc.Analyze(ctx, AnalysisRequest{
@@ -150,12 +155,16 @@ func TestAnalyze_HealthScoreDeduction(t *testing.T) {
 	})
 
 	parentID := parent.ID
-	store.CreatePool(ctx, domain.CreatePool{
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Overlap A", CIDR: "10.0.0.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
-	store.CreatePool(ctx, domain.CreatePool{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Overlap B", CIDR: "10.0.0.128/25", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	svc := NewAnalysisService(store)
 	report, err := svc.Analyze(ctx, AnalysisRequest{

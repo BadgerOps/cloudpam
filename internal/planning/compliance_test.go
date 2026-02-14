@@ -162,12 +162,16 @@ func TestCheckCompliance_AllPools(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemoryStore()
 
-	store.CreatePool(ctx, domain.CreatePool{
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Pool 1", CIDR: "10.0.0.0/24", Type: domain.PoolTypeSubnet,
-	})
-	store.CreatePool(ctx, domain.CreatePool{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Pool 2", CIDR: "172.16.0.0/16", Type: domain.PoolTypeSubnet,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	svc := NewAnalysisService(store)
 	// Empty pool IDs = all pools.
@@ -190,9 +194,11 @@ func TestCheckCompliance_IncludeChildren(t *testing.T) {
 	})
 
 	parentID := parent.ID
-	store.CreatePool(ctx, domain.CreatePool{
+	if _, err := store.CreatePool(ctx, domain.CreatePool{
 		Name: "Child", CIDR: "10.0.0.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	svc := NewAnalysisService(store)
 	report, err := svc.CheckCompliance(ctx, []int64{parent.ID}, true)
