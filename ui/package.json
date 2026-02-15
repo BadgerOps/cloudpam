@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:analyze": "tsc -b && vite build --mode analyze",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -27,6 +28,7 @@
     "tailwindcss": "^4.0.0",
     "typescript": "~5.7.2",
     "vite": "^6.0.5",
+    "rollup-plugin-visualizer": "^5.14.0",
     "vitest": "^4.0.18"
   }
 }
