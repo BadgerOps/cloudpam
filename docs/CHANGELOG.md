@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/CHANGELOG.md`: this entry
 - `CLAUDE.md`: updated with org discovery endpoint, env vars, migration, deployment modules
 
+## [0.3.1] - 2026-02-14
+
+### Fixed
+- Auto-release workflow now chains container image and binary builds via `workflow_call` instead of relying on the `release: [published]` event, which is silently ignored when created by `GITHUB_TOKEN` (GitHub Actions limitation)
+- `release-builds.yml` and `container-images.yml` accept both `release: [published]` (manual releases) and `workflow_call` (auto-release), resolving the tag via `inputs.tag || github.event.release.tag_name`
+
 ## [0.3.0] - 2026-02-14
 
 ### Added - Release Infrastructure
@@ -517,7 +523,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
-[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/BadgerOps/cloudpam/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BadgerOps/cloudpam/releases/tag/v0.3.0
 [0.2.0]: https://github.com/BadgerOps/cloudpam/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/BadgerOps/cloudpam/releases/tag/v0.1.0
