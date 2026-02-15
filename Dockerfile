@@ -19,17 +19,11 @@ RUN CGO_ENABLED=0 go build \
     -o /cloudpam ./cmd/cloudpam
 
 # ---------- runtime stage ----------
-FROM alpine:3.21
-
-RUN apk add --no-cache ca-certificates tzdata curl \
-    && addgroup -S cloudpam && adduser -S cloudpam -G cloudpam
+FROM cgr.dev/chainguard/static:latest
 
 COPY --from=builder /cloudpam /usr/local/bin/cloudpam
 
-USER cloudpam
+USER nonroot
 EXPOSE 8080
-
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/healthz || exit 1
 
 ENTRYPOINT ["cloudpam"]

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — Build Pipeline & Container Hardening
+
+#### Container Images
+- Runtime base image changed from `alpine:3.21` to `cgr.dev/chainguard/static:latest` in both server and agent Dockerfiles — zero OS packages, ~15MB images
+- Removed `apk add ca-certificates tzdata curl` (ca-certs and tzdata provided by Chainguard base)
+- Removed manual user creation (`addgroup`/`adduser`) — uses Chainguard built-in `nonroot` user (UID 65532)
+- Removed `HEALTHCHECK` instructions (Kubernetes liveness/readiness probes handle health checks; Docker Compose users can add externally)
+- Helm chart `podSecurityContext` updated: `runAsUser` and `fsGroup` changed from 1000 to 65532 to match Chainguard `nonroot` UID
+
+#### Frontend Build Optimization
+- Vite build config: explicit `sourcemap: false`, `target: 'es2020'`, `cssMinify: true`
+- Rollup `manualChunks` splits vendor-react and vendor-icons into separate cacheable chunks
+- Hash-based chunk/entry/asset file naming for cache busting
+- Added `rollup-plugin-visualizer` devDep and `build:analyze` script for bundle analysis
+
+#### CI/CD Hardening
+- All GitHub Actions pinned to immutable commit SHAs across 6 workflow files (test, lint, container-images, release-builds, release, manual-builds)
+- New `govulncheck` job in `test.yml` — scans Go dependencies for known vulnerabilities on every push/PR
+- New Trivy container scan step in `container-images.yml` — scans server and agent images for HIGH/CRITICAL vulnerabilities after build (non-blocking)
+
 ### Added - Sprint 16b: AWS Organizations Discovery
 
 #### Org-Mode Agent (`cmd/cloudpam-agent/`)

@@ -37,6 +37,7 @@ ui/dist/
 # web/dist/ is tracked: contains go:embed placeholder (overwritten by ui build)
 # Built assets in web/dist/assets/ are not tracked
 web/dist/assets/
+web/dist/stats.html
 
 # Editors/IDE
 .idea/

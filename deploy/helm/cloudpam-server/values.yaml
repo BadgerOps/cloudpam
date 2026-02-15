@@ -95,8 +95,8 @@ resources:
 # Pod security context
 podSecurityContext:
   runAsNonRoot: true
-  runAsUser: 1000
-  fsGroup: 1000
+  runAsUser: 65532
+  fsGroup: 65532
 
 # Container security context
 securityContext:
