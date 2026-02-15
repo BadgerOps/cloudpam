@@ -13,11 +13,8 @@ permissions:
   contents: write
 
 jobs:
-  # NOTE: This job re-implements the behavior of 'go-release-action' in-line
-  # (derived from wangyoucao577/go-release-action) to build and attach
-  # per-OS/arch binaries directly to the GitHub Release.
-  build-and-upload:
-    name: Build and attach binaries
+  build-server:
+    name: Build server binary
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,14 +40,12 @@ jobs:
       - name: Build binary (-tags sqlite)
         run: |
           set -euxo pipefail
-          ENTRY=./cmd/cloudpam
-          test -d "$ENTRY" || { echo "entrypoint $ENTRY not found"; exit 1; }
           BIN=cloudpam
           EXT=""; [ "$GOOS" = "windows" ] && EXT=".exe"
           OUT="$BIN$EXT"
           mkdir -p build
           echo "Building ${GOOS}/${GOARCH} -> build/${OUT}"
-          go build -trimpath -tags sqlite -ldflags "-s -w" -o "build/${OUT}" "$ENTRY"
+          go build -trimpath -tags sqlite -ldflags "-s -w -X main.version=${VERSION}" -o "build/${OUT}" ./cmd/cloudpam
 
       - name: Package archive
         run: |
@@ -73,17 +68,72 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  build-agent:
+    name: Build agent binary
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: 0
+      VERSION: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+
+      - name: Build agent binary
+        run: |
+          set -euxo pipefail
+          BIN=cloudpam-agent
+          EXT=""; [ "$GOOS" = "windows" ] && EXT=".exe"
+          OUT="$BIN$EXT"
+          mkdir -p build
+          echo "Building ${GOOS}/${GOARCH} -> build/${OUT}"
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "build/${OUT}" ./cmd/cloudpam-agent
+
+      - name: Package archive
+        run: |
+          set -euxo pipefail
+          ASSET_BASE="cloudpam-agent_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p dist
+          if [ "$GOOS" = "windows" ]; then
+            (cd build && zip -9 "../dist/${ASSET_BASE}.zip" cloudpam-agent.exe)
+          else
+            tar -C build -czf "dist/${ASSET_BASE}.tar.gz" cloudpam-agent
+          fi
+
+      - name: Attach asset to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.event.release.tag_name }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   checksums:
     name: Upload SHA256SUMS
     runs-on: ubuntu-latest
-    needs: build-and-upload
+    needs: [build-server, build-agent]
     steps:
       - name: Download release assets
         uses: robinraju/release-downloader@v1.11
         with:
           repository: ${{ github.repository }}
           tag: ${{ inputs.tag || github.event.release.tag_name }}
-          fileName: "cloudpam_*"
+          fileName: "cloudpam*"
           out-file-path: downloads
       - name: Generate checksums
         run: |
@@ -101,7 +151,7 @@ jobs:
   sbom:
     name: Upload SBOM (SPDX)
     runs-on: ubuntu-latest
-    needs: build-and-upload
+    needs: [build-server, build-agent]
     steps:
       - name: Checkout tag
         uses: actions/checkout@v5

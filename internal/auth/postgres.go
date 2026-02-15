@@ -11,9 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// defaultOrgID is the UUID of the default organization for single-tenant deployments.
-const defaultOrgID = "00000000-0000-0000-0000-000000000001"
-
 // PostgresKeyStore is a PostgreSQL-backed implementation of KeyStore.
 type PostgresKeyStore struct {
 	pool    *pgxpool.Pool
@@ -211,23 +208,3 @@ func scanAPIKey(row pgx.Row) (*APIKey, error) {
 	return &k, nil
 }
 
-func isUniqueViolation(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	return contains(s, "23505") || contains(s, "unique constraint") || contains(s, "duplicate key")
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}

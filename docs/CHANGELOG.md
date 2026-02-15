@@ -49,7 +49,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/CHANGELOG.md`: this entry
 - `CLAUDE.md`: updated with org discovery endpoint, env vars, migration, deployment modules
 
-## [0.3.1] - 2026-02-14
+## [0.3.2] - 2026-02-15
+
+### Fixed
+- Fix `go build -tags 'sqlite postgres'` compilation errors — extracted shared auth helpers (`isUniqueViolation`, `contains`, `boolToInt`, `defaultOrgID`) into build-tag-guarded helper files so each tag combination gets exactly one definition
+- Added `cmd/cloudpam/store_both.go` (`//go:build sqlite && postgres`) to select storage backend at runtime via `DATABASE_URL` env var when both tags are active
+- Made `store_sqlite.go` and `store_postgres.go` build tags mutually exclusive (`sqlite && !postgres` / `postgres && !sqlite`) to avoid `selectStore` redeclaration
+
+### Added
+- Agent binary (`cloudpam-agent`) now built and released alongside server for all 6 platform/arch combinations (linux/darwin/windows on amd64/arm64)
+- SHA256 checksums now cover both server and agent release archives
+
+## [0.3.1] - 2026-02-15
 
 ### Fixed
 - Auto-release workflow now chains container image and binary builds via `workflow_call` instead of relying on the `release: [published]` event, which is silently ignored when created by `GITHUB_TOKEN` (GitHub Actions limitation)
@@ -523,7 +534,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
-[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/BadgerOps/cloudpam/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/BadgerOps/cloudpam/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BadgerOps/cloudpam/releases/tag/v0.3.0
 [0.2.0]: https://github.com/BadgerOps/cloudpam/compare/v0.1.0...v0.2.0

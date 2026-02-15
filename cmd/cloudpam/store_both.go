@@ -1,4 +1,4 @@
-//go:build sqlite && !postgres
+//go:build sqlite && postgres
 
 package main
 
@@ -9,8 +9,13 @@ import (
 	"cloudpam/internal/auth"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
+	pgstore "cloudpam/internal/storage/postgres"
 	sqlitestore "cloudpam/internal/storage/sqlite"
 )
+
+func usePostgres() bool {
+	return os.Getenv("DATABASE_URL") != ""
+}
 
 func sqliteDSN() string {
 	dsn := os.Getenv("SQLITE_DSN")
@@ -20,11 +25,28 @@ func sqliteDSN() string {
 	return dsn
 }
 
-// selectStore returns a SQLite-backed store when built with the 'sqlite' tag.
-// Configure with env var SQLITE_DSN (e.g., file:cloudpam.db?cache=shared&_fk=1)
+func databaseURL() string {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		url = "postgres://cloudpam:cloudpam@localhost:5432/cloudpam?sslmode=disable"
+	}
+	return url
+}
+
+// selectStore picks PostgreSQL if DATABASE_URL is set, otherwise SQLite.
 func selectStore(logger observability.Logger) storage.Store {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	if usePostgres() {
+		url := databaseURL()
+		st, err := pgstore.New(url)
+		if err != nil {
+			logger.Error("postgres init failed; falling back to sqlite", "error", err)
+		} else {
+			logger.Info("using postgres store")
+			return st
+		}
 	}
 	dsn := sqliteDSN()
 	st, err := sqlitestore.New(dsn)
@@ -36,13 +58,20 @@ func selectStore(logger observability.Logger) storage.Store {
 	return st
 }
 
-// selectAuditLogger returns a SQLite-backed audit logger when built with 'sqlite' tag.
 func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	dsn := sqliteDSN()
-	al, err := audit.NewSQLiteAuditLogger(dsn)
+	if usePostgres() {
+		al, err := audit.NewPostgresAuditLogger(databaseURL())
+		if err != nil {
+			logger.Error("postgres audit logger init failed; falling back to sqlite", "error", err)
+		} else {
+			logger.Info("using postgres audit logger")
+			return al
+		}
+	}
+	al, err := audit.NewSQLiteAuditLogger(sqliteDSN())
 	if err != nil {
 		logger.Error("sqlite audit logger init failed; falling back to memory", "error", err)
 		return audit.NewMemoryAuditLogger()
@@ -51,13 +80,20 @@ func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
 	return al
 }
 
-// selectKeyStore returns a SQLite-backed key store when built with 'sqlite' tag.
 func selectKeyStore(logger observability.Logger) auth.KeyStore {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	dsn := sqliteDSN()
-	ks, err := auth.NewSQLiteKeyStore(dsn)
+	if usePostgres() {
+		ks, err := auth.NewPostgresKeyStore(databaseURL())
+		if err != nil {
+			logger.Error("postgres key store init failed; falling back to sqlite", "error", err)
+		} else {
+			logger.Info("using postgres key store")
+			return ks
+		}
+	}
+	ks, err := auth.NewSQLiteKeyStore(sqliteDSN())
 	if err != nil {
 		logger.Error("sqlite key store init failed; falling back to memory", "error", err)
 		return auth.NewMemoryKeyStore()
@@ -66,13 +102,20 @@ func selectKeyStore(logger observability.Logger) auth.KeyStore {
 	return ks
 }
 
-// selectUserStore returns a SQLite-backed user store.
 func selectUserStore(logger observability.Logger) auth.UserStore {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	dsn := sqliteDSN()
-	us, err := auth.NewSQLiteUserStore(dsn)
+	if usePostgres() {
+		us, err := auth.NewPostgresUserStore(databaseURL())
+		if err != nil {
+			logger.Error("postgres user store init failed; falling back to sqlite", "error", err)
+		} else {
+			logger.Info("using postgres user store")
+			return us
+		}
+	}
+	us, err := auth.NewSQLiteUserStore(sqliteDSN())
 	if err != nil {
 		logger.Error("sqlite user store init failed; falling back to memory", "error", err)
 		return auth.NewMemoryUserStore()
@@ -81,13 +124,20 @@ func selectUserStore(logger observability.Logger) auth.UserStore {
 	return us
 }
 
-// selectSessionStore returns a SQLite-backed session store.
 func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
-	dsn := sqliteDSN()
-	ss, err := auth.NewSQLiteSessionStore(dsn)
+	if usePostgres() {
+		ss, err := auth.NewPostgresSessionStore(databaseURL())
+		if err != nil {
+			logger.Error("postgres session store init failed; falling back to sqlite", "error", err)
+		} else {
+			logger.Info("using postgres session store")
+			return ss
+		}
+	}
+	ss, err := auth.NewSQLiteSessionStore(sqliteDSN())
 	if err != nil {
 		logger.Error("sqlite session store init failed; falling back to memory", "error", err)
 		return auth.NewMemorySessionStore()
@@ -96,18 +146,14 @@ func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	return ss
 }
 
-// selectDiscoveryStore returns a SQLite-backed discovery store.
-// The SQLite Store already implements storage.DiscoveryStore.
 func selectDiscoveryStore(logger observability.Logger, mainStore storage.Store) storage.DiscoveryStore {
 	if ds, ok := mainStore.(storage.DiscoveryStore); ok {
 		return ds
 	}
-	// Fallback: use in-memory
 	logger.Warn("main store does not implement DiscoveryStore; using in-memory fallback")
 	return storage.NewMemoryDiscoveryStore(storage.NewMemoryStore())
 }
 
-// selectRecommendationStore returns a SQLite-backed recommendation store if the main store supports it.
 func selectRecommendationStore(logger observability.Logger, mainStore storage.Store) storage.RecommendationStore {
 	if rs, ok := mainStore.(storage.RecommendationStore); ok {
 		return rs
@@ -116,7 +162,6 @@ func selectRecommendationStore(logger observability.Logger, mainStore storage.St
 	return storage.NewMemoryRecommendationStore(storage.NewMemoryStore())
 }
 
-// sqliteStatus returns migration status when built with sqlite tag.
 func sqliteStatus(dsn string) string {
 	s, err := sqlitestore.Status(dsn)
 	if err != nil {
@@ -125,5 +170,10 @@ func sqliteStatus(dsn string) string {
 	return s
 }
 
-// postgresStatus returns schema status string when not built with postgres tag.
-func postgresStatus() string { return "" }
+func postgresStatus() string {
+	s, err := pgstore.Status(databaseURL())
+	if err != nil {
+		return ""
+	}
+	return s
+}
