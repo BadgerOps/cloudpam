@@ -3,6 +3,11 @@ name: Container Images
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,11 +20,13 @@ jobs:
   build-server:
     name: Build server image
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.TAG }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -40,8 +47,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/badgerops/cloudpam/server
           tags: |
-            type=semver,pattern={{version}},value=${{ github.event.release.tag_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }}
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
             type=raw,value=latest
 
       - name: Build and push server image
@@ -54,18 +61,20 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ github.event.release.tag_name }}
+            VERSION=${{ env.TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   build-agent:
     name: Build agent image
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.TAG }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -86,8 +95,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/badgerops/cloudpam/agent
           tags: |
-            type=semver,pattern={{version}},value=${{ github.event.release.tag_name }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ github.event.release.tag_name }}
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
             type=raw,value=latest
 
       - name: Build and push agent image
@@ -100,6 +109,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ github.event.release.tag_name }}
+            VERSION=${{ env.TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

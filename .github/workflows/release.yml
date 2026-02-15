@@ -8,11 +8,15 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
     name: Create release from changelog
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.changelog.outputs.tag }}
+      skip: ${{ steps.changelog.outputs.skip }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -62,3 +66,24 @@ jobs:
             --title "CloudPAM ${{ steps.changelog.outputs.tag }}" \
             --notes-file /tmp/release-body.md \
             --target "${{ github.sha }}"
+
+  # Call downstream workflows directly since GITHUB_TOKEN events
+  # don't trigger other workflows (GitHub Actions limitation).
+  container-images:
+    needs: release
+    if: needs.release.outputs.skip != 'true'
+    uses: ./.github/workflows/container-images.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    permissions:
+      contents: read
+      packages: write
+
+  release-builds:
+    needs: release
+    if: needs.release.outputs.skip != 'true'
+    uses: ./.github/workflows/release-builds.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    permissions:
+      contents: write

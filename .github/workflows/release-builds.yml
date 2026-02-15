@@ -3,6 +3,11 @@ name: Release Builds
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -23,12 +28,12 @@ jobs:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
       CGO_ENABLED: 0
-      VERSION: ${{ github.event.release.tag_name }}
+      VERSION: ${{ inputs.tag || github.event.release.tag_name }}
     steps:
       - name: Checkout tag
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -61,6 +66,7 @@ jobs:
       - name: Attach asset to Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.event.release.tag_name }}
           files: |
             dist/*.tar.gz
             dist/*.zip
@@ -76,7 +82,7 @@ jobs:
         uses: robinraju/release-downloader@v1.11
         with:
           repository: ${{ github.repository }}
-          tag: ${{ github.event.release.tag_name }}
+          tag: ${{ inputs.tag || github.event.release.tag_name }}
           fileName: "cloudpam_*"
           out-file-path: downloads
       - name: Generate checksums
@@ -87,6 +93,7 @@ jobs:
       - name: Upload checksum to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.event.release.tag_name }}
           files: downloads/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,7 +106,7 @@ jobs:
       - name: Checkout tag
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
       - name: Generate SBOM (SPDX JSON)
         uses: anchore/sbom-action@v0
         with:
@@ -108,6 +115,7 @@ jobs:
       - name: Upload SBOM to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.event.release.tag_name }}
           files: sbom.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
