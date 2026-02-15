@@ -7,11 +7,22 @@ CloudPAM is a modern IPAM solution designed for hybrid and multi-cloud environme
 ## Key Features
 
 - **Hierarchical Pool Management** - Organize IP addresses in a tree structure matching your network topology
-- **Smart Planning** - AI-assisted network planning with gap analysis, recommendations, and growth projections
-- **Cloud Discovery** - Auto-import VPCs, subnets, and IPs from AWS, GCP, and Azure
-- **Schema Wizard** - Design IP schemas with templates before deploying
-- **Drift Detection** - Identify discrepancies between planned and actual allocations
-- **Multi-tenant** - Role-based access control with team-scoped permissions
+- **Cloud Discovery** - Auto-import VPCs, subnets, and EIPs from AWS (single-account and Organizations mode)
+- **Network Analysis** - Gap analysis, fragmentation scoring, and compliance checks
+- **Recommendations** - Automated allocation and compliance recommendations with apply/dismiss workflow
+- **Schema Wizard** - Design IP schemas with conflict detection before deploying
+- **CIDR Search** - Unified search with containment queries across pools and accounts
+- **Auth & RBAC** - Local user management with session cookies and API keys
+- **Audit Logging** - Full activity tracking with filterable event log
+- **Observability** - Structured logging (slog), Prometheus metrics, Sentry integration
+- **Dark Mode** - Three-mode toggle (Light/Dark/System)
+
+### Planned
+
+- GCP and Azure cloud discovery
+- AI-powered network planning with LLM integration
+- Multi-tenancy with SSO/OIDC
+- Distributed tracing (OpenTelemetry)
 
 ## Quick Start
 
@@ -20,179 +31,178 @@ CloudPAM is a modern IPAM solution designed for hybrid and multi-cloud environme
 git clone https://github.com/BadgerOps/cloudpam.git
 cd cloudpam
 
-# Start with Docker Compose (SQLite)
-docker-compose up -d
+# Run with in-memory store (no dependencies needed)
+just dev
+
+# Or run directly
+go run ./cmd/cloudpam
 
 # Access the UI
 open http://localhost:8080
 ```
+
+For SQLite persistence:
+
+```bash
+just sqlite-run
+```
+
+See the [Deployment Guide](docs/DEPLOYMENT.md) for production setup.
+
+## Technology Stack
+
+| Component | Technology |
+|-----------|------------|
+| **Backend** | Go 1.24 |
+| **Database** | PostgreSQL 15+ (production) / SQLite (development) / In-memory (demo) |
+| **Frontend** | React 18 + Vite + TypeScript + Tailwind CSS |
+| **API** | OpenAPI 3.1 |
+| **Auth** | Session cookies + API keys + RBAC |
+| **Logging** | slog (Go std lib) |
+| **Metrics** | Prometheus |
+| **Error Tracking** | Sentry (backend + frontend) |
 
 ## Documentation
 
 ### Getting Started
 | Document | Description |
 |----------|-------------|
-| [Quick Start Guide](internal/docs/content/getting-started/quick-start.md) | Get running in 5 minutes |
-| [Deployment Guide](DEPLOYMENT.md) | Production deployment options |
+| [Deployment Guide](docs/DEPLOYMENT.md) | Production deployment options |
+| [API Examples](docs/API_EXAMPLES.md) | Common API usage patterns |
+| [Cloud Discovery](docs/DISCOVERY.md) | AWS discovery setup and API reference |
 
 ### Architecture & Design
 | Document | Description |
 |----------|-------------|
-| [API Specification](openapi.yaml) | OpenAPI 3.1 spec (85+ endpoints) |
-| [Smart Planning API](openapi-smart-planning.yaml) | AI planning & analysis endpoints |
-| [Database Schema](DATABASE_SCHEMA.md) | PostgreSQL/SQLite schema design |
-| [Authentication Flows](AUTH_FLOWS.md) | JWT, API keys, SSO/OIDC |
-| [Documentation Architecture](DOCUMENTATION_ARCHITECTURE.md) | Embedded docs system |
+| [API Specification](docs/openapi.yaml) | OpenAPI 3.1 spec |
+| [Database Schema](docs/DATABASE_SCHEMA.md) | PostgreSQL/SQLite schema design |
+| [Authentication Flows](docs/AUTH_FLOWS.md) | Session, API key, and RBAC flows |
+| [Smart Planning Architecture](docs/SMART_PLANNING.md) | Analysis engine and AI planning design |
+| [Observability Architecture](docs/OBSERVABILITY.md) | Logging, metrics, tracing, audit |
+| [Implementation Roadmap](docs/IMPLEMENTATION_ROADMAP.md) | 20-week phased development plan |
+| [Code Review](docs/REVIEW.md) | Code review with prioritized issues |
+| [Discovery Agent Plan](docs/DISCOVERY_AGENT_PLAN.md) | Standalone discovery agent architecture |
 
-### Smart Planning
-| Document | Description |
-|----------|-------------|
-| [Smart Planning Architecture](SMART_PLANNING.md) | Discovery, analysis, and AI planning |
-| [Planning Interfaces](internal/planning/interfaces.go) | Go service interfaces |
-| [Implementation Roadmap](IMPLEMENTATION_ROADMAP.md) | 20-week development plan |
+## API Overview
 
-### Observability
-| Document | Description |
-|----------|-------------|
-| [Observability Architecture](OBSERVABILITY.md) | Logging, metrics, tracing, audit |
-| [Observability Interfaces](internal/observability/interfaces.go) | Logger, Metrics, Tracer interfaces |
-| [Observability API](openapi-observability.yaml) | Audit log and health endpoints |
-| [Vector Configuration](deploy/vector/vector.toml) | Log shipping to Splunk, CloudWatch, etc. |
-| [K8s Observability](deploy/k8s/observability-stack.yaml) | Prometheus, Grafana, Jaeger |
-| [Docker Compose](deploy/docker-compose.observability.yml) | Local observability stack |
+CloudPAM provides a REST API served at `/api/v1/`. The OpenAPI spec is available at `/openapi.yaml` when running.
 
-### User Guides
-| Document | Description |
-|----------|-------------|
-| [IP Schema Planning](internal/docs/content/user-guide/ip-schema-planning.md) | Design effective IP schemas |
-| [Smart Planning Guide](internal/docs/content/user-guide/smart-planning.md) | AI-assisted network planning |
-| [API Examples](API_EXAMPLES.md) | Common API usage patterns |
+### Core Resources
+- `GET/POST /api/v1/pools` - Pool management (CRUD, hierarchy, stats)
+- `GET/POST /api/v1/accounts` - Cloud account management
+- `GET /api/v1/blocks` - List assigned blocks with filters
+- `GET /api/v1/search` - Unified search with CIDR containment queries
 
-### UI Mockups
-| Mockup | Description |
-|--------|-------------|
-| [Dashboard](cloudpam-dashboard.html) | Main dashboard with pool overview |
-| [Cloud Accounts](cloudpam-accounts.html) | Cloud provider integration |
-| [Discovery](cloudpam-discovery.html) | Cloud resource discovery |
-| [Schema Planner](cloudpam-schema-planner.html) | Visual schema designer |
-| [AI Planning Assistant](cloudpam-ai-planning.html) | Conversational planning interface |
-| [Audit Log](cloudpam-audit-log.html) | Activity and change tracking |
-| [Auth Settings](cloudpam-settings-auth.html) | Authentication configuration |
+### Cloud Discovery
+- `GET /api/v1/discovery/resources` - List discovered cloud resources
+- `POST /api/v1/discovery/sync` - Trigger cloud sync
+- `POST /api/v1/discovery/ingest/org` - Bulk AWS Organizations ingest
 
-## Architecture Overview
+### Analysis & Recommendations
+- `POST /api/v1/analysis` - Full network analysis report
+- `POST /api/v1/analysis/gaps` - Gap analysis for a pool
+- `POST /api/v1/analysis/fragmentation` - Fragmentation scoring
+- `POST /api/v1/analysis/compliance` - Compliance checks
+- `POST /api/v1/recommendations/generate` - Generate recommendations
+- `GET /api/v1/recommendations` - List recommendations
+- `POST /api/v1/recommendations/{id}/apply` - Apply a recommendation
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              CloudPAM                                        │
-│                                                                              │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────────────────────┐ │
-│  │    REST API    │  │    Web UI      │  │      AI Planning Assistant     │ │
-│  │  (OpenAPI 3.1) │  │    (React)     │  │   (LLM-powered, pluggable)     │ │
-│  └───────┬────────┘  └───────┬────────┘  └───────────────┬────────────────┘ │
-│          │                   │                           │                   │
-│  ┌───────┴───────────────────┴───────────────────────────┴────────────────┐ │
-│  │                         Core Services                                   │ │
-│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌───────────────────┐ │ │
-│  │  │    Pools    │ │    Auth     │ │   Audit     │ │   Smart Planning  │ │ │
-│  │  │  Management │ │   (RBAC)    │ │   Logging   │ │  (Analysis + AI)  │ │ │
-│  │  └─────────────┘ └─────────────┘ └─────────────┘ └───────────────────┘ │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                    │                                         │
-│  ┌─────────────────────────────────┴─────────────────────────────────────┐  │
-│  │                   PostgreSQL / SQLite (dual-mode)                      │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────┘
-          │                    │                    │
-          ▼                    ▼                    ▼
-   ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-   │     AWS     │      │     GCP     │      │    Azure    │
-   │ (VPC/EC2)   │      │ (Compute)   │      │  (VNets)    │
-   └─────────────┘      └─────────────┘      └─────────────┘
-```
-
-## Technology Stack
-
-| Component | Technology |
-|-----------|------------|
-| **Backend** | Go 1.21+ |
-| **Database** | PostgreSQL 15+ (production) / SQLite (development) |
-| **Frontend** | React 18 + Tailwind CSS |
-| **API** | OpenAPI 3.1 with Scalar documentation |
-| **Auth** | JWT + OAuth/OIDC + API Keys |
-| **AI** | Pluggable LLM (OpenAI, Anthropic, Azure, Ollama) |
-| **Logging** | slog (Go std lib) + Vector for shipping |
-| **Metrics** | OpenTelemetry + Prometheus |
-| **Tracing** | OpenTelemetry + Jaeger |
+### Auth & System
+- `POST /api/v1/auth/login` - Session login
+- `GET /api/v1/auth/me` - Current identity
+- `GET /api/v1/auth/keys` - API key management
+- `GET /healthz` / `GET /readyz` - Health and readiness checks
+- `GET /metrics` - Prometheus metrics
 
 ## Project Structure
 
 ```
 cloudpam/
-├── cmd/
-│   └── cloudpam/           # Main application entry point
+├── cmd/cloudpam/           # Main entrypoint and storage selection
+│   ├── main.go             # Server startup, flags, graceful shutdown
+│   ├── store_default.go    # In-memory store (default build)
+│   ├── store_sqlite.go     # SQLite store (-tags sqlite)
+│   └── store_postgres.go   # PostgreSQL store (-tags postgres)
 ├── internal/
-│   ├── api/                # HTTP handlers and routing
-│   ├── domain/             # Core domain models
-│   │   └── models.go       # Pool, Address, User types
-│   ├── storage/            # Database interfaces and implementations
-│   │   ├── interfaces.go   # Repository interfaces
-│   │   ├── postgres/       # PostgreSQL implementation
-│   │   └── sqlite/         # SQLite implementation
-│   ├── planning/           # Smart planning services
-│   │   └── interfaces.go   # Discovery, Analysis, AI interfaces
-│   ├── observability/      # Logging, metrics, tracing
-│   │   └── interfaces.go   # Logger, Metrics, Tracer interfaces
-│   ├── auth/               # Authentication and authorization
-│   └── docs/               # Embedded documentation
+│   ├── domain/             # Core types (Pool, Account, DiscoveredResource, etc.)
+│   ├── http/               # HTTP server, routes, handlers, middleware
+│   ├── storage/            # Store interface + implementations
+│   │   ├── sqlite/         # SQLite implementation
+│   │   └── postgres/       # PostgreSQL implementation
+│   ├── discovery/          # Cloud resource discovery
+│   │   └── aws/            # AWS collector (VPCs, subnets, EIPs, Organizations)
+│   ├── planning/           # Analysis engine (gaps, fragmentation, compliance, recommendations)
+│   ├── auth/               # Authentication, RBAC, sessions, API keys
+│   ├── audit/              # Audit logging
+│   ├── cidr/               # CIDR math utilities
+│   ├── validation/         # Input validation
+│   └── observability/      # Logging, metrics
+├── ui/                     # React/Vite/TypeScript frontend
+├── web/                    # Embedded frontend assets (go:embed)
+├── migrations/             # SQL migrations (0001-0012)
 ├── deploy/                 # Deployment configurations
-│   ├── vector/             # Vector log shipping config
-│   ├── k8s/                # Kubernetes manifests
-│   └── docker-compose.observability.yml
-├── migrations/             # Database migrations
-├── web/                    # React frontend
-├── openapi.yaml            # Core API specification
-├── openapi-smart-planning.yaml  # Planning API specification
-└── docker-compose.yml      # Local development setup
+│   └── terraform/          # AWS Organizations discovery IAM
+├── docs/                   # Project documentation + OpenAPI spec
+├── .github/workflows/      # CI/CD (test, lint, release builds)
+├── Justfile                # Task runner commands
+└── CLAUDE.md               # AI assistant context
 ```
 
 ## Implementation Status
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| Foundation | 🟡 Design | Core API, database, auth |
-| Cloud Integration | 🟡 Design | AWS/GCP/Azure discovery |
-| Smart Planning | 🟡 Design | Analysis, recommendations |
-| AI Planning | 🟡 Design | LLM integration, conversations |
-| Observability | 🟡 Design | Logging, metrics, tracing, audit |
-| Enterprise | ⚪ Planned | Multi-tenancy, SSO |
+| Foundation (Sprints 1-4) | Complete | Auth, RBAC, audit, observability, rate limiting |
+| Enhanced Models (Sprint 5) | Complete | Pool hierarchy, stats, utilization tracking |
+| Code Quality (Sprint 6) | Complete | Handler split, sentinel errors, 80%+ coverage |
+| API & Storage (Sprint 7) | Complete | OpenAPI spec, SQLite API key store |
+| Schema Wizard (Sprint 8) | Complete | Schema planner with conflict detection |
+| Frontend (Sprint 9) | Complete | Unified React/Vite/TypeScript SPA |
+| Dark Mode (Sprint 10) | Complete | Three-mode toggle |
+| Search (Sprint 11) | Complete | CIDR search with containment queries |
+| User Management (Sprint 12) | Complete | Local users, dual auth |
+| Cloud Discovery (Sprint 13) | Complete | AWS collector, sync service, approval workflow |
+| Analysis Engine (Sprint 14) | Complete | Gap analysis, fragmentation, compliance |
+| Recommendations (Sprint 15) | Complete | Allocation & compliance recs, scoring, apply/dismiss |
+| AWS Organizations (Sprint 16b) | Complete | Org-mode agent, cross-account discovery, Terraform/CF modules |
+| AI Planning | Planned | LLM integration, conversational planning |
+| Enterprise | Planned | Multi-tenancy, SSO/OIDC |
 
-See [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) for the full development timeline.
+See [Implementation Roadmap](docs/IMPLEMENTATION_ROADMAP.md) for the full development timeline.
 
-## API Overview
+## Development
 
-CloudPAM provides a comprehensive REST API with 100+ endpoints:
+### Prerequisites
 
-### Core Resources
-- `GET/POST /api/v1/pools` - Pool management
-- `GET/POST /api/v1/cloud-accounts` - Cloud provider integration
-- `GET /api/v1/discovery/resources` - Discovered cloud resources
-- `GET /api/v1/audit/events` - Audit trail
+- Go 1.24+
+- Node.js 18+ (for frontend development)
+- [Just](https://github.com/casey/just) command runner
 
-### Smart Planning
-- `POST /api/v1/planning/analyze` - Run network analysis
-- `GET /api/v1/planning/recommendations` - Get recommendations
-- `POST /api/v1/planning/ai/conversations` - AI planning sessions
-- `POST /api/v1/planning/schema/generate` - Generate schemas
+### Common Commands
 
-### Configuration
-- `GET/PUT /api/v1/settings/llm` - LLM provider configuration
-- `GET /api/v1/settings/llm/prompts` - Prompt templates
+```bash
+just dev              # Run server on :8080 (in-memory store)
+just build            # Build binary
+just sqlite-build     # Build with SQLite support
+just test             # Run all tests
+just test-race        # Run tests with race detector
+just lint             # Run golangci-lint
+just fmt              # Format code
+just cover            # Generate coverage report
+```
 
-Full API documentation available at `/docs/api` when running.
+### Frontend Development
+
+```bash
+cd ui && npm install        # Install dependencies
+cd ui && npm run dev        # Vite dev server (proxied to :8080)
+cd ui && npm run build      # Production build -> web/dist/
+cd ui && npx vitest run     # Run tests
+```
 
 ## Contributing
 
-We welcome contributions! Please see our contributing guidelines:
+We welcome contributions! Please:
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -206,6 +216,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Support
 
-- **Documentation**: Browse the `/docs` endpoint
 - **Issues**: [GitHub Issues](https://github.com/BadgerOps/cloudpam/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/BadgerOps/cloudpam/discussions)

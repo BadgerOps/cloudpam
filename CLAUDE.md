@@ -50,22 +50,21 @@ Recent planning session produced these design documents:
 
 | Document | Purpose |
 |----------|---------|
-| `IMPLEMENTATION_ROADMAP.md` | 20-week phased implementation plan |
-| `REVIEW.md` | Code review with prioritized issues |
-| `DATABASE_SCHEMA.md` | Complete PostgreSQL/SQLite schema |
-| `AUTH_FLOWS.md` | OAuth2/OIDC and API key authentication |
-| `SMART_PLANNING.md` | Analysis engine and AI planning architecture |
-| `OBSERVABILITY.md` | Logging, metrics, tracing, audit logging |
-| `API_EXAMPLES.md` | API usage examples |
-| `DEPLOYMENT.md` | Kubernetes and cloud deployment guides |
-| `CLEANUP.md` | Documentation consolidation notes |
+| `docs/IMPLEMENTATION_ROADMAP.md` | 20-week phased implementation plan |
+| `docs/REVIEW.md` | Code review with prioritized issues |
+| `docs/DATABASE_SCHEMA.md` | Complete PostgreSQL/SQLite schema |
+| `docs/AUTH_FLOWS.md` | OAuth2/OIDC and API key authentication |
+| `docs/SMART_PLANNING.md` | Analysis engine and AI planning architecture |
+| `docs/OBSERVABILITY.md` | Logging, metrics, tracing, audit logging |
+| `docs/API_EXAMPLES.md` | API usage examples |
+| `docs/DEPLOYMENT.md` | Kubernetes and cloud deployment guides |
 | `docs/DISCOVERY.md` | Cloud discovery setup, AWS config, API reference |
 | `docs/DISCOVERY_AGENT_PLAN.md` | Standalone discovery agent architecture plan |
 
 **OpenAPI Specifications**:
 - `docs/openapi.yaml` - Core IPAM API (current)
-- `openapi-smart-planning.yaml` - Smart Planning API (planned)
-- `openapi-observability.yaml` - Audit/observability API (planned)
+- `.planning/openapi/openapi-smart-planning.yaml` - Smart Planning API (planned)
+- `.planning/openapi/openapi-observability.yaml` - Audit/observability API (planned)
 
 ## Build System & Commands
 
