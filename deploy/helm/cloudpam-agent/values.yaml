@@ -2,7 +2,7 @@
 
 # Image configuration
 image:
-  repository: ghcr.io/yourorg/cloudpam-agent
+  repository: ghcr.io/badgerops/cloudpam/agent
   pullPolicy: IfNotPresent
   tag: "latest"
 

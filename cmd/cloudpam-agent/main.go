@@ -16,7 +16,7 @@ import (
 	"cloudpam/internal/domain"
 )
 
-const version = "dev"
+var version = "dev"
 
 func main() {
 	var configPath string

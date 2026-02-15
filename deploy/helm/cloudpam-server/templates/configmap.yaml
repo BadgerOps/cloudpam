@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cloudpam-server.fullname" . }}
+  labels:
+    {{- include "cloudpam-server.labels" . | nindent 4 }}
+data:
+  CLOUDPAM_LOG_LEVEL: {{ .Values.observability.logLevel | quote }}
+  CLOUDPAM_LOG_FORMAT: {{ .Values.observability.logFormat | quote }}
+  CLOUDPAM_METRICS_ENABLED: {{ .Values.observability.metricsEnabled | quote }}
+  RATE_LIMIT_RPS: {{ .Values.rateLimit.rps | quote }}
+  RATE_LIMIT_BURST: {{ .Values.rateLimit.burst | quote }}
+  {{- if .Values.auth.enabled }}
+  CLOUDPAM_AUTH_ENABLED: "true"
+  {{- end }}
+  {{- if .Values.auth.adminUsername }}
+  CLOUDPAM_ADMIN_USERNAME: {{ .Values.auth.adminUsername | quote }}
+  {{- end }}
+  {{- if .Values.auth.adminEmail }}
+  CLOUDPAM_ADMIN_EMAIL: {{ .Values.auth.adminEmail | quote }}
+  {{- end }}
+  SENTRY_ENVIRONMENT: {{ .Values.observability.sentryEnvironment | quote }}
+  {{- if eq .Values.storage.backend "sqlite" }}
+  SQLITE_DSN: {{ .Values.storage.sqlite.dsn | quote }}
+  {{- end }}

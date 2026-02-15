@@ -1,14 +1,16 @@
 apiVersion: v2
-name: cloudpam-agent
-description: CloudPAM Discovery Agent - Remote cloud resource discovery
+name: cloudpam-server
+description: CloudPAM Server - Intelligent IP Address Management platform
 type: application
 version: 0.1.0
 appVersion: "dev"
 keywords:
   - ipam
   - cloud
-  - discovery
+  - networking
   - aws
+  - gcp
+  - azure
 home: https://github.com/BadgerOps/cloudpam
 maintainers:
   - name: CloudPAM Team
