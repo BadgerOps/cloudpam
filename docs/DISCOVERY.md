@@ -263,6 +263,135 @@ View agent status in the **Agents** tab on the Discovery page, or via:
 curl http://localhost:8080/api/v1/discovery/agents
 ```
 
+## AWS Organizations Discovery
+
+For environments using AWS Organizations, a single CloudPAM agent in the management account can discover resources across all member accounts.
+
+### Architecture
+
+```
+Management Account (agent runs here)
+├── organizations:ListAccounts → enumerate all active member accounts
+├── For each member account:
+│   ├── sts:AssumeRole → CloudPAMDiscoveryRole
+│   ├── ec2:DescribeVpcs
+│   ├── ec2:DescribeSubnets
+│   └── ec2:DescribeAddresses
+└── POST /api/v1/discovery/ingest/org → bulk push to server
+    └── Server auto-creates Account records for new AWS accounts
+```
+
+### Setup
+
+1. **Deploy member role** to all accounts via CloudFormation StackSet or Terraform:
+
+   ```bash
+   # CloudFormation StackSet (recommended for org-wide)
+   aws cloudformation create-stack-set \
+     --stack-set-name CloudPAMDiscoveryRole \
+     --template-body file://deploy/cloudformation/discovery-role-stackset.yaml \
+     --parameters ParameterKey=ManagementAccountId,ParameterValue=123456789012
+
+   # Or Terraform (per-account)
+   cd deploy/terraform/aws-org-discovery/member-role
+   terraform apply -var="management_account_id=123456789012"
+   ```
+
+2. **Deploy management policy** in the management account:
+
+   ```bash
+   cd deploy/terraform/aws-org-discovery/management-policy
+   terraform apply
+   ```
+
+   This creates the agent IAM role, instance profile, and three policies:
+   - Org discovery: `organizations:ListAccounts`, `sts:AssumeRole`
+   - EC2 read-only: `ec2:DescribeVpcs/Subnets/Addresses/NetworkInterfaces/Regions`
+   - STS identity: `sts:GetCallerIdentity`
+
+3. **Configure the agent** in org mode:
+
+   ```bash
+   CLOUDPAM_BOOTSTRAP_TOKEN=eyJhZ2VudF9uYW1lIjoi... \
+   CLOUDPAM_AWS_ORG_ENABLED=true \
+   CLOUDPAM_AWS_ORG_ROLE_NAME=CloudPAMDiscoveryRole \
+   CLOUDPAM_AWS_ORG_REGIONS=us-east-1,us-west-2 \
+   ./cloudpam-agent
+   ```
+
+   Or via YAML:
+
+   ```yaml
+   server_url: https://cloudpam.example.com
+   bootstrap_token: eyJhZ2VudF9uYW1lIjoi...
+   agent_name: org-discovery-agent
+   aws_org:
+     enabled: true
+     role_name: CloudPAMDiscoveryRole
+     external_id: cloudpam-discovery  # optional
+     regions: [us-east-1, us-west-2]
+     exclude_accounts: [999999999999]  # optional
+   ```
+
+### Org Agent Configuration Reference
+
+| Field | Env Var | Default | Description |
+|-------|---------|---------|-------------|
+| `aws_org.enabled` | `CLOUDPAM_AWS_ORG_ENABLED` | `false` | Enable org-mode discovery |
+| `aws_org.role_name` | `CLOUDPAM_AWS_ORG_ROLE_NAME` | `CloudPAMDiscoveryRole` | IAM role to assume in each member account |
+| `aws_org.external_id` | `CLOUDPAM_AWS_ORG_EXTERNAL_ID` | | External ID for STS AssumeRole |
+| `aws_org.regions` | `CLOUDPAM_AWS_ORG_REGIONS` | SDK default | Comma-separated regions to discover |
+| `aws_org.exclude_accounts` | `CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS` | | Comma-separated account IDs to skip |
+
+### Bulk Org Ingest API
+
+```bash
+curl -X POST http://localhost:8080/api/v1/discovery/ingest/org \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer cpk_abc123...' \
+  -d '{
+    "accounts": [
+      {
+        "aws_account_id": "111111111111",
+        "account_name": "Production",
+        "account_email": "prod@example.com",
+        "provider": "aws",
+        "regions": ["us-east-1"],
+        "resources": [...]
+      }
+    ],
+    "agent_id": "uuid"
+  }'
+```
+
+Response:
+
+```json
+{
+  "accounts_processed": 5,
+  "accounts_created": 2,
+  "total_resources": 47,
+  "errors": []
+}
+```
+
+The server auto-creates CloudPAM Account records (key `aws:<account_id>`) for any AWS accounts not yet registered.
+
+### Terraform Modules
+
+| Module | Path | Purpose |
+|--------|------|---------|
+| Management policy | `deploy/terraform/aws-org-discovery/management-policy/` | Agent IAM role, instance profile, org + EC2 + STS policies |
+| Member role | `deploy/terraform/aws-org-discovery/member-role/` | Cross-account discovery role with trust to management account |
+| CF StackSet | `deploy/cloudformation/discovery-role-stackset.yaml` | Deploy member role across org via StackSet |
+
+### Frontend Wizard
+
+The Discovery wizard (Plan Discovery button) supports org mode:
+1. Step 1: Choose "AWS Organization" mode, configure role name, regions, exclude list
+2. Step 2: Provision the agent (generates bootstrap token)
+3. Step 3: Deploy using generated configs; wizard polls for agent connection and shows live status
+
 ## Terraform Example
 
 The `deploy/terraform/aws-discovery/` directory contains a Terraform module that creates the IAM role and policy needed for the discovery agent. It supports both EC2 instance profiles and EKS IRSA (IAM Roles for Service Accounts).

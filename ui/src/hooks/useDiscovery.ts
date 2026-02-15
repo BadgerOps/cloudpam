@@ -6,6 +6,7 @@ import type {
   DiscoveryAgentsResponse,
   SyncJob,
   SyncJobsResponse,
+  AgentProvisionResponse,
 } from '../api/types'
 
 export function useDiscoveryResources() {
@@ -97,6 +98,33 @@ export function useSyncJobs() {
   }, [])
 
   return { jobs, loading, error, fetch, triggerSync }
+}
+
+export function useAgentProvisioning() {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<AgentProvisionResponse | null>(null)
+
+  const provision = useCallback(async (name: string) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const resp = await post<AgentProvisionResponse>(
+        '/api/v1/discovery/agents/provision',
+        { name },
+      )
+      setResult(resp)
+      return resp
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to provision agent'
+      setError(msg)
+      throw err
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  return { result, loading, error, provision }
 }
 
 export function useDiscoveryAgents() {

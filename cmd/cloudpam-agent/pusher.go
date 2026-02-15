@@ -169,6 +169,79 @@ func (p *Pusher) PushResources(ctx context.Context, accountID int64, resources [
 	return fmt.Errorf("push failed after %d attempts: %w", maxRetries+1, lastErr)
 }
 
+// PushOrgResources sends bulk org ingest request to the server with retry logic.
+func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequest, maxRetries int, backoff time.Duration) error {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal org ingest request: %w", err)
+	}
+
+	url := p.serverURL + "/api/v1/discovery/ingest/org"
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := backoff * time.Duration(1<<uint(attempt-1))
+			p.logger.Info("retrying org push", "attempt", attempt, "delay", delay)
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create request: %w", err)
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+
+		resp, err := p.client.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("http request: %w", err)
+			p.logger.Error("org push failed", "error", lastErr, "attempt", attempt+1)
+			continue
+		}
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			var ingestResp domain.BulkIngestResponse
+			if err := json.NewDecoder(resp.Body).Decode(&ingestResp); err != nil {
+				_ = resp.Body.Close()
+				return fmt.Errorf("decode response: %w", err)
+			}
+			_ = resp.Body.Close()
+
+			p.logger.Info("pushed org resources",
+				"accounts_processed", ingestResp.AccountsProcessed,
+				"accounts_created", ingestResp.AccountsCreated,
+				"total_resources", ingestResp.TotalResources,
+			)
+			if len(ingestResp.Errors) > 0 {
+				p.logger.Warn("org ingest had errors", "errors", ingestResp.Errors)
+			}
+			return nil
+		}
+
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			var errBody struct {
+				Error  string `json:"error"`
+				Detail string `json:"detail"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&errBody)
+			_ = resp.Body.Close()
+			return fmt.Errorf("server rejected request (status %d): %s - %s", resp.StatusCode, errBody.Error, errBody.Detail)
+		}
+
+		_ = resp.Body.Close()
+		lastErr = fmt.Errorf("server error (status %d)", resp.StatusCode)
+		p.logger.Error("org push failed", "error", lastErr, "attempt", attempt+1)
+	}
+
+	return fmt.Errorf("org push failed after %d attempts: %w", maxRetries+1, lastErr)
+}
+
 // Heartbeat sends a heartbeat to the server.
 func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, version, hostname string) error {
 	req := domain.AgentHeartbeatRequest{

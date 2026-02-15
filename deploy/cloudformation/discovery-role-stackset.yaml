@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudPAM Discovery Role — deploy as a CloudFormation StackSet
+  to create the discovery IAM role in all member accounts.
+  The role grants read-only EC2 access and trusts the agent role
+  in the management account.
+
+Parameters:
+  ManagementAccountId:
+    Type: String
+    Description: AWS account ID of the management account where the CloudPAM agent runs
+
+  AgentRoleName:
+    Type: String
+    Default: CloudPAMAgent
+    Description: Name of the IAM role the agent uses in the management account
+
+  RoleName:
+    Type: String
+    Default: CloudPAMDiscoveryRole
+    Description: Name of the IAM role to create in each member account
+
+  ExternalId:
+    Type: String
+    Default: ''
+    Description: External ID for the trust policy (optional but recommended)
+
+Conditions:
+  HasExternalId: !Not [!Equals [!Ref ExternalId, '']]
+
+Resources:
+  CloudPAMDiscoveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowManagementAgent
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${ManagementAccountId}:role/${AgentRoleName}'
+            Action: sts:AssumeRole
+            Condition: !If
+              - HasExternalId
+              - StringEquals:
+                  sts:ExternalId: !Ref ExternalId
+              - !Ref AWS::NoValue
+      Policies:
+        - PolicyName: CloudPAMEC2ReadOnly
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: EC2ReadOnly
+                Effect: Allow
+                Action:
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeRegions
+                Resource: '*'
+      Tags:
+        - Key: ManagedBy
+          Value: CloudPAM
+        - Key: Purpose
+          Value: Discovery
+
+Outputs:
+  RoleArn:
+    Description: ARN of the CloudPAM discovery role in this member account
+    Value: !GetAtt CloudPAMDiscoveryRole.Arn
+  RoleName:
+    Description: Name of the discovery role
+    Value: !Ref RoleName

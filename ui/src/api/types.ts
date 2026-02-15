@@ -93,6 +93,15 @@ export interface CreatePoolRequest {
   tags?: Record<string, string>
 }
 
+export interface UpdatePoolRequest {
+  name?: string
+  account_id?: number | null
+  type?: PoolType
+  status?: PoolStatus
+  description?: string
+  tags?: Record<string, string>
+}
+
 export interface Account {
   id: number
   key: string
@@ -390,4 +399,23 @@ export interface RecommendationsListResponse {
 export interface GenerateRecommendationsResponse {
   items: Recommendation[]
   total: number
+}
+
+// --- Org discovery types ---
+
+export interface BulkIngestResponse {
+  accounts_processed: number
+  accounts_created: number
+  total_resources: number
+  errors?: string[]
+}
+
+// --- Agent provisioning types ---
+
+export interface AgentProvisionResponse {
+  agent_name: string
+  api_key: string
+  api_key_id: string
+  server_url: string
+  token: string
 }

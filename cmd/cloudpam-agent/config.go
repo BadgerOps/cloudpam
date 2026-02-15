@@ -15,6 +15,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// AWSOrg holds AWS Organizations discovery configuration.
+type AWSOrg struct {
+	Enabled         bool     `yaml:"enabled"`
+	RoleName        string   `yaml:"role_name"`
+	ExternalID      string   `yaml:"external_id"`
+	Regions         []string `yaml:"regions"`
+	ExcludeAccounts []string `yaml:"exclude_accounts"`
+}
+
 // Config holds the agent configuration.
 type Config struct {
 	ServerURL         string        `yaml:"server_url"`
@@ -28,6 +37,7 @@ type Config struct {
 	RetryBackoff      time.Duration `yaml:"retry_backoff"`
 	RequestTimeout    time.Duration `yaml:"request_timeout"`
 	BootstrapToken    string        `yaml:"bootstrap_token"`
+	AWSOrg            AWSOrg        `yaml:"aws_org"`
 
 	// Bootstrapped is set to true when config was populated from a bootstrap token.
 	Bootstrapped bool `yaml:"-"`
@@ -88,6 +98,23 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.BootstrapToken = v
 	}
 
+	// AWS Organization env vars
+	if v := os.Getenv("CLOUDPAM_AWS_ORG_ENABLED"); v == "true" || v == "1" {
+		cfg.AWSOrg.Enabled = true
+	}
+	if v := os.Getenv("CLOUDPAM_AWS_ORG_ROLE_NAME"); v != "" {
+		cfg.AWSOrg.RoleName = v
+	}
+	if v := os.Getenv("CLOUDPAM_AWS_ORG_EXTERNAL_ID"); v != "" {
+		cfg.AWSOrg.ExternalID = v
+	}
+	if v := os.Getenv("CLOUDPAM_AWS_ORG_REGIONS"); v != "" {
+		cfg.AWSOrg.Regions = strings.Split(v, ",")
+	}
+	if v := os.Getenv("CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS"); v != "" {
+		cfg.AWSOrg.ExcludeAccounts = strings.Split(v, ",")
+	}
+
 	// Validate required fields
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -121,7 +148,12 @@ func (c *Config) Validate() error {
 	if c.AgentName == "" {
 		return errors.New("agent_name is required (set CLOUDPAM_AGENT_NAME or yaml)")
 	}
-	if c.AccountID < 1 {
+	if c.AWSOrg.Enabled {
+		// In org mode, account_id is not required (accounts are discovered dynamically)
+		if c.AWSOrg.RoleName == "" {
+			c.AWSOrg.RoleName = "CloudPAMDiscoveryRole"
+		}
+	} else if c.AccountID < 1 {
 		return errors.New("account_id must be a positive integer (set CLOUDPAM_ACCOUNT_ID or yaml)")
 	}
 	if c.SyncInterval < 1*time.Minute {

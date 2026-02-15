@@ -18,6 +18,7 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 The project is entering **Phase 3** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
 **Current State** (Sprint 15 complete):
+- AWS Organizations discovery: org-mode agent, cross-account AssumeRole, bulk ingest, Terraform/CF modules, wizard org mode (Sprint 16b)
 - Recommendation generator: allocation & compliance recs, scoring, apply/dismiss workflow (Sprint 15)
 - Analysis engine: gap analysis, fragmentation scoring, compliance checks (Sprint 14)
 - Cloud resource discovery: AWS collector, sync service, approval workflow (Sprint 13)
@@ -209,7 +210,7 @@ The storage layer uses build tags to switch between implementations:
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
-  - Current migrations: `0001_init.sql` through `0011_recommendations.sql`
+  - Current migrations: `0001_init.sql` through `0012_account_key_unique.sql`
 
 - **PostgreSQL Support** (`-tags postgres`)
   - Production-grade database with native CIDR operations
@@ -224,7 +225,7 @@ The storage layer uses build tags to switch between implementations:
 |---------|---------|--------|
 | `internal/auth` | Authentication, RBAC, users, sessions | Implemented |
 | `internal/audit` | Audit logging | Implemented |
-| `internal/discovery` | Cloud resource discovery (Collector, SyncService) | Implemented (AWS) |
+| `internal/discovery` | Cloud resource discovery (Collector, SyncService, AWS Org) | Implemented (AWS single + org) |
 | `internal/observability` | Logging, metrics, tracing | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
@@ -260,6 +261,7 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/discovery/resources/{id}/link` - link/unlink resource to pool (POST/DELETE)
   - `/api/v1/discovery/sync` - trigger sync (POST) or list sync jobs (GET)
   - `/api/v1/discovery/sync/{id}` - get sync job status
+  - `/api/v1/discovery/ingest/org` - bulk org ingest with auto-account creation (POST)
   - `/api/v1/analysis` - full network analysis report (POST)
   - `/api/v1/analysis/gaps` - gap analysis for a pool (POST)
   - `/api/v1/analysis/fragmentation` - fragmentation scoring (POST)
@@ -396,6 +398,13 @@ When adding endpoints:
 - `RATE_LIMIT_RPS`: Requests per second (default: `10.0`; set to `0` to disable)
 - `RATE_LIMIT_BURST`: Burst size (default: `20`)
 
+### Agent (Org Mode)
+- `CLOUDPAM_AWS_ORG_ENABLED`: Enable AWS Organizations discovery mode
+- `CLOUDPAM_AWS_ORG_ROLE_NAME`: IAM role name in member accounts (default: `CloudPAMDiscoveryRole`)
+- `CLOUDPAM_AWS_ORG_EXTERNAL_ID`: External ID for STS AssumeRole (optional)
+- `CLOUDPAM_AWS_ORG_REGIONS`: Comma-separated AWS regions to discover
+- `CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS`: Comma-separated account IDs to skip
+
 ### Planned
 - `CLOUDPAM_TRACING_ENABLED`: Enable distributed tracing
 - `CLOUDPAM_TRACING_ENDPOINT`: Jaeger collector endpoint
@@ -435,6 +444,7 @@ Common workflows:
 - Trigger sync: `POST /api/v1/discovery/sync` with `{"account_id":1}`
 - List sync jobs: `GET /api/v1/discovery/sync?account_id=1`
 - Get sync job: `GET /api/v1/discovery/sync/{id}`
+- Org bulk ingest: `POST /api/v1/discovery/ingest/org` with `{"accounts":[{"aws_account_id":"...","resources":[...]}]}`
 - Full analysis: `POST /api/v1/analysis` with `{"pool_ids":[1], "include_children":true}`
 - Gap analysis: `POST /api/v1/analysis/gaps` with `{"pool_id":1}`
 - Fragmentation: `POST /api/v1/analysis/fragmentation` with `{"pool_ids":[1,2]}`
@@ -588,7 +598,9 @@ cloudpam/
 │   ├── discovery/          # Cloud resource discovery
 │   │   ├── collector.go    # Collector interface + SyncService
 │   │   └── aws/            # AWS collector (VPCs, subnets, EIPs)
-│   │       └── collector.go
+│   │       ├── collector.go
+│   │       ├── org.go          # ListOrgAccounts (AWS Organizations)
+│   │       └── assume_role.go  # STS AssumeRole helper
 │   ├── auth/               # Authentication/authorization
 │   │   ├── rbac.go         # Roles, permissions, RBAC middleware
 │   │   ├── keys.go         # API key types and store interfaces
@@ -601,14 +613,19 @@ cloudpam/
 │   ├── planning/           # Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0011)
+├── migrations/             # SQL migrations (0001-0012)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
 │   ├── ...
 │   ├── 0008_discovered_resources.sql  # Discovery tables
 │   └── postgres/           # PostgreSQL migrations
-├── deploy/                 # Deployment configurations (planned)
+├── deploy/                 # Deployment configurations
+│   ├── terraform/aws-org-discovery/  # AWS Organizations discovery IAM
+│   │   ├── management-policy/  # Agent role + policies (management account)
+│   │   └── member-role/        # Discovery role (member accounts)
+│   ├── cloudformation/         # CloudFormation templates
+│   │   └── discovery-role-stackset.yaml  # StackSet for org-wide member role
 │   ├── k8s/                # Kubernetes manifests
 │   │   ├── observability-stack.yaml
 │   │   └── vector-daemonset.yaml
