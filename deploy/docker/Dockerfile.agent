@@ -15,10 +15,14 @@ RUN go mod download
 COPY . .
 
 # Build the agent binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o cloudpam-agent ./cmd/cloudpam-agent
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -ldflags "-s -w -X main.version=${VERSION}" \
+    -o cloudpam-agent ./cmd/cloudpam-agent
 
 # Final stage: minimal runtime image
-FROM alpine:latest
+FROM alpine:3.21
 
 # Install CA certificates for HTTPS
 RUN apk --no-cache add ca-certificates

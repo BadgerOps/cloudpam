@@ -119,6 +119,13 @@ install-hooks:
     chmod +x .git/hooks/pre-commit
     @echo "pre-commit hook installed"
 
+docker-build-agent tag="cloudpam-agent:latest":
+    docker build -t {{tag}} -f deploy/docker/Dockerfile.agent .
+
+docker-build-all tag="latest":
+    docker build -t cloudpam:{{tag}} .
+    docker build -t cloudpam-agent:{{tag}} -f deploy/docker/Dockerfile.agent .
+
 openapi-validate:
     ruby "{{justfile_directory()}}/scripts/openapi_validate.rb" "{{openapi_spec}}"
 

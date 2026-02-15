@@ -1,0 +1,125 @@
+# Default values for cloudpam-server
+
+# Image configuration
+image:
+  repository: ghcr.io/badgerops/cloudpam/server
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Number of replicas (use 1 for SQLite mode)
+replicaCount: 1
+
+# Storage backend: "postgres" or "sqlite"
+storage:
+  backend: postgres
+
+  # PostgreSQL settings (used when backend is "postgres")
+  postgres:
+    # DATABASE_URL connection string
+    # Can be provided directly or via existingSecret
+    databaseUrl: ""
+
+  # SQLite settings (used when backend is "sqlite")
+  sqlite:
+    # SQLITE_DSN (default: file:/data/cloudpam.db?cache=shared&_fk=1)
+    dsn: "file:/data/cloudpam.db?cache=shared&_fk=1"
+    # Persistent volume for SQLite data
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: ""
+      accessModes:
+        - ReadWriteOnce
+
+# Auth configuration
+auth:
+  enabled: false
+  # Bootstrap admin credentials (used on first startup)
+  adminUsername: ""
+  adminPassword: ""
+  adminEmail: ""
+
+# Observability
+observability:
+  logLevel: info
+  logFormat: json
+  metricsEnabled: true
+  sentryDsn: ""
+  sentryEnvironment: production
+
+# Rate limiting
+rateLimit:
+  rps: "10.0"
+  burst: "20"
+
+# Existing secret for sensitive values
+# Must contain keys as needed: database-url, admin-password, sentry-dsn
+existingSecret: ""
+
+# Service account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Service
+service:
+  type: ClusterIP
+  port: 8080
+
+# Ingress
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: cloudpam.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Resource limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity
+affinity: {}
+
+# Extra environment variables
+env: []
+
+# Extra volumes
+extraVolumes: []
+
+# Extra volume mounts
+extraVolumeMounts: []

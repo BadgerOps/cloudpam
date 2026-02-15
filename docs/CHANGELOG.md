@@ -49,6 +49,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/CHANGELOG.md`: this entry
 - `CLAUDE.md`: updated with org discovery endpoint, env vars, migration, deployment modules
 
+## [0.3.0] - 2026-02-14
+
+### Added - Release Infrastructure
+
+#### Auto-Release Workflow (`.github/workflows/release.yml`)
+- Triggers on push to `master` when `docs/CHANGELOG.md` changes
+- Parses latest `## [x.y.z]` version from changelog, creates GitHub Release + tag if not already tagged
+- Changelog body for the version is included as release notes
+
+#### Container Image Workflow (`.github/workflows/container-images.yml`)
+- Triggers on `release: [published]` (alongside existing `release-builds.yml`)
+- Builds and pushes multi-platform images (`linux/amd64`, `linux/arm64`) to GHCR
+- `ghcr.io/badgerops/cloudpam/server:<tag>` — server image built with `-tags 'sqlite postgres'`
+- `ghcr.io/badgerops/cloudpam/agent:<tag>` — agent image with version injection via ldflags
+- Uses Docker Buildx with QEMU for cross-platform builds, GHA cache for layer reuse
+
+#### Server Helm Chart (`deploy/helm/cloudpam-server/`)
+- Full Helm chart for deploying CloudPAM server to Kubernetes
+- Configurable storage backend: PostgreSQL (default) or SQLite with optional PVC
+- Auth bootstrap, observability (Sentry, log level/format, metrics), rate limiting via values
+- Liveness (`/healthz`) and readiness (`/readyz`) probes
+- Optional Ingress resource, ServiceAccount, and Secret management
+- Resource defaults: 500m CPU / 512Mi memory limits
+
+#### Dockerfile Improvements
+- Server Dockerfile: build tags changed from `sqlite` to `'sqlite postgres'`, added `HEALTHCHECK` instruction
+- Agent Dockerfile: added `VERSION` ARG with `-trimpath` and `-ldflags` for version injection, pinned Alpine to `3.21`
+
+#### Agent Version Injection
+- Changed `const version = "dev"` to `var version = "dev"` in `cmd/cloudpam-agent/main.go` so `-ldflags -X main.version=...` works at build time
+
+#### Agent Helm Chart Fixes
+- Fixed image repository from `ghcr.io/yourorg/cloudpam-agent` to `ghcr.io/badgerops/cloudpam/agent`
+- Fixed `Chart.yaml` home URL to `https://github.com/BadgerOps/cloudpam`
+
+#### Justfile
+- Added `docker-build-agent` recipe for building agent container image
+- Added `docker-build-all` recipe for building both server and agent images
+
 ### Added - Sprint 14: Analysis Engine (Phase 3 — Smart Planning)
 
 #### Analysis Package (`internal/planning/`)
@@ -479,6 +518,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Block detection marks exact CIDR matches as used
 
 [Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/BadgerOps/cloudpam/compare/v0.2.0...v0.3.0
+[0.3.0]: https://github.com/BadgerOps/cloudpam/releases/tag/v0.3.0
 [0.2.0]: https://github.com/BadgerOps/cloudpam/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/BadgerOps/cloudpam/releases/tag/v0.1.0

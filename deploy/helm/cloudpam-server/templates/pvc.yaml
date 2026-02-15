@@ -1,0 +1,17 @@
+{{- if and (eq .Values.storage.backend "sqlite") .Values.storage.sqlite.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cloudpam-server.fullname" . }}-data
+  labels:
+    {{- include "cloudpam-server.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.storage.sqlite.persistence.accessModes | nindent 4 }}
+  {{- if .Values.storage.sqlite.persistence.storageClass }}
+  storageClassName: {{ .Values.storage.sqlite.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.sqlite.persistence.size }}
+{{- end }}
