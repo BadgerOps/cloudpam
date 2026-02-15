@@ -38,6 +38,7 @@ func (d *DiscoveryServer) RegisterDiscoveryRoutes() {
 	d.srv.mux.HandleFunc("/api/v1/discovery/sync", d.handleSync)
 	d.srv.mux.HandleFunc("/api/v1/discovery/sync/", d.handleSyncSubroutes)
 	d.srv.mux.HandleFunc("/api/v1/discovery/ingest", d.handleIngest)
+	d.srv.mux.HandleFunc("/api/v1/discovery/ingest/org", d.handleOrgIngest)
 	d.srv.mux.HandleFunc("/api/v1/discovery/agents", d.handleListAgents)
 	d.srv.mux.HandleFunc("/api/v1/discovery/agents/", d.handleAgentsSubroutes)
 }
@@ -54,6 +55,7 @@ func (d *DiscoveryServer) RegisterProtectedDiscoveryRoutes(dualMW Middleware, lo
 
 	// Agent endpoints — all go through dualMW (API key or session auth)
 	d.srv.mux.Handle("/api/v1/discovery/ingest", dualMW(createMW(http.HandlerFunc(d.handleIngest))))
+	d.srv.mux.Handle("/api/v1/discovery/ingest/org", dualMW(createMW(http.HandlerFunc(d.handleOrgIngest))))
 	d.srv.mux.Handle("/api/v1/discovery/agents", dualMW(readMW(http.HandlerFunc(d.handleListAgents))))
 	d.srv.mux.Handle("/api/v1/discovery/agents/", dualMW(d.protectedAgentsSubroutes(logger)))
 }
@@ -577,4 +579,86 @@ func getAPIKeyIDFromContext(ctx context.Context) (string, bool) {
 		return "", false
 	}
 	return key.ID, true
+}
+
+// handleOrgIngest handles POST /api/v1/discovery/ingest/org
+// Accepts discovered resources from multiple AWS accounts (via Organizations) and
+// auto-creates CloudPAM Account records for new AWS accounts.
+func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	var req domain.BulkIngestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	if len(req.Accounts) == 0 {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "accounts list is required", "")
+		return
+	}
+
+	resp := domain.BulkIngestResponse{}
+	syncTime := time.Now().UTC()
+
+	for _, orgAcct := range req.Accounts {
+		if orgAcct.AWSAccountID == "" {
+			resp.Errors = append(resp.Errors, "skipped account with empty aws_account_id")
+			continue
+		}
+
+		// Build key: "aws:<account_id>"
+		key := "aws:" + orgAcct.AWSAccountID
+		provider := orgAcct.Provider
+		if provider == "" {
+			provider = "aws"
+		}
+
+		// Look up or auto-create the CloudPAM account
+		account, err := d.srv.store.GetAccountByKey(r.Context(), key)
+		if err != nil {
+			if !errors.Is(err, storage.ErrNotFound) {
+				resp.Errors = append(resp.Errors, "lookup "+key+": "+err.Error())
+				continue
+			}
+			// Auto-create
+			name := orgAcct.AccountName
+			if name == "" {
+				name = orgAcct.AWSAccountID
+			}
+			created, createErr := d.srv.store.CreateAccount(r.Context(), domain.CreateAccount{
+				Key:        key,
+				Name:       name,
+				Provider:   provider,
+				ExternalID: orgAcct.AWSAccountID,
+				Regions:    orgAcct.Regions,
+			})
+			if createErr != nil {
+				resp.Errors = append(resp.Errors, "create account "+key+": "+createErr.Error())
+				continue
+			}
+			account = &created
+			resp.AccountsCreated++
+		}
+
+		// Set account_id on all resources
+		for i := range orgAcct.Resources {
+			orgAcct.Resources[i].AccountID = account.ID
+		}
+
+		// Process resources
+		_, _, _, processErr := d.syncService.ProcessResources(r.Context(), account.ID, orgAcct.Resources, syncTime)
+		if processErr != nil {
+			resp.Errors = append(resp.Errors, "process "+key+": "+processErr.Error())
+		}
+
+		resp.AccountsProcessed++
+		resp.TotalResources += len(orgAcct.Resources)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

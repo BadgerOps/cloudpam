@@ -86,7 +86,7 @@ func main() {
 		cancel()
 	}()
 
-	// Run scheduler
+	// Run scheduler (org mode or single-account mode)
 	if err := runScheduler(ctx, cfg, collector, pusher, agentID, hostname, logger); err != nil {
 		logger.Error("scheduler failed", "error", err)
 		cancel()
@@ -104,9 +104,18 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 	heartbeatTicker := time.NewTicker(cfg.HeartbeatInterval)
 	defer heartbeatTicker.Stop()
 
+	// Choose sync function based on mode
+	syncFn := func() { runSync(ctx, cfg, collector, pusher, logger) }
+	if cfg.AWSOrg.Enabled {
+		logger.Info("org mode enabled", "role_name", cfg.AWSOrg.RoleName, "regions", cfg.AWSOrg.Regions)
+		syncFn = func() { runOrgSync(ctx, cfg, pusher, logger) }
+	}
+
 	// Initial sync and heartbeat
-	runSync(ctx, cfg, collector, pusher, logger)
-	_ = pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
+	syncFn()
+	if !cfg.AWSOrg.Enabled {
+		_ = pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
+	}
 
 	for {
 		select {
@@ -115,14 +124,98 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 			return nil
 
 		case <-syncTicker.C:
-			runSync(ctx, cfg, collector, pusher, logger)
+			syncFn()
 
 		case <-heartbeatTicker.C:
-			if err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname); err != nil {
-				logger.Error("heartbeat failed", "error", err)
+			if !cfg.AWSOrg.Enabled {
+				if err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname); err != nil {
+					logger.Error("heartbeat failed", "error", err)
+				}
 			}
 		}
 	}
+}
+
+func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, logger *slog.Logger) {
+	logger.Info("starting org discovery sync")
+
+	// Enumerate all active accounts in the organization
+	orgAccounts, err := aws.ListOrgAccounts(ctx)
+	if err != nil {
+		logger.Error("failed to list org accounts", "error", err)
+		return
+	}
+
+	// Build exclude set
+	excludeSet := make(map[string]bool, len(cfg.AWSOrg.ExcludeAccounts))
+	for _, id := range cfg.AWSOrg.ExcludeAccounts {
+		excludeSet[id] = true
+	}
+
+	regions := cfg.AWSOrg.Regions
+	if len(regions) == 0 {
+		regions = cfg.AWSRegions
+	}
+
+	var ingestAccounts []domain.OrgAccountIngest
+
+	for _, orgAcct := range orgAccounts {
+		if excludeSet[orgAcct.ID] {
+			logger.Info("excluding account", "account_id", orgAcct.ID, "name", orgAcct.Name)
+			continue
+		}
+
+		logger.Info("discovering account", "account_id", orgAcct.ID, "name", orgAcct.Name)
+
+		// Assume role into member account
+		creds, err := aws.AssumeRole(ctx, orgAcct.ID, cfg.AWSOrg.RoleName, cfg.AWSOrg.ExternalID)
+		if err != nil {
+			logger.Error("assume role failed", "account_id", orgAcct.ID, "error", err)
+			continue
+		}
+
+		// Create collector with assumed credentials
+		collector := aws.NewWithCredentials(creds)
+
+		// Build a temporary account for discovery
+		account := domain.Account{
+			Provider: "aws",
+			Regions:  regions,
+		}
+
+		resources, err := collector.Discover(ctx, account)
+		if err != nil {
+			logger.Error("discovery failed for account", "account_id", orgAcct.ID, "error", err)
+			continue
+		}
+
+		logger.Info("discovered resources for account", "account_id", orgAcct.ID, "count", len(resources))
+
+		ingestAccounts = append(ingestAccounts, domain.OrgAccountIngest{
+			AWSAccountID: orgAcct.ID,
+			AccountName:  orgAcct.Name,
+			AccountEmail: orgAcct.Email,
+			Provider:     "aws",
+			Regions:      regions,
+			Resources:    resources,
+		})
+	}
+
+	if len(ingestAccounts) == 0 {
+		logger.Info("no accounts to ingest")
+		return
+	}
+
+	req := domain.BulkIngestRequest{
+		Accounts: ingestAccounts,
+	}
+
+	if err := pusher.PushOrgResources(ctx, req, cfg.MaxRetries, cfg.RetryBackoff); err != nil {
+		logger.Error("push org resources failed", "error", err)
+		return
+	}
+
+	logger.Info("org sync completed", "accounts", len(ingestAccounts))
 }
 
 func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pusher *Pusher, logger *slog.Logger) {

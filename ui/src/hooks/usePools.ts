@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
-import { get, post, del } from '../api/client'
-import type { Pool, PoolWithStats, CreatePoolRequest } from '../api/types'
+import { get, post, patch, del } from '../api/client'
+import type { Pool, PoolWithStats, CreatePoolRequest, UpdatePoolRequest } from '../api/types'
 
 export function usePools() {
   const [pools, setPools] = useState<Pool[]>([])
@@ -44,11 +44,17 @@ export function usePools() {
     return pool
   }, [])
 
+  const updatePool = useCallback(async (id: number, data: UpdatePoolRequest) => {
+    const updated = await patch<Pool>(`/api/v1/pools/${id}`, data)
+    setPools(prev => prev.map(p => p.id === id ? updated : p))
+    return updated
+  }, [])
+
   const deletePool = useCallback(async (id: number, force = false) => {
     const qs = force ? '?force=true' : ''
     await del(`/api/v1/pools/${id}${qs}`)
     setPools(prev => prev.filter(p => p.id !== id))
   }, [])
 
-  return { pools, hierarchy, loading, error, fetchPools, fetchHierarchy, getPool, createPool, deletePool }
+  return { pools, hierarchy, loading, error, fetchPools, fetchHierarchy, getPool, createPool, updatePool, deletePool }
 }

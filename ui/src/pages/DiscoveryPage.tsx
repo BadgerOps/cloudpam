@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   Activity,
+  Wand2,
 } from 'lucide-react'
 import {
   useDiscoveryResources,
@@ -18,6 +19,7 @@ import {
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
 import StatusBadge from '../components/StatusBadge'
+import DiscoveryWizard from '../components/DiscoveryWizard'
 import { formatTimeAgo } from '../utils/format'
 import type {
   Account,
@@ -37,6 +39,7 @@ export default function DiscoveryPage() {
   const [linkedFilter, setLinkedFilter] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [showGuide, setShowGuide] = useState(false)
+  const [showWizard, setShowWizard] = useState(false)
 
   const { accounts, fetchAccounts } = useAccounts()
   const {
@@ -61,7 +64,7 @@ export default function DiscoveryPage() {
     fetch: fetchAgents,
   } = useDiscoveryAgents()
   const { showToast } = useToast()
-  const agentsRefreshInterval = useRef<NodeJS.Timeout | null>(null)
+  const agentsRefreshInterval = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     fetchAccounts()
@@ -178,12 +181,30 @@ export default function DiscoveryPage() {
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
               Cloud Discovery
             </h2>
-            <p className="text-gray-500 dark:text-gray-400">
+            <p className="text-gray-500 dark:text-gray-400 mb-4">
               Create a cloud account first to start discovering resources.
             </p>
+            <button
+              onClick={() => setShowWizard(true)}
+              className="inline-flex items-center gap-2 rounded bg-green-600 hover:bg-green-700 text-white px-4 py-2 text-sm"
+            >
+              <Wand2 className="w-4 h-4" />
+              Plan Discovery
+            </button>
           </div>
           <SetupGuide defaultOpen />
         </div>
+        {showWizard && (
+          <DiscoveryWizard
+            accounts={accounts}
+            onAccountCreated={fetchAccounts}
+            onClose={() => setShowWizard(false)}
+            onComplete={() => {
+              setTab('agents')
+              fetchAgents(selectedAccountId ?? undefined)
+            }}
+          />
+        )}
       </div>
     )
   }
@@ -216,6 +237,13 @@ export default function DiscoveryPage() {
               </option>
             ))}
           </select>
+          <button
+            onClick={() => setShowWizard(true)}
+            className="flex items-center gap-2 rounded bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 text-sm"
+          >
+            <Wand2 className="w-4 h-4" />
+            Plan Discovery
+          </button>
           <button
             onClick={handleSync}
             className="flex items-center gap-2 rounded bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 text-sm"
@@ -303,6 +331,14 @@ export default function DiscoveryPage() {
           agents={agents}
           loading={agentsLoading}
           error={agentsError}
+        />
+      )}
+
+      {showWizard && (
+        <DiscoveryWizard
+          accounts={accounts}
+          onAccountCreated={fetchAccounts}
+          onClose={() => setShowWizard(false)}
         />
       )}
     </div>

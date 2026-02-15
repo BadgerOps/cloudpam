@@ -924,6 +924,29 @@ func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool,
 	return a, true, nil
 }
 
+// GetAccountByKey retrieves an account by its unique key.
+func (s *Store) GetAccountByKey(ctx context.Context, key string) (*domain.Account, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT seq_id, key, name, provider, external_id, description,
+			platform, tier, environment, regions, created_at, updated_at
+		FROM accounts
+		WHERE key = $1 AND organization_id = $2 AND deleted_at IS NULL`, key, s.orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, storage.ErrNotFound
+	}
+
+	a, err := scanAccount(rows)
+	if err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 // =============================================================================
 // Search
 // =============================================================================

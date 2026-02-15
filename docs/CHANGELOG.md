@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Sprint 16b: AWS Organizations Discovery
+
+#### Org-Mode Agent (`cmd/cloudpam-agent/`)
+- `config.go`: `AWSOrg` config struct with `enabled`, `role_name`, `external_id`, `regions`, `exclude_accounts` — env vars `CLOUDPAM_AWS_ORG_*`
+- `main.go`: `runOrgSync()` — enumerates org accounts, filters excludes, AssumeRole per member, discovers, builds `BulkIngestRequest`
+- `pusher.go`: `PushOrgResources()` — pushes bulk ingest payload to server with retry/backoff
+
+#### AWS SDK Extensions (`internal/discovery/aws/`)
+- `org.go`: `ListOrgAccounts()` — enumerates active AWS Organization accounts via `organizations:ListAccounts` paginator
+- `assume_role.go`: `AssumeRole()` — returns `aws.CredentialsProvider` via `stscreds.NewAssumeRoleProvider` with optional ExternalID
+- `collector.go`: `NewWithCredentials()` constructor — injects cross-account credentials into the existing collector
+
+#### Bulk Org Ingest API
+- `POST /api/v1/discovery/ingest/org` — accepts `BulkIngestRequest`, auto-creates CloudPAM Account records for new AWS accounts, upserts resources per account
+- `internal/domain/discovery.go`: `OrgAccountIngest`, `BulkIngestRequest`, `BulkIngestResponse` domain types
+- `internal/storage/store.go`: `GetAccountByKey(ctx, key)` on Store interface — lookup accounts by unique key (e.g. `aws:123456789012`)
+- `internal/storage/sqlite/sqlite.go`: SQLite `GetAccountByKey` implementation
+- `internal/storage/postgres/postgres.go`: PostgreSQL `GetAccountByKey` implementation
+- `migrations/0012_account_key_unique.sql`: unique index on `accounts.key`
+
+#### Infrastructure as Code (`deploy/`)
+- `deploy/terraform/aws-org-discovery/management-policy/`: Terraform module creating IAM role (EC2+ECS trust), instance profile, 3 policies (org discovery, EC2 read-only, STS identity)
+- `deploy/terraform/aws-org-discovery/member-role/`: Terraform module creating cross-account discovery role with least-privilege trust policy
+- `deploy/cloudformation/discovery-role-stackset.yaml`: CloudFormation StackSet template for deploying member role across all org accounts
+
+#### Frontend — Discovery Wizard Org Mode (`ui/src/components/DiscoveryWizard.tsx`)
+- Discovery mode toggle: "Single Account" vs "AWS Organization" radio cards
+- Org mode fields: Role Name, External ID, Regions, Exclude Accounts
+- Org-aware config generation for all deployment tabs (Shell, YAML, Terraform, Docker)
+- New "IAM Setup" tab (org-mode only) with Terraform snippets for member role + management policy
+- Agent connection polling: wizard polls for agent heartbeats every 5s, shows spinner while waiting, green status when connected
+- `onComplete` callback navigates to Agents tab on completion
+
+#### Dependencies
+- `github.com/aws/aws-sdk-go-v2/service/organizations` v1.50.2
+- `github.com/aws/aws-sdk-go-v2/credentials/stscreds` (STS AssumeRole)
+
+#### Documentation
+- `docs/DISCOVERY.md`: AWS Organizations discovery section — architecture, agent config, Terraform modules, bulk ingest API
+- `docs/CHANGELOG.md`: this entry
+- `CLAUDE.md`: updated with org discovery endpoint, env vars, migration, deployment modules
+
 ### Added - Sprint 14: Analysis Engine (Phase 3 — Smart Planning)
 
 #### Analysis Package (`internal/planning/`)

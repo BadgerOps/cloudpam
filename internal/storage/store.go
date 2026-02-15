@@ -35,6 +35,8 @@ type Store interface {
 	DeleteAccount(ctx context.Context, id int64) (bool, error)
 	DeleteAccountCascade(ctx context.Context, id int64) (bool, error)
 	GetAccount(ctx context.Context, id int64) (domain.Account, bool, error)
+	// GetAccountByKey retrieves an account by its unique key (e.g., "aws:123456789012").
+	GetAccountByKey(ctx context.Context, key string) (*domain.Account, error)
 	// Search performs a paginated search across pools and accounts.
 	Search(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, error)
 	// Close releases resources held by the store
@@ -352,6 +354,18 @@ func (m *MemoryStore) GetAccount(ctx context.Context, id int64) (domain.Account,
 	defer m.mu.RUnlock()
 	a, ok := m.accounts[id]
 	return a, ok, nil
+}
+
+// GetAccountByKey retrieves an account by its unique key.
+func (m *MemoryStore) GetAccountByKey(ctx context.Context, key string) (*domain.Account, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, a := range m.accounts {
+		if a.Key == key {
+			return &a, nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
 // GetPoolWithStats returns a pool with its computed statistics.

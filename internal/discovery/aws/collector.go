@@ -16,11 +16,19 @@ import (
 )
 
 // Collector discovers AWS VPCs, subnets, and Elastic IPs.
-type Collector struct{}
+type Collector struct {
+	credsProvider aws.CredentialsProvider
+}
 
-// New creates a new AWS collector.
+// New creates a new AWS collector using the default credential chain.
 func New() *Collector {
 	return &Collector{}
+}
+
+// NewWithCredentials creates a new AWS collector using the given credentials provider.
+// This is used for cross-account discovery via STS AssumeRole.
+func NewWithCredentials(cp aws.CredentialsProvider) *Collector {
+	return &Collector{credsProvider: cp}
 }
 
 // Provider returns "aws".
@@ -90,6 +98,11 @@ func (c *Collector) loadConfigForRegion(ctx context.Context, region string) (aws
 	// Set region if provided
 	if region != "" {
 		opts = append(opts, config.WithRegion(region))
+	}
+
+	// Use injected credentials if available (cross-account AssumeRole)
+	if c.credsProvider != nil {
+		opts = append(opts, config.WithCredentialsProvider(c.credsProvider))
 	}
 
 	return config.LoadDefaultConfig(ctx, opts...)

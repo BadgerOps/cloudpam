@@ -236,3 +236,27 @@ type AgentRegisterResponse struct {
 	Message        string              `json:"message,omitempty"`
 }
 
+// OrgAccountIngest represents a single AWS account's discovered resources for bulk org ingest.
+type OrgAccountIngest struct {
+	AWSAccountID string               `json:"aws_account_id"`
+	AccountName  string               `json:"account_name"`
+	AccountEmail string               `json:"account_email"`
+	Provider     string               `json:"provider"`
+	Regions      []string             `json:"regions"`
+	Resources    []DiscoveredResource `json:"resources"`
+}
+
+// BulkIngestRequest is the request body for the /api/v1/discovery/ingest/org endpoint.
+type BulkIngestRequest struct {
+	Accounts []OrgAccountIngest `json:"accounts"`
+	AgentID  string             `json:"agent_id,omitempty"`
+}
+
+// BulkIngestResponse is the response body for the /api/v1/discovery/ingest/org endpoint.
+type BulkIngestResponse struct {
+	AccountsProcessed int      `json:"accounts_processed"`
+	AccountsCreated   int      `json:"accounts_created"`
+	TotalResources    int      `json:"total_resources"`
+	Errors            []string `json:"errors,omitempty"`
+}
+
