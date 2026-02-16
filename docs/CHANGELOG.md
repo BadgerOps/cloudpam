@@ -5,6 +5,43 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - First-Boot Setup & Auth Bugfixes
+
+### Added
+- First-boot admin setup wizard: fresh installs prompt for admin account creation at `/setup`
+- `POST /api/v1/auth/setup` endpoint for creating the initial admin user
+- `/healthz` now returns `needs_setup` boolean for fresh install detection
+- `SetupPage` frontend component with username, email, password, and confirm password fields
+- `ProtectedRoute` redirects to `/setup` on fresh installs before any other page loads
+
+### Fixed
+- Session cookie `Secure` flag now adapts to HTTP vs HTTPS — cookies work on `http://localhost` during development
+- Session cookie `SameSite` set to `Lax` on HTTP (was `Strict`, which blocked cookie on navigation)
+- `GET /api/v1/accounts` no longer returns JSON `null` on empty database (returns `[]`)
+- `GET /api/v1/pools` no longer returns JSON `null` on empty database (returns `[]`)
+- Frontend `useAccounts` hook guards against null API response with `?? []`
+
+## [0.4.0] - Phase 4: AI Planning
+
+### Added - Sprint 17: AI Planning Backend
+- LLM provider abstraction (`internal/planning/llm/`) with OpenAI-compatible implementation
+- Supports OpenAI, Ollama, vLLM, Azure, and any OpenAI-compatible endpoint via `CLOUDPAM_LLM_ENDPOINT`
+- Conversation storage (`ConversationStore`) with in-memory, SQLite, and PostgreSQL implementations
+- AI planning service (`AIPlanningService`) with context-aware system prompts (pool hierarchy, gap analysis, compliance)
+- SSE streaming chat endpoint (`POST /api/v1/ai/chat`) with 5-minute write deadline
+- Session CRUD endpoints (`/api/v1/ai/sessions`)
+- Plan apply endpoint (`POST /api/v1/ai/sessions/{id}/apply-plan`) reusing schema apply logic
+- SQLite migration `0013_conversations.sql` and PostgreSQL migration `002_conversations.up.sql`
+- Environment variables: `CLOUDPAM_LLM_API_KEY`, `CLOUDPAM_LLM_MODEL`, `CLOUDPAM_LLM_ENDPOINT`, `CLOUDPAM_LLM_MAX_TOKENS`, `CLOUDPAM_LLM_TEMPERATURE`
+
+### Added - Sprint 18: AI Planner Frontend
+- AI Planner page with session sidebar and chat interface
+- SSE streaming client helper (`streamPost`) for real-time response display
+- Plan extraction from assistant markdown responses (`planParser.ts`)
+- Apply Plan button on detected plan cards to create pools directly
+- `Bot` icon nav item in sidebar
+- Frontend tests for plan parser (5 tests)
+
 ## [Unreleased]
 
 ### Changed — Build Pipeline & Container Hardening

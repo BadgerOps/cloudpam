@@ -63,6 +63,14 @@ func selectRecommendationStore(_ observability.Logger, mainStore storage.Store) 
 	return storage.NewMemoryRecommendationStore(storage.NewMemoryStore())
 }
 
+// selectConversationStore returns an in-memory conversation store.
+func selectConversationStore(_ observability.Logger, mainStore storage.Store) storage.ConversationStore {
+	if ms, ok := mainStore.(*storage.MemoryStore); ok {
+		return storage.NewMemoryConversationStore(ms)
+	}
+	return storage.NewMemoryConversationStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus returns schema status string when not built with sqlite tag.
 func sqliteStatus(dsn string) string { return "" }
 

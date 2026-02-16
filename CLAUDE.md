@@ -15,9 +15,10 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 ## Implementation Status
 
-The project is entering **Phase 3** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
+The project is in **Phase 4** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
-**Current State** (Sprint 15 complete):
+**Current State** (Sprint 18 complete):
+- AI Planning: LLM-powered conversational planning with SSE streaming, plan generation and apply (Sprints 17-18)
 - AWS Organizations discovery: org-mode agent, cross-account AssumeRole, bulk ingest, Terraform/CF modules, wizard org mode (Sprint 16b)
 - Recommendation generator: allocation & compliance recs, scoring, apply/dismiss workflow (Sprint 15)
 - Analysis engine: gap analysis, fragmentation scoring, compliance checks (Sprint 14)
@@ -228,6 +229,7 @@ The storage layer uses build tags to switch between implementations:
 | `internal/observability` | Logging, metrics, tracing | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
+| `internal/planning/llm` | LLM provider abstraction (OpenAI-compatible) | Implemented (Phase 4) |
 
 ### HTTP Layer
 
@@ -270,6 +272,10 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/recommendations/{id}` - get single recommendation (GET)
   - `/api/v1/recommendations/{id}/apply` - apply a recommendation (POST)
   - `/api/v1/recommendations/{id}/dismiss` - dismiss a recommendation (POST)
+  - `/api/v1/ai/chat` - send message and stream SSE response (POST)
+  - `/api/v1/ai/sessions` - list conversations (GET), create conversation (POST)
+  - `/api/v1/ai/sessions/{id}` - get conversation with messages (GET), delete conversation (DELETE)
+  - `/api/v1/ai/sessions/{id}/apply-plan` - apply a generated plan as pools (POST)
   - `/api/v1/test-sentry` - Sentry integration test endpoint (use `?type=message|error|panic`)
   - `/readyz` - readiness check with database health
   - `/metrics` - Prometheus metrics endpoint
@@ -404,6 +410,13 @@ When adding endpoints:
 - `CLOUDPAM_AWS_ORG_REGIONS`: Comma-separated AWS regions to discover
 - `CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS`: Comma-separated account IDs to skip
 
+### AI Planning
+- `CLOUDPAM_LLM_API_KEY`: API key for OpenAI-compatible endpoint (empty = AI disabled)
+- `CLOUDPAM_LLM_MODEL`: Model name (default: `gpt-4o`)
+- `CLOUDPAM_LLM_ENDPOINT`: Base URL override for Ollama/vLLM/Azure (empty = OpenAI default)
+- `CLOUDPAM_LLM_MAX_TOKENS`: Max response tokens (default: `4096`)
+- `CLOUDPAM_LLM_TEMPERATURE`: Temperature (default: `0.7`)
+
 ### Planned
 - `CLOUDPAM_TRACING_ENABLED`: Enable distributed tracing
 - `CLOUDPAM_TRACING_ENDPOINT`: Jaeger collector endpoint
@@ -453,6 +466,12 @@ Common workflows:
 - Get recommendation: `GET /api/v1/recommendations/{id}`
 - Apply recommendation: `POST /api/v1/recommendations/{id}/apply` with `{"name":"New Subnet"}`
 - Dismiss recommendation: `POST /api/v1/recommendations/{id}/dismiss` with `{"reason":"not needed"}`
+- AI chat (SSE streaming): `POST /api/v1/ai/chat` with `{"session_id":"...","message":"Plan a /16 for prod"}`
+- List AI sessions: `GET /api/v1/ai/sessions`
+- Create AI session: `POST /api/v1/ai/sessions` with `{"title":"My Planning Session"}`
+- Get AI session: `GET /api/v1/ai/sessions/{id}`
+- Delete AI session: `DELETE /api/v1/ai/sessions/{id}`
+- Apply AI plan: `POST /api/v1/ai/sessions/{id}/apply-plan` with `{"plan":{"name":"...","pools":[...]},"skip_conflicts":false}`
 - Test Sentry: `GET /api/v1/test-sentry?type=message|error|panic`
 
 ## Testing Across Storage Backends
@@ -575,6 +594,7 @@ cloudpam/
 │   │   ├── auth_handlers.go       # Auth (login, logout, keys, users)
 │   │   ├── user_handlers.go       # User management
 │   │   ├── recommendation_handlers.go # Recommendation API (generate, apply, dismiss)
+│   │   ├── ai_handlers.go       # AI Planning API (chat, sessions, plan apply)
 │   │   ├── middleware.go   # Middleware (logging, auth, rate limit)
 │   │   ├── context.go      # Request context helpers
 │   │   ├── cidr.go         # IPv4 CIDR validation utilities
@@ -610,9 +630,10 @@ cloudpam/
 │   ├── cidr/               # Reusable CIDR math utilities
 │   ├── validation/         # Input validation
 │   ├── planning/           # Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations)
+│   │   └── llm/            # LLM provider abstraction (OpenAI-compatible)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0012)
+├── migrations/             # SQL migrations (0001-0013)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql

@@ -114,6 +114,15 @@ func selectRecommendationStore(logger observability.Logger, mainStore storage.St
 	return storage.NewMemoryRecommendationStore(storage.NewMemoryStore())
 }
 
+// selectConversationStore returns a PostgreSQL-backed conversation store if the main store supports it.
+func selectConversationStore(logger observability.Logger, mainStore storage.Store) storage.ConversationStore {
+	if cs, ok := mainStore.(storage.ConversationStore); ok {
+		return cs
+	}
+	logger.Warn("main store does not implement ConversationStore; using in-memory fallback")
+	return storage.NewMemoryConversationStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus is a no-op for postgres builds.
 func sqliteStatus(_ string) string { return "" }
 

@@ -241,6 +241,7 @@ export interface HealthResponse {
   status: string
   auth_enabled?: boolean
   local_auth_enabled?: boolean
+  needs_setup?: boolean
 }
 
 // --- User types ---
@@ -408,6 +409,64 @@ export interface BulkIngestResponse {
   accounts_created: number
   total_resources: number
   errors?: string[]
+}
+
+// --- AI Planning types ---
+
+export interface Conversation {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ConversationMessage {
+  id: string
+  conversation_id: string
+  role: 'system' | 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
+export interface ConversationWithMessages extends Conversation {
+  messages: ConversationMessage[]
+}
+
+export interface ConversationsListResponse {
+  items: Conversation[]
+  total: number
+}
+
+export interface ChatRequest {
+  session_id: string
+  message: string
+}
+
+export interface PoolSpec {
+  ref: string
+  name: string
+  cidr: string
+  type: string
+  parent_ref?: string
+}
+
+export interface GeneratedPlan {
+  name: string
+  description: string
+  pools: PoolSpec[]
+}
+
+export interface ApplyPlanRequest {
+  plan: GeneratedPlan
+  skip_conflicts: boolean
+}
+
+export interface ApplyPlanResponse {
+  created: number
+  skipped: number
+  errors: string[]
+  root_pool_id: number
+  pool_map: Record<string, number>
 }
 
 // --- Agent provisioning types ---

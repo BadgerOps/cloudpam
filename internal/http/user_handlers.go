@@ -187,13 +187,19 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = us.userStore.UpdateLastLogin(ctx, user.ID, now)
 
 	// Set session cookie.
+	// Only set Secure flag when served over HTTPS so cookies work on http://localhost.
+	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	sameSite := http.SameSiteLaxMode
+	if isSecure {
+		sameSite = http.SameSiteStrictMode
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
 		Value:    session.ID,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   isSecure,
+		SameSite: sameSite,
 		MaxAge:   int(auth.DefaultSessionDuration.Seconds()),
 	})
 
@@ -229,13 +235,18 @@ func (us *UserServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear cookie.
+	isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	sameSite := http.SameSiteLaxMode
+	if isSecure {
+		sameSite = http.SameSiteStrictMode
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
+		Secure:   isSecure,
+		SameSite: sameSite,
 		MaxAge:   -1,
 	})
 

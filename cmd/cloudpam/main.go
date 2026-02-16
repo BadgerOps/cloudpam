@@ -19,6 +19,7 @@ import (
 	ih "cloudpam/internal/http"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/planning"
+	"cloudpam/internal/planning/llm"
 
 	"github.com/google/uuid"
 )
@@ -118,6 +119,14 @@ func main() {
 	sessionStore := selectSessionStore(logger)
 	srv := ih.NewServer(mux, store, logger, metrics, auditLogger)
 
+	// Check if this is a fresh install (no users exist) for first-boot setup.
+	srv.SetUserStore(userStore)
+	existingUsers, _ := userStore.List(context.Background())
+	if len(existingUsers) == 0 {
+		srv.SetNeedsSetup(true)
+		logger.Info("fresh install detected: setup wizard enabled at /setup")
+	}
+
 	// Bootstrap admin user from environment variables (idempotent).
 	if adminUser := os.Getenv("CLOUDPAM_ADMIN_USERNAME"); adminUser != "" {
 		adminPass := os.Getenv("CLOUDPAM_ADMIN_PASSWORD")
@@ -146,10 +155,26 @@ func main() {
 	recSrv := ih.NewRecommendationServer(srv, recService, recStore)
 	logger.Info("recommendation subsystem initialized")
 
-	// When CLOUDPAM_AUTH_ENABLED is set, use protected routes with RBAC.
+	// Initialize AI planning subsystem
+	llmCfg := llm.ConfigFromEnv()
+	var llmProvider llm.Provider
+	if llmCfg.APIKey != "" {
+		llmProvider = llm.NewOpenAIProvider(llmCfg)
+		logger.Info("ai planning enabled", "model", llmCfg.Model, "endpoint", llmCfg.Endpoint)
+	} else {
+		llmProvider = llm.NewOpenAIProvider(llmCfg) // unconfigured; Available() returns false
+		logger.Info("ai planning disabled (set CLOUDPAM_LLM_API_KEY to enable)")
+	}
+	convStore := selectConversationStore(logger, store)
+	aiService := planning.NewAIPlanningService(analysisService, convStore, store, llmProvider)
+	aiSrv := ih.NewAIPlanningServer(srv, aiService, convStore)
+	logger.Info("ai planning subsystem initialized")
+
+	// When CLOUDPAM_AUTH_ENABLED is set (or fresh install needs setup), use protected routes with RBAC.
 	// Otherwise use unprotected routes for development.
 	authEnabled := os.Getenv("CLOUDPAM_AUTH_ENABLED") == "true" || os.Getenv("CLOUDPAM_AUTH_ENABLED") == "1"
-	if authEnabled {
+	needsSetup := len(existingUsers) == 0
+	if authEnabled || needsSetup {
 		srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
 		authSrv := ih.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
 		authSrv.RegisterProtectedAuthRoutes(logger.Slog())
@@ -159,6 +184,7 @@ func main() {
 		discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
 		analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 		recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
+		aiSrv.RegisterProtectedAIPlanningRoutes(dualMW, logger.Slog())
 		logger.Info("authentication enabled (RBAC enforced)")
 	} else {
 		srv.RegisterRoutes()
@@ -169,6 +195,7 @@ func main() {
 		discoverySrv.RegisterDiscoveryRoutes()
 		analysisSrv.RegisterAnalysisRoutes()
 		recSrv.RegisterRecommendationRoutes()
+		aiSrv.RegisterAIPlanningRoutes()
 		logger.Info("authentication disabled (all routes open)",
 			"hint", "set CLOUDPAM_AUTH_ENABLED=true to enable RBAC")
 	}

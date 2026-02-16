@@ -18,6 +18,7 @@ import {
   Users,
   User,
   Lightbulb,
+  Bot,
 } from 'lucide-react'
 import { useTheme } from '../hooks/useTheme'
 import { useAuth } from '../hooks/useAuth'
@@ -31,6 +32,7 @@ const navItems = [
   { to: '/audit', icon: Clock, label: 'Audit Log' },
   { to: '/schema', icon: Map, label: 'Schema Planner' },
   { to: '/recommendations', icon: Lightbulb, label: 'Recommendations' },
+  { to: '/ai-planner', icon: Bot, label: 'AI Planner' },
 ]
 
 interface SidebarProps {

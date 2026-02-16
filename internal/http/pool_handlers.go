@@ -409,6 +409,9 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
+	if pools == nil {
+		pools = []domain.Pool{}
+	}
 	writeJSON(w, http.StatusOK, pools)
 }
 

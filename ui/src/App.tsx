@@ -4,6 +4,7 @@ import { AuthContext, useAuthState } from './hooks/useAuth'
 import Layout from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
+import SetupPage from './pages/SetupPage'
 import DashboardPage from './pages/DashboardPage'
 import PoolsPage from './pages/PoolsPage'
 import BlocksPage from './pages/BlocksPage'
@@ -14,6 +15,7 @@ import SchemaPage from './pages/SchemaPage'
 import ApiKeysPage from './pages/ApiKeysPage'
 import UsersPage from './pages/UsersPage'
 import RecommendationsPage from './pages/RecommendationsPage'
+import AIPlannerPage from './pages/AIPlannerPage'
 
 export default function App() {
   const toastState = useToastState()
@@ -25,6 +27,7 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/setup" element={<SetupPage />} />
             <Route element={<ProtectedRoute />}>
               <Route element={<Layout />}>
                 <Route index element={<DashboardPage />} />
@@ -35,6 +38,7 @@ export default function App() {
                 <Route path="discovery" element={<DiscoveryPage />} />
                 <Route path="schema" element={<SchemaPage />} />
                 <Route path="recommendations" element={<RecommendationsPage />} />
+                <Route path="ai-planner" element={<AIPlannerPage />} />
                 <Route path="settings/api-keys" element={<ApiKeysPage />} />
                 <Route path="settings/users" element={<UsersPage />} />
               </Route>

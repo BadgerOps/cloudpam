@@ -162,6 +162,14 @@ func selectRecommendationStore(logger observability.Logger, mainStore storage.St
 	return storage.NewMemoryRecommendationStore(storage.NewMemoryStore())
 }
 
+func selectConversationStore(logger observability.Logger, mainStore storage.Store) storage.ConversationStore {
+	if cs, ok := mainStore.(storage.ConversationStore); ok {
+		return cs
+	}
+	logger.Warn("main store does not implement ConversationStore; using in-memory fallback")
+	return storage.NewMemoryConversationStore(storage.NewMemoryStore())
+}
+
 func sqliteStatus(dsn string) string {
 	s, err := sqlitestore.Status(dsn)
 	if err != nil {

@@ -4,7 +4,7 @@ import { Eye, EyeOff, Server, User } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
 export default function LoginPage() {
-  const { loginWithPassword, isAuthenticated, authChecked } = useAuth()
+  const { loginWithPassword, isAuthenticated, needsSetup, authChecked } = useAuth()
   const navigate = useNavigate()
 
   const [username, setUsername] = useState('')
@@ -13,12 +13,14 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Redirect if already authenticated
+  // Redirect to setup if fresh install, or home if already authenticated
   useEffect(() => {
-    if (isAuthenticated) {
+    if (needsSetup) {
+      navigate('/setup', { replace: true })
+    } else if (isAuthenticated) {
       navigate('/', { replace: true })
     }
-  }, [isAuthenticated, navigate])
+  }, [isAuthenticated, needsSetup, navigate])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
