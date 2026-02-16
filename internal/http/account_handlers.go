@@ -231,6 +231,9 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
+	if accs == nil {
+		accs = []domain.Account{}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(accs)
 }

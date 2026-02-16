@@ -14,6 +14,7 @@ export interface AuthContextValue {
   isAuthenticated: boolean
   authEnabled: boolean
   localAuthEnabled: boolean
+  needsSetup: boolean
   authChecked: boolean
   loginWithPassword: (username: string, password: string) => Promise<void>
   logout: () => void
@@ -27,6 +28,7 @@ export const AuthContext = createContext<AuthContextValue>({
   isAuthenticated: false,
   authEnabled: false,
   localAuthEnabled: false,
+  needsSetup: false,
   authChecked: false,
   loginWithPassword: async () => {},
   logout: () => {},
@@ -46,6 +48,7 @@ export function useAuthState(): AuthContextValue {
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
   const [authEnabled, setAuthEnabled] = useState(false)
   const [localAuthEnabled, setLocalAuthEnabled] = useState(false)
+  const [needsSetup, setNeedsSetup] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
 
   // Check health + validate existing session cookie on mount
@@ -59,6 +62,7 @@ export function useAuthState(): AuthContextValue {
         if (cancelled) return
         setAuthEnabled(health.auth_enabled === true)
         setLocalAuthEnabled(health.local_auth_enabled === true)
+        setNeedsSetup(health.needs_setup === true)
 
         // Check if there's a valid session cookie
         const meRes = await fetch('/api/v1/auth/me', {
@@ -157,6 +161,7 @@ export function useAuthState(): AuthContextValue {
     isAuthenticated,
     authEnabled,
     localAuthEnabled,
+    needsSetup,
     authChecked,
     loginWithPassword,
     logout,

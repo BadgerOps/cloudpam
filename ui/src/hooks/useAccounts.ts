@@ -12,7 +12,7 @@ export function useAccounts() {
     setError(null)
     try {
       const data = await get<Account[]>('/api/v1/accounts')
-      setAccounts(data)
+      setAccounts(data ?? [])
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch accounts')
     } finally {

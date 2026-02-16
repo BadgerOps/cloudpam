@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -11,9 +12,11 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/google/uuid"
 
 	apidocs "cloudpam/docs"
 	"cloudpam/internal/audit"
+	"cloudpam/internal/auth"
 	webui "cloudpam/web"
 )
 
@@ -32,6 +35,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":             "ok",
 		"auth_enabled":       s.authEnabled,
 		"local_auth_enabled": s.localAuthEnabled,
+		"needs_setup":        s.needsSetup,
 	})
 }
 
@@ -117,6 +121,93 @@ func (s *Server) handleTestSentry(w http.ResponseWriter, r *http.Request) {
 			"usage":   "?type=message|error|panic",
 		})
 	}
+}
+
+// handleSetup creates the initial admin account on a fresh install.
+// POST /api/v1/auth/setup
+// Only works when needsSetup is true (no users exist).
+func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "use POST")
+		return
+	}
+
+	if !s.needsSetup {
+		s.writeErr(r.Context(), w, http.StatusForbidden, "setup already completed", "an admin account already exists")
+		return
+	}
+
+	if s.userStore == nil {
+		s.writeErr(r.Context(), w, http.StatusServiceUnavailable, "user store not configured", "")
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	if strings.TrimSpace(req.Username) == "" {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "username is required", "")
+		return
+	}
+	if len(req.Password) < 8 {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "password must be at least 8 characters", "")
+		return
+	}
+
+	// Double-check no users exist (race safety)
+	existing, _ := s.userStore.List(r.Context())
+	if len(existing) > 0 {
+		s.needsSetup = false
+		s.writeErr(r.Context(), w, http.StatusForbidden, "setup already completed", "an admin account already exists")
+		return
+	}
+
+	hash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to hash password", err.Error())
+		return
+	}
+
+	email := req.Email
+	if email == "" {
+		email = req.Username + "@localhost"
+	}
+
+	now := time.Now().UTC()
+	user := &auth.User{
+		ID:           uuid.New().String(),
+		Username:     strings.TrimSpace(req.Username),
+		Email:        email,
+		DisplayName:  strings.TrimSpace(req.Username),
+		Role:         auth.RoleAdmin,
+		PasswordHash: hash,
+		IsActive:     true,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	if err := s.userStore.Create(r.Context(), user); err != nil {
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to create admin user", err.Error())
+		return
+	}
+
+	s.needsSetup = false
+	s.authEnabled = true
+	s.localAuthEnabled = true
+
+	s.logAudit(r.Context(), "create", "user", user.ID, user.Username, http.StatusCreated)
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"message":  "admin account created",
+		"username": user.Username,
+	})
 }
 
 // handleSPA serves the Vite-built React SPA from the embedded dist/ directory.

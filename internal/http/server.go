@@ -35,6 +35,8 @@ type Server struct {
 	auditLogger      audit.AuditLogger
 	authEnabled      bool
 	localAuthEnabled bool
+	needsSetup       bool
+	userStore        auth.UserStore
 }
 
 // NewServer creates a new HTTP server with the given dependencies.
@@ -50,6 +52,12 @@ func NewServer(mux *http.ServeMux, store storage.Store, logger observability.Log
 	}
 	return &Server{mux: mux, store: store, logger: logger, metrics: metrics, auditLogger: auditLogger}
 }
+
+// SetUserStore sets the user store for first-boot setup.
+func (s *Server) SetUserStore(us auth.UserStore) { s.userStore = us }
+
+// SetNeedsSetup marks the server as requiring first-boot admin setup.
+func (s *Server) SetNeedsSetup(v bool) { s.needsSetup = v }
 
 // NewServerWithSlog creates a new HTTP server with a raw *slog.Logger.
 // This is for backward compatibility with existing code.
@@ -140,6 +148,7 @@ func (s *Server) RegisterRoutes() {
 	// localAuthEnabled stays false — no auth enforcement in dev mode
 	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
+	s.mux.HandleFunc("/api/v1/auth/setup", s.handleSetup)
 	s.mux.HandleFunc("/readyz", s.handleReady)
 	// Metrics endpoint
 	if s.metrics != nil {
@@ -184,6 +193,7 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, sessionStore au
 	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/readyz", s.handleReady)
+	s.mux.HandleFunc("/api/v1/auth/setup", s.handleSetup)
 	if s.metrics != nil {
 		s.mux.Handle("/metrics", s.metrics.Handler())
 	}
