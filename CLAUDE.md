@@ -324,6 +324,10 @@ The HTTP server (`internal/http/server.go`) implements IPv4 CIDR logic:
 - Handles migration CLI commands before starting server
 - Implements graceful shutdown with signal handling
 
+## Nix Development Environment
+
+This project has a Nix flake (`flake.nix`). **Always use `nix develop`** to enter the dev shell before running commands (Go, Node, npm, npx, etc.). This ensures the correct toolchain versions are available. For running shell commands, prefix with `nix develop --command` or enter the shell first.
+
 ## Development Guidelines
 
 ### Code Style

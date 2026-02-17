@@ -5,6 +5,19 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - Configuration Section & User Menu
+
+### Changed
+- Sidebar nav restructured into labeled sections: IPAM, Operations, Planning, Configuration
+- Sidebar "Settings" section renamed to "Configuration"; routes updated from `/settings/*` to `/config/*`
+- Theme toggle moved from sidebar footer to header as a Sun/Moon icon button (simple light/dark toggle)
+- User info badge and logout button removed from sidebar footer (now handled by header dropdown)
+
+### Added
+- Header user dropdown menu: shows authenticated user info (username, role badge), with links to Profile, My API Keys, and Log out
+- Profile page (`/profile`): view user info (username, email, role) and change password
+- Log Destinations stub page (`/config/log-destinations`): placeholder for future syslog, webhook, S3, and SIEM integrations
+
 ## [0.4.1] - First-Boot Setup & Auth Bugfixes
 
 ### Added
