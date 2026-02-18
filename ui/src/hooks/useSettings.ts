@@ -9,6 +9,7 @@ export interface SecuritySettings {
   login_rate_limit_per_minute: number
   account_lockout_attempts: number
   trusted_proxies: string[]
+  local_auth_enabled: boolean
 }
 
 export function useSecuritySettings() {
