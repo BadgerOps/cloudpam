@@ -16,6 +16,8 @@ import ApiKeysPage from './pages/ApiKeysPage'
 import UsersPage from './pages/UsersPage'
 import RecommendationsPage from './pages/RecommendationsPage'
 import AIPlannerPage from './pages/AIPlannerPage'
+import ProfilePage from './pages/ProfilePage'
+import LogDestinationsPage from './pages/LogDestinationsPage'
 
 export default function App() {
   const toastState = useToastState()
@@ -39,8 +41,10 @@ export default function App() {
                 <Route path="schema" element={<SchemaPage />} />
                 <Route path="recommendations" element={<RecommendationsPage />} />
                 <Route path="ai-planner" element={<AIPlannerPage />} />
-                <Route path="settings/api-keys" element={<ApiKeysPage />} />
-                <Route path="settings/users" element={<UsersPage />} />
+                <Route path="profile" element={<ProfilePage />} />
+                <Route path="config/api-keys" element={<ApiKeysPage />} />
+                <Route path="config/users" element={<UsersPage />} />
+                <Route path="config/log-destinations" element={<LogDestinationsPage />} />
               </Route>
             </Route>
           </Routes>
