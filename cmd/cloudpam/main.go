@@ -232,6 +232,7 @@ func main() {
 		observability.MetricsMiddleware(metrics),
 		api.RequestIDMiddleware(),
 		api.LoggingMiddleware(logger.Slog()),
+		api.CSRFMiddleware(),
 		api.RateLimitMiddleware(rateCfg, logger.Slog()),
 	)
 	server := &http.Server{
