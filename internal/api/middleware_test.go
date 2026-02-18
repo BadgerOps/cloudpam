@@ -1721,6 +1721,122 @@ func TestIsTrusted_BadRemoteAddr(t *testing.T) {
 
 // Login rate limiting tests
 
+// DualAuth active-status tests
+
+func TestDualAuth_DeactivatedUserRejected(t *testing.T) {
+	keyStore := auth.NewMemoryKeyStore()
+	sessionStore := auth.NewMemorySessionStore()
+	userStore := auth.NewMemoryUserStore()
+	ctx := context.Background()
+
+	// Create an active user.
+	user := &auth.User{
+		ID:       "u-1",
+		Username: "testuser",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}
+	if err := userStore.Create(ctx, user); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	// Create a valid session.
+	session := &auth.Session{
+		ID:        "sess-1",
+		UserID:    user.ID,
+		Role:      auth.RoleAdmin,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+	if err := sessionStore.Create(ctx, session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	// Deactivate the user.
+	user.IsActive = false
+	if err := userStore.Update(ctx, user); err != nil {
+		t.Fatalf("failed to deactivate user: %v", err)
+	}
+
+	handler := DualAuthMiddleware(keyStore, sessionStore, userStore, true, newTestLogger())(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: session.ID})
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for deactivated user, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp apiError
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Error != "account disabled" {
+		t.Errorf("expected error 'account disabled', got %q", resp.Error)
+	}
+}
+
+func TestDualAuth_ActiveUserAllowed(t *testing.T) {
+	keyStore := auth.NewMemoryKeyStore()
+	sessionStore := auth.NewMemorySessionStore()
+	userStore := auth.NewMemoryUserStore()
+	ctx := context.Background()
+
+	// Create an active user.
+	user := &auth.User{
+		ID:       "u-2",
+		Username: "activeuser",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}
+	if err := userStore.Create(ctx, user); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	// Create a valid session.
+	session := &auth.Session{
+		ID:        "sess-2",
+		UserID:    user.ID,
+		Role:      auth.RoleAdmin,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+	if err := sessionStore.Create(ctx, session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	var handlerCalled bool
+	handler := DualAuthMiddleware(keyStore, sessionStore, userStore, true, newTestLogger())(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handlerCalled = true
+			// Verify user is in context.
+			u := auth.UserFromContext(r.Context())
+			if u == nil {
+				t.Error("expected user in context")
+			}
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/pools", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: session.ID})
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for active user, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !handlerCalled {
+		t.Error("handler should have been called for active user")
+	}
+}
+
 func TestLoginRateLimitMiddleware_AllowsBelowLimit(t *testing.T) {
 	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
 		AttemptsPerMinute: 5,
