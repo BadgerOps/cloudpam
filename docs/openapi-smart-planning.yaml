@@ -1,0 +1,2205 @@
+openapi: 3.1.0
+info:
+  title: CloudPAM Smart Planning API
+  description: |
+    Smart Planning and AI-assisted IP address management endpoints.
+
+    These endpoints provide intelligent network analysis, AI-powered planning conversations,
+    and LLM provider configuration for enhanced planning capabilities.
+
+  version: 1.0.0
+
+tags:
+  - name: Smart Planning
+    description: Analysis and recommendations for network optimization
+  - name: AI Planning
+    description: AI-assisted planning conversations and plan generation
+  - name: LLM Configuration
+    description: LLM provider settings and configuration
+
+# ============================================================
+# PATHS
+# ============================================================
+
+paths:
+  # ============================================================
+  # Discovery & Import
+  # ============================================================
+  /planning/import:
+    post:
+      tags: [Smart Planning]
+      summary: Import networks from file
+      description: |
+        Import networks from CSV, Excel, or JSON format.
+        Supports dry-run mode to preview imports before committing.
+      operationId: importNetworks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportRequest'
+      responses:
+        '200':
+          description: Import completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+        '400':
+          description: Invalid import format
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/discovered:
+    get:
+      tags: [Smart Planning]
+      summary: List discovered networks
+      description: |
+        Lists networks discovered from cloud providers and network scans.
+        Supports filtering by source, status, region, and environment.
+      operationId: listDiscoveredNetworks
+      parameters:
+        - name: source_type
+          in: query
+          description: Filter by discovery source
+          schema:
+            $ref: '#/components/schemas/DiscoverySource'
+        - name: status
+          in: query
+          description: Filter by discovery status
+          schema:
+            $ref: '#/components/schemas/DiscoveryStatus'
+        - name: region
+          in: query
+          description: Filter by region
+          schema:
+            type: string
+        - name: environment
+          in: query
+          description: Filter by environment
+          schema:
+            type: string
+        - name: search
+          in: query
+          description: Search by name or CIDR
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of discovered networks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveredNetworkList'
+
+  /planning/sync:
+    post:
+      tags: [Smart Planning]
+      summary: Trigger cloud sync
+      description: |
+        Triggers synchronization with connected cloud provider accounts
+        to discover new networks and update existing ones.
+      operationId: syncWithCloud
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  description: Specific accounts to sync (empty = all)
+      responses:
+        '202':
+          description: Sync operation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncOperation'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/reconcile:
+    get:
+      tags: [Smart Planning]
+      summary: Reconcile discovered vs managed
+      description: |
+        Compares discovered networks from cloud providers with managed pools
+        to identify unmanaged resources, missing pools, and conflicts.
+      operationId: reconcileNetworks
+      parameters:
+        - name: org_id
+          in: query
+          required: true
+          description: Organization ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Reconciliation report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationReport'
+
+  # ============================================================
+  # Analysis
+  # ============================================================
+  /planning/analyze:
+    post:
+      tags: [Smart Planning]
+      summary: Comprehensive network analysis
+      description: |
+        Performs a comprehensive analysis including gaps, fragmentation,
+        compliance, and growth projections.
+      operationId: analyzeNetwork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisScope'
+      responses:
+        '200':
+          description: Comprehensive analysis report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkAnalysisReport'
+        '400':
+          description: Invalid scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/analyze/gaps:
+    post:
+      tags: [Smart Planning]
+      summary: Gap analysis only
+      description: |
+        Identifies unused and available address space within allocated ranges.
+      operationId: analyzeGaps
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisScope'
+      responses:
+        '200':
+          description: Gap analysis results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GapAnalysis'
+
+  /planning/analyze/fragmentation:
+    post:
+      tags: [Smart Planning]
+      summary: Fragmentation analysis
+      description: |
+        Detects inefficient address space usage patterns including
+        scattered allocations, oversized blocks, and misalignment issues.
+      operationId: analyzeFragmentation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisScope'
+      responses:
+        '200':
+          description: Fragmentation analysis results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FragmentationAnalysis'
+
+  /planning/analyze/compliance:
+    post:
+      tags: [Smart Planning]
+      summary: Compliance check
+      description: |
+        Validates network configuration against compliance rules
+        and organizational policies.
+      operationId: checkCompliance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisScope'
+      responses:
+        '200':
+          description: Compliance report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceReport'
+
+  /planning/analyze/growth:
+    post:
+      tags: [Smart Planning]
+      summary: Growth projection
+      description: |
+        Projects future address space needs based on historical usage patterns
+        and growth trends.
+      operationId: projectGrowth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              allOf:
+                - $ref: '#/components/schemas/AnalysisScope'
+                - type: object
+                  properties:
+                    months:
+                      type: integer
+                      description: Number of months to project
+                      minimum: 1
+                      maximum: 60
+                      default: 12
+      responses:
+        '200':
+          description: Growth projection results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrowthProjection'
+
+  # ============================================================
+  # Recommendations
+  # ============================================================
+  /planning/recommendations:
+    get:
+      tags: [Smart Planning]
+      summary: Get recommendations
+      description: |
+        Returns generated recommendations for network optimization.
+        Results are cached and regenerated based on analysis changes.
+      operationId: getRecommendations
+      parameters:
+        - name: org_id
+          in: query
+          required: true
+          description: Organization ID
+          schema:
+            type: string
+            format: uuid
+        - name: type
+          in: query
+          description: Filter by recommendation type
+          schema:
+            $ref: '#/components/schemas/RecommendationType'
+        - name: priority
+          in: query
+          description: Minimum priority level (1-5)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+      responses:
+        '200':
+          description: List of recommendations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recommendations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Recommendation'
+                  generated_at:
+                    type: string
+                    format: date-time
+
+  /planning/recommendations/{id}/apply:
+    post:
+      tags: [Smart Planning]
+      summary: Apply recommendation
+      description: |
+        Executes a recommendation to modify network configuration.
+        May require confirmation based on recommendation type.
+      operationId: applyRecommendation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Recommendation ID
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm:
+                  type: boolean
+                  description: Confirm applying recommendation
+                  default: false
+      responses:
+        '200':
+          description: Recommendation applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  applied_actions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                        result:
+                          type: object
+        '400':
+          description: Cannot apply recommendation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/recommendations/{id}/dismiss:
+    post:
+      tags: [Smart Planning]
+      summary: Dismiss recommendation
+      description: |
+        Dismisses a recommendation from the active list.
+        Reasons are tracked for analysis purposes.
+      operationId: dismissRecommendation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Recommendation ID
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: Reason for dismissal
+                  enum:
+                    - not_applicable
+                    - already_implemented
+                    - too_risky
+                    - other
+      responses:
+        '204':
+          description: Recommendation dismissed
+
+  /planning/allocate/suggest:
+    post:
+      tags: [Smart Planning]
+      summary: Get allocation suggestions
+      description: |
+        Suggests optimal address space allocations based on requirements,
+        constraints, and network analysis.
+      operationId: suggestAllocations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AllocationRequest'
+      responses:
+        '200':
+          description: Allocation suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AllocationSuggestion'
+                  analysis_summary:
+                    type: object
+                    properties:
+                      total_candidates:
+                        type: integer
+                      filtering_criteria:
+                        type: array
+                        items:
+                          type: string
+
+  # ============================================================
+  # AI Planning Conversations
+  # ============================================================
+  /planning/ai/conversations:
+    post:
+      tags: [AI Planning]
+      summary: Create conversation
+      description: |
+        Starts a new AI planning conversation session with context
+        about the organization's network.
+      operationId: createConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organization_id, user_id]
+              properties:
+                organization_id:
+                  type: string
+                  format: uuid
+                user_id:
+                  type: string
+                  format: uuid
+                title:
+                  type: string
+                  description: Optional conversation title
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningConversation'
+
+    get:
+      tags: [AI Planning]
+      summary: List conversations
+      description: |
+        Lists planning conversations for the authenticated user.
+      operationId: listConversations
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          description: User ID
+          schema:
+            type: string
+            format: uuid
+        - name: org_id
+          in: query
+          description: Filter by organization
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversations:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PlanningConversation'
+                  total:
+                    type: integer
+
+  /planning/ai/conversations/{id}:
+    get:
+      tags: [AI Planning]
+      summary: Get conversation
+      description: |
+        Retrieves a specific planning conversation with all messages
+        and generated plans.
+      operationId: getConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Conversation details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningConversation'
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    patch:
+      tags: [AI Planning]
+      summary: Update conversation
+      description: |
+        Updates conversation metadata such as title.
+      operationId: updateConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: Updated conversation title
+      responses:
+        '200':
+          description: Conversation updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanningConversation'
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags: [AI Planning]
+      summary: Delete conversation
+      description: |
+        Archives or permanently deletes a planning conversation.
+        By default, conversations are archived and can be restored.
+      operationId: deleteConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+        - name: permanent
+          in: query
+          description: Permanently delete instead of archive
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '204':
+          description: Conversation deleted/archived
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/ai/conversations/{id}/messages:
+    get:
+      tags: [AI Planning]
+      summary: List messages
+      description: |
+        Lists messages in a conversation with pagination support.
+      operationId: listMessages
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+        - name: cursor
+          in: query
+          description: Pagination cursor
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConversationMessage'
+                  next_cursor:
+                    type: string
+                  has_more:
+                    type: boolean
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags: [AI Planning]
+      summary: Send message
+      description: |
+        Sends a message in the planning conversation and receives
+        AI analysis, suggestions, or plan generation.
+      operationId: sendMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: User message content
+                artifacts:
+                  type: array
+                  description: Optional file attachments
+                  items:
+                    $ref: '#/components/schemas/Artifact'
+      responses:
+        '200':
+          description: Message processed, response received
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationMessage'
+        '400':
+          description: Invalid message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/ai/conversations/{id}/plans:
+    get:
+      tags: [AI Planning]
+      summary: List plans
+      description: |
+        Lists all plans generated within a conversation.
+      operationId: listPlans
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of generated plans
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  plans:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GeneratedPlan'
+        '404':
+          description: Conversation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/ai/conversations/{id}/plans/{planId}:
+    get:
+      tags: [AI Planning]
+      summary: Get plan
+      description: |
+        Retrieves a specific generated plan with full details.
+      operationId: getPlan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+        - name: planId
+          in: path
+          required: true
+          description: Plan ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Plan details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneratedPlan'
+        '404':
+          description: Plan not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/ai/conversations/{id}/plans/{planId}/validate:
+    post:
+      tags: [AI Planning]
+      summary: Validate plan
+      description: |
+        Validates an AI-generated plan against current infrastructure
+        and compliance rules without applying it.
+      operationId: validatePlan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+        - name: planId
+          in: path
+          required: true
+          description: Plan ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  warnings:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        code:
+                          type: string
+                        message:
+                          type: string
+                        severity:
+                          type: string
+                          enum: [info, warning, error]
+                  conflicts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        pool_id:
+                          type: string
+                        cidr:
+                          type: string
+                        reason:
+                          type: string
+        '404':
+          description: Plan not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/ai/conversations/{id}/plans/{planId}/apply:
+    post:
+      tags: [AI Planning]
+      summary: Apply plan
+      description: |
+        Applies an AI-generated plan to create pools and network structure.
+        Requires confirmation for security-sensitive operations.
+      operationId: applyPlan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+        - name: planId
+          in: path
+          required: true
+          description: Plan ID
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm:
+                  type: boolean
+                  description: Confirm applying the plan
+                  default: false
+                dry_run:
+                  type: boolean
+                  description: Preview changes without applying
+                  default: false
+      responses:
+        '200':
+          description: Plan applied successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  pools_created:
+                    type: integer
+                  summary:
+                    type: string
+        '202':
+          description: Plan application in progress
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  operation_id:
+                    type: string
+                  status:
+                    type: string
+
+  /planning/ai/conversations/{id}/plans/{planId}/export:
+    get:
+      tags: [AI Planning]
+      summary: Export plan
+      description: |
+        Exports an AI-generated plan in various formats for use with
+        infrastructure-as-code tools or external systems.
+      operationId: exportPlan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+        - name: planId
+          in: path
+          required: true
+          description: Plan ID
+          schema:
+            type: string
+        - name: format
+          in: query
+          description: Export format
+          schema:
+            type: string
+            enum: [json, yaml, terraform, cloudformation, pulumi]
+            default: json
+      responses:
+        '200':
+          description: Plan exported
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  format:
+                    type: string
+                  content:
+                    type: string
+            application/x-yaml:
+              schema:
+                type: string
+            text/plain:
+              schema:
+                type: string
+
+  # ============================================================
+  # Schema Wizard
+  # ============================================================
+  /planning/schema/templates:
+    get:
+      tags: [Smart Planning]
+      summary: List templates
+      description: |
+        Lists available schema templates for common network configurations.
+      operationId: listSchemaTemplates
+      parameters:
+        - name: category
+          in: query
+          description: Filter by template category
+          schema:
+            type: string
+            enum: [aws, gcp, azure, hybrid, custom]
+      responses:
+        '200':
+          description: Available templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  templates:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SchemaTemplate'
+
+  /planning/schema/generate:
+    post:
+      tags: [Smart Planning]
+      summary: Generate schema
+      description: |
+        Generates a network schema based on wizard inputs and templates.
+      operationId: generateSchema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SchemaWizardInput'
+      responses:
+        '200':
+          description: Schema generated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GeneratedSchema'
+        '400':
+          description: Invalid wizard input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /planning/schema/validate:
+    post:
+      tags: [Smart Planning]
+      summary: Validate schema
+      description: |
+        Validates a generated schema for issues, overlaps, and compliance.
+      operationId: validateSchema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GeneratedSchema'
+      responses:
+        '200':
+          description: Validation results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  issues:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ValidationIssue'
+                  warnings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ValidationIssue'
+
+  /planning/schema/apply:
+    post:
+      tags: [Smart Planning]
+      summary: Apply schema
+      description: |
+        Creates pools and network structure from a validated schema.
+      operationId: applySchema
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [organization_id, schema]
+              properties:
+                organization_id:
+                  type: string
+                  format: uuid
+                schema:
+                  $ref: '#/components/schemas/GeneratedSchema'
+                dry_run:
+                  type: boolean
+                  description: Preview without creating
+                  default: false
+      responses:
+        '201':
+          description: Schema applied, pools created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_pools_created:
+                    type: integer
+                  root_pool_id:
+                    type: string
+                    format: uuid
+                  summary:
+                    type: string
+
+  # ============================================================
+  # LLM Configuration
+  # ============================================================
+  /settings/llm:
+    get:
+      tags: [LLM Configuration]
+      summary: Get LLM config
+      description: |
+        Retrieves the current LLM provider configuration.
+        Sensitive fields (API keys) are redacted.
+      operationId: getLLMConfig
+      responses:
+        '200':
+          description: LLM configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMConfig'
+
+    put:
+      tags: [LLM Configuration]
+      summary: Update LLM config
+      description: |
+        Updates LLM provider settings. API keys should be included
+        only if being changed.
+      operationId: updateLLMConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LLMConfigUpdate'
+      responses:
+        '200':
+          description: Configuration updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LLMConfig'
+        '400':
+          description: Invalid configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /settings/llm/test:
+    post:
+      tags: [LLM Configuration]
+      summary: Test LLM connection
+      description: |
+        Tests connectivity and authentication with the configured LLM provider.
+      operationId: testLLMConnection
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider:
+                  type: string
+                  description: Provider to test (uses current if not specified)
+      responses:
+        '200':
+          description: Connection successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  provider:
+                    type: string
+                  model:
+                    type: string
+                  message:
+                    type: string
+        '503':
+          description: Connection failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+
+  /settings/llm/prompts:
+    get:
+      tags: [LLM Configuration]
+      summary: Get prompt templates
+      description: |
+        Retrieves system prompt templates used for planning conversations.
+      operationId: getPromptTemplates
+      parameters:
+        - name: category
+          in: query
+          description: Filter by prompt category
+          schema:
+            type: string
+            enum: [planning, analysis, recommendations, general]
+      responses:
+        '200':
+          description: Prompt templates
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  prompts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PromptTemplate'
+
+  /settings/llm/prompts/{id}:
+    put:
+      tags: [LLM Configuration]
+      summary: Update prompt template
+      description: |
+        Updates a system prompt template for planning conversations.
+      operationId: updatePromptTemplate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Prompt template ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: Prompt template content with placeholders
+                active:
+                  type: boolean
+                  description: Enable this template
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptTemplate'
+        '400':
+          description: Invalid prompt template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+# ============================================================
+# COMPONENTS
+# ============================================================
+
+components:
+  schemas:
+    # ============================================================
+    # Shared/Common Schemas
+    # ============================================================
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+
+    Timestamp:
+      type: string
+      format: date-time
+
+    # ============================================================
+    # Discovery Types
+    # ============================================================
+    DiscoverySource:
+      type: string
+      enum: [aws, gcp, azure, scan, import, manual]
+
+    DiscoveryStatus:
+      type: string
+      enum: [active, stale, deleted]
+
+    DiscoveredNetwork:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_type:
+          $ref: '#/components/schemas/DiscoverySource'
+        source_id:
+          type: string
+        cidr:
+          type: string
+        name:
+          type: string
+        region:
+          type: string
+        environment:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        attributes:
+          type: object
+          additionalProperties: true
+        discovered_at:
+          $ref: '#/components/schemas/Timestamp'
+        last_seen_at:
+          $ref: '#/components/schemas/Timestamp'
+        status:
+          $ref: '#/components/schemas/DiscoveryStatus'
+
+    DiscoveredNetworkList:
+      type: object
+      properties:
+        networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveredNetwork'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    DiscoveredHost:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        network_id:
+          type: string
+          format: uuid
+        ip_address:
+          type: string
+        hostname:
+          type: string
+        mac_address:
+          type: string
+        resource_type:
+          type: string
+        resource_id:
+          type: string
+        discovered_at:
+          $ref: '#/components/schemas/Timestamp'
+        last_seen_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    ImportRequest:
+      type: object
+      required: [format, data]
+      properties:
+        format:
+          type: string
+          enum: [csv, excel, json]
+          description: Import file format
+        data:
+          type: string
+          format: base64
+          description: Base64-encoded file content
+        column_map:
+          type: object
+          description: Map of column indices to field names
+          additionalProperties:
+            type: string
+        default_tags:
+          type: object
+          description: Default tags to apply to imported networks
+          additionalProperties:
+            type: string
+        dry_run:
+          type: boolean
+          description: Preview import without committing
+          default: false
+
+    ImportError:
+      type: object
+      properties:
+        row:
+          type: integer
+        column:
+          type: string
+        value:
+          type: string
+        message:
+          type: string
+
+    ImportResult:
+      type: object
+      properties:
+        total_rows:
+          type: integer
+        imported:
+          type: integer
+        skipped:
+          type: integer
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportError'
+        networks:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveredNetwork'
+
+    SyncOperation:
+      type: object
+      properties:
+        operation_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, in_progress, completed, failed]
+        started_at:
+          $ref: '#/components/schemas/Timestamp'
+        account_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    ReconciliationReport:
+      type: object
+      properties:
+        matched:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatchedNetwork'
+        unmanaged:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiscoveredNetwork'
+        missing_pool_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/NetworkConflict'
+
+    MatchedNetwork:
+      type: object
+      properties:
+        discovered:
+          $ref: '#/components/schemas/DiscoveredNetwork'
+        pool_id:
+          type: string
+          format: uuid
+        pool_name:
+          type: string
+
+    NetworkConflict:
+      type: object
+      properties:
+        type:
+          type: string
+        discovered_cidr:
+          type: string
+        managed_cidr:
+          type: string
+        pool_id:
+          type: string
+          format: uuid
+        description:
+          type: string
+
+    # ============================================================
+    # Analysis Types
+    # ============================================================
+    AnalysisScope:
+      type: object
+      required: [organization_id]
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        pool_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Specific pools to analyze, or empty for all
+        cidr:
+          type: string
+          description: Specific CIDR range to analyze
+        include_children:
+          type: boolean
+          description: Include child pools in analysis
+          default: true
+
+    GapAnalysis:
+      type: object
+      properties:
+        parent_cidr:
+          type: string
+        allocated_blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllocatedBlock'
+        available_blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableBlock'
+        total_addresses:
+          type: integer
+          format: int64
+        used_addresses:
+          type: integer
+          format: int64
+        utilization_percent:
+          type: number
+          format: double
+
+    AllocatedBlock:
+      type: object
+      properties:
+        cidr:
+          type: string
+        name:
+          type: string
+        pool_id:
+          type: string
+          format: uuid
+        utilization_percent:
+          type: number
+          format: double
+
+    AvailableBlock:
+      type: object
+      properties:
+        cidr:
+          type: string
+        address_count:
+          type: integer
+          format: int64
+        recommended_use:
+          type: string
+
+    FragmentationType:
+      type: string
+      enum: [scattered, oversized, undersized, misaligned]
+
+    FragmentationIssue:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/FragmentationType'
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        cidr:
+          type: string
+        pool_id:
+          type: string
+          format: uuid
+        description:
+          type: string
+        impact:
+          type: string
+
+    FragmentationAnalysis:
+      type: object
+      properties:
+        scope:
+          type: string
+        fragmentation_score:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/FragmentationIssue'
+        recommendations:
+          type: array
+          items:
+            type: string
+
+    ComplianceViolation:
+      type: object
+      properties:
+        rule_id:
+          type: string
+        rule_name:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        category:
+          type: string
+        cidr:
+          type: string
+        pool_id:
+          type: string
+          format: uuid
+        message:
+          type: string
+        remediation:
+          type: string
+
+    ComplianceReport:
+      type: object
+      properties:
+        total_checks:
+          type: integer
+        passed:
+          type: integer
+        failed:
+          type: integer
+        warnings:
+          type: integer
+        violations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComplianceViolation'
+
+    ProjectionPoint:
+      type: object
+      properties:
+        date:
+          $ref: '#/components/schemas/Timestamp'
+        projected_usage:
+          type: integer
+          format: int64
+        utilization_percent:
+          type: number
+          format: double
+
+    GrowthProjection:
+      type: object
+      properties:
+        scope:
+          type: string
+        current_usage:
+          type: integer
+          format: int64
+        projected_usage:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectionPoint'
+        exhaustion_date:
+          $ref: '#/components/schemas/Timestamp'
+        confidence_percent:
+          type: number
+          format: double
+        assumptions:
+          type: array
+          items:
+            type: string
+
+    AnalysisSummary:
+      type: object
+      properties:
+        total_networks:
+          type: integer
+        total_addresses:
+          type: integer
+          format: int64
+        used_addresses:
+          type: integer
+          format: int64
+        available_addresses:
+          type: integer
+          format: int64
+        overall_utilization_percent:
+          type: number
+          format: double
+        health_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        critical_issues:
+          type: integer
+        warnings:
+          type: integer
+
+    NetworkAnalysisReport:
+      type: object
+      properties:
+        generated_at:
+          $ref: '#/components/schemas/Timestamp'
+        scope:
+          $ref: '#/components/schemas/AnalysisScope'
+        summary:
+          $ref: '#/components/schemas/AnalysisSummary'
+        gap_analysis:
+          $ref: '#/components/schemas/GapAnalysis'
+        fragmentation:
+          $ref: '#/components/schemas/FragmentationAnalysis'
+        compliance:
+          $ref: '#/components/schemas/ComplianceReport'
+        growth_projection:
+          $ref: '#/components/schemas/GrowthProjection'
+        recommendations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Recommendation'
+
+    # ============================================================
+    # Recommendation Types
+    # ============================================================
+    RecommendationType:
+      type: string
+      enum: [schema_template, allocation, consolidation, resize, reclaim, compliance]
+
+    RecommendedAction:
+      type: object
+      properties:
+        type:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+        preview:
+          type: string
+
+    Recommendation:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          $ref: '#/components/schemas/RecommendationType'
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 5
+        title:
+          type: string
+        description:
+          type: string
+        rationale:
+          type: string
+        impact:
+          type: string
+        effort:
+          type: string
+          enum: [low, medium, high]
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecommendedAction'
+        auto_applicable:
+          type: boolean
+
+    Constraint:
+      type: object
+      properties:
+        type:
+          type: string
+        parameters:
+          type: object
+          additionalProperties: true
+
+    AllocationRequest:
+      type: object
+      required: [organization_id, purpose]
+      properties:
+        organization_id:
+          type: string
+          format: uuid
+        parent_pool_id:
+          type: string
+          format: uuid
+        purpose:
+          type: string
+        required_size:
+          type: integer
+        min_hosts:
+          type: integer
+        preferred_region:
+          type: string
+        environment:
+          type: string
+        constraints:
+          type: array
+          items:
+            $ref: '#/components/schemas/Constraint'
+        growth_factor:
+          type: number
+          format: double
+
+    AllocationSuggestion:
+      type: object
+      properties:
+        cidr:
+          type: string
+        score:
+          type: number
+          format: double
+        rationale:
+          type: array
+          items:
+            type: string
+        tradeoffs:
+          type: array
+          items:
+            type: string
+        alternatives:
+          type: array
+          items:
+            type: string
+
+    # ============================================================
+    # AI Planning Types
+    # ============================================================
+    Artifact:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [diagram, code, data, other]
+        name:
+          type: string
+        content:
+          type: string
+
+    ConversationMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+        timestamp:
+          $ref: '#/components/schemas/Timestamp'
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Artifact'
+
+    PoolSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        cidr:
+          type: string
+        environment:
+          type: string
+        region:
+          type: string
+        utilization_percent:
+          type: number
+          format: double
+        child_count:
+          type: integer
+
+    AllocationHistory:
+      type: object
+      properties:
+        cidr:
+          type: string
+        purpose:
+          type: string
+        allocated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    ComplianceRuleDef:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        category:
+          type: string
+        message:
+          type: string
+
+    PlanningContext:
+      type: object
+      properties:
+        existing_pools:
+          type: array
+          items:
+            $ref: '#/components/schemas/PoolSummary'
+        available_space:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableBlock'
+        recent_allocations:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllocationHistory'
+        compliance_rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComplianceRuleDef'
+        organization_pattern:
+          type: string
+
+    PoolSpec:
+      type: object
+      required: [name, cidr]
+      properties:
+        name:
+          type: string
+        cidr:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        tags:
+          type: object
+          additionalProperties:
+            type: string
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/PoolSpec'
+
+    GeneratedPlan:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        pools:
+          type: array
+          items:
+            $ref: '#/components/schemas/PoolSpec'
+        visualization:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    PlanningConversation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        organization_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          description: User-defined conversation title
+        status:
+          type: string
+          enum: [active, archived, deleted]
+          description: Conversation status
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationMessage'
+        context:
+          $ref: '#/components/schemas/PlanningContext'
+        generated_plans:
+          type: array
+          items:
+            $ref: '#/components/schemas/GeneratedPlan'
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+    # ============================================================
+    # Schema Wizard Types
+    # ============================================================
+    TemplateParam:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        required:
+          type: boolean
+        default:
+          nullable: true
+        options:
+          type: array
+          items:
+            type: string
+
+    SchemaTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        parameters:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateParam'
+        preview:
+          type: string
+
+    SchemaWizardInput:
+      type: object
+      required: [regions, environments, total_space_needed]
+      properties:
+        regions:
+          type: array
+          items:
+            type: string
+        environments:
+          type: array
+          items:
+            type: string
+        total_space_needed:
+          type: string
+        vpcs_per_region:
+          type: integer
+          default: 3
+        subnets_per_vpc:
+          type: integer
+          default: 4
+        hosts_per_subnet:
+          type: integer
+          default: 254
+        hierarchy_style:
+          type: string
+          enum: [flat, nested, regional, functional]
+          default: regional
+        growth_headroom:
+          type: number
+          format: double
+          description: Headroom multiplier for growth (e.g., 1.5 = 50% headroom)
+          default: 1.5
+        existing_networks:
+          type: array
+          items:
+            type: string
+        avoid_overlap:
+          type: boolean
+          default: true
+
+    GeneratedSchema:
+      type: object
+      properties:
+        root_pool:
+          $ref: '#/components/schemas/PoolSpec'
+        total_pools:
+          type: integer
+        total_addresses:
+          type: integer
+          format: int64
+        visualization:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
+
+    ValidationIssue:
+      type: object
+      properties:
+        severity:
+          type: string
+          enum: [info, warning, error]
+        path:
+          type: string
+        message:
+          type: string
+        suggestion:
+          type: string
+
+    # ============================================================
+    # LLM Configuration Types
+    # ============================================================
+    LLMConfig:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, azure, ollama, vllm, custom]
+        api_key:
+          type: string
+          description: API key (redacted in responses)
+        endpoint:
+          type: string
+          description: Custom endpoint URL
+        model:
+          type: string
+          description: Model identifier
+        deployment:
+          type: string
+          description: Azure deployment name
+        max_tokens:
+          type: integer
+          default: 2000
+        temperature:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 2
+          default: 0.7
+
+    LLMConfigUpdate:
+      type: object
+      properties:
+        provider:
+          type: string
+          enum: [openai, anthropic, azure, ollama, vllm, custom]
+        api_key:
+          type: string
+          description: Only required if changing provider or keys
+        endpoint:
+          type: string
+        model:
+          type: string
+        deployment:
+          type: string
+        max_tokens:
+          type: integer
+        temperature:
+          type: number
+          format: double
+
+    PromptTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        content:
+          type: string
+        description:
+          type: string
+        active:
+          type: boolean
+        placeholders:
+          type: array
+          items:
+            type: string
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+
+  # ============================================================
+  # Security Schemes
+  # ============================================================
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key

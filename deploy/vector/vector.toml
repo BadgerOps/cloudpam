@@ -1,0 +1,338 @@
+# CloudPAM Vector Configuration
+#
+# This configuration collects logs from CloudPAM and ships them to multiple
+# destinations. Enable destinations by setting the appropriate environment
+# variables.
+#
+# Documentation: https://vector.dev/docs/
+
+# =============================================================================
+# Global Settings
+# =============================================================================
+
+data_dir = "/var/lib/vector"
+
+# =============================================================================
+# Sources - Collect logs from CloudPAM
+# =============================================================================
+
+# Application logs (JSON structured)
+[sources.app_logs]
+type = "file"
+include = ["/var/log/cloudpam/app.log"]
+read_from = "beginning"
+fingerprint.strategy = "device_and_inode"
+max_line_bytes = 102400
+
+# Audit logs (separate stream for compliance)
+[sources.audit_logs]
+type = "file"
+include = ["/var/log/cloudpam/audit.log"]
+read_from = "beginning"
+fingerprint.strategy = "device_and_inode"
+max_line_bytes = 102400
+
+# HTTP access logs
+[sources.access_logs]
+type = "file"
+include = ["/var/log/cloudpam/access.log"]
+read_from = "beginning"
+fingerprint.strategy = "device_and_inode"
+
+# =============================================================================
+# Transforms - Parse and enrich logs
+# =============================================================================
+
+# Parse JSON application logs
+[transforms.parse_app_logs]
+type = "remap"
+inputs = ["app_logs"]
+source = '''
+# Parse JSON
+. = parse_json!(.message)
+
+# Add source identifier
+.log_source = "cloudpam"
+.log_type = "application"
+
+# Add Kubernetes metadata if available
+.kubernetes.pod_name = get_env_var("POD_NAME") ?? "unknown"
+.kubernetes.namespace = get_env_var("POD_NAMESPACE") ?? "default"
+.kubernetes.node_name = get_env_var("NODE_NAME") ?? "unknown"
+
+# Normalize timestamp
+if exists(.timestamp) {
+  .@timestamp = .timestamp
+  del(.timestamp)
+}
+
+# Add processing timestamp
+.vector_processed_at = now()
+'''
+
+# Parse JSON audit logs
+[transforms.parse_audit_logs]
+type = "remap"
+inputs = ["audit_logs"]
+source = '''
+# Parse JSON
+. = parse_json!(.message)
+
+# Mark as audit log
+.log_source = "cloudpam"
+.log_type = "audit"
+
+# Add Kubernetes metadata
+.kubernetes.pod_name = get_env_var("POD_NAME") ?? "unknown"
+.kubernetes.namespace = get_env_var("POD_NAMESPACE") ?? "default"
+
+# Normalize timestamp
+if exists(.timestamp) {
+  .@timestamp = .timestamp
+  del(.timestamp)
+}
+
+# Add processing timestamp
+.vector_processed_at = now()
+'''
+
+# Parse access logs (combined log format)
+[transforms.parse_access_logs]
+type = "remap"
+inputs = ["access_logs"]
+source = '''
+# Parse common log format
+parsed, err = parse_apache_log(.message, "combined")
+if err == null {
+  . = parsed
+}
+
+# Add metadata
+.log_source = "cloudpam"
+.log_type = "access"
+.kubernetes.pod_name = get_env_var("POD_NAME") ?? "unknown"
+
+# Add processing timestamp
+.@timestamp = now()
+'''
+
+# Combine all parsed logs
+[transforms.all_logs]
+type = "remap"
+inputs = ["parse_app_logs", "parse_audit_logs", "parse_access_logs"]
+source = '''
+# Ensure consistent schema
+.service = "cloudpam"
+.environment = get_env_var("CLOUDPAM_ENV") ?? "development"
+'''
+
+# Filter for error logs only (for alerting)
+[transforms.error_logs]
+type = "filter"
+inputs = ["parse_app_logs"]
+condition = '.severity == "ERROR" || .level == "error"'
+
+# Filter audit logs for compliance stream
+[transforms.compliance_audit]
+type = "filter"
+inputs = ["parse_audit_logs"]
+condition = 'includes(["create", "update", "delete", "login", "logout"], .action) ?? false'
+
+# =============================================================================
+# Sinks - Ship logs to destinations
+# =============================================================================
+
+# Console output (development/debugging)
+[sinks.console]
+type = "console"
+inputs = ["all_logs"]
+target = "stdout"
+encoding.codec = "json"
+
+# -----------------------------------------------------------------------------
+# Syslog (Enterprise log aggregation)
+# Enable: Set SYSLOG_ADDRESS environment variable
+# -----------------------------------------------------------------------------
+[sinks.syslog]
+type = "socket"
+inputs = ["all_logs"]
+mode = "tcp"
+address = "${SYSLOG_ADDRESS:-127.0.0.1:514}"
+encoding.codec = "json"
+
+# Only enable if SYSLOG_ADDRESS is set
+[sinks.syslog.healthcheck]
+enabled = true
+
+# -----------------------------------------------------------------------------
+# Splunk (SIEM integration)
+# Enable: Set SPLUNK_HEC_URL and SPLUNK_HEC_TOKEN environment variables
+# -----------------------------------------------------------------------------
+[sinks.splunk]
+type = "splunk_hec_logs"
+inputs = ["all_logs"]
+endpoint = "${SPLUNK_HEC_URL:-http://localhost:8088}"
+token = "${SPLUNK_HEC_TOKEN:-}"
+host_key = "kubernetes.pod_name"
+index = "cloudpam"
+sourcetype = "_json"
+compression = "gzip"
+
+[sinks.splunk.encoding]
+codec = "json"
+
+[sinks.splunk.batch]
+max_bytes = 1048576
+max_events = 1000
+timeout_secs = 5
+
+[sinks.splunk.buffer]
+type = "memory"
+max_events = 10000
+when_full = "block"
+
+[sinks.splunk.request]
+retry_initial_backoff_secs = 1
+retry_max_duration_secs = 30
+rate_limit_num = 10
+
+# Splunk audit-specific index
+[sinks.splunk_audit]
+type = "splunk_hec_logs"
+inputs = ["compliance_audit"]
+endpoint = "${SPLUNK_HEC_URL:-http://localhost:8088}"
+token = "${SPLUNK_HEC_TOKEN:-}"
+index = "cloudpam_audit"
+sourcetype = "cloudpam:audit"
+compression = "gzip"
+
+[sinks.splunk_audit.encoding]
+codec = "json"
+
+# -----------------------------------------------------------------------------
+# AWS CloudWatch Logs
+# Enable: Set AWS_REGION environment variable
+# Authentication: IAM role or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY
+# -----------------------------------------------------------------------------
+[sinks.cloudwatch]
+type = "aws_cloudwatch_logs"
+inputs = ["all_logs"]
+group_name = "cloudpam"
+stream_name = "{{ kubernetes.pod_name }}"
+region = "${AWS_REGION:-us-east-1}"
+create_missing_group = true
+create_missing_stream = true
+
+[sinks.cloudwatch.encoding]
+codec = "json"
+
+[sinks.cloudwatch.batch]
+max_bytes = 1048576
+max_events = 1000
+timeout_secs = 5
+
+# CloudWatch audit stream
+[sinks.cloudwatch_audit]
+type = "aws_cloudwatch_logs"
+inputs = ["compliance_audit"]
+group_name = "cloudpam-audit"
+stream_name = "{{ kubernetes.pod_name }}"
+region = "${AWS_REGION:-us-east-1}"
+create_missing_group = true
+create_missing_stream = true
+
+[sinks.cloudwatch_audit.encoding]
+codec = "json"
+
+# -----------------------------------------------------------------------------
+# Google Cloud Logging
+# Enable: Set GCP_PROJECT_ID environment variable
+# Authentication: GCP service account (Workload Identity or key file)
+# -----------------------------------------------------------------------------
+[sinks.gcp_logging]
+type = "gcp_stackdriver_logs"
+inputs = ["all_logs"]
+project_id = "${GCP_PROJECT_ID:-}"
+log_id = "cloudpam"
+
+[sinks.gcp_logging.encoding]
+codec = "json"
+
+[sinks.gcp_logging.resource]
+type = "k8s_container"
+
+# GCP audit logging
+[sinks.gcp_audit]
+type = "gcp_stackdriver_logs"
+inputs = ["compliance_audit"]
+project_id = "${GCP_PROJECT_ID:-}"
+log_id = "cloudpam-audit"
+
+[sinks.gcp_audit.encoding]
+codec = "json"
+
+# -----------------------------------------------------------------------------
+# Datadog (SaaS observability)
+# Enable: Set DATADOG_API_KEY environment variable
+# -----------------------------------------------------------------------------
+[sinks.datadog]
+type = "datadog_logs"
+inputs = ["all_logs"]
+default_api_key = "${DATADOG_API_KEY:-}"
+site = "${DATADOG_SITE:-datadoghq.com}"
+
+[sinks.datadog.encoding]
+codec = "json"
+
+# -----------------------------------------------------------------------------
+# Elasticsearch (Self-hosted search)
+# Enable: Set ELASTICSEARCH_URL environment variable
+# -----------------------------------------------------------------------------
+[sinks.elasticsearch]
+type = "elasticsearch"
+inputs = ["all_logs"]
+endpoints = ["${ELASTICSEARCH_URL:-http://localhost:9200}"]
+bulk.index = "cloudpam-%Y.%m.%d"
+
+[sinks.elasticsearch.encoding]
+codec = "json"
+
+[sinks.elasticsearch.batch]
+max_bytes = 10485760
+max_events = 5000
+timeout_secs = 5
+
+# Elasticsearch audit index
+[sinks.elasticsearch_audit]
+type = "elasticsearch"
+inputs = ["compliance_audit"]
+endpoints = ["${ELASTICSEARCH_URL:-http://localhost:9200}"]
+bulk.index = "cloudpam-audit-%Y.%m.%d"
+
+[sinks.elasticsearch_audit.encoding]
+codec = "json"
+
+# -----------------------------------------------------------------------------
+# File output (backup/debugging)
+# -----------------------------------------------------------------------------
+[sinks.file_backup]
+type = "file"
+inputs = ["all_logs"]
+path = "/var/log/vector/cloudpam-%Y-%m-%d.log"
+compression = "gzip"
+
+[sinks.file_backup.encoding]
+codec = "json"
+
+# =============================================================================
+# Internal Metrics
+# =============================================================================
+
+# Expose Vector's internal metrics for Prometheus
+[sources.internal_metrics]
+type = "internal_metrics"
+
+[sinks.prometheus]
+type = "prometheus_exporter"
+inputs = ["internal_metrics"]
+address = "0.0.0.0:9598"

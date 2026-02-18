@@ -1,0 +1,236 @@
+# CloudPAM Vector DaemonSet
+#
+# Deploys Vector as a DaemonSet for node-level log collection.
+# Collects logs from all CloudPAM pods on each node.
+#
+# Apply: kubectl apply -f vector-daemonset.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudpam
+  labels:
+    app.kubernetes.io/name: cloudpam
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vector
+  namespace: cloudpam
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: log-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vector
+  labels:
+    app.kubernetes.io/name: vector
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vector
+  labels:
+    app.kubernetes.io/name: vector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vector
+subjects:
+  - kind: ServiceAccount
+    name: vector
+    namespace: cloudpam
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-config
+  namespace: cloudpam
+  labels:
+    app.kubernetes.io/name: vector
+data:
+  vector.toml: |
+    # Vector DaemonSet configuration for Kubernetes
+    data_dir = "/var/lib/vector"
+
+    # Collect container logs from the node
+    [sources.kubernetes_logs]
+    type = "kubernetes_logs"
+    self_node_name = "${VECTOR_SELF_NODE_NAME}"
+    exclude_paths_glob_patterns = ["**/vector-*/**"]
+
+    # Filter to only CloudPAM pods
+    [transforms.cloudpam_only]
+    type = "filter"
+    inputs = ["kubernetes_logs"]
+    condition = '.kubernetes.pod_namespace == "cloudpam"'
+
+    # Parse CloudPAM JSON logs
+    [transforms.parse_logs]
+    type = "remap"
+    inputs = ["cloudpam_only"]
+    source = '''
+    # Try to parse as JSON
+    parsed, err = parse_json(.message)
+    if err == null {
+      . = merge(., parsed)
+      del(.message)
+    }
+
+    # Add node info
+    .node = "${VECTOR_SELF_NODE_NAME}"
+    '''
+
+    # Console output (for debugging)
+    [sinks.console]
+    type = "console"
+    inputs = ["parse_logs"]
+    target = "stdout"
+    [sinks.console.encoding]
+    codec = "json"
+
+    # Prometheus metrics
+    [sources.internal_metrics]
+    type = "internal_metrics"
+
+    [sinks.prometheus]
+    type = "prometheus_exporter"
+    inputs = ["internal_metrics"]
+    address = "0.0.0.0:9598"
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: vector
+  namespace: cloudpam
+  labels:
+    app.kubernetes.io/name: vector
+    app.kubernetes.io/component: log-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vector
+      app.kubernetes.io/component: log-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vector
+        app.kubernetes.io/component: log-agent
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9598"
+    spec:
+      serviceAccountName: vector
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+        - effect: NoExecute
+          operator: Exists
+      containers:
+        - name: vector
+          image: timberio/vector:0.34.1-distroless-libc
+          args:
+            - --config-dir
+            - /etc/vector
+          env:
+            - name: VECTOR_SELF_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: VECTOR_LOG
+              value: "info"
+            # Add destination credentials from secrets
+            - name: SPLUNK_HEC_URL
+              valueFrom:
+                secretKeyRef:
+                  name: vector-secrets
+                  key: splunk-hec-url
+                  optional: true
+            - name: SPLUNK_HEC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vector-secrets
+                  key: splunk-hec-token
+                  optional: true
+            - name: AWS_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: vector-secrets
+                  key: aws-region
+                  optional: true
+            - name: GCP_PROJECT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vector-secrets
+                  key: gcp-project-id
+                  optional: true
+          ports:
+            - name: metrics
+              containerPort: 9598
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/vector
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/vector
+            - name: var-log
+              mountPath: /var/log
+              readOnly: true
+            - name: var-lib-docker
+              mountPath: /var/lib/docker
+              readOnly: true
+            - name: procfs
+              mountPath: /host/proc
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            readOnlyRootFilesystem: true
+      volumes:
+        - name: config
+          configMap:
+            name: vector-config
+        - name: data
+          hostPath:
+            path: /var/lib/vector
+            type: DirectoryOrCreate
+        - name: var-log
+          hostPath:
+            path: /var/log
+        - name: var-lib-docker
+          hostPath:
+            path: /var/lib/docker
+        - name: procfs
+          hostPath:
+            path: /proc
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vector-secrets
+  namespace: cloudpam
+  labels:
+    app.kubernetes.io/name: vector
+type: Opaque
+stringData:
+  # Configure these values for your environment
+  # splunk-hec-url: "https://splunk.example.com:8088"
+  # splunk-hec-token: "your-token-here"
+  # aws-region: "us-east-1"
+  # gcp-project-id: "your-project-id"
+  placeholder: "configure-me"

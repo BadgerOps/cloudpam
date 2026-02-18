@@ -1,0 +1,185 @@
+# CloudPAM Observability Stack - Docker Compose
+#
+# Local development stack for observability components.
+# Includes Prometheus, Grafana, Jaeger, and Vector.
+#
+# Usage:
+#   docker-compose -f deploy/docker-compose.observability.yml up -d
+#
+# Access:
+#   Prometheus: http://localhost:9090
+#   Grafana:    http://localhost:3000 (admin/admin)
+#   Jaeger:     http://localhost:16686
+#   Vector:     http://localhost:8686/health
+
+version: '3.9'
+
+services:
+  # ===========================================================================
+  # Prometheus - Metrics Collection
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: cloudpam-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # Grafana - Visualization & Dashboards
+  # ===========================================================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: cloudpam-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - observability
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # Jaeger - Distributed Tracing
+  # ===========================================================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: cloudpam-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - LOG_LEVEL=info
+    ports:
+      - "6831:6831/udp"   # Jaeger agent (Thrift compact)
+      - "6832:6832/udp"   # Jaeger agent (Thrift binary)
+      - "14250:14250"     # Jaeger collector (gRPC)
+      - "14268:14268"     # Jaeger collector (HTTP)
+      - "14269:14269"     # Admin/health port
+      - "4317:4317"       # OTLP gRPC
+      - "4318:4318"       # OTLP HTTP
+      - "16686:16686"     # Jaeger UI
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:14269/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # Vector - Log Aggregation & Shipping
+  # ===========================================================================
+  vector:
+    image: timberio/vector:0.34.1-debian
+    container_name: cloudpam-vector
+    command:
+      - --config-dir
+      - /etc/vector
+    environment:
+      - VECTOR_LOG=info
+      # Configure destinations (optional)
+      # - SPLUNK_HEC_URL=https://splunk.example.com:8088
+      # - SPLUNK_HEC_TOKEN=your-token
+      # - AWS_REGION=us-east-1
+      # - GCP_PROJECT_ID=your-project
+    ports:
+      - "8686:8686"       # Vector API
+      - "9598:9598"       # Prometheus metrics
+    volumes:
+      - ./vector:/etc/vector:ro
+      - vector-data:/var/lib/vector
+      - cloudpam-logs:/var/log/cloudpam:ro
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "vector", "top", "--interval", "1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # Loki - Log Aggregation (Alternative to Vector shipping)
+  # ===========================================================================
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: cloudpam-loki
+    command: -config.file=/etc/loki/loki-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    networks:
+      - observability
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ===========================================================================
+  # Promtail - Log Collector for Loki
+  # ===========================================================================
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: cloudpam-promtail
+    command: -config.file=/etc/promtail/promtail-config.yaml
+    volumes:
+      - ./promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      - cloudpam-logs:/var/log/cloudpam:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - observability
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+networks:
+  observability:
+    name: cloudpam-observability
+    driver: bridge
+
+volumes:
+  prometheus-data:
+    name: cloudpam-prometheus-data
+  grafana-data:
+    name: cloudpam-grafana-data
+  vector-data:
+    name: cloudpam-vector-data
+  loki-data:
+    name: cloudpam-loki-data
+  cloudpam-logs:
+    name: cloudpam-logs

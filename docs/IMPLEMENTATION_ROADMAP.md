@@ -33,16 +33,16 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Implement database abstraction layer supporting both PostgreSQL and SQLite
 
 **Deliverables**:
-- [ ] Git repository with proper structure
-- [ ] Docker Compose development environment
-- [ ] HTTP server running on port 8080
-- [ ] Database connection pool with support for both PostgreSQL and SQLite
-- [ ] Observability framework (see [OBSERVABILITY.md](OBSERVABILITY.md)):
-  - [ ] Structured logging with slog (JSON output)
-  - [ ] OpenTelemetry metrics (Prometheus export)
-  - [ ] Distributed tracing (Jaeger)
-  - [ ] Health check endpoints (`/health`, `/ready`)
-- [ ] Local observability stack (see [docker-compose.observability.yml](deploy/docker-compose.observability.yml))
+- [x] Git repository with proper structure
+- [x] Docker Compose development environment
+- [x] HTTP server running on port 8080
+- [x] Database connection pool with support for both PostgreSQL and SQLite
+- [x] Observability framework (see [OBSERVABILITY.md](OBSERVABILITY.md)):
+  - [x] Structured logging with slog (JSON output)
+  - [x] OpenTelemetry metrics (Prometheus export)
+  - [ ] Distributed tracing (Jaeger) — not yet implemented
+  - [x] Health check endpoints (`/healthz`, `/readyz`)
+- [ ] Local observability stack (see [docker-compose.observability.yml](deploy/docker-compose.observability.yml)) — config exists but not integrated
 
 **Success Criteria**:
 - Server starts cleanly and responds to `/health` endpoint
@@ -61,11 +61,11 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Build database abstraction layer
 
 **Deliverables**:
-- [ ] Complete schema migrations for PostgreSQL
-- [ ] Complete schema migrations for SQLite
-- [ ] Migration runner in Go
-- [ ] Database initialization scripts
-- [ ] Performance indexes on all key queries
+- [x] Complete schema migrations for PostgreSQL
+- [x] Complete schema migrations for SQLite
+- [x] Migration runner in Go
+- [x] Database initialization scripts
+- [x] Performance indexes on all key queries
 
 **Success Criteria**:
 - Migrations run without errors on both database types
@@ -84,13 +84,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Implement audit logging for auth events
 
 **Deliverables**:
-- [ ] OIDC provider configuration interface
-- [ ] Session store with encryption (AES-256-GCM)
-- [ ] API token generation and storage (Argon2id hashing)
-- [ ] Auth middleware stack
-- [ ] Permission validation middleware
-- [ ] User provisioning endpoints
-- [ ] Auth audit logging
+- [ ] OIDC provider configuration interface — not yet implemented (local auth only)
+- [x] Session store with encryption
+- [x] API token generation and storage (Argon2id hashing)
+- [x] Auth middleware stack
+- [x] Permission validation middleware
+- [x] User provisioning endpoints
+- [x] Auth audit logging
 
 **Success Criteria**:
 - Successfully authenticate via OIDC (test with Keycloak locally)
@@ -110,12 +110,12 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Add soft delete support
 
 **Deliverables**:
-- [ ] Pool repository with full CRUD operations
-- [ ] REST endpoints: `/api/v1/pools/*`
-- [ ] Hierarchical pool creation and navigation
-- [ ] Pool search and filtering
-- [ ] Request/response validation
-- [ ] Comprehensive error handling
+- [x] Pool repository with full CRUD operations
+- [x] REST endpoints: `/api/v1/pools/*`
+- [x] Hierarchical pool creation and navigation
+- [x] Pool search and filtering
+- [x] Request/response validation
+- [x] Comprehensive error handling
 
 **Success Criteria**:
 - Create root pool with CIDR
@@ -149,12 +149,12 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Implement health checks and connectivity testing
 
 **Deliverables**:
-- [ ] Cloud account entity and repository
-- [ ] OAuth2 flows for each cloud provider
-- [ ] Credential encryption/decryption system
-- [ ] Account management endpoints: `/api/v1/accounts/*`
-- [ ] Health check endpoints for connected accounts
-- [ ] Account listing with status
+- [x] Cloud account entity and repository
+- [ ] OAuth2 flows for each cloud provider — not yet implemented
+- [ ] Credential encryption/decryption system — not yet implemented
+- [x] Account management endpoints: `/api/v1/accounts/*`
+- [x] Health check endpoints for connected accounts
+- [x] Account listing with status
 
 **Success Criteria**:
 - Register AWS account with IAM role
@@ -175,13 +175,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Implement concurrent discovery with rate limiting
 
 **Deliverables**:
-- [ ] Collector interface and SDK
-- [ ] AWS collector (VPCs, subnets, ENIs, EIPs)
-- [ ] GCP collector (networks, subnetworks, IPs)
-- [ ] Azure collector (VNets, subnets, NICs)
-- [ ] Discovery resource storage
-- [ ] Collector registry and heartbeat
-- [ ] Rate limiting per collector
+- [x] Collector interface and SDK
+- [x] AWS collector (VPCs, subnets, EIPs) + AWS Organizations cross-account discovery
+- [ ] GCP collector (networks, subnetworks, IPs) — not yet implemented
+- [ ] Azure collector (VNets, subnets, NICs) — not yet implemented
+- [x] Discovery resource storage
+- [x] Collector registry and heartbeat
+- [x] Rate limiting per collector
 
 **Success Criteria**:
 - AWS collector discovers resources in test accounts
@@ -203,13 +203,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create sync job monitoring and retry logic
 
 **Deliverables**:
-- [ ] Sync job scheduler (configurable intervals)
-- [ ] Incremental sync engine
-- [ ] Resource reconciliation against existing pools
-- [ ] Conflict detection and reporting
-- [ ] Orphan resource detection
-- [ ] Sync job history and logging
-- [ ] Retry mechanism for failed syncs
+- [x] Sync job scheduler (on-demand via API)
+- [ ] Incremental sync engine — not yet implemented
+- [x] Resource reconciliation against existing pools
+- [x] Conflict detection and reporting
+- [ ] Orphan resource detection — not yet implemented
+- [x] Sync job history and logging
+- [ ] Retry mechanism for failed syncs — not yet implemented
 
 **Success Criteria**:
 - Automatic sync runs every 60 minutes (configurable)
@@ -230,12 +230,12 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create reconciliation workflow UI
 
 **Deliverables**:
-- [ ] Drift detection engine
-- [ ] Drift reporting endpoints
-- [ ] Reconciliation suggestions
-- [ ] Cloud account management UI
-- [ ] Sync status dashboard
-- [ ] Resource discovery browser
+- [ ] Drift detection engine — not yet implemented
+- [ ] Drift reporting endpoints — not yet implemented
+- [ ] Reconciliation suggestions — not yet implemented
+- [x] Cloud account management UI
+- [x] Sync status dashboard
+- [x] Resource discovery browser
 
 **Success Criteria**:
 - Drift detection identifies all conflicts
@@ -267,13 +267,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create caching for analysis results
 
 **Deliverables**:
-- [ ] Gap analysis service
-- [ ] Fragmentation scoring algorithm
-- [ ] Compliance rule evaluation
-- [ ] Utilization metrics calculation
-- [ ] Analysis report endpoints: `/api/v1/analysis/*`
-- [ ] Result caching with TTL
-- [ ] Batch analysis for multiple pools
+- [x] Gap analysis service
+- [x] Fragmentation scoring algorithm
+- [x] Compliance rule evaluation
+- [x] Utilization metrics calculation
+- [x] Analysis report endpoints: `/api/v1/analysis/*`
+- [ ] Result caching with TTL — not yet implemented
+- [x] Batch analysis for multiple pools
 
 **Success Criteria**:
 - Gap analysis identifies all unused address blocks
@@ -304,13 +304,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create recommendation scoring and ranking
 
 **Deliverables**:
-- [ ] Recommendation generation engine
-- [ ] Allocation suggestion algorithm
-- [ ] Consolidation detection
-- [ ] Compliance fix recommendations
-- [ ] Growth projections (3-12 months)
-- [ ] Recommendation ranking by impact
-- [ ] Auto-applicability detection
+- [x] Recommendation generation engine
+- [x] Allocation suggestion algorithm
+- [x] Consolidation detection
+- [x] Compliance fix recommendations
+- [ ] Growth projections (3-12 months) — not yet implemented
+- [x] Recommendation ranking by impact
+- [x] Auto-applicability detection (apply/dismiss workflow)
 
 **Success Criteria**:
 - Generates 5-20 recommendations per analysis
@@ -330,13 +330,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Implement schema visualization
 
 **Deliverables**:
-- [ ] Schema template entities and storage
-- [ ] Built-in templates: Regional, Hierarchical, Flat, Cloud-Native, Hybrid
-- [ ] Schema wizard form endpoints
-- [ ] Schema generation from parameters
-- [ ] Schema validation with detailed errors
-- [ ] ASCII art visualization of generated schema
-- [ ] Schema export (JSON, YAML, Terraform)
+- [x] Schema template entities and storage
+- [x] Built-in templates: Regional, Hierarchical, Flat, Cloud-Native, Hybrid
+- [x] Schema wizard form endpoints
+- [x] Schema generation from parameters
+- [x] Schema validation with detailed errors (conflict detection)
+- [ ] ASCII art visualization of generated schema — not implemented
+- [ ] Schema export (JSON, YAML, Terraform) — not implemented
 
 **Success Criteria**:
 - 5+ built-in templates available
@@ -357,13 +357,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Implement bulk update from imports
 
 **Deliverables**:
-- [ ] CSV import with header mapping wizard
-- [ ] Excel import (openpyxl or similar)
-- [ ] Data validation and preview before commit
-- [ ] Dry-run mode for all imports
-- [ ] JSON/YAML/Terraform export endpoints
-- [ ] Error reporting on failed imports
-- [ ] Import history and rollback
+- [x] CSV import for accounts and pools
+- [ ] Excel import — not implemented
+- [x] Data validation and preview before commit
+- [ ] Dry-run mode for all imports — not implemented
+- [x] CSV/ZIP export endpoint
+- [x] Error reporting on failed imports
+- [ ] Import history and rollback — not implemented
 
 **Success Criteria**:
 - Import 1000+ pools from CSV in < 10 seconds
@@ -396,13 +396,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Build context injection system
 
 **Deliverables**:
-- [ ] LLMProvider interface
-- [ ] OpenAI implementation
-- [ ] Anthropic Claude implementation
-- [ ] Azure OpenAI implementation
-- [ ] Ollama implementation
-- [ ] Provider selection and fallback
-- [ ] Configuration validation
+- [x] LLMProvider interface
+- [x] OpenAI implementation (supports any OpenAI-compatible endpoint)
+- [ ] Anthropic Claude implementation — not yet (uses OpenAI-compatible API)
+- [x] Azure OpenAI implementation (via endpoint override)
+- [x] Ollama implementation (via endpoint override)
+- [x] Provider selection and fallback
+- [x] Configuration validation
 
 **Success Criteria**:
 - Support all 5 LLM providers
@@ -422,13 +422,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create conversation export functionality
 
 **Deliverables**:
-- [ ] Conversation entity and repository
-- [ ] Message storage and retrieval
-- [ ] System prompt library
-- [ ] Context injection system
-- [ ] Streaming response handling
-- [ ] Conversation endpoints: `/api/v1/planning/conversations/*`
-- [ ] WebSocket support for real-time responses
+- [x] Conversation entity and repository
+- [x] Message storage and retrieval
+- [x] System prompt library (context-aware with pool/analysis data)
+- [x] Context injection system
+- [x] Streaming response handling (SSE)
+- [x] Conversation endpoints: `/api/v1/ai/sessions/*`
+- [ ] WebSocket support — used SSE streaming instead
 
 **Success Criteria**:
 - Maintain conversation history
@@ -448,13 +448,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create plan application workflow
 
 **Deliverables**:
-- [ ] LLM response parser
-- [ ] GeneratedPlan entity
-- [ ] Plan validation engine
-- [ ] What-if simulation
-- [ ] Risk assessment algorithm
-- [ ] Plan storage and retrieval
-- [ ] Plan application endpoints
+- [x] LLM response parser (plan extraction from markdown)
+- [x] GeneratedPlan entity
+- [x] Plan validation engine (via schema check)
+- [ ] What-if simulation — not yet implemented
+- [ ] Risk assessment algorithm — not yet implemented
+- [x] Plan storage and retrieval (within conversations)
+- [x] Plan application endpoints (`/api/v1/ai/sessions/{id}/apply-plan`)
 
 **Success Criteria**:
 - LLM generates valid pool specifications
@@ -474,13 +474,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create plan analytics and success tracking
 
 **Deliverables**:
-- [ ] Multi-turn conversation refinement
-- [ ] Plan comparison reports
-- [ ] Cost impact analysis
-- [ ] Growth headroom calculations
-- [ ] Fallback to rule-based recommendations
-- [ ] Plan success metrics tracking
-- [ ] Analytics endpoints
+- [x] Multi-turn conversation refinement
+- [ ] Plan comparison reports — not yet implemented
+- [ ] Cost impact analysis — not yet implemented
+- [ ] Growth headroom calculations — not yet implemented
+- [x] Fallback to rule-based recommendations (recommendation engine)
+- [ ] Plan success metrics tracking — not yet implemented
+- [ ] Analytics endpoints — not yet implemented
 
 **Success Criteria**:
 - Users can refine plans through conversation
@@ -513,13 +513,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create organization API key management
 
 **Deliverables**:
-- [ ] Organization entity enhancements
-- [ ] Row-level security policies (PostgreSQL)
-- [ ] Tenant isolation verification
-- [ ] Organization management UI/API
-- [ ] Settings storage per organization
-- [ ] Quota enforcement system
-- [ ] Organization billing hooks
+- [x] Organization entity enhancements (schema exists, `defaultOrgID` hardcoded)
+- [ ] Row-level security policies (PostgreSQL) — schema exists, not enforced
+- [ ] Tenant isolation verification — not yet implemented
+- [ ] Organization management UI/API — not yet implemented
+- [ ] Settings storage per organization — not yet implemented
+- [ ] Quota enforcement system — not yet implemented
+- [ ] Organization billing hooks — not yet implemented
 
 **Success Criteria**:
 - Complete data isolation between organizations
@@ -540,13 +540,13 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create device management
 
 **Deliverables**:
-- [ ] SSO configuration endpoints
-- [ ] Provider discovery implementation
-- [ ] Group to role mapping UI
-- [ ] Auto-user provisioning system
-- [ ] Session management endpoints
-- [ ] MFA enrollment and verification
-- [ ] Trusted device registration
+- [ ] SSO configuration endpoints — not yet implemented
+- [ ] Provider discovery implementation — not yet implemented
+- [ ] Group to role mapping UI — not yet implemented
+- [ ] Auto-user provisioning system — not yet implemented
+- [x] Session management endpoints (local sessions implemented)
+- [ ] MFA enrollment and verification — not yet implemented
+- [ ] Trusted device registration — not yet implemented
 
 **Success Criteria**:
 - SSO works with major IdPs (Okta, Azure AD, Google)
@@ -576,15 +576,15 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - [cloudpam-audit-log.html](cloudpam-audit-log.html) - UI mockup
 
 **Deliverables**:
-- [ ] Comprehensive audit logging for all mutations
-- [ ] Audit search endpoints with filtering (see openapi-observability.yaml)
-- [ ] Audit report generation (JSON, CSV, PDF)
-- [ ] Data retention configuration
-- [ ] Audit trail encryption at rest
-- [ ] Compliance report templates
-- [ ] Audit dashboard with analytics (see cloudpam-audit-log.html)
-- [ ] Vector sidecar deployment for log shipping
-- [ ] SIEM integration (Splunk, CloudWatch, Cloud Logging)
+- [x] Comprehensive audit logging for all mutations
+- [x] Audit search endpoints with filtering
+- [ ] Audit report generation (JSON, CSV, PDF) — not yet implemented
+- [ ] Data retention configuration — not yet implemented
+- [ ] Audit trail encryption at rest — not yet implemented
+- [ ] Compliance report templates — not yet implemented
+- [x] Audit dashboard with analytics (frontend AuditPage)
+- [ ] Vector sidecar deployment for log shipping — config exists in deploy/vector/
+- [ ] SIEM integration (Splunk, CloudWatch, Cloud Logging) — not yet implemented
 
 **Success Criteria**:
 - Every mutation logged with before/after state
@@ -606,14 +606,14 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Documentation and runbooks
 
 **Deliverables**:
-- [ ] Rate limiting middleware
-- [ ] Per-user rate limits
-- [ ] Per-API-key configurable limits
-- [ ] Usage dashboard
-- [ ] Cost tracking system
-- [ ] Security audit report
-- [ ] Complete API documentation
-- [ ] Operations runbooks
+- [x] Rate limiting middleware (per-IP token bucket)
+- [ ] Per-user rate limits — not yet implemented
+- [ ] Per-API-key configurable limits — not yet implemented
+- [ ] Usage dashboard — not yet implemented
+- [ ] Cost tracking system — not yet implemented
+- [ ] Security audit report — not yet implemented
+- [x] Complete API documentation (OpenAPI 3.1 spec)
+- [ ] Operations runbooks — not yet implemented
 
 **Success Criteria**:
 - Rate limits prevent abuse
@@ -1055,8 +1055,8 @@ After initial launch, consider these enhancements:
 
 ## Document Control
 
-- **Version**: 1.0
-- **Last Updated**: 2024-01-30
+- **Version**: 1.1
+- **Last Updated**: 2026-02-18
 - **Owner**: CloudPAM Product Team
-- **Status**: Approved for Implementation
+- **Status**: Phases 1-4 substantially complete; Phase 5 in progress
 

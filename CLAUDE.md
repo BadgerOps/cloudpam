@@ -64,8 +64,8 @@ Recent planning session produced these design documents:
 
 **OpenAPI Specifications**:
 - `docs/openapi.yaml` - Core IPAM API (current)
-- `.planning/openapi/openapi-smart-planning.yaml` - Smart Planning API (planned)
-- `.planning/openapi/openapi-observability.yaml` - Audit/observability API (planned)
+- `docs/openapi-smart-planning.yaml` - Smart Planning API (planned)
+- `docs/openapi-observability.yaml` - Audit/observability API (planned)
 
 ## Build System & Commands
 
@@ -646,11 +646,10 @@ cloudpam/
 │   │   └── member-role/        # Discovery role (member accounts)
 │   ├── cloudformation/         # CloudFormation templates
 │   │   └── discovery-role-stackset.yaml  # StackSet for org-wide member role
-│   ├── k8s/                # Kubernetes manifests
-│   │   ├── observability-stack.yaml
-│   │   └── vector-daemonset.yaml
+│   ├── docker/             # Docker build files
+│   ├── helm/               # Helm charts
+│   ├── k8s/                # Kubernetes manifests (observability stack)
 │   ├── vector/             # Vector log shipping config
-│   │   └── vector.toml
 │   └── docker-compose.observability.yml
 ├── ui/                     # Frontend (React/Vite/TypeScript SPA)
 │   ├── src/
@@ -669,8 +668,16 @@ cloudpam/
 │   └── dist/                 # Built frontend output (from ui/)
 ├── docs/                   # Documentation
 │   ├── openapi.yaml        # Core API spec
+│   ├── openapi-smart-planning.yaml  # Smart Planning API spec (planned)
+│   ├── openapi-observability.yaml   # Observability API spec (planned)
 │   ├── spec_embed.go
 │   ├── PROJECT_PLAN.md
+│   ├── IMPLEMENTATION_ROADMAP.md
+│   ├── REVIEW.md
+│   ├── DATABASE_SCHEMA.md
+│   ├── AUTH_FLOWS.md
+│   ├── SMART_PLANNING.md
+│   ├── OBSERVABILITY.md
 │   └── CHANGELOG.md
 ├── scripts/                # Utility scripts
 ├── photos/                 # Screenshots (Git LFS tracked)
@@ -678,15 +685,7 @@ cloudpam/
 ├── Justfile                # Task runner commands
 ├── .golangci.yml           # Linter configuration
 ├── go.mod / go.sum         # Go module files
-├── CLAUDE.md               # This file
-├── IMPLEMENTATION_ROADMAP.md  # 20-week implementation plan
-├── REVIEW.md               # Code review with prioritized issues
-├── DATABASE_SCHEMA.md      # Complete database schema
-├── AUTH_FLOWS.md           # Authentication architecture
-├── SMART_PLANNING.md       # Smart planning architecture
-├── OBSERVABILITY.md        # Observability architecture
-├── openapi-smart-planning.yaml   # Smart Planning API spec
-└── openapi-observability.yaml    # Observability API spec
+└── CLAUDE.md               # This file
 ```
 
 ## Roadmap Context
@@ -701,27 +700,25 @@ See `IMPLEMENTATION_ROADMAP.md` for the detailed 20-week plan. Summary:
 | **4: AI Planning** | 13-16 | LLM integration | Conversational planning, plan generation |
 | **5: Enterprise** | 17-20 | Production ready | Multi-tenancy, SSO, audit, rate limiting |
 
-### Immediate Next Steps (from REVIEW.md)
+### Remaining Work
 
-**Sprint 1 - Critical Fixes:**
-1. Add input validation package (`internal/validation/`)
-2. Migrate to structured logging with `slog`
-3. Add `/readyz` endpoint with database health check
-4. Implement rate limiting middleware
+**Phase 2 gaps (Cloud Integration):**
+- GCP discovery collector
+- Azure discovery collector
+- Drift detection (discovered vs managed state)
 
-**Sprint 2 - Observability:**
-5. Implement `internal/observability/` interfaces
-6. Add Prometheus metrics endpoint
-7. Add request ID middleware
-8. Increase test coverage to 65%+
+**Phase 5 (Enterprise):**
+- Multi-tenancy enforcement (schema exists, not enforced)
+- SSO/OIDC integration
+- Log shipping / SIEM integration
+- Per-org rate limiting and quotas
 
 ### Development Priorities
 
 When implementing new features, follow this order:
-1. **P0 issues** from REVIEW.md (critical bugs/gaps)
-2. **P1 issues** (production readiness)
-3. **Phase 1** roadmap items (foundation)
-4. **Phase 2+** features (cloud integration, planning)
+1. Open GitHub issues (check `gh issue list`)
+2. Phase 2 gaps (GCP/Azure discovery, drift detection)
+3. Phase 5 enterprise features (multi-tenancy, SSO)
 
 ## Additional Documentation
 
