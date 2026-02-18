@@ -149,6 +149,12 @@ func (s *PostgresUserStore) UpdateLastLogin(ctx context.Context, id string, t ti
 	return nil
 }
 
+func (s *PostgresUserStore) GetByOIDCIdentity(ctx context.Context, issuer, subject string) (*User, error) {
+	return s.scanUser(s.pool.QueryRow(ctx, `
+		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
+		FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2`, issuer, subject))
+}
+
 func (s *PostgresUserStore) scanUser(row pgx.Row) (*User, error) {
 	var u User
 	var role string

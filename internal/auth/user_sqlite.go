@@ -171,6 +171,13 @@ func (s *SQLiteUserStore) UpdateLastLogin(ctx context.Context, id string, t time
 	return nil
 }
 
+func (s *SQLiteUserStore) GetByOIDCIdentity(ctx context.Context, issuer, subject string) (*User, error) {
+	return s.scanUser(s.db.QueryRowContext(ctx, `
+		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
+		FROM users WHERE oidc_issuer = ? AND oidc_subject = ?
+	`, issuer, subject))
+}
+
 func (s *SQLiteUserStore) scanUser(row *sql.Row) (*User, error) {
 	var (
 		u                    User

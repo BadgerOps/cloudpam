@@ -30,6 +30,10 @@ type UserStore interface {
 
 	// UpdateLastLogin sets the last_login_at timestamp for a user.
 	UpdateLastLogin(ctx context.Context, id string, t time.Time) error
+
+	// GetByOIDCIdentity retrieves a user by OIDC issuer and subject.
+	// Returns nil, nil if not found.
+	GetByOIDCIdentity(ctx context.Context, issuer, subject string) (*User, error)
 }
 
 // MemoryUserStore is an in-memory implementation of UserStore.
@@ -156,6 +160,22 @@ func (s *MemoryUserStore) Delete(_ context.Context, id string) error {
 	delete(s.usernameIndex, user.Username)
 	delete(s.users, id)
 	return nil
+}
+
+func (s *MemoryUserStore) GetByOIDCIdentity(_ context.Context, issuer, subject string) (*User, error) {
+	if issuer == "" || subject == "" {
+		return nil, nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, u := range s.users {
+		if u.OIDCIssuer == issuer && u.OIDCSubject == subject {
+			return copyUser(u), nil
+		}
+	}
+	return nil, nil
 }
 
 func (s *MemoryUserStore) UpdateLastLogin(_ context.Context, id string, t time.Time) error {
