@@ -276,7 +276,7 @@ cloudpam/
 └── cmd/cloudpam-agent/      # Agent binary (no database, no HTTP server)
 ```
 
-Both binaries live in the same Go module. The agent imports `internal/domain` and `internal/discovery` but NOT `internal/storage`, `internal/http`, or `internal/auth`.
+Both binaries live in the same Go module. The agent imports `internal/domain` and `internal/discovery` but NOT `internal/storage`, `internal/api`, or `internal/auth`.
 
 ## Testing Strategy
 

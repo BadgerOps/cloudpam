@@ -5,6 +5,13 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - Rename internal/http to internal/api
+
+### Changed
+- Renamed `internal/http` package to `internal/api` to avoid shadowing Go's standard library `net/http` package (#42)
+- Updated all import aliases (`ih`, `cloudpamhttp`) to use the clean `api` package name directly
+- Updated all documentation references to reflect the new package path
+
 ## [0.6.0] - Soft-Deletes, Connection Pooling & Utilization Snapshots
 
 ### Added
@@ -462,7 +469,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed - Sprint 6: Code Quality & API Hardening
 
-- Raise `internal/http` test coverage from 60% to 80.6% (#67, #32, #33):
+- Raise `internal/api` test coverage from 60% to 80.6% (#67, #32, #33):
   - Added `import_test.go` — 20+ tests covering CSV import handlers, `writeStoreErr`, `NewServerWithSlog`, `handleTestSentry`, and force-delete paths
   - Added `protected_handlers_test.go` — 30+ tests exercising RBAC-protected pool, account, and auth handlers with admin and viewer API keys
   - Tests cover `protectedPoolsHandler`, `protectedPoolsSubroutesHandler`, `protectedAccountsHandler`, `protectedAccountsSubroutesHandler`, `protectedAPIKeysHandler`, `protectedAPIKeyByIDHandler`, `RegisterProtectedRoutes`, `RegisterProtectedAuthRoutes`, `AuthServer.handleAuditList`, and `parseInt`
@@ -476,7 +483,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `writeStoreErr()` helper in HTTP server for centralized error-to-status-code mapping
   - Renamed `errors` local variables to `errs` in export handlers to avoid shadowing the `errors` package
   - Added 9 new tests: sentinel error assertions for each error path, plus `WrapIfConflict` table-driven test
-- Split `internal/http/server.go` (2277 lines) into 7 focused handler files (#68):
+- Split `internal/api/server.go` (2277 lines) into 7 focused handler files (#68):
   - `server.go` (185 lines) — Server struct, constructors, route registration, helpers
   - `pool_handlers.go` (561 lines) — Pool CRUD, hierarchy, stats, RBAC handlers
   - `account_handlers.go` (287 lines) — Account CRUD and RBAC handlers
@@ -622,6 +629,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
+[0.6.1]: https://github.com/BadgerOps/cloudpam/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/BadgerOps/cloudpam/compare/v0.5.0...v0.6.0
 [Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.2...HEAD
 [0.3.2]: https://github.com/BadgerOps/cloudpam/compare/v0.3.1...v0.3.2

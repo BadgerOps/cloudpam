@@ -12,7 +12,7 @@ import (
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
-	cloudpamhttp "cloudpam/internal/http"
+	"cloudpam/internal/api"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
 )
@@ -26,7 +26,7 @@ type TestServerConfig struct {
 	// EnableRateLimit enables rate limiting middleware.
 	EnableRateLimit bool
 	// RateLimitConfig configures rate limiting if enabled.
-	RateLimitConfig cloudpamhttp.RateLimitConfig
+	RateLimitConfig api.RateLimitConfig
 	// EnableMetrics enables metrics collection.
 	EnableMetrics bool
 	// EnableAudit enables audit logging.
@@ -97,11 +97,11 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 
 	// Create the base server
 	mux := http.NewServeMux()
-	srv := cloudpamhttp.NewServer(mux, store, logger, metrics, auditLogger)
+	srv := api.NewServer(mux, store, logger, metrics, auditLogger)
 	srv.RegisterRoutes()
 
 	// Create auth server for key management endpoints
-	authSrv := cloudpamhttp.NewAuthServer(srv, keyStore, auditLogger)
+	authSrv := api.NewAuthServer(srv, keyStore, auditLogger)
 	authSrv.RegisterAuthRoutes()
 
 	// Build middleware chain
@@ -109,19 +109,19 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 
 	// Apply audit middleware if enabled
 	if cfg.EnableAudit && auditLogger != nil {
-		// Create an adapter that converts audit.MemoryAuditLogger to cloudpamhttp.AuditLogger
+		// Create an adapter that converts audit.MemoryAuditLogger to api.AuditLogger
 		adapter := &auditLoggerAdapter{logger: auditLogger}
-		handler = cloudpamhttp.AuditMiddleware(adapter, logger.Slog())(handler)
+		handler = api.AuditMiddleware(adapter, logger.Slog())(handler)
 	}
 
 	// Apply auth middleware if enabled
 	if cfg.EnableAuth {
-		handler = cloudpamhttp.AuthMiddleware(keyStore, cfg.RequireAuth, logger.Slog())(handler)
+		handler = api.AuthMiddleware(keyStore, cfg.RequireAuth, logger.Slog())(handler)
 	}
 
 	// Apply rate limiting if enabled
 	if cfg.EnableRateLimit {
-		handler = cloudpamhttp.RateLimitMiddleware(cfg.RateLimitConfig, logger.Slog())(handler)
+		handler = api.RateLimitMiddleware(cfg.RateLimitConfig, logger.Slog())(handler)
 	}
 
 	// Apply metrics middleware if enabled
@@ -130,10 +130,10 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 	}
 
 	// Apply request ID middleware
-	handler = cloudpamhttp.RequestIDMiddleware()(handler)
+	handler = api.RequestIDMiddleware()(handler)
 
 	// Apply logging middleware
-	handler = cloudpamhttp.LoggingMiddleware(logger.Slog())(handler)
+	handler = api.LoggingMiddleware(logger.Slog())(handler)
 
 	// Create test server
 	testServer := httptest.NewServer(handler)
@@ -154,17 +154,17 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 	}
 }
 
-// auditLoggerAdapter adapts audit.AuditLogger to cloudpamhttp.AuditLogger interface.
+// auditLoggerAdapter adapts audit.AuditLogger to api.AuditLogger interface.
 type auditLoggerAdapter struct {
 	logger audit.AuditLogger
 }
 
-func (a *auditLoggerAdapter) Log(ctx context.Context, event *cloudpamhttp.AuditEvent) error {
+func (a *auditLoggerAdapter) Log(ctx context.Context, event *api.AuditEvent) error {
 	if event == nil {
 		return nil
 	}
 
-	// Convert cloudpamhttp.AuditEvent to audit.AuditEvent
+	// Convert api.AuditEvent to audit.AuditEvent
 	auditEvent := &audit.AuditEvent{
 		ID:           event.ID,
 		Timestamp:    event.Timestamp,

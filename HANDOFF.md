@@ -130,7 +130,7 @@ b8b8b31 Phase 3: Deployment & packaging
 - `internal/storage/discovery.go` - Extended interface
 - `internal/storage/discovery_memory.go` - Agent + token storage
 - `internal/storage/sqlite/discovery.go` - Agent + token storage
-- `internal/http/discovery_handlers.go` - Agent handlers
+- `internal/api/discovery_handlers.go` - Agent handlers
 
 #### Agent Binary
 - `cmd/cloudpam-agent/main.go` - Entrypoint, scheduler
@@ -176,7 +176,7 @@ CLOUDPAM_BOOTSTRAP_TOKEN=boot_xxxxx  # Instead of CLOUDPAM_API_KEY
 Focus on getting the core backend working before UI/docs.
 
 1. **Implement registration endpoint** (Task #17)
-   - Create `internal/http/bootstrap_handlers.go`
+   - Create `internal/api/bootstrap_handlers.go`
    - Add handlers for token CRUD and agent registration
    - Wire up to routes with RBAC
 
@@ -305,7 +305,7 @@ Before starting:
 - [ ] Read `internal/discovery/bootstrap.go` for token logic
 
 First tasks:
-1. Create `internal/http/bootstrap_handlers.go`
+1. Create `internal/api/bootstrap_handlers.go`
 2. Implement token CRUD handlers
 3. Implement registration handler
 4. Wire up routes in `server.go`
