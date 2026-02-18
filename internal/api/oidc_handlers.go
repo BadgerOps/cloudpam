@@ -483,6 +483,19 @@ func (os *OIDCServer) handleOIDCCallback(w http.ResponseWriter, r *http.Request)
 	}
 
 	ctx := r.Context()
+	isIframe := r.Header.Get("Sec-Fetch-Dest") == "iframe"
+
+	// Check for error parameter from IdP (e.g., login_required for prompt=none).
+	if errParam := r.URL.Query().Get("error"); errParam != "" {
+		if isIframe {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body><script>window.parent.postMessage({type:"oidc-refresh",success:false,error:%q},"*");</script></body></html>`, errParam)
+			return
+		}
+		http.Redirect(w, r, "/?error="+errParam, http.StatusFound)
+		return
+	}
 
 	// Read and validate params.
 	code := r.URL.Query().Get("code")
@@ -656,6 +669,14 @@ func (os *OIDCServer) handleOIDCCallback(w http.ResponseWriter, r *http.Request)
 	})
 
 	os.logOIDCAudit(ctx, audit.ActionLogin, audit.ResourceSession, session.ID, user.Username, http.StatusOK)
+
+	// If this is an iframe-based silent re-auth, post a message to the parent window.
+	if isIframe {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, `<!DOCTYPE html><html><body><script>window.parent.postMessage({type:"oidc-refresh",success:true},"*");</script></body></html>`)
+		return
+	}
 
 	// Redirect to the frontend.
 	http.Redirect(w, r, "/", http.StatusFound)

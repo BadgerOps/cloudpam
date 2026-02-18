@@ -5,8 +5,10 @@ import Header from './Header'
 import SearchModal from './SearchModal'
 import ImportExportModal from './ImportExportModal'
 import ToastContainer from './ToastContainer'
+import { useSessionRefresh } from '../hooks/useSessionRefresh'
 
 export default function Layout() {
+  useSessionRefresh()
   const [searchOpen, setSearchOpen] = useState(false)
   const [importExportOpen, setImportExportOpen] = useState(false)
 

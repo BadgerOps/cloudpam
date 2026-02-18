@@ -333,19 +333,29 @@ func (us *UserServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	role := auth.GetEffectiveRole(ctx)
 
 	type meResponse struct {
-		AuthType string     `json:"auth_type"`
-		Role     auth.Role  `json:"role"`
-		User     *auth.User `json:"user,omitempty"`
-		KeyID    string     `json:"key_id,omitempty"`
-		KeyName  string     `json:"key_name,omitempty"`
+		AuthType         string     `json:"auth_type"`
+		Role             auth.Role  `json:"role"`
+		User             *auth.User `json:"user,omitempty"`
+		KeyID            string     `json:"key_id,omitempty"`
+		KeyName          string     `json:"key_name,omitempty"`
+		AuthProvider     string     `json:"auth_provider,omitempty"`
+		SessionExpiresAt string     `json:"session_expires_at,omitempty"`
 	}
 
 	if user := auth.UserFromContext(ctx); user != nil {
-		writeJSON(w, http.StatusOK, meResponse{
-			AuthType: "session",
-			Role:     role,
-			User:     user,
-		})
+		resp := meResponse{
+			AuthType:     "session",
+			Role:         role,
+			User:         user,
+			AuthProvider: user.AuthProvider,
+		}
+		if resp.AuthProvider == "" {
+			resp.AuthProvider = "local"
+		}
+		if session := auth.SessionFromContext(ctx); session != nil {
+			resp.SessionExpiresAt = session.ExpiresAt.Format(time.RFC3339)
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 
