@@ -5,6 +5,45 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - Auth Hardening Sprint 19
+
+### BREAKING
+- `CLOUDPAM_AUTH_ENABLED` env var removed — authentication is always enforced
+- First boot always shows setup wizard; use `CLOUDPAM_ADMIN_USERNAME`/`CLOUDPAM_ADMIN_PASSWORD` to auto-seed admin
+- Password minimum length increased from 8 to 12 characters
+- Bearer tokens without `cpam_` prefix no longer accepted as session auth
+
+### Added
+- Security settings API (`GET/PATCH /api/v1/settings/security`) with admin-only RBAC
+- Security settings UI page under Config > Security (session, password, login, network sections)
+- CSRF protection middleware (double-submit cookie pattern for session-authenticated requests)
+- Per-IP login rate limiting (5 attempts/minute default) on `/api/v1/auth/login`
+- Trusted proxy configuration via `CLOUDPAM_TRUSTED_PROXIES` env var
+- Configurable session duration and max concurrent sessions per user (default: 24h, 10 sessions)
+- `POST /api/v1/auth/users/{id}/revoke-sessions` endpoint (admin or self-service)
+- `ListByUserID` added to `SessionStore` interface (memory, SQLite, PostgreSQL)
+- `SettingsStore` interface with memory and SQLite implementations
+- Migration `0016_settings.sql` (settings table)
+- `ValidatePassword()` with configurable min (12) and max (72, bcrypt limit)
+- `RoleLevel()` helper for privilege comparison
+- Coming soon placeholders for Roles & Permissions and SSO/OIDC in settings UI
+
+### Fixed
+- API key scope elevation: callers can no longer create keys with higher privileges than their own role
+- Audit actor attribution: `logAudit()` extracts user/API key from auth context instead of hardcoding "anonymous"
+- Import routes (`/api/v1/import/accounts`, `/api/v1/import/pools`) now registered in protected mode
+- `X-Forwarded-For` no longer trusted blindly — only from configured trusted proxies
+
+### Removed
+- `RegisterRoutes()` (unprotected route variant)
+- Bearer-as-session-token auth path (Strategy 3 in `DualAuthMiddleware`)
+
+### Security
+- CSRF token validation on all session-authenticated state-changing requests
+- Login rate limiting prevents brute-force attacks
+- Session eviction enforces max concurrent sessions per user
+- Password max length enforced at 72 chars to prevent bcrypt truncation
+
 ## [0.6.1] - Rename internal/http to internal/api
 
 ### Changed
@@ -629,6 +668,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
+[0.7.0]: https://github.com/BadgerOps/cloudpam/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/BadgerOps/cloudpam/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/BadgerOps/cloudpam/compare/v0.5.0...v0.6.0
 [Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.2...HEAD
