@@ -9,6 +9,7 @@ type SecuritySettings struct {
 	LoginRateLimitPerMin   int      `json:"login_rate_limit_per_minute"`
 	AccountLockoutAttempts int      `json:"account_lockout_attempts"`
 	TrustedProxies         []string `json:"trusted_proxies"`
+	LocalAuthEnabled       bool     `json:"local_auth_enabled"`
 }
 
 // DefaultSecuritySettings returns safe defaults.
@@ -21,5 +22,6 @@ func DefaultSecuritySettings() SecuritySettings {
 		LoginRateLimitPerMin:   5,
 		AccountLockoutAttempts: 0,
 		TrustedProxies:         []string{},
+		LocalAuthEnabled:       true,
 	}
 }
