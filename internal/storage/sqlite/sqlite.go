@@ -11,6 +11,8 @@ import (
     "fmt"
     "net"
     "net/netip"
+    "os"
+    "strconv"
     "strings"
     "time"
 
@@ -25,11 +27,31 @@ type Store struct {
     db *sql.DB
 }
 
+// Connection pool defaults for SQLite.
+// Override via environment variables:
+//   - SQLITE_MAX_OPEN_CONNS (default: 1 — SQLite allows only one writer)
+//   - SQLITE_MAX_IDLE_CONNS (default: 2)
+//   - SQLITE_CONN_MAX_LIFETIME_SECS (default: 3600 — 1 hour)
+//   - SQLITE_CONN_MAX_IDLE_SECS (default: 600 — 10 minutes)
+const (
+    defaultMaxOpenConns     = 1
+    defaultMaxIdleConns     = 2
+    defaultConnMaxLifetime  = 3600 // seconds
+    defaultConnMaxIdleTime  = 600  // seconds
+)
+
 func New(dsn string) (*Store, error) {
     db, err := sql.Open("sqlite", dsn)
     if err != nil {
         return nil, err
     }
+
+    // Configure connection pool from env vars with sensible defaults.
+    db.SetMaxOpenConns(envIntOrDefault("SQLITE_MAX_OPEN_CONNS", defaultMaxOpenConns))
+    db.SetMaxIdleConns(envIntOrDefault("SQLITE_MAX_IDLE_CONNS", defaultMaxIdleConns))
+    db.SetConnMaxLifetime(time.Duration(envIntOrDefault("SQLITE_CONN_MAX_LIFETIME_SECS", defaultConnMaxLifetime)) * time.Second)
+    db.SetConnMaxIdleTime(time.Duration(envIntOrDefault("SQLITE_CONN_MAX_IDLE_SECS", defaultConnMaxIdleTime)) * time.Second)
+
     if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`); err != nil {
         _ = db.Close()
         return nil, err
@@ -43,6 +65,20 @@ func New(dsn string) (*Store, error) {
     var _appVersion, _appliedAt string
     _ = db.QueryRow(`SELECT schema_version, min_supported_schema, app_version, applied_at FROM schema_info WHERE id=1`).Scan(&_schemaVersion, &_minSupported, &_appVersion, &_appliedAt)
     return &Store{db: db}, nil
+}
+
+// envIntOrDefault reads an integer from the named environment variable,
+// falling back to def if unset or unparseable.
+func envIntOrDefault(name string, def int) int {
+    v := os.Getenv(name)
+    if v == "" {
+        return def
+    }
+    n, err := strconv.Atoi(v)
+    if err != nil {
+        return def
+    }
+    return n
 }
 
 // Status returns schema_migrations and schema_info summary for the given DSN without creating a Store.
@@ -73,7 +109,7 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
-    rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools ORDER BY id ASC`)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE deleted_at IS NULL ORDER BY id ASC`)
     if err != nil {
         return nil, err
     }
@@ -201,7 +237,7 @@ func (s *Store) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error
     var createdAt, updatedAt sql.NullString
     var parent, account sql.NullInt64
     var poolType, poolStatus, poolSource, description, tagsJSON sql.NullString
-    row := s.db.QueryRowContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE id=?`, id)
+    row := s.db.QueryRowContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE id=? AND deleted_at IS NULL`, id)
     if err := row.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &poolType, &poolStatus, &poolSource, &description, &tagsJSON, &createdAt, &updatedAt); err != nil {
         if errors.Is(err, sql.ErrNoRows) {
             return domain.Pool{}, false, nil
@@ -323,20 +359,21 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 }
 
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
-    // check children
+    // check children (only non-deleted)
     var cnt int
-    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=?`, id).Scan(&cnt); err != nil {
+    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
         return false, err
     }
     if cnt > 0 { return false, fmt.Errorf("pool has child pools: %w", storage.ErrConflict) }
-    res, err := s.db.ExecContext(ctx, `DELETE FROM pools WHERE id=?`, id)
+    now := time.Now().UTC().Format(time.RFC3339)
+    res, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
     if err != nil { return false, err }
     n, _ := res.RowsAffected()
     return n > 0, nil
 }
 
 func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
-    // Load all pools, compute subtree, delete
+    // Load all non-deleted pools, compute subtree, soft-delete
     ps, err := s.ListPools(ctx)
     if err != nil { return false, err }
     exists := false
@@ -356,9 +393,9 @@ func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
         order = append(order, cur)
         for _, ch := range children[cur] { queue = append(queue, ch) }
     }
-    // Delete leaves-first or any order since individual deletes are fine
-    for i := len(order)-1; i >=0; i-- {
-        _, err := s.db.ExecContext(ctx, `DELETE FROM pools WHERE id=?`, order[i])
+    now := time.Now().UTC().Format(time.RFC3339)
+    for _, pid := range order {
+        _, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, pid)
         if err != nil { return false, err }
     }
     return true, nil
@@ -366,7 +403,7 @@ func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
 
 // Accounts
 func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
-    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts ORDER BY id ASC`)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE deleted_at IS NULL ORDER BY id ASC`)
     if err != nil {
         return nil, err
     }
@@ -419,7 +456,7 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
 }
 
 func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {
-    row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=?`, id)
+    row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=? AND deleted_at IS NULL`, id)
     var a domain.Account
     var ts string
     var provider, extid, desc, platform, tier, env sql.NullString
@@ -446,7 +483,7 @@ func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool,
 }
 
 func (s *Store) GetAccountByKey(ctx context.Context, key string) (*domain.Account, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE key=?`, key)
+	row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE key=? AND deleted_at IS NULL`, key)
 	var a domain.Account
 	var ts string
 	var provider, extid, desc, platform, tier, env sql.NullString
@@ -475,8 +512,8 @@ func (s *Store) GetAccountByKey(ctx context.Context, key string) (*domain.Accoun
 }
 
 func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
-    // Fetch current
-    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=?`, id)
+    // Fetch current (non-deleted)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=? AND deleted_at IS NULL`, id)
     if err != nil { return domain.Account{}, false, err }
     defer rows.Close()
     if !rows.Next() { return domain.Account{}, false, nil }
@@ -514,21 +551,22 @@ func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Accou
 
 func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
     var cnt int
-    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=?`, id).Scan(&cnt); err != nil { return false, err }
+    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil { return false, err }
     if cnt > 0 { return false, fmt.Errorf("account in use by pools: %w", storage.ErrConflict) }
-    res, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id)
+    now := time.Now().UTC().Format(time.RFC3339)
+    res, err := s.db.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
     if err != nil { return false, err }
     n, _ := res.RowsAffected()
     return n > 0, nil
 }
 
 func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
-    // Delete all pools referencing this account, including their descendants, then delete account
+    // Soft-delete all pools referencing this account, including their descendants, then soft-delete account
     ps, err := s.ListPools(ctx)
     if err != nil { return false, err }
-    // Check account exists
+    // Check account exists (non-deleted)
     var accCnt int
-    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM accounts WHERE id=?`, id).Scan(&accCnt); err != nil { return false, err }
+    if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM accounts WHERE id=? AND deleted_at IS NULL`, id).Scan(&accCnt); err != nil { return false, err }
     if accCnt == 0 { return false, nil }
     // Build adjacency
     children := map[int64][]int64{}
@@ -538,7 +576,7 @@ func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error
     // Collect roots: pools with account_id = id
     roots := []int64{}
     for _, p := range ps { if p.AccountID != nil && *p.AccountID == id { roots = append(roots, p.ID) } }
-    // Collect all to delete
+    // Collect all to soft-delete
     toDel := map[int64]struct{}{}
     var dfs func(int64)
     dfs = func(n int64){
@@ -547,10 +585,11 @@ func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error
         for _, ch := range children[n] { dfs(ch) }
     }
     for _, r := range roots { dfs(r) }
-    // Delete pools
-    for pid := range toDel { if _, err := s.db.ExecContext(ctx, `DELETE FROM pools WHERE id=?`, pid); err != nil { return false, err } }
-    // Delete account
-    if _, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id); err != nil { return false, err }
+    // Soft-delete pools
+    now := time.Now().UTC().Format(time.RFC3339)
+    for pid := range toDel { if _, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, pid); err != nil { return false, err } }
+    // Soft-delete account
+    if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id); err != nil { return false, err }
     return true, nil
 }
 
@@ -653,7 +692,7 @@ func (s *Store) GetPoolChildren(ctx context.Context, parentID int64) ([]domain.P
         return nil, fmt.Errorf("parent pool not found: %w", storage.ErrNotFound)
     }
 
-    rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE parent_id=? ORDER BY id ASC`, parentID)
+    rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE parent_id=? AND deleted_at IS NULL ORDER BY id ASC`, parentID)
     if err != nil {
         return nil, err
     }
@@ -743,8 +782,8 @@ func (s *Store) calculatePoolStats(ctx context.Context, p domain.Pool) (*domain.
         }
     }
 
-    // Get direct children
-    rows, err := s.db.QueryContext(ctx, `SELECT cidr FROM pools WHERE parent_id=?`, p.ID)
+    // Get direct children (non-deleted)
+    rows, err := s.db.QueryContext(ctx, `SELECT cidr FROM pools WHERE parent_id=? AND deleted_at IS NULL`, p.ID)
     if err != nil {
         return nil, err
     }
@@ -777,7 +816,7 @@ func (s *Store) calculatePoolStats(ctx context.Context, p domain.Pool) (*domain.
     var countDescendants func(parentID int64) (int, error)
     countDescendants = func(parentID int64) (int, error) {
         var count int
-        childRows, err := s.db.QueryContext(ctx, `SELECT id FROM pools WHERE parent_id=?`, parentID)
+        childRows, err := s.db.QueryContext(ctx, `SELECT id FROM pools WHERE parent_id=? AND deleted_at IS NULL`, parentID)
         if err != nil {
             return 0, err
         }
@@ -867,11 +906,11 @@ func (s *Store) Search(ctx context.Context, req domain.SearchRequest) (domain.Se
         if query != "" {
             like := "%" + query + "%"
             poolRows, err = s.db.QueryContext(ctx,
-                `SELECT id, name, cidr, parent_id, account_id, type, status, source, description FROM pools WHERE name LIKE ? OR cidr LIKE ? OR description LIKE ? ORDER BY id`,
+                `SELECT id, name, cidr, parent_id, account_id, type, status, source, description FROM pools WHERE deleted_at IS NULL AND (name LIKE ? OR cidr LIKE ? OR description LIKE ?) ORDER BY id`,
                 like, like, like)
         } else {
             poolRows, err = s.db.QueryContext(ctx,
-                `SELECT id, name, cidr, parent_id, account_id, type, status, source, description FROM pools ORDER BY id`)
+                `SELECT id, name, cidr, parent_id, account_id, type, status, source, description FROM pools WHERE deleted_at IS NULL ORDER BY id`)
         }
         if err != nil {
             return domain.SearchResponse{}, err
@@ -938,11 +977,11 @@ func (s *Store) Search(ctx context.Context, req domain.SearchRequest) (domain.Se
         if query != "" {
             like := "%" + query + "%"
             accRows, err = s.db.QueryContext(ctx,
-                `SELECT id, key, name, provider, description FROM accounts WHERE name LIKE ? OR key LIKE ? OR description LIKE ? ORDER BY id`,
+                `SELECT id, key, name, provider, description FROM accounts WHERE deleted_at IS NULL AND (name LIKE ? OR key LIKE ? OR description LIKE ?) ORDER BY id`,
                 like, like, like)
         } else {
             accRows, err = s.db.QueryContext(ctx,
-                `SELECT id, key, name, provider, description FROM accounts ORDER BY id`)
+                `SELECT id, key, name, provider, description FROM accounts WHERE deleted_at IS NULL ORDER BY id`)
         }
         if err != nil {
             return domain.SearchResponse{}, err

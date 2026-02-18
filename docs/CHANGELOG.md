@@ -5,6 +5,24 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - Soft-Deletes, Connection Pooling & Utilization Snapshots
+
+### Added
+- Soft-delete support for pools and accounts — records are marked with `deleted_at` instead of being permanently removed, enabling future restore/audit capabilities (#18)
+- SQLite connection pool configuration via environment variables: `SQLITE_MAX_OPEN_CONNS`, `SQLITE_MAX_IDLE_CONNS`, `SQLITE_CONN_MAX_LIFETIME_SECS`, `SQLITE_CONN_MAX_IDLE_SECS` (#71)
+- Utilization snapshot table (`utilization_snapshots`) for tracking pool usage over time, enabling growth projections and capacity planning (#117)
+- `UtilizationStore` interface with in-memory and SQLite implementations (`RecordSnapshot`, `ListSnapshots`, `LatestSnapshot`)
+- `UtilizationSnapshot` domain type capturing pool utilization at a point in time
+- SQLite migrations: `0014_soft_deletes.sql` (adds `deleted_at` column + indexes), `0015_utilization_snapshots.sql` (snapshot table)
+
+### Changed
+- All pool and account queries now filter on `deleted_at IS NULL` across MemoryStore, SQLite, and PostgreSQL backends
+- Delete operations (`DeletePool`, `DeleteAccount`, `DeletePoolCascade`, `DeleteAccountCascade`) now perform soft-deletes (SET `deleted_at`) instead of hard deletes
+- Search queries filter out soft-deleted records in all storage backends
+
+### Noted
+- Test coverage is at 53.4% overall — below the 80% target tracked in #67; coverage improvement deferred to a dedicated sprint
+
 ## [0.5.0] - Configuration Section & User Menu
 
 ### Changed
@@ -604,6 +622,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
+[0.6.0]: https://github.com/BadgerOps/cloudpam/compare/v0.5.0...v0.6.0
 [Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.3.2...HEAD
 [0.3.2]: https://github.com/BadgerOps/cloudpam/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/BadgerOps/cloudpam/compare/v0.3.0...v0.3.1

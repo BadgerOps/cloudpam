@@ -98,6 +98,7 @@ type Pool struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
+	DeletedAt   *time.Time        `json:"deleted_at,omitempty"`
 }
 
 // PoolStats contains computed statistics for a pool.
@@ -143,18 +144,19 @@ type UpdatePool struct {
 // Account represents a cloud account or project to which pools can be assigned.
 // It uses a generic shape to support AWS accounts, GCP projects, etc.
 type Account struct {
-	ID          int64     `json:"id"`
-	Key         string    `json:"key"` // unique key like "aws:123456789012" or "gcp:my-project"
-	Name        string    `json:"name"`
-	Provider    string    `json:"provider,omitempty"`
-	ExternalID  string    `json:"external_id,omitempty"`
-	Description string    `json:"description,omitempty"`
-	Platform    string    `json:"platform,omitempty"`
-	Tier        string    `json:"tier,omitempty"`
-	Environment string    `json:"environment,omitempty"`
-	Regions     []string  `json:"regions,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          int64      `json:"id"`
+	Key         string     `json:"key"` // unique key like "aws:123456789012" or "gcp:my-project"
+	Name        string     `json:"name"`
+	Provider    string     `json:"provider,omitempty"`
+	ExternalID  string     `json:"external_id,omitempty"`
+	Description string     `json:"description,omitempty"`
+	Platform    string     `json:"platform,omitempty"`
+	Tier        string     `json:"tier,omitempty"`
+	Environment string     `json:"environment,omitempty"`
+	Regions     []string   `json:"regions,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 }
 
 // CreateAccount is the input for creating an account.
@@ -168,4 +170,17 @@ type CreateAccount struct {
 	Tier        string   `json:"tier,omitempty"`
 	Environment string   `json:"environment,omitempty"`
 	Regions     []string `json:"regions,omitempty"`
+}
+
+// UtilizationSnapshot captures pool utilization at a point in time
+// for historical tracking and growth projections.
+type UtilizationSnapshot struct {
+	ID           int64     `json:"id"`
+	PoolID       int64     `json:"pool_id"`
+	TotalIPs     int64     `json:"total_ips"`
+	UsedIPs      int64     `json:"used_ips"`
+	AvailableIPs int64     `json:"available_ips"`
+	Utilization  float64   `json:"utilization"` // 0-100 percentage
+	ChildCount   int       `json:"child_count"`
+	CapturedAt   time.Time `json:"captured_at"`
 }
