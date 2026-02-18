@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"net/http"
 	"os"
@@ -188,6 +190,13 @@ func main() {
 	settingsSrv := api.NewSettingsServer(srv, settingsStore)
 	logger.Info("settings subsystem initialized")
 
+	// OIDC subsystem
+	oidcStore := storage.NewMemoryOIDCProviderStore()
+	oidcEncKey := parseOIDCEncryptionKey(logger)
+	oidcCallbackURL := os.Getenv("CLOUDPAM_OIDC_CALLBACK_URL")
+	oidcSrv := api.NewOIDCServer(srv, oidcStore, sessionStore, userStore, settingsStore, oidcEncKey, oidcCallbackURL)
+	logger.Info("oidc subsystem initialized")
+
 	// Auth is always enabled — register protected routes with RBAC.
 	srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
 	authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
@@ -204,6 +213,9 @@ func main() {
 	recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
 	aiSrv.RegisterProtectedAIPlanningRoutes(dualMW, logger.Slog())
 	settingsSrv.RegisterProtectedSettingsRoutes(dualMW, logger.Slog())
+	oidcSrv.RegisterOIDCRoutes(logger.Slog())
+	oidcSrv.RegisterOIDCAdminRoutes(dualMW, logger.Slog())
+	userSrv.SetSettingsStore(settingsStore)
 
 	if len(existingUsers) == 0 {
 		logger.Info("first-boot setup required", "hint", "visit the UI to create an admin account")
@@ -336,6 +348,33 @@ func bootstrapAdmin(logger observability.Logger, userStore auth.UserStore, usern
 		return
 	}
 	logger.Info("bootstrap admin user created", "username", username)
+}
+
+// parseOIDCEncryptionKey reads a hex-encoded AES-256 key from CLOUDPAM_OIDC_ENCRYPTION_KEY
+// environment variable. If not set, generates a random key (warning: won't survive restarts).
+func parseOIDCEncryptionKey(logger observability.Logger) []byte {
+	hexKey := os.Getenv("CLOUDPAM_OIDC_ENCRYPTION_KEY")
+	if hexKey != "" {
+		key, err := hex.DecodeString(hexKey)
+		if err != nil {
+			logger.Error("invalid CLOUDPAM_OIDC_ENCRYPTION_KEY (must be hex-encoded)", "error", err)
+			os.Exit(1)
+		}
+		if len(key) != 32 {
+			logger.Error("CLOUDPAM_OIDC_ENCRYPTION_KEY must be 32 bytes (64 hex chars)", "length", len(key))
+			os.Exit(1)
+		}
+		return key
+	}
+
+	// Auto-generate key — logs a warning
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		logger.Error("failed to generate OIDC encryption key", "error", err)
+		os.Exit(1)
+	}
+	logger.Warn("CLOUDPAM_OIDC_ENCRYPTION_KEY not set — using auto-generated key (OIDC provider secrets won't survive restarts)")
+	return key
 }
 
 // runMigrationsCLI executes migration commands.
