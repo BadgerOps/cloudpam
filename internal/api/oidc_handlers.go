@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -63,9 +64,335 @@ func (os *OIDCServer) RegisterOIDCRoutes(_ *slog.Logger) {
 	os.mux.HandleFunc("/api/v1/auth/oidc/providers", os.handleListPublicProviders)
 }
 
-// RegisterOIDCAdminRoutes registers admin OIDC management routes (stub for Task 10).
-func (os *OIDCServer) RegisterOIDCAdminRoutes(_ *slog.Logger) {
-	// Admin routes will be implemented in Task 10.
+// RegisterOIDCAdminRoutes registers admin OIDC management routes with RBAC.
+func (os *OIDCServer) RegisterOIDCAdminRoutes(dualMW func(http.Handler) http.Handler, slogger *slog.Logger) {
+	adminRead := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionRead, slogger)
+	adminWrite := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionWrite, slogger)
+
+	os.mux.Handle("GET /api/v1/settings/oidc/providers",
+		dualMW(adminRead(http.HandlerFunc(os.handleAdminListProviders))))
+	os.mux.Handle("POST /api/v1/settings/oidc/providers",
+		dualMW(adminWrite(http.HandlerFunc(os.handleAdminCreateProvider))))
+	os.mux.Handle("GET /api/v1/settings/oidc/providers/{id}",
+		dualMW(adminRead(http.HandlerFunc(os.handleAdminGetProvider))))
+	os.mux.Handle("PATCH /api/v1/settings/oidc/providers/{id}",
+		dualMW(adminWrite(http.HandlerFunc(os.handleAdminUpdateProvider))))
+	os.mux.Handle("DELETE /api/v1/settings/oidc/providers/{id}",
+		dualMW(adminWrite(http.HandlerFunc(os.handleAdminDeleteProvider))))
+	os.mux.Handle("POST /api/v1/settings/oidc/providers/{id}/test",
+		dualMW(adminWrite(http.HandlerFunc(os.handleAdminTestProvider))))
+}
+
+// RegisterOIDCAdminRoutesNoAuth registers admin OIDC routes without auth middleware (for tests).
+func (os *OIDCServer) RegisterOIDCAdminRoutesNoAuth() {
+	os.mux.HandleFunc("GET /api/v1/settings/oidc/providers", os.handleAdminListProviders)
+	os.mux.HandleFunc("POST /api/v1/settings/oidc/providers", os.handleAdminCreateProvider)
+	os.mux.HandleFunc("GET /api/v1/settings/oidc/providers/{id}", os.handleAdminGetProvider)
+	os.mux.HandleFunc("PATCH /api/v1/settings/oidc/providers/{id}", os.handleAdminUpdateProvider)
+	os.mux.HandleFunc("DELETE /api/v1/settings/oidc/providers/{id}", os.handleAdminDeleteProvider)
+	os.mux.HandleFunc("POST /api/v1/settings/oidc/providers/{id}/test", os.handleAdminTestProvider)
+}
+
+// handleAdminListProviders returns all OIDC providers with secrets masked.
+// GET /api/v1/settings/oidc/providers
+func (os *OIDCServer) handleAdminListProviders(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	providers, err := os.oidcStore.ListProviders(ctx)
+	if err != nil {
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to list providers", err.Error())
+		return
+	}
+
+	for _, p := range providers {
+		p.ClientSecretMasked = "****"
+	}
+
+	writeJSON(w, http.StatusOK, struct {
+		Providers []*domain.OIDCProvider `json:"providers"`
+	}{Providers: providers})
+}
+
+// handleAdminCreateProvider creates a new OIDC provider configuration.
+// POST /api/v1/settings/oidc/providers
+func (os *OIDCServer) handleAdminCreateProvider(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var input struct {
+		Name          string            `json:"name"`
+		IssuerURL     string            `json:"issuer_url"`
+		ClientID      string            `json:"client_id"`
+		ClientSecret  string            `json:"client_secret"`
+		Scopes        string            `json:"scopes"`
+		RoleMapping   map[string]string `json:"role_mapping"`
+		DefaultRole   string            `json:"default_role"`
+		AutoProvision bool              `json:"auto_provision"`
+		Enabled       bool              `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		os.writeErr(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	// Validate required fields.
+	if input.Name == "" {
+		os.writeErr(ctx, w, http.StatusBadRequest, "name is required", "")
+		return
+	}
+	if input.IssuerURL == "" {
+		os.writeErr(ctx, w, http.StatusBadRequest, "issuer_url is required", "")
+		return
+	}
+	if input.ClientID == "" {
+		os.writeErr(ctx, w, http.StatusBadRequest, "client_id is required", "")
+		return
+	}
+	if input.ClientSecret == "" {
+		os.writeErr(ctx, w, http.StatusBadRequest, "client_secret is required", "")
+		return
+	}
+
+	// Encrypt client secret.
+	encSecret, err := oidc.Encrypt(input.ClientSecret, os.encryptionKey)
+	if err != nil {
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to encrypt client secret", err.Error())
+		return
+	}
+
+	now := time.Now().UTC()
+	provider := &domain.OIDCProvider{
+		ID:                    uuid.New().String(),
+		Name:                  input.Name,
+		IssuerURL:             input.IssuerURL,
+		ClientID:              input.ClientID,
+		ClientSecretEncrypted: encSecret,
+		Scopes:                input.Scopes,
+		RoleMapping:           input.RoleMapping,
+		DefaultRole:           input.DefaultRole,
+		AutoProvision:         input.AutoProvision,
+		Enabled:               input.Enabled,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
+
+	if err := os.oidcStore.CreateProvider(ctx, provider); err != nil {
+		if errors.Is(err, storage.ErrDuplicateIssuer) {
+			os.writeErr(ctx, w, http.StatusConflict, "provider with this issuer URL already exists", "")
+			return
+		}
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to create provider", err.Error())
+		return
+	}
+
+	// Invalidate any cached provider with this ID.
+	os.providerCache.Delete(provider.ID)
+
+	os.logOIDCAudit(ctx, "create", "oidc_provider", provider.ID, provider.Name, http.StatusCreated)
+
+	provider.ClientSecretMasked = "****"
+	writeJSON(w, http.StatusCreated, provider)
+}
+
+// handleAdminGetProvider returns a single OIDC provider with secret masked.
+// GET /api/v1/settings/oidc/providers/{id}
+func (os *OIDCServer) handleAdminGetProvider(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	provider, err := os.oidcStore.GetProvider(ctx, id)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			os.writeErr(ctx, w, http.StatusNotFound, "provider not found", "")
+			return
+		}
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to get provider", err.Error())
+		return
+	}
+
+	provider.ClientSecretMasked = "****"
+	writeJSON(w, http.StatusOK, provider)
+}
+
+// handleAdminUpdateProvider partially updates an OIDC provider.
+// PATCH /api/v1/settings/oidc/providers/{id}
+func (os *OIDCServer) handleAdminUpdateProvider(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	provider, err := os.oidcStore.GetProvider(ctx, id)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			os.writeErr(ctx, w, http.StatusNotFound, "provider not found", "")
+			return
+		}
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to get provider", err.Error())
+		return
+	}
+
+	// Decode partial update.
+	var input map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		os.writeErr(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	if v, ok := input["name"]; ok {
+		var name string
+		if err := json.Unmarshal(v, &name); err == nil {
+			provider.Name = name
+		}
+	}
+	if v, ok := input["issuer_url"]; ok {
+		var issuerURL string
+		if err := json.Unmarshal(v, &issuerURL); err == nil {
+			provider.IssuerURL = issuerURL
+		}
+	}
+	if v, ok := input["client_id"]; ok {
+		var clientID string
+		if err := json.Unmarshal(v, &clientID); err == nil {
+			provider.ClientID = clientID
+		}
+	}
+	if v, ok := input["client_secret"]; ok {
+		var clientSecret string
+		if err := json.Unmarshal(v, &clientSecret); err == nil && clientSecret != "" {
+			encSecret, encErr := oidc.Encrypt(clientSecret, os.encryptionKey)
+			if encErr != nil {
+				os.writeErr(ctx, w, http.StatusInternalServerError, "failed to encrypt client secret", encErr.Error())
+				return
+			}
+			provider.ClientSecretEncrypted = encSecret
+		}
+	}
+	if v, ok := input["scopes"]; ok {
+		var scopes string
+		if err := json.Unmarshal(v, &scopes); err == nil {
+			provider.Scopes = scopes
+		}
+	}
+	if v, ok := input["role_mapping"]; ok {
+		var roleMapping map[string]string
+		if err := json.Unmarshal(v, &roleMapping); err == nil {
+			provider.RoleMapping = roleMapping
+		}
+	}
+	if v, ok := input["default_role"]; ok {
+		var defaultRole string
+		if err := json.Unmarshal(v, &defaultRole); err == nil {
+			provider.DefaultRole = defaultRole
+		}
+	}
+	if v, ok := input["auto_provision"]; ok {
+		var autoProvision bool
+		if err := json.Unmarshal(v, &autoProvision); err == nil {
+			provider.AutoProvision = autoProvision
+		}
+	}
+	if v, ok := input["enabled"]; ok {
+		var enabled bool
+		if err := json.Unmarshal(v, &enabled); err == nil {
+			provider.Enabled = enabled
+		}
+	}
+
+	provider.UpdatedAt = time.Now().UTC()
+
+	if err := os.oidcStore.UpdateProvider(ctx, provider); err != nil {
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to update provider", err.Error())
+		return
+	}
+
+	// Invalidate cached provider so changes take effect.
+	os.providerCache.Delete(id)
+
+	os.logOIDCAudit(ctx, "update", "oidc_provider", provider.ID, provider.Name, http.StatusOK)
+
+	provider.ClientSecretMasked = "****"
+	writeJSON(w, http.StatusOK, provider)
+}
+
+// handleAdminDeleteProvider removes an OIDC provider.
+// DELETE /api/v1/settings/oidc/providers/{id}
+func (os *OIDCServer) handleAdminDeleteProvider(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	if err := os.oidcStore.DeleteProvider(ctx, id); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			os.writeErr(ctx, w, http.StatusNotFound, "provider not found", "")
+			return
+		}
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to delete provider", err.Error())
+		return
+	}
+
+	// Invalidate cached provider.
+	os.providerCache.Delete(id)
+
+	os.logOIDCAudit(ctx, "delete", "oidc_provider", id, "", http.StatusNoContent)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleAdminTestProvider tests OIDC discovery for a configured provider.
+// POST /api/v1/settings/oidc/providers/{id}/test
+func (os *OIDCServer) handleAdminTestProvider(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	provider, err := os.oidcStore.GetProvider(ctx, id)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			os.writeErr(ctx, w, http.StatusNotFound, "provider not found", "")
+			return
+		}
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to get provider", err.Error())
+		return
+	}
+
+	// Decrypt client secret.
+	clientSecret, err := oidc.Decrypt(provider.ClientSecretEncrypted, os.encryptionKey)
+	if err != nil {
+		os.writeErr(ctx, w, http.StatusInternalServerError, "failed to decrypt client secret", "")
+		return
+	}
+
+	// Attempt OIDC discovery.
+	scopes := strings.Split(provider.Scopes, ",")
+	for i := range scopes {
+		scopes[i] = strings.TrimSpace(scopes[i])
+	}
+	if len(scopes) == 1 && scopes[0] == "" {
+		scopes = nil
+	}
+
+	_, testErr := oidc.NewProvider(ctx, oidc.ProviderConfig{
+		IssuerURL:    provider.IssuerURL,
+		ClientID:     provider.ClientID,
+		ClientSecret: clientSecret,
+		RedirectURL:  os.callbackURL,
+		Scopes:       scopes,
+	})
+
+	result := struct {
+		Success   bool   `json:"success"`
+		IssuerURL string `json:"issuer_url"`
+		Message   string `json:"message,omitempty"`
+	}{
+		IssuerURL: provider.IssuerURL,
+	}
+
+	if testErr != nil {
+		result.Success = false
+		result.Message = fmt.Sprintf("discovery failed: %v", testErr)
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
+	result.Success = true
+	result.Message = "oidc discovery successful"
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handleOIDCLogin redirects the user to the OIDC identity provider.
