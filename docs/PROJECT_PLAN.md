@@ -4,46 +4,75 @@ This document captures the roadmap for CloudPAM, a cloud-native IP Address Manag
 
 ---
 
-## Current State (v0.1)
+## Current State (v0.4.1 — Sprint 18 Complete)
 
 ### Implemented Features
 
 **Core IPAM:**
-- Pool CRUD with hierarchical parent-child relationships
+- Pool CRUD with hierarchical parent-child relationships, tags, type/status/source metadata
 - CIDR validation (IPv4 only, prefix 8-32, reserved ranges blocked)
 - Overlap detection within same parent scope
 - Block enumeration with pagination (compute candidate subnets)
 - Account management with cloud provider metadata
+- CIDR search with containment queries (`/api/v1/search`)
 
 **Storage:**
 - In-memory store (default, for development/testing)
-- SQLite store (`-tags sqlite`) with migrations
-- Both implement identical `Store` interface
+- SQLite store (`-tags sqlite`) with 13 migrations
+- PostgreSQL store (`-tags postgres`) with pgx/v5
+- All three implement identical `Store` interface
+
+**Authentication & Authorization:**
+- API key authentication with Argon2id hashing
+- RBAC with 4 roles: admin, operator, viewer, auditor
+- Local user management with password authentication
+- Session management (HttpOnly + Secure cookies)
+- Dual auth: session cookies (browser) + Bearer tokens (API)
+- Bootstrap admin user and first-boot setup wizard
+
+**Cloud Discovery (AWS):**
+- AWS collector: VPCs, subnets, Elastic IPs
+- AWS Organizations discovery with cross-account AssumeRole
+- Standalone discovery agent (`cmd/cloudpam-agent/`)
+- Bulk org ingest API, resource linking/unlinking
+- Terraform modules and CloudFormation StackSet for IAM
+
+**Smart Planning:**
+- Gap analysis, fragmentation scoring, compliance checks
+- Recommendation engine with apply/dismiss workflow
+- Schema Planner wizard (4-step: Template → Strategy → Dimensions → Preview)
+
+**AI Planning:**
+- LLM provider abstraction (OpenAI/Ollama/vLLM/Azure compatible)
+- Conversational planning with SSE streaming
+- Plan extraction from LLM responses, plan apply
 
 **API:**
-- RESTful JSON API with OpenAPI 3.1 spec
-- Pools: CRUD, cascade delete, block enumeration
-- Accounts: CRUD with metadata (platform, tier, environment, regions)
-- Blocks: List assigned sub-pools with filters
-- Export: CSV in ZIP format
+- RESTful JSON API with OpenAPI 3.1 spec (v0.7.0)
+- 30+ endpoints across pools, accounts, blocks, discovery, analysis, recommendations, AI, auth, audit
+
+**Frontend:**
+- Unified React/Vite/TypeScript SPA with 13 pages
+- Dark mode with three-mode toggle
+- Cmd+K search, hierarchical pool tree
 
 **Operational:**
-- Request ID middleware
-- Structured logging with slog
-- Rate limiting per IP
+- Request ID middleware, structured logging with slog
+- Rate limiting per IP, Prometheus metrics
 - Sentry integration (errors + performance)
-- Graceful shutdown
-- Embedded Alpine.js UI
+- Graceful shutdown, health/readiness endpoints
+- Audit logging for all mutations
+- Docker, Nix flake, CI/CD with GitHub Actions
 
 ### Not Yet Implemented
 
-- Cloud provider integration (AWS/GCP API calls)
-- Discovery of existing cloud resources
-- Multi-instance synchronization
-- Authentication and authorization
-- Audit logging
+- GCP/Azure cloud discovery collectors
+- Drift detection (discovered vs managed state)
+- SSO/OIDC integration
+- Multi-tenancy enforcement (schema exists, not active)
 - IPv6 support
 - VLAN/VRF tracking
+- Host/Address tracking (deferred to M7+)
 
 ---
 
@@ -633,23 +662,23 @@ To enable host tracking in the future without rework, M1-M4 should include:
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
-| Import from AWS | Not started | P0 | VPCs and Subnets via DescribeVpcs/DescribeSubnets |
+| Import from AWS | ✅ Done | P0 | VPCs, Subnets, EIPs + AWS Organizations cross-account |
 | Import from GCP | Not started | P0 | Networks and Subnetworks via Compute API |
-| PostgreSQL storage | Not started | P0 | Required for production; SQLite not suitable for concurrent access |
-| Search by CIDR | Not started | P0 | "Find all pools containing 10.1.2.0/24" |
-| Utilization metrics | Not started | P1 | % allocated per pool, rollup to parent |
-| Change history | Not started | P1 | Audit log for all mutations |
-| Basic authentication | Not started | P1 | API tokens for collectors and users |
+| PostgreSQL storage | ✅ Done | P0 | Full pgx/v5 implementation with migrations |
+| Search by CIDR | ✅ Done | P0 | `/api/v1/search` with `cidr_contains` and `cidr_within` |
+| Utilization metrics | ✅ Done | P1 | Pool stats with allocation tracking |
+| Change history | ✅ Done | P1 | Comprehensive audit logging |
+| Basic authentication | ✅ Done | P1 | API keys (Argon2id), RBAC, local users, sessions |
 
 ### Should Have (v1.x)
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
 | IPAM reservations | Not started | P2 | Hold space without cloud resource |
-| Tags/labels on pools | Not started | P2 | Arbitrary key-value metadata |
+| Tags/labels on pools | ✅ Done | P2 | JSON tags field on Pool model |
 | VLAN tracking | Not started | P2 | Associate VLAN IDs with pools |
 | VRF support | Not started | P2 | Overlapping IP spaces in different domains |
-| Bulk import (CSV) | Not started | P2 | Seed from spreadsheet |
+| Bulk import (CSV) | ✅ Done | P2 | `/api/v1/import/accounts` and `/api/v1/import/pools` |
 | Webhook notifications | Not started | P2 | Alert on allocations, conflicts, drift |
 | IPv6 support | Not started | P2 | Dual-stack networks |
 
@@ -657,7 +686,7 @@ To enable host tracking in the future without rework, M1-M4 should include:
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
-| **Host/Address tracking** | Not started | P2 | Individual IP inventory from ENIs/instances |
+| **Host/Address tracking** | Not started | P2 | Individual IP inventory from ENIs/instances (deferred M7+) |
 | **Subnet utilization** | Not started | P2 | % used based on discovered hosts |
 | **IP lookup** | Not started | P2 | "What's using 10.1.2.45?" |
 | **Capacity forecasting** | Not started | P3 | Predict subnet exhaustion |
