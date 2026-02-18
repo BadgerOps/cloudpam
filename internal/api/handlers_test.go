@@ -33,7 +33,7 @@ func setupTestServer() (*Server, *storage.MemoryStore) {
 		Output: io.Discard,
 	})
 	srv := NewServer(mux, st, logger, nil, nil)
-	srv.RegisterRoutes()
+	srv.registerUnprotectedTestRoutes()
 	return srv, st
 }
 
@@ -690,7 +690,7 @@ func TestReadyzEndpointDatabaseFailure(t *testing.T) {
 		Output: io.Discard,
 	})
 	srv := NewServer(mux, st, logger, nil, nil)
-	srv.RegisterRoutes()
+	srv.registerUnprotectedTestRoutes()
 
 	req := httptest.NewRequest(stdhttp.MethodGet, "/readyz", nil)
 	rr := httptest.NewRecorder()
@@ -729,7 +729,7 @@ func TestMetricsEndpoint(t *testing.T) {
 		Version:   "test",
 	})
 	srv := NewServer(mux, st, logger, metrics, nil)
-	srv.RegisterRoutes()
+	srv.registerUnprotectedTestRoutes()
 
 	// Make a request to trigger metrics recording
 	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.0.0.0/16"}`, stdhttp.StatusCreated)
@@ -776,7 +776,7 @@ func TestMetricsEndpointDisabled(t *testing.T) {
 	})
 	// Create without metrics (nil)
 	srv := NewServer(mux, st, logger, nil, nil)
-	srv.RegisterRoutes()
+	srv.registerUnprotectedTestRoutes()
 
 	// When metrics is nil, /metrics falls through to the SPA catch-all
 	// which returns 200 with index.html (SPA handles client-side routing).

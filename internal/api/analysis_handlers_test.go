@@ -24,7 +24,7 @@ func setupAnalysisServer() (*stdhttp.ServeMux, *storage.MemoryStore) {
 		Output: io.Discard,
 	})
 	srv := NewServer(mux, st, logger, nil, nil)
-	srv.RegisterRoutes()
+	srv.registerUnprotectedTestRoutes()
 	analysisSvc := planning.NewAnalysisService(st)
 	analysisSrv := NewAnalysisServer(srv, analysisSvc)
 	analysisSrv.RegisterAnalysisRoutes()

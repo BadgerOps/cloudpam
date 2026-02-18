@@ -142,41 +142,6 @@ type statusRecorder struct {
 
 func (s *statusRecorder) WriteHeader(code int) { s.status = code; s.ResponseWriter.WriteHeader(code) }
 
-// RegisterRoutes registers all HTTP routes without RBAC protection.
-// This is for backward compatibility. Use RegisterProtectedRoutes for RBAC enforcement.
-func (s *Server) RegisterRoutes() {
-	// localAuthEnabled stays false — no auth enforcement in dev mode
-	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
-	s.mux.HandleFunc("/healthz", s.handleHealth)
-	s.mux.HandleFunc("/api/v1/auth/setup", s.handleSetup)
-	s.mux.HandleFunc("/readyz", s.handleReady)
-	// Metrics endpoint
-	if s.metrics != nil {
-		s.mux.Handle("/metrics", s.metrics.Handler())
-	}
-	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
-	s.mux.HandleFunc("/api/v1/pools", s.handlePools)
-	// Note: /api/v1/pools/hierarchy is handled by handlePoolsSubroutes
-	s.mux.HandleFunc("/api/v1/pools/", s.handlePoolsSubroutes)
-	s.mux.HandleFunc("/api/v1/accounts", s.handleAccounts)
-	s.mux.HandleFunc("/api/v1/accounts/", s.handleAccountsSubroutes)
-	s.mux.HandleFunc("/api/v1/blocks", s.handleBlocksList)
-	// Data export (CSV in ZIP)
-	s.mux.HandleFunc("/api/v1/export", s.handleExport)
-	// Data import (CSV)
-	s.mux.HandleFunc("/api/v1/import/accounts", s.handleImportAccounts)
-	s.mux.HandleFunc("/api/v1/import/pools", s.handleImportPools)
-	// Audit logs (unprotected access)
-	s.mux.HandleFunc("/api/v1/audit", s.handleAuditList)
-	// Schema planner API
-	s.mux.HandleFunc("/api/v1/schema/check", s.handleSchemaCheck)
-	s.mux.HandleFunc("/api/v1/schema/apply", s.handleSchemaApply)
-	// Search API
-	s.mux.HandleFunc("/api/v1/search", s.handleSearch)
-	// Unified React SPA (catch-all)
-	s.mux.Handle("/", s.handleSPA())
-}
-
 // RegisterProtectedRoutes registers all HTTP routes with RBAC protection.
 // Routes are protected based on the resource and action being performed.
 // Public endpoints (health, metrics, static) remain unprotected.
@@ -226,6 +191,11 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, sessionStore au
 	poolsCreateMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, slogger)
 	s.mux.Handle("/api/v1/schema/check", dualMW(poolsReadMW(http.HandlerFunc(s.handleSchemaCheck))))
 	s.mux.Handle("/api/v1/schema/apply", dualMW(poolsCreateMW(http.HandlerFunc(s.handleSchemaApply))))
+
+	// Import endpoints - require create permissions
+	accountsCreateMW := RequirePermissionMiddleware(auth.ResourceAccounts, auth.ActionCreate, slogger)
+	s.mux.Handle("POST /api/v1/import/accounts", dualMW(accountsCreateMW(http.HandlerFunc(s.handleImportAccounts))))
+	s.mux.Handle("POST /api/v1/import/pools", dualMW(poolsCreateMW(http.HandlerFunc(s.handleImportPools))))
 
 	// Search endpoint - requires pools:read
 	s.mux.Handle("/api/v1/search", dualMW(poolsReadMW(http.HandlerFunc(s.handleSearch))))

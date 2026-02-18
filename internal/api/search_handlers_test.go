@@ -15,7 +15,7 @@ func setupSearchServer(t *testing.T) (*Server, *storage.MemoryStore) {
 	store := storage.NewMemoryStore()
 	mux := http.NewServeMux()
 	srv := NewServer(mux, store, nil, nil, nil)
-	srv.RegisterRoutes()
+	srv.registerUnprotectedTestRoutes()
 	return srv, store
 }
 

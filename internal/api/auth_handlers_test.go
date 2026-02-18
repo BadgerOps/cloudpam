@@ -29,9 +29,12 @@ func setupAuthTestServer() (*AuthServer, *auth.MemoryKeyStore, *audit.MemoryAudi
 
 	keyStore := auth.NewMemoryKeyStore()
 
-	authSrv := NewAuthServer(srv, keyStore, auditLogger)
-	srv.RegisterRoutes()
-	authSrv.RegisterAuthRoutes()
+	sessionStore := auth.NewMemorySessionStore()
+	userStore := auth.NewMemoryUserStore()
+
+	authSrv := NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
+	srv.registerUnprotectedTestRoutes()
+	authSrv.registerUnprotectedAuthTestRoutes()
 
 	return authSrv, keyStore, auditLogger
 }

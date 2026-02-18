@@ -205,6 +205,9 @@ func TestIntegration_MetricsEndpoint(t *testing.T) {
 	components := testutil.NewTestServer(t, cfg)
 	defer components.Cleanup()
 
+	// Create an admin API key for authenticated requests
+	adminKey, _ := testutil.CreateTestAPIKey(t, components.KeyStore, "metrics-admin", []string{"*"})
+
 	client := components.HTTPClient()
 	baseURL := components.Server.URL
 
@@ -214,12 +217,13 @@ func TestIntegration_MetricsEndpoint(t *testing.T) {
 		path   string
 		body   string
 		status int
+		auth   bool
 	}{
-		{http.MethodGet, "/healthz", "", http.StatusOK},
-		{http.MethodGet, "/readyz", "", http.StatusOK},
-		{http.MethodPost, "/api/v1/pools", `{"name":"metrics-pool","cidr":"10.0.0.0/16"}`, http.StatusCreated},
-		{http.MethodGet, "/api/v1/pools", "", http.StatusOK},
-		{http.MethodPost, "/api/v1/pools", `invalid json`, http.StatusBadRequest},
+		{http.MethodGet, "/healthz", "", http.StatusOK, false},
+		{http.MethodGet, "/readyz", "", http.StatusOK, false},
+		{http.MethodPost, "/api/v1/pools", `{"name":"metrics-pool","cidr":"10.0.0.0/16"}`, http.StatusCreated, true},
+		{http.MethodGet, "/api/v1/pools", "", http.StatusOK, true},
+		{http.MethodPost, "/api/v1/pools", `invalid json`, http.StatusBadRequest, true},
 	}
 
 	for _, r := range requests {
@@ -230,6 +234,9 @@ func TestIntegration_MetricsEndpoint(t *testing.T) {
 		req, _ := http.NewRequest(r.method, baseURL+r.path, body)
 		if r.body != "" {
 			req.Header.Set("Content-Type", "application/json")
+		}
+		if r.auth {
+			req.Header.Set("Authorization", "Bearer "+adminKey)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -720,8 +727,8 @@ func TestIntegration_ErrorResponses(t *testing.T) {
 	client := components.HTTPClient()
 	baseURL := components.Server.URL
 
-	// Create a valid API key for some tests
-	plaintext, _ := testutil.CreateTestAPIKey(t, components.KeyStore, "Error Test Key", []string{"pools:read"})
+	// Create a valid API key for some tests (needs read+write for POST tests)
+	plaintext, _ := testutil.CreateTestAPIKey(t, components.KeyStore, "Error Test Key", []string{"pools:read", "pools:write"})
 
 	testCases := []struct {
 		name           string
@@ -908,9 +915,11 @@ func TestIntegration_APIKeyExpiration(t *testing.T) {
 
 // TestIntegration_ScopeEnforcement tests that API key scopes are properly enforced.
 func TestIntegration_ScopeEnforcement(t *testing.T) {
-	// Create a simple test server without the complex middleware for scope testing
+	// Create a simple test server with protected routes for scope testing
 	store := storage.NewMemoryStore()
 	keyStore := auth.NewMemoryKeyStore()
+	sessionStore := auth.NewMemorySessionStore()
+	userStore := auth.NewMemoryUserStore()
 	logger := observability.NewLogger(observability.Config{
 		Level:  "debug",
 		Format: "json",
@@ -919,10 +928,10 @@ func TestIntegration_ScopeEnforcement(t *testing.T) {
 
 	mux := http.NewServeMux()
 	srv := api.NewServer(mux, store, logger, nil, nil)
-	srv.RegisterRoutes()
+	srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
 
-	// Wrap with auth middleware (required)
-	handler := api.AuthMiddleware(keyStore, true, logger.Slog())(mux)
+	// Protected routes already include per-route DualAuthMiddleware
+	var handler http.Handler = mux
 
 	testServer := httptest.NewServer(handler)
 	defer testServer.Close()

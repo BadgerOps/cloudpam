@@ -33,8 +33,8 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":             "ok",
-		"auth_enabled":       s.authEnabled,
-		"local_auth_enabled": s.localAuthEnabled,
+		"auth_enabled":       true,
+		"local_auth_enabled": true,
 		"needs_setup":        s.needsSetup,
 	})
 }
@@ -199,8 +199,6 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.needsSetup = false
-	s.authEnabled = true
-	s.localAuthEnabled = true
 
 	s.logAudit(r.Context(), "create", "user", user.ID, user.Username, http.StatusCreated)
 

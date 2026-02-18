@@ -52,6 +52,10 @@ type TestServerComponents struct {
 	Store *storage.MemoryStore
 	// KeyStore is the API key store.
 	KeyStore *auth.MemoryKeyStore
+	// SessionStore is the session store.
+	SessionStore auth.SessionStore
+	// UserStore is the user store.
+	UserStore auth.UserStore
 	// AuditLogger is the audit logger.
 	AuditLogger audit.AuditLogger
 	// Metrics is the metrics collector.
@@ -88,6 +92,8 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 
 	// Create key store
 	keyStore := auth.NewMemoryKeyStore()
+	sessionStore := auth.NewMemorySessionStore()
+	userStore := auth.NewMemoryUserStore()
 
 	// Create audit logger
 	var auditLogger audit.AuditLogger
@@ -98,11 +104,15 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 	// Create the base server
 	mux := http.NewServeMux()
 	srv := api.NewServer(mux, store, logger, metrics, auditLogger)
-	srv.RegisterRoutes()
+	srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
 
 	// Create auth server for key management endpoints
-	authSrv := api.NewAuthServer(srv, keyStore, auditLogger)
-	authSrv.RegisterAuthRoutes()
+	authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
+	authSrv.RegisterProtectedAuthRoutes(logger.Slog())
+
+	// Create user server for user management endpoints
+	userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
+	userSrv.RegisterProtectedUserRoutes(logger.Slog())
 
 	// Build middleware chain
 	var handler http.Handler = mux
@@ -114,9 +124,9 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 		handler = api.AuditMiddleware(adapter, logger.Slog())(handler)
 	}
 
-	// Apply auth middleware if enabled
+	// Apply auth middleware if enabled (DualAuthMiddleware for session + API key support)
 	if cfg.EnableAuth {
-		handler = api.AuthMiddleware(keyStore, cfg.RequireAuth, logger.Slog())(handler)
+		handler = api.DualAuthMiddleware(keyStore, sessionStore, userStore, cfg.RequireAuth, logger.Slog())(handler)
 	}
 
 	// Apply rate limiting if enabled
@@ -144,13 +154,15 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 	}
 
 	return &TestServerComponents{
-		Server:      testServer,
-		Store:       store,
-		KeyStore:    keyStore,
-		AuditLogger: auditLogger,
-		Metrics:     metrics,
-		Logger:      logger,
-		Cleanup:     cleanup,
+		Server:       testServer,
+		Store:        store,
+		KeyStore:     keyStore,
+		SessionStore: sessionStore,
+		UserStore:    userStore,
+		AuditLogger:  auditLogger,
+		Metrics:      metrics,
+		Logger:       logger,
+		Cleanup:      cleanup,
 	}
 }
 
