@@ -237,7 +237,7 @@ func TestRateLimitMiddlewarePerIPTracking(t *testing.T) {
 	}
 }
 
-func TestRateLimitMiddlewareXForwardedFor(t *testing.T) {
+func TestRateLimitMiddlewareXForwardedForIgnoredWithoutTrustedProxy(t *testing.T) {
 	cfg := RateLimitConfig{
 		RequestsPerSecond: 5,
 		Burst:             1,
@@ -246,24 +246,26 @@ func TestRateLimitMiddlewareXForwardedFor(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	// First request with X-Forwarded-For - should succeed
+	// Without trusted proxies, XFF is ignored and RemoteAddr is used for rate limiting.
+	// Two requests from the same RemoteAddr but different XFF should still be rate limited
+	// because XFF is not trusted.
 	rr1 := httptest.NewRecorder()
 	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
-	req1.RemoteAddr = "proxy:80"
-	req1.Header.Set("X-Forwarded-For", "10.0.0.1, 10.0.0.2")
+	req1.RemoteAddr = "192.168.1.1:80"
+	req1.Header.Set("X-Forwarded-For", "10.0.0.1")
 	handler.ServeHTTP(rr1, req1)
 	if rr1.Code != http.StatusOK {
 		t.Fatalf("expected first request to succeed, got %d", rr1.Code)
 	}
 
-	// Second request with same X-Forwarded-For first IP - should be rate limited
+	// Same RemoteAddr, different XFF — should be rate limited because XFF is ignored
 	rr2 := httptest.NewRecorder()
 	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
-	req2.RemoteAddr = "proxy:80"
-	req2.Header.Set("X-Forwarded-For", "10.0.0.1")
+	req2.RemoteAddr = "192.168.1.1:80"
+	req2.Header.Set("X-Forwarded-For", "10.0.0.2")
 	handler.ServeHTTP(rr2, req2)
 	if rr2.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected second request to be rate limited, got %d", rr2.Code)
+		t.Fatalf("expected second request to be rate limited (XFF ignored), got %d", rr2.Code)
 	}
 }
 
@@ -1612,5 +1614,206 @@ func TestRequirePermissionMiddleware_NilLoggerUsesDefault(t *testing.T) {
 	}
 	if !handlerCalled {
 		t.Error("handler should have been called")
+	}
+}
+
+// Trusted proxy tests
+
+func TestParseTrustedProxies_Valid(t *testing.T) {
+	cfg, err := ParseTrustedProxies("10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.CIDRs) != 3 {
+		t.Fatalf("expected 3 CIDRs, got %d", len(cfg.CIDRs))
+	}
+}
+
+func TestParseTrustedProxies_Empty(t *testing.T) {
+	cfg, err := ParseTrustedProxies("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.CIDRs) != 0 {
+		t.Fatalf("expected 0 CIDRs, got %d", len(cfg.CIDRs))
+	}
+}
+
+func TestParseTrustedProxies_Invalid(t *testing.T) {
+	_, err := ParseTrustedProxies("not-a-cidr")
+	if err == nil {
+		t.Fatal("expected error for invalid CIDR")
+	}
+}
+
+func TestClientKeyWithProxies_NoTrustedProxies(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "1.2.3.4:12345"
+	req.Header.Set("X-Forwarded-For", "10.0.0.1")
+
+	// With nil proxies, should use RemoteAddr and ignore XFF
+	got := clientKeyWithProxies(req, nil)
+	if got != "1.2.3.4" {
+		t.Errorf("expected '1.2.3.4', got %q", got)
+	}
+}
+
+func TestClientKeyWithProxies_TrustedProxy(t *testing.T) {
+	cfg, _ := ParseTrustedProxies("172.16.0.0/12")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "172.16.0.1:8080"
+	req.Header.Set("X-Forwarded-For", "10.0.0.1, 172.16.0.1")
+
+	got := clientKeyWithProxies(req, cfg)
+	if got != "10.0.0.1" {
+		t.Errorf("expected '10.0.0.1', got %q", got)
+	}
+}
+
+func TestClientKeyWithProxies_UntrustedProxy(t *testing.T) {
+	cfg, _ := ParseTrustedProxies("172.16.0.0/12")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "5.6.7.8:8080"
+	req.Header.Set("X-Forwarded-For", "10.0.0.1")
+
+	// 5.6.7.8 is not in 172.16.0.0/12, so XFF should be ignored
+	got := clientKeyWithProxies(req, cfg)
+	if got != "5.6.7.8" {
+		t.Errorf("expected '5.6.7.8', got %q", got)
+	}
+}
+
+func TestClientKeyWithProxies_EmptyXFF(t *testing.T) {
+	cfg, _ := ParseTrustedProxies("172.16.0.0/12")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "172.16.0.1:8080"
+	// No XFF header
+
+	got := clientKeyWithProxies(req, cfg)
+	if got != "172.16.0.1" {
+		t.Errorf("expected '172.16.0.1', got %q", got)
+	}
+}
+
+func TestIsTrusted_NilConfig(t *testing.T) {
+	var cfg *TrustedProxyConfig
+	if cfg.IsTrusted("1.2.3.4:80") {
+		t.Error("nil config should not trust anything")
+	}
+}
+
+func TestIsTrusted_EmptyCIDRs(t *testing.T) {
+	cfg := &TrustedProxyConfig{}
+	if cfg.IsTrusted("1.2.3.4:80") {
+		t.Error("empty CIDRs should not trust anything")
+	}
+}
+
+func TestIsTrusted_BadRemoteAddr(t *testing.T) {
+	cfg, _ := ParseTrustedProxies("10.0.0.0/8")
+	if cfg.IsTrusted("not-an-address") {
+		t.Error("bad remote addr should not be trusted")
+	}
+}
+
+// Login rate limiting tests
+
+func TestLoginRateLimitMiddleware_AllowsBelowLimit(t *testing.T) {
+	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
+		AttemptsPerMinute: 5,
+	})
+
+	handler := loginRL(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 0; i < 5; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d", i+1, rr.Code)
+		}
+	}
+}
+
+func TestLoginRateLimitMiddleware_BlocksOverLimit(t *testing.T) {
+	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
+		AttemptsPerMinute: 5,
+	})
+
+	handler := loginRL(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Exhaust 5 allowed attempts
+	for i := 0; i < 5; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		handler.ServeHTTP(rr, req)
+	}
+
+	// 6th should be blocked
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	req.RemoteAddr = "1.2.3.4:12345"
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", rr.Code)
+	}
+
+	var resp apiError
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if resp.Error != "too many login attempts" {
+		t.Errorf("expected 'too many login attempts', got %q", resp.Error)
+	}
+
+	retryAfter := rr.Header().Get("Retry-After")
+	if retryAfter != "60" {
+		t.Errorf("expected Retry-After '60', got %q", retryAfter)
+	}
+}
+
+func TestLoginRateLimitMiddleware_PerIPIsolation(t *testing.T) {
+	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
+		AttemptsPerMinute: 2,
+	})
+
+	handler := loginRL(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Exhaust IP1
+	for i := 0; i < 2; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		handler.ServeHTTP(rr, req)
+	}
+
+	// IP1 should be blocked
+	rr1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	req1.RemoteAddr = "1.2.3.4:12345"
+	handler.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected IP1 to be blocked, got %d", rr1.Code)
+	}
+
+	// IP2 should still work
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	req2.RemoteAddr = "5.6.7.8:54321"
+	handler.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("expected IP2 to succeed, got %d", rr2.Code)
 	}
 }

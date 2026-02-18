@@ -112,6 +112,18 @@ func main() {
 		)
 	}
 
+	// Parse trusted proxies for X-Forwarded-For handling
+	var proxyConfig *api.TrustedProxyConfig
+	if proxiesEnv := os.Getenv("CLOUDPAM_TRUSTED_PROXIES"); proxiesEnv != "" {
+		var err error
+		proxyConfig, err = api.ParseTrustedProxies(proxiesEnv)
+		if err != nil {
+			logger.Error("invalid CLOUDPAM_TRUSTED_PROXIES", "error", err)
+		} else {
+			logger.Info("trusted proxies configured", "count", len(proxyConfig.CIDRs))
+		}
+	}
+
 	mux := http.NewServeMux()
 	auditLogger := selectAuditLogger(logger)
 	keyStore := selectKeyStore(logger)
@@ -175,7 +187,11 @@ func main() {
 	authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
 	authSrv.RegisterProtectedAuthRoutes(logger.Slog())
 	userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
-	userSrv.RegisterProtectedUserRoutes(logger.Slog())
+	loginRL := api.LoginRateLimitMiddleware(api.LoginRateLimitConfig{
+		AttemptsPerMinute: 5,
+		ProxyConfig:       proxyConfig,
+	})
+	userSrv.RegisterProtectedUserRoutes(logger.Slog(), api.WithLoginRateLimit(loginRL))
 	dualMW := api.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
 	discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
 	analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
@@ -280,6 +296,11 @@ func bootstrapAdmin(logger observability.Logger, userStore auth.UserStore, usern
 	existing, _ := userStore.GetByUsername(context.Background(), username)
 	if existing != nil {
 		logger.Info("bootstrap admin already exists", "username", username)
+		return
+	}
+
+	if err := auth.ValidatePassword(password, 0); err != nil {
+		logger.Error("bootstrap admin password does not meet requirements", "error", err)
 		return
 	}
 

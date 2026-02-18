@@ -34,6 +34,21 @@ func NewUserServer(s *Server, keyStore auth.KeyStore, userStore auth.UserStore, 
 	}
 }
 
+// userRouteConfig holds optional configuration for user route registration.
+type userRouteConfig struct {
+	loginRateLimit func(http.Handler) http.Handler
+}
+
+// UserRouteOption configures user route registration.
+type UserRouteOption func(*userRouteConfig)
+
+// WithLoginRateLimit sets login rate limiting middleware.
+func WithLoginRateLimit(mw func(http.Handler) http.Handler) UserRouteOption {
+	return func(cfg *userRouteConfig) {
+		cfg.loginRateLimit = mw
+	}
+}
+
 // RegisterUserRoutes registers user auth routes without RBAC (development mode).
 func (us *UserServer) RegisterUserRoutes() {
 	us.mux.HandleFunc("/api/v1/auth/login", us.handleLogin)
@@ -44,13 +59,22 @@ func (us *UserServer) RegisterUserRoutes() {
 }
 
 // RegisterProtectedUserRoutes registers user auth routes with RBAC.
-func (us *UserServer) RegisterProtectedUserRoutes(logger *slog.Logger) {
+func (us *UserServer) RegisterProtectedUserRoutes(logger *slog.Logger, opts ...UserRouteOption) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	// Login is always public (no auth required).
-	us.mux.HandleFunc("/api/v1/auth/login", us.handleLogin)
+	var cfg userRouteConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	// Login is always public (no auth required), but rate limited.
+	loginHandler := http.Handler(http.HandlerFunc(us.handleLogin))
+	if cfg.loginRateLimit != nil {
+		loginHandler = cfg.loginRateLimit(loginHandler)
+	}
+	us.mux.Handle("/api/v1/auth/login", loginHandler)
 
 	// Dual auth middleware (session or API key).
 	dualMW := DualAuthMiddleware(us.keyStore, us.sessionStore, us.userStore, true, logger)
@@ -391,8 +415,8 @@ func (us *UserServer) createUser(w http.ResponseWriter, r *http.Request) {
 		us.writeErr(ctx, w, http.StatusBadRequest, "password is required", "")
 		return
 	}
-	if len(input.Password) < 8 {
-		us.writeErr(ctx, w, http.StatusBadRequest, "password too short", "minimum 8 characters")
+	if err := auth.ValidatePassword(input.Password, 0); err != nil {
+		us.writeErr(ctx, w, http.StatusBadRequest, "password too weak", err.Error())
 		return
 	}
 
@@ -583,8 +607,8 @@ func (us *UserServer) changePassword(w http.ResponseWriter, r *http.Request, id 
 		us.writeErr(ctx, w, http.StatusBadRequest, "new_password is required", "")
 		return
 	}
-	if len(input.NewPassword) < 8 {
-		us.writeErr(ctx, w, http.StatusBadRequest, "password too short", "minimum 8 characters")
+	if err := auth.ValidatePassword(input.NewPassword, 0); err != nil {
+		us.writeErr(ctx, w, http.StatusBadRequest, "password too weak", err.Error())
 		return
 	}
 

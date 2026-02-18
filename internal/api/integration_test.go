@@ -753,7 +753,7 @@ func TestIntegration_ErrorResponses(t *testing.T) {
 			path:           "/api/v1/pools",
 			apiKey:         "invalid-key",
 			expectedStatus: http.StatusUnauthorized,
-			expectedError:  "unauthorized",
+			expectedError:  "invalid bearer token",
 		},
 		{
 			name:           "not found",
