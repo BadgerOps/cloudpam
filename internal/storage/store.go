@@ -62,6 +62,9 @@ func (m *MemoryStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
 	defer m.mu.RUnlock()
 	out := make([]domain.Pool, 0, len(m.pools))
 	for _, p := range m.pools {
+		if p.DeletedAt != nil {
+			continue
+		}
 		out = append(out, p)
 	}
 	return out, nil
@@ -122,6 +125,9 @@ func (m *MemoryStore) GetPool(ctx context.Context, id int64) (domain.Pool, bool,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	p, ok := m.pools[id]
+	if ok && p.DeletedAt != nil {
+		return domain.Pool{}, false, nil
+	}
 	return p, ok, nil
 }
 
@@ -195,43 +201,54 @@ func (m *MemoryStore) UpdatePool(ctx context.Context, id int64, update domain.Up
 func (m *MemoryStore) DeletePool(ctx context.Context, id int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, p := range m.pools {
-		if p.ParentID != nil && *p.ParentID == id {
+	p, ok := m.pools[id]
+	if !ok || p.DeletedAt != nil {
+		return false, nil
+	}
+	for _, ch := range m.pools {
+		if ch.ParentID != nil && *ch.ParentID == id && ch.DeletedAt == nil {
 			return false, fmt.Errorf("pool has child pools: %w", ErrConflict)
 		}
 	}
-	if _, ok := m.pools[id]; !ok {
-		return false, nil
-	}
-	delete(m.pools, id)
+	now := time.Now().UTC()
+	p.DeletedAt = &now
+	p.UpdatedAt = now
+	m.pools[id] = p
 	return true, nil
 }
 
 func (m *MemoryStore) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Collect subtree ids starting from id
-	if _, ok := m.pools[id]; !ok {
+	p, ok := m.pools[id]
+	if !ok || p.DeletedAt != nil {
 		return false, nil
 	}
 	toDelete := map[int64]struct{}{id: {}}
 	progressed := true
 	for progressed {
 		progressed = false
-		for pid, p := range m.pools {
+		for pid, pp := range m.pools {
 			if _, seen := toDelete[pid]; seen {
 				continue
 			}
-			if p.ParentID != nil {
-				if _, ok := toDelete[*p.ParentID]; ok {
+			if pp.DeletedAt != nil {
+				continue
+			}
+			if pp.ParentID != nil {
+				if _, ok := toDelete[*pp.ParentID]; ok {
 					toDelete[pid] = struct{}{}
 					progressed = true
 				}
 			}
 		}
 	}
+	now := time.Now().UTC()
 	for pid := range toDelete {
-		delete(m.pools, pid)
+		pp := m.pools[pid]
+		pp.DeletedAt = &now
+		pp.UpdatedAt = now
+		m.pools[pid] = pp
 	}
 	return true, nil
 }
@@ -242,6 +259,9 @@ func (m *MemoryStore) ListAccounts(ctx context.Context) ([]domain.Account, error
 	defer m.mu.RUnlock()
 	out := make([]domain.Account, 0, len(m.accounts))
 	for _, a := range m.accounts {
+		if a.DeletedAt != nil {
+			continue
+		}
 		out = append(out, a)
 	}
 	return out, nil
@@ -302,27 +322,35 @@ func (m *MemoryStore) UpdateAccount(ctx context.Context, id int64, update domain
 func (m *MemoryStore) DeleteAccount(ctx context.Context, id int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	a, ok := m.accounts[id]
+	if !ok || a.DeletedAt != nil {
+		return false, nil
+	}
 	for _, p := range m.pools {
-		if p.AccountID != nil && *p.AccountID == id {
+		if p.AccountID != nil && *p.AccountID == id && p.DeletedAt == nil {
 			return false, fmt.Errorf("account in use by pools: %w", ErrConflict)
 		}
 	}
-	if _, ok := m.accounts[id]; !ok {
-		return false, nil
-	}
-	delete(m.accounts, id)
+	now := time.Now().UTC()
+	a.DeletedAt = &now
+	a.UpdatedAt = now
+	m.accounts[id] = a
 	return true, nil
 }
 
 func (m *MemoryStore) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[id]; !ok {
+	a, ok := m.accounts[id]
+	if !ok || a.DeletedAt != nil {
 		return false, nil
 	}
 	// Gather pools referencing this account and their descendants
 	toDelete := map[int64]struct{}{}
 	for pid, p := range m.pools {
+		if p.DeletedAt != nil {
+			continue
+		}
 		if p.AccountID != nil && *p.AccountID == id {
 			toDelete[pid] = struct{}{}
 		}
@@ -334,6 +362,9 @@ func (m *MemoryStore) DeleteAccountCascade(ctx context.Context, id int64) (bool,
 			if _, seen := toDelete[pid]; seen {
 				continue
 			}
+			if p.DeletedAt != nil {
+				continue
+			}
 			if p.ParentID != nil {
 				if _, ok := toDelete[*p.ParentID]; ok {
 					toDelete[pid] = struct{}{}
@@ -342,10 +373,16 @@ func (m *MemoryStore) DeleteAccountCascade(ctx context.Context, id int64) (bool,
 			}
 		}
 	}
+	now := time.Now().UTC()
 	for pid := range toDelete {
-		delete(m.pools, pid)
+		pp := m.pools[pid]
+		pp.DeletedAt = &now
+		pp.UpdatedAt = now
+		m.pools[pid] = pp
 	}
-	delete(m.accounts, id)
+	a.DeletedAt = &now
+	a.UpdatedAt = now
+	m.accounts[id] = a
 	return true, nil
 }
 
@@ -353,6 +390,9 @@ func (m *MemoryStore) GetAccount(ctx context.Context, id int64) (domain.Account,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	a, ok := m.accounts[id]
+	if ok && a.DeletedAt != nil {
+		return domain.Account{}, false, nil
+	}
 	return a, ok, nil
 }
 
@@ -361,7 +401,7 @@ func (m *MemoryStore) GetAccountByKey(ctx context.Context, key string) (*domain.
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, a := range m.accounts {
-		if a.Key == key {
+		if a.Key == key && a.DeletedAt == nil {
 			return &a, nil
 		}
 	}
@@ -373,7 +413,7 @@ func (m *MemoryStore) GetPoolWithStats(ctx context.Context, id int64) (*domain.P
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	p, ok := m.pools[id]
-	if !ok {
+	if !ok || p.DeletedAt != nil {
 		return nil, fmt.Errorf("pool not found: %w", ErrNotFound)
 	}
 	stats := m.calculatePoolStatsLocked(p)
@@ -389,9 +429,12 @@ func (m *MemoryStore) GetPoolHierarchy(ctx context.Context, rootID *int64) ([]do
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Build parent -> children map
+	// Build parent -> children map (skip soft-deleted)
 	children := make(map[int64][]int64)
 	for _, p := range m.pools {
+		if p.DeletedAt != nil {
+			continue
+		}
 		if p.ParentID != nil {
 			children[*p.ParentID] = append(children[*p.ParentID], p.ID)
 		}
@@ -416,14 +459,15 @@ func (m *MemoryStore) GetPoolHierarchy(ctx context.Context, rootID *int64) ([]do
 
 	if rootID != nil {
 		// Return subtree from specific root
-		if _, ok := m.pools[*rootID]; !ok {
+		rp, ok := m.pools[*rootID]
+		if !ok || rp.DeletedAt != nil {
 			return nil, fmt.Errorf("root pool not found: %w", ErrNotFound)
 		}
 		result = append(result, buildTree(*rootID))
 	} else {
-		// Return all top-level pools (no parent)
+		// Return all top-level pools (no parent, not deleted)
 		for _, p := range m.pools {
-			if p.ParentID == nil {
+			if p.ParentID == nil && p.DeletedAt == nil {
 				result = append(result, buildTree(p.ID))
 			}
 		}
@@ -437,12 +481,16 @@ func (m *MemoryStore) GetPoolChildren(ctx context.Context, parentID int64) ([]do
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if _, ok := m.pools[parentID]; !ok {
+	pp, ok := m.pools[parentID]
+	if !ok || pp.DeletedAt != nil {
 		return nil, fmt.Errorf("parent pool not found: %w", ErrNotFound)
 	}
 
 	var children []domain.Pool
 	for _, p := range m.pools {
+		if p.DeletedAt != nil {
+			continue
+		}
 		if p.ParentID != nil && *p.ParentID == parentID {
 			children = append(children, p)
 		}
@@ -455,7 +503,7 @@ func (m *MemoryStore) CalculatePoolUtilization(ctx context.Context, id int64) (*
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	p, ok := m.pools[id]
-	if !ok {
+	if !ok || p.DeletedAt != nil {
 		return nil, fmt.Errorf("pool not found: %w", ErrNotFound)
 	}
 	stats := m.calculatePoolStatsLocked(p)
@@ -488,11 +536,14 @@ func (m *MemoryStore) calculatePoolStatsLocked(p domain.Pool) domain.PoolStats {
 	var usedIPs int64
 	var totalChildCount int
 
-	// Recursive function to count all descendants
+	// Recursive function to count all descendants (skip soft-deleted)
 	var countDescendants func(parentID int64) int
 	countDescendants = func(parentID int64) int {
 		count := 0
 		for _, child := range m.pools {
+			if child.DeletedAt != nil {
+				continue
+			}
 			if child.ParentID != nil && *child.ParentID == parentID {
 				count++
 				count += countDescendants(child.ID)
@@ -502,6 +553,9 @@ func (m *MemoryStore) calculatePoolStatsLocked(p domain.Pool) domain.PoolStats {
 	}
 
 	for _, child := range m.pools {
+		if child.DeletedAt != nil {
+			continue
+		}
 		if child.ParentID != nil && *child.ParentID == p.ID {
 			directChildren++
 
@@ -578,9 +632,12 @@ func (m *MemoryStore) Search(ctx context.Context, req domain.SearchRequest) (dom
 	query := strings.ToLower(req.Query)
 	var items []domain.SearchResultItem
 
-	// Search pools
+	// Search pools (skip soft-deleted)
 	if searchPools {
 		for _, p := range m.pools {
+			if p.DeletedAt != nil {
+				continue
+			}
 			if !m.matchPool(p, query, hasCIDRContains, cidrContains, hasCIDRWithin, cidrWithin) {
 				continue
 			}
@@ -598,9 +655,12 @@ func (m *MemoryStore) Search(ctx context.Context, req domain.SearchRequest) (dom
 		}
 	}
 
-	// Search accounts (CIDR filters don't apply to accounts)
+	// Search accounts (CIDR filters don't apply to accounts, skip soft-deleted)
 	if searchAccounts && !hasCIDRContains && !hasCIDRWithin {
 		for _, a := range m.accounts {
+			if a.DeletedAt != nil {
+				continue
+			}
 			if query != "" && !m.matchAccount(a, query) {
 				continue
 			}
