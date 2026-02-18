@@ -11,6 +11,7 @@ import (
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
+	"cloudpam/internal/storage"
 
 	"github.com/google/uuid"
 )
@@ -18,10 +19,11 @@ import (
 // UserServer extends Server with user management capabilities.
 type UserServer struct {
 	*Server
-	keyStore     auth.KeyStore
-	userStore    auth.UserStore
-	sessionStore auth.SessionStore
-	auditLogger  audit.AuditLogger
+	keyStore      auth.KeyStore
+	userStore     auth.UserStore
+	sessionStore  auth.SessionStore
+	auditLogger   audit.AuditLogger
+	settingsStore storage.SettingsStore
 }
 
 // NewUserServer creates a new UserServer.
@@ -33,6 +35,11 @@ func NewUserServer(s *Server, keyStore auth.KeyStore, userStore auth.UserStore, 
 		sessionStore: sessionStore,
 		auditLogger:  auditLogger,
 	}
+}
+
+// SetSettingsStore sets the settings store for local auth toggle checks.
+func (us *UserServer) SetSettingsStore(ss storage.SettingsStore) {
+	us.settingsStore = ss
 }
 
 // userRouteConfig holds optional configuration for user route registration.
@@ -179,6 +186,15 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if input.Username == "" || input.Password == "" {
 		us.writeErr(ctx, w, http.StatusBadRequest, "username and password are required", "")
 		return
+	}
+
+	// Check if local authentication is enabled.
+	if us.settingsStore != nil {
+		settings, err := us.settingsStore.GetSecuritySettings(ctx)
+		if err == nil && settings != nil && !settings.LocalAuthEnabled {
+			writeJSON(w, http.StatusForbidden, apiError{Error: "local authentication is disabled", Detail: "use SSO to sign in"})
+			return
+		}
 	}
 
 	// Look up user.
