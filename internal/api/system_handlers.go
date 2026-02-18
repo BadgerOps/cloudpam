@@ -156,8 +156,8 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "username is required", "")
 		return
 	}
-	if len(req.Password) < 8 {
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "password must be at least 8 characters", "")
+	if err := auth.ValidatePassword(req.Password, 0); err != nil {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "password too weak", err.Error())
 		return
 	}
 

@@ -31,8 +31,8 @@ export default function SetupPage() {
       return
     }
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters')
+    if (password.length < 12) {
+      setError('Password must be at least 12 characters')
       return
     }
 
@@ -125,7 +125,7 @@ export default function SetupPage() {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="Minimum 8 characters"
+                placeholder="Minimum 12 characters"
                 className="w-full pl-3 pr-10 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 autoComplete="new-password"
               />

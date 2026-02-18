@@ -1,8 +1,34 @@
 package auth
 
-import "golang.org/x/crypto/bcrypt"
+import (
+	"fmt"
 
-const bcryptCost = 12
+	"golang.org/x/crypto/bcrypt"
+)
+
+const (
+	bcryptCost = 12
+
+	// DefaultMinPasswordLength is the minimum password length enforced by default.
+	DefaultMinPasswordLength = 12
+
+	// MaxPasswordLength is the maximum password length (bcrypt truncation boundary).
+	MaxPasswordLength = 72
+)
+
+// ValidatePassword checks password meets policy requirements.
+func ValidatePassword(password string, minLength int) error {
+	if minLength <= 0 {
+		minLength = DefaultMinPasswordLength
+	}
+	if len(password) < minLength {
+		return fmt.Errorf("password must be at least %d characters", minLength)
+	}
+	if len(password) > MaxPasswordLength {
+		return fmt.Errorf("password must be at most %d characters", MaxPasswordLength)
+	}
+	return nil
+}
 
 // HashPassword hashes a plaintext password using bcrypt.
 func HashPassword(password string) ([]byte, error) {
