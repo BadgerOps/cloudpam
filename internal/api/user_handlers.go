@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -123,6 +124,17 @@ func (us *UserServer) RegisterProtectedUserRoutes(logger *slog.Logger, opts ...U
 			return
 		}
 
+		// Check for /revoke-sessions sub-route.
+		if len(parts) == 2 && strings.TrimSuffix(parts[1], "/") == "revoke-sessions" {
+			if r.Method == http.MethodPost {
+				us.handleRevokeSessions(w, r, id)
+				return
+			}
+			w.Header().Set("Allow", http.MethodPost)
+			us.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+			return
+		}
+
 		switch r.Method {
 		case http.MethodGet:
 			usersReadMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -204,6 +216,21 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := us.sessionStore.Create(ctx, session); err != nil {
 		us.writeErr(ctx, w, http.StatusInternalServerError, "failed to store session", err.Error())
 		return
+	}
+
+	// Enforce max concurrent sessions per user.
+	if sessions, err := us.sessionStore.ListByUserID(ctx, user.ID); err == nil {
+		const maxSessions = 10
+		if len(sessions) > maxSessions {
+			// Sort by creation time (oldest first) and evict excess.
+			sort.Slice(sessions, func(i, j int) bool {
+				return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
+			})
+			excess := len(sessions) - maxSessions
+			for i := 0; i < excess; i++ {
+				_ = us.sessionStore.Delete(ctx, sessions[i].ID)
+			}
+		}
 	}
 
 	// Update last login.
@@ -348,6 +375,16 @@ func (us *UserServer) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Allow", http.MethodPatch)
+		us.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	if len(parts) == 2 && strings.TrimSuffix(parts[1], "/") == "revoke-sessions" {
+		if r.Method == http.MethodPost {
+			us.handleRevokeSessions(w, r, id)
+			return
+		}
+		w.Header().Set("Allow", http.MethodPost)
 		us.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 		return
 	}
@@ -641,6 +678,29 @@ func (us *UserServer) changePassword(w http.ResponseWriter, r *http.Request, id 
 	us.logAuditEvent(ctx, audit.ActionUpdate, audit.ResourceUser, user.ID, user.Username, http.StatusOK)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRevokeSessions revokes all sessions for a given user.
+// POST /api/v1/auth/users/{id}/revoke-sessions
+// Accessible by admins or the user themselves.
+func (us *UserServer) handleRevokeSessions(w http.ResponseWriter, r *http.Request, id string) {
+	ctx := r.Context()
+
+	// Check authorization: admin or self.
+	callerRole := auth.GetEffectiveRole(ctx)
+	caller := auth.UserFromContext(ctx)
+	if callerRole != auth.RoleAdmin && (caller == nil || caller.ID != id) {
+		us.writeErr(ctx, w, http.StatusForbidden, "forbidden", "only admins or the user themselves can revoke sessions")
+		return
+	}
+
+	if err := us.sessionStore.DeleteByUserID(ctx, id); err != nil {
+		us.writeErr(ctx, w, http.StatusInternalServerError, "failed to revoke sessions", err.Error())
+		return
+	}
+
+	us.logAuditEvent(ctx, "revoke_sessions", audit.ResourceUser, id, "", http.StatusOK)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "sessions revoked"})
 }
 
 // logAuditEvent is a helper to log audit events with actor context.

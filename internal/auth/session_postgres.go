@@ -114,6 +114,27 @@ func (s *PostgresSessionStore) DeleteByUserID(ctx context.Context, userID string
 	return err
 }
 
+func (s *PostgresSessionStore) ListByUserID(ctx context.Context, userID string) ([]*Session, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, user_id, role, created_at, expires_at FROM sessions WHERE user_id = $1 AND expires_at > NOW() ORDER BY created_at ASC`,
+		userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []*Session
+	for rows.Next() {
+		var sess Session
+		var role string
+		if err := rows.Scan(&sess.ID, &sess.UserID, &role, &sess.CreatedAt, &sess.ExpiresAt); err != nil {
+			return nil, err
+		}
+		sess.Role = Role(role)
+		sessions = append(sessions, &sess)
+	}
+	return sessions, rows.Err()
+}
+
 func (s *PostgresSessionStore) Cleanup(ctx context.Context) (int, error) {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < $1`, time.Now().UTC())
 	if err != nil {

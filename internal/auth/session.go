@@ -73,6 +73,9 @@ type SessionStore interface {
 	// DeleteByUserID removes all sessions for a specific user.
 	DeleteByUserID(ctx context.Context, userID string) error
 
+	// ListByUserID returns all valid (non-expired) sessions for a specific user.
+	ListByUserID(ctx context.Context, userID string) ([]*Session, error)
+
 	// Cleanup removes all expired sessions.
 	// Returns the number of sessions removed.
 	Cleanup(ctx context.Context) (int, error)
@@ -198,6 +201,19 @@ func (s *MemorySessionStore) DeleteByUserID(_ context.Context, userID string) er
 	delete(s.userIndex, userID)
 
 	return nil
+}
+
+// ListByUserID returns all valid (non-expired) sessions for a specific user.
+func (s *MemorySessionStore) ListByUserID(_ context.Context, userID string) ([]*Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var result []*Session
+	for _, sess := range s.sessions {
+		if sess.UserID == userID && sess.IsValid() {
+			result = append(result, copySession(sess))
+		}
+	}
+	return result, nil
 }
 
 // Cleanup removes all expired sessions.
