@@ -246,6 +246,23 @@ func GetRoleFromScopes(scopes []string) Role {
 	}
 }
 
+// RoleLevel returns the numeric privilege level of a role for comparison.
+// Higher values = more privileges.
+func RoleLevel(r Role) int {
+	switch r {
+	case RoleAdmin:
+		return 4
+	case RoleOperator:
+		return 3
+	case RoleViewer:
+		return 2
+	case RoleAuditor:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // ValidRoles returns all valid role values.
 func ValidRoles() []Role {
 	return []Role{RoleAdmin, RoleOperator, RoleViewer, RoleAuditor}

@@ -408,6 +408,49 @@ func TestAudit_List_Filtering(t *testing.T) {
 	}
 }
 
+// doAuthJSONWithRole is like doAuthJSON but injects a role into the request context.
+func doAuthJSONWithRole(t *testing.T, mux *stdhttp.ServeMux, method, path, body string, role auth.Role, code int) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	ctx := auth.ContextWithRole(req.Context(), role)
+	req = req.WithContext(ctx)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != code {
+		t.Fatalf("%s %s: expected code %d, got %d: %s", method, path, code, rr.Code, rr.Body.String())
+	}
+	return rr
+}
+
+func TestCreateAPIKey_ScopeElevation(t *testing.T) {
+	as, _, _ := setupAuthTestServer()
+
+	// Operator (level 3) tries to create admin-level key (scope "*" = level 4) -> 403
+	body := `{"name": "Admin Key", "scopes": ["*"]}`
+	rr := doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleOperator, stdhttp.StatusForbidden)
+	if !strings.Contains(rr.Body.String(), "scope elevation denied") {
+		t.Errorf("Expected 'scope elevation denied' error, got: %s", rr.Body.String())
+	}
+
+	// Operator (level 3) creates operator-level key (scope "pools:write" = level 3) -> 201
+	body = `{"name": "Operator Key", "scopes": ["pools:read"]}`
+	doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleOperator, stdhttp.StatusCreated)
+
+	// Viewer (level 2) tries to create operator-level key (scope "pools:write" = level 3) -> 403
+	body = `{"name": "Writer Key", "scopes": ["pools:write"]}`
+	rr = doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleViewer, stdhttp.StatusForbidden)
+	if !strings.Contains(rr.Body.String(), "scope elevation denied") {
+		t.Errorf("Expected 'scope elevation denied' error, got: %s", rr.Body.String())
+	}
+
+	// Admin (level 4) creates admin-level key (scope "*" = level 4) -> 201
+	body = `{"name": "Admin Key", "scopes": ["*"]}`
+	doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleAdmin, stdhttp.StatusCreated)
+}
+
 func TestAudit_MethodNotAllowed(t *testing.T) {
 	as, _, _ := setupAuthTestServer()
 
