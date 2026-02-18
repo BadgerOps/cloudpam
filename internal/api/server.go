@@ -117,16 +117,27 @@ func (s *Server) logAudit(ctx context.Context, action, resourceType, resourceID,
 	if s.auditLogger == nil {
 		return
 	}
+
+	actor := "anonymous"
+	actorType := audit.ActorTypeAnonymous
+
+	if user := auth.UserFromContext(ctx); user != nil {
+		actor = user.Username
+		actorType = audit.ActorTypeUser
+	} else if key := auth.APIKeyFromContext(ctx); key != nil {
+		actor = key.Name
+		actorType = audit.ActorTypeAPIKey
+	}
+
 	event := &audit.AuditEvent{
-		Actor:        "anonymous", // Will be overwritten if auth is enabled
-		ActorType:    audit.ActorTypeAnonymous,
+		Actor:        actor,
+		ActorType:    actorType,
 		Action:       action,
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
 		ResourceName: resourceName,
 		StatusCode:   statusCode,
 	}
-	// Try to get request ID from context
 	if reqID := ctx.Value(requestIDContextKey); reqID != nil {
 		if id, ok := reqID.(string); ok {
 			event.RequestID = id
