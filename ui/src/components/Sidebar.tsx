@@ -14,6 +14,7 @@ import {
   Lightbulb,
   Bot,
   Radio,
+  Shield,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
@@ -116,6 +117,12 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
             <Radio className="w-5 h-5" />
             <span>Log Destinations</span>
           </NavLink>
+          {role === 'admin' && (
+            <NavLink to="/config/security" className={linkClass}>
+              <Shield className="w-5 h-5" />
+              <span>Security</span>
+            </NavLink>
+          )}
         </div>
       </nav>
 

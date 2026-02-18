@@ -10,10 +10,25 @@ export class ApiRequestError extends Error {
   }
 }
 
+function getCSRFToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/)
+  return match ? match[1] : null
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+
+  // Add CSRF token for state-changing requests
+  if (options?.method && options.method !== 'GET' && options.method !== 'HEAD') {
+    const csrfToken = getCSRFToken()
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken
+    }
+  }
+
   const res = await fetch(path, {
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options,
   })
 
@@ -67,10 +82,16 @@ export interface SSECallbacks {
 }
 
 export async function streamPost(path: string, data: unknown, callbacks: SSECallbacks): Promise<void> {
+  const streamHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+  const csrfToken = getCSRFToken()
+  if (csrfToken) {
+    streamHeaders['X-CSRF-Token'] = csrfToken
+  }
+
   const res = await fetch(path, {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' },
+    headers: streamHeaders,
     body: JSON.stringify(data),
   })
 

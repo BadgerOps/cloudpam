@@ -18,6 +18,7 @@ import (
 	awscollector "cloudpam/internal/discovery/aws"
 	"cloudpam/internal/api"
 	"cloudpam/internal/observability"
+	"cloudpam/internal/storage"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/planning/llm"
 
@@ -112,6 +113,18 @@ func main() {
 		)
 	}
 
+	// Parse trusted proxies for X-Forwarded-For handling
+	var proxyConfig *api.TrustedProxyConfig
+	if proxiesEnv := os.Getenv("CLOUDPAM_TRUSTED_PROXIES"); proxiesEnv != "" {
+		var err error
+		proxyConfig, err = api.ParseTrustedProxies(proxiesEnv)
+		if err != nil {
+			logger.Error("invalid CLOUDPAM_TRUSTED_PROXIES", "error", err)
+		} else {
+			logger.Info("trusted proxies configured", "count", len(proxyConfig.CIDRs))
+		}
+	}
+
 	mux := http.NewServeMux()
 	auditLogger := selectAuditLogger(logger)
 	keyStore := selectKeyStore(logger)
@@ -170,34 +183,32 @@ func main() {
 	aiSrv := api.NewAIPlanningServer(srv, aiService, convStore)
 	logger.Info("ai planning subsystem initialized")
 
-	// When CLOUDPAM_AUTH_ENABLED is set (or fresh install needs setup), use protected routes with RBAC.
-	// Otherwise use unprotected routes for development.
-	authEnabled := os.Getenv("CLOUDPAM_AUTH_ENABLED") == "true" || os.Getenv("CLOUDPAM_AUTH_ENABLED") == "1"
-	needsSetup := len(existingUsers) == 0
-	if authEnabled || needsSetup {
-		srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
-		authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
-		authSrv.RegisterProtectedAuthRoutes(logger.Slog())
-		userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
-		userSrv.RegisterProtectedUserRoutes(logger.Slog())
-		dualMW := api.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
-		discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
-		analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
-		recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
-		aiSrv.RegisterProtectedAIPlanningRoutes(dualMW, logger.Slog())
-		logger.Info("authentication enabled (RBAC enforced)")
+	// Initialize settings subsystem
+	settingsStore := storage.NewMemorySettingsStore()
+	settingsSrv := api.NewSettingsServer(srv, settingsStore)
+	logger.Info("settings subsystem initialized")
+
+	// Auth is always enabled — register protected routes with RBAC.
+	srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
+	authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
+	authSrv.RegisterProtectedAuthRoutes(logger.Slog())
+	userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
+	loginRL := api.LoginRateLimitMiddleware(api.LoginRateLimitConfig{
+		AttemptsPerMinute: 5,
+		ProxyConfig:       proxyConfig,
+	})
+	userSrv.RegisterProtectedUserRoutes(logger.Slog(), api.WithLoginRateLimit(loginRL))
+	dualMW := api.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
+	discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
+	analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
+	recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
+	aiSrv.RegisterProtectedAIPlanningRoutes(dualMW, logger.Slog())
+	settingsSrv.RegisterProtectedSettingsRoutes(dualMW, logger.Slog())
+
+	if len(existingUsers) == 0 {
+		logger.Info("first-boot setup required", "hint", "visit the UI to create an admin account")
 	} else {
-		srv.RegisterRoutes()
-		authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
-		authSrv.RegisterAuthRoutes()
-		userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
-		userSrv.RegisterUserRoutes()
-		discoverySrv.RegisterDiscoveryRoutes()
-		analysisSrv.RegisterAnalysisRoutes()
-		recSrv.RegisterRecommendationRoutes()
-		aiSrv.RegisterAIPlanningRoutes()
-		logger.Info("authentication disabled (all routes open)",
-			"hint", "set CLOUDPAM_AUTH_ENABLED=true to enable RBAC")
+		logger.Info("authentication enforced", "users", len(existingUsers))
 	}
 
 	// Background session cleanup every 15 minutes.
@@ -221,6 +232,7 @@ func main() {
 		observability.MetricsMiddleware(metrics),
 		api.RequestIDMiddleware(),
 		api.LoggingMiddleware(logger.Slog()),
+		api.CSRFMiddleware(),
 		api.RateLimitMiddleware(rateCfg, logger.Slog()),
 	)
 	server := &http.Server{
@@ -292,6 +304,11 @@ func bootstrapAdmin(logger observability.Logger, userStore auth.UserStore, usern
 	existing, _ := userStore.GetByUsername(context.Background(), username)
 	if existing != nil {
 		logger.Info("bootstrap admin already exists", "username", username)
+		return
+	}
+
+	if err := auth.ValidatePassword(password, 0); err != nil {
+		logger.Error("bootstrap admin password does not meet requirements", "error", err)
 		return
 	}
 

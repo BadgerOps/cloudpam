@@ -130,6 +130,29 @@ func (s *SQLiteSessionStore) DeleteByUserID(ctx context.Context, userID string) 
 	return nil
 }
 
+func (s *SQLiteSessionStore) ListByUserID(ctx context.Context, userID string) ([]*Session, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_id, role, created_at, expires_at FROM sessions WHERE user_id = ? AND expires_at > datetime('now') ORDER BY created_at ASC`,
+		userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var sessions []*Session
+	for rows.Next() {
+		var sess Session
+		var role, createdAt, expiresAt string
+		if err := rows.Scan(&sess.ID, &sess.UserID, &role, &createdAt, &expiresAt); err != nil {
+			return nil, err
+		}
+		sess.Role = Role(role)
+		sess.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		sess.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt)
+		sessions = append(sessions, &sess)
+	}
+	return sessions, rows.Err()
+}
+
 func (s *SQLiteSessionStore) Cleanup(ctx context.Context) (int, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at < ?`,
 		time.Now().UTC().Format(time.RFC3339Nano))

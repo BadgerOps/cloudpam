@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -281,19 +282,123 @@ func RateLimitMiddleware(cfg RateLimitConfig, logger *slog.Logger) Middleware {
 }
 
 func clientKey(r *http.Request) string {
-	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			xff = xff[:idx]
+	return clientKeyWithProxies(r, nil)
+}
+
+// TrustedProxyConfig holds trusted proxy CIDR list for X-Forwarded-For handling.
+type TrustedProxyConfig struct {
+	CIDRs []netip.Prefix
+}
+
+// ParseTrustedProxies parses a comma-separated list of CIDRs.
+func ParseTrustedProxies(raw string) (*TrustedProxyConfig, error) {
+	if raw == "" {
+		return &TrustedProxyConfig{}, nil
+	}
+	var cidrs []netip.Prefix
+	for _, s := range strings.Split(raw, ",") {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
 		}
-		if ip := strings.TrimSpace(xff); ip != "" {
-			return ip
+		prefix, err := netip.ParsePrefix(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", s, err)
+		}
+		cidrs = append(cidrs, prefix)
+	}
+	return &TrustedProxyConfig{CIDRs: cidrs}, nil
+}
+
+// IsTrusted checks if the remote address is from a trusted proxy.
+func (tc *TrustedProxyConfig) IsTrusted(remoteAddr string) bool {
+	if tc == nil || len(tc.CIDRs) == 0 {
+		return false
+	}
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	for _, cidr := range tc.CIDRs {
+		if cidr.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientKeyWithProxies extracts the client IP, only trusting X-Forwarded-For from trusted proxies.
+func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
+	if proxies != nil && proxies.IsTrusted(r.RemoteAddr) {
+		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+			parts := strings.SplitN(xff, ",", 2)
+			if ip := strings.TrimSpace(parts[0]); ip != "" {
+				return ip
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil && host != "" {
-		return host
+	if err != nil {
+		return r.RemoteAddr
 	}
-	return r.RemoteAddr
+	return host
+}
+
+// LoginRateLimitConfig configures per-IP login rate limiting.
+type LoginRateLimitConfig struct {
+	AttemptsPerMinute int
+	ProxyConfig       *TrustedProxyConfig
+}
+
+// LoginRateLimitMiddleware wraps a handler with per-IP login rate limiting.
+func LoginRateLimitMiddleware(cfg LoginRateLimitConfig) func(http.Handler) http.Handler {
+	type ipEntry struct {
+		limiter  *rate.Limiter
+		lastSeen time.Time
+	}
+	var mu sync.Mutex
+	clients := make(map[string]*ipEntry)
+
+	go func() {
+		for {
+			time.Sleep(5 * time.Minute)
+			mu.Lock()
+			for ip, entry := range clients {
+				if time.Since(entry.lastSeen) > 10*time.Minute {
+					delete(clients, ip)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+
+	rps := rate.Limit(float64(cfg.AttemptsPerMinute) / 60.0)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := clientKeyWithProxies(r, cfg.ProxyConfig)
+
+			mu.Lock()
+			entry, ok := clients[ip]
+			if !ok {
+				entry = &ipEntry{limiter: rate.NewLimiter(rps, cfg.AttemptsPerMinute)}
+				clients[ip] = entry
+			}
+			entry.lastSeen = time.Now()
+			mu.Unlock()
+
+			if !entry.limiter.Allow() {
+				w.Header().Set("Retry-After", "60")
+				writeJSON(w, http.StatusTooManyRequests, apiError{Error: "too many login attempts", Detail: "try again later"})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // AuthMiddleware validates API key authentication.
@@ -414,8 +519,8 @@ func AuthMiddleware(keyStore auth.KeyStore, required bool, logger *slog.Logger) 
 // It tries these strategies in order:
 // 1. "session" cookie -> session lookup
 // 2. Authorization: Bearer with "cpam_" prefix -> API key (existing flow)
-// 3. Authorization: Bearer without prefix -> session token lookup
 // If required is true, unauthenticated requests get 401.
+// Non-cpam_ Bearer tokens are rejected (session IDs must not appear in headers).
 func DualAuthMiddleware(
 	keyStore auth.KeyStore,
 	sessionStore auth.SessionStore,
@@ -446,7 +551,7 @@ func DualAuthMiddleware(
 				}
 			}
 
-			// Strategy 2 & 3: Check Authorization header
+			// Strategy 2: Check Authorization header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
 				token := strings.TrimPrefix(authHeader, "Bearer ")
@@ -510,22 +615,10 @@ func DualAuthMiddleware(
 					return
 				}
 
-				// Strategy 3: Bearer token as session token
-				session, err := sessionStore.Get(ctx, token)
-				if err == nil && session != nil && session.IsValid() {
-					ctx = auth.ContextWithSession(ctx, session)
-					ctx = auth.ContextWithRole(ctx, session.Role)
-					if user, _ := userStore.GetByID(ctx, session.UserID); user != nil {
-						ctx = auth.ContextWithUser(ctx, user)
-					}
-					r = r.WithContext(ctx)
-					next.ServeHTTP(w, r)
-					return
-				}
-
+				// Unrecognized Bearer token format - reject
 				if required {
-					logAuthFailure(logger, r, "invalid session token")
-					writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid or expired session"})
+					logAuthFailure(logger, r, "invalid bearer token format")
+					writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid bearer token", Detail: "bearer tokens must be API keys (cpam_ prefix)"})
 					return
 				}
 			}

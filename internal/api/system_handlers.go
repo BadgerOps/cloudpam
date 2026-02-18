@@ -33,8 +33,8 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":             "ok",
-		"auth_enabled":       s.authEnabled,
-		"local_auth_enabled": s.localAuthEnabled,
+		"auth_enabled":       true,
+		"local_auth_enabled": true,
 		"needs_setup":        s.needsSetup,
 	})
 }
@@ -156,8 +156,8 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "username is required", "")
 		return
 	}
-	if len(req.Password) < 8 {
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "password must be at least 8 characters", "")
+	if err := auth.ValidatePassword(req.Password, 0); err != nil {
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "password too weak", err.Error())
 		return
 	}
 
@@ -199,8 +199,6 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.needsSetup = false
-	s.authEnabled = true
-	s.localAuthEnabled = true
 
 	s.logAudit(r.Context(), "create", "user", user.ID, user.Username, http.StatusCreated)
 

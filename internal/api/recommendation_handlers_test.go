@@ -17,7 +17,7 @@ func setupRecommendationServer() (*stdhttp.ServeMux, *storage.MemoryStore) {
 	st := storage.NewMemoryStore()
 	mux := stdhttp.NewServeMux()
 	srv := NewServerWithSlog(mux, st, nil)
-	srv.RegisterRoutes()
+	srv.registerUnprotectedTestRoutes()
 
 	analysisSvc := planning.NewAnalysisService(st)
 	recStore := storage.NewMemoryRecommendationStore(st)

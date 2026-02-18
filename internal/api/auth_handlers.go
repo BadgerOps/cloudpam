@@ -198,6 +198,18 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Prevent scope elevation: callers cannot create keys with higher privileges than their own role.
+	// Only enforced when the caller is authenticated (callerRole != RoleNone).
+	callerRole := auth.GetEffectiveRole(r.Context())
+	if callerRole != auth.RoleNone {
+		requestedRole := auth.GetRoleFromScopes(input.Scopes)
+		if auth.RoleLevel(requestedRole) > auth.RoleLevel(callerRole) {
+			as.writeErr(r.Context(), w, http.StatusForbidden, "scope elevation denied",
+				"requested scopes require a higher privilege level than your current role")
+			return
+		}
+	}
+
 	// Calculate expiration
 	var expiresAt *time.Time
 	if input.ExpiresInDays != nil && *input.ExpiresInDays > 0 {

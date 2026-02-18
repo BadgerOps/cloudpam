@@ -17,7 +17,8 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 The project is in **Phase 4** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
-**Current State** (Sprint 18 complete):
+**Current State** (Sprint 19 complete):
+- Auth hardening: auth-always default, CSRF protection, password policy (NIST 800-63B), session limits, login rate limiting, trusted proxies, security settings UI, API key scope elevation prevention (Sprint 19)
 - AI Planning: LLM-powered conversational planning with SSE streaming, plan generation and apply (Sprints 17-18)
 - AWS Organizations discovery: org-mode agent, cross-account AssumeRole, bulk ingest, Terraform/CF modules, wizard org mode (Sprint 16b)
 - Recommendation generator: allocation & compliance recs, scoring, apply/dismiss workflow (Sprint 15)
@@ -236,7 +237,7 @@ The storage layer uses build tags to switch between implementations:
 `internal/api/server.go` implements the REST API and serves the embedded UI:
 
 - **Server struct**: wraps `http.ServeMux` and `storage.Store`
-- **Route registration**: `RegisterRoutes()` sets up all endpoints
+- **Route registration**: `RegisterProtectedRoutes()` sets up all endpoints with RBAC
 - **API endpoints**:
   - `/healthz` - health check endpoint
   - `/api/v1/pools` - pool CRUD
@@ -256,6 +257,9 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/auth/me` - current user/key identity (GET)
   - `/api/v1/auth/users` - user management (GET/POST)
   - `/api/v1/auth/users/{id}` - user CRUD (GET/PATCH/DELETE)
+  - `/api/v1/auth/users/{id}/revoke-sessions` - revoke all sessions for a user (POST)
+  - `/api/v1/auth/setup` - first-boot admin account creation (POST)
+  - `/api/v1/settings/security` - security settings (GET/PATCH)
   - `/api/v1/search` - unified search with CIDR containment queries
   - `/api/v1/discovery/resources` - list discovered cloud resources (filterable)
   - `/api/v1/discovery/resources/{id}` - get single discovered resource
@@ -281,7 +285,7 @@ The storage layer uses build tags to switch between implementations:
   - `/metrics` - Prometheus metrics endpoint
   - `/openapi.yaml` - OpenAPI spec served from embedded `docs/spec_embed.go`
   - `/` - serves unified React SPA via `handleSPA()` with client-side routing fallback
-- **Middleware**: `LoggingMiddleware` logs requests and captures Sentry performance traces
+- **Middleware**: `LoggingMiddleware`, `CSRFMiddleware`, `RateLimitMiddleware`, `RequestIDMiddleware`, `DualAuthMiddleware` (session + API key), `LoginRateLimitMiddleware`
 - **Error handling**: uses `apiError` struct with `error` and `detail` fields; 5xx errors are reported to Sentry
 
 ### Graceful Shutdown
@@ -389,10 +393,10 @@ When adding endpoints:
 - `DATABASE_URL`: PostgreSQL connection string (default `postgres://cloudpam:cloudpam@localhost:5432/cloudpam?sslmode=disable`)
 
 ### Auth
-- `CLOUDPAM_AUTH_ENABLED`: Enable RBAC auth (`true` or `1` to enable)
 - `CLOUDPAM_ADMIN_USERNAME`: Bootstrap admin username
-- `CLOUDPAM_ADMIN_PASSWORD`: Bootstrap admin password
+- `CLOUDPAM_ADMIN_PASSWORD`: Bootstrap admin password (min 12 chars)
 - `CLOUDPAM_ADMIN_EMAIL`: Bootstrap admin email (default: `{username}@localhost`)
+- `CLOUDPAM_TRUSTED_PROXIES`: Comma-separated CIDRs for trusted reverse proxies (e.g., `10.0.0.0/8,172.16.0.0/12`)
 
 ### Observability
 - `CLOUDPAM_LOG_LEVEL`: Log level - debug, info, warn, error (default: `info`)
@@ -452,6 +456,9 @@ Common workflows:
 - Schema apply: `POST /api/v1/schema/apply` with JSON body `{"pools":[...], "status":"planned", "tags":{}, "skip_conflicts":false}`
 - Audit log: `GET /api/v1/audit?limit=50&offset=0&action=create&resource_type=pool`
 - API key management: `POST /api/v1/auth/keys`, `GET /api/v1/auth/keys`, `DELETE /api/v1/auth/keys/{id}`
+- Revoke user sessions: `POST /api/v1/auth/users/{id}/revoke-sessions`
+- First-boot setup: `POST /api/v1/auth/setup` with `{"username":"...","password":"...","email":"..."}`
+- Security settings: `GET /api/v1/settings/security`, `PATCH /api/v1/settings/security` with JSON body
 - Search: `GET /api/v1/search?q=prod&cidr_contains=10.1.2.5&type=pool,account`
 - Discovery resources: `GET /api/v1/discovery/resources?account_id=1&status=active&resource_type=vpc`
 - Discovery resource detail: `GET /api/v1/discovery/resources/{id}`
@@ -586,8 +593,9 @@ cloudpam/
 │   │   ├── types.go        # Pool, Account types
 │   │   ├── discovery.go    # Discovery domain types
 │   │   ├── recommendations.go # Recommendation types
+│   │   ├── settings.go     # SecuritySettings type
 │   │   └── models.go       # Extended models (planned)
-│   ├── http/               # HTTP server, routes, handlers
+│   ├── api/                # HTTP server, routes, handlers
 │   │   ├── server.go       # Server struct, route registration, helpers
 │   │   ├── pool_handlers.go       # Pool CRUD, hierarchy, stats
 │   │   ├── account_handlers.go    # Account CRUD
@@ -597,9 +605,11 @@ cloudpam/
 │   │   ├── discovery_handlers.go  # Discovery API (resources, sync)
 │   │   ├── auth_handlers.go       # Auth (login, logout, keys, users)
 │   │   ├── user_handlers.go       # User management
+│   │   ├── settings_handlers.go   # Security settings API
+│   │   ├── csrf.go                # CSRF double-submit cookie middleware
 │   │   ├── recommendation_handlers.go # Recommendation API (generate, apply, dismiss)
 │   │   ├── ai_handlers.go       # AI Planning API (chat, sessions, plan apply)
-│   │   ├── middleware.go   # Middleware (logging, auth, rate limit)
+│   │   ├── middleware.go   # Middleware (logging, auth, rate limit, trusted proxies)
 │   │   ├── context.go      # Request context helpers
 │   │   ├── cidr.go         # IPv4 CIDR validation utilities
 │   │   └── *_test.go       # Tests
@@ -609,11 +619,14 @@ cloudpam/
 │   │   ├── discovery_memory.go  # In-memory DiscoveryStore
 │   │   ├── recommendations.go   # RecommendationStore interface
 │   │   ├── recommendations_memory.go # In-memory RecommendationStore
+│   │   ├── settings.go          # SettingsStore interface
+│   │   ├── settings_memory.go   # In-memory SettingsStore
 │   │   ├── errors.go       # Sentinel errors (ErrNotFound, etc.)
 │   │   ├── sqlite/         # SQLite implementation
 │   │   │   ├── sqlite.go
 │   │   │   ├── discovery.go    # SQLite DiscoveryStore
 │   │   │   ├── recommendations.go # SQLite RecommendationStore
+│   │   │   ├── settings.go     # SQLite SettingsStore
 │   │   │   └── migrator.go
 │   │   └── postgres/       # PostgreSQL implementation
 │   │       ├── postgres.go
@@ -628,6 +641,7 @@ cloudpam/
 │   │   ├── rbac.go         # Roles, permissions, RBAC middleware
 │   │   ├── keys.go         # API key types and store interfaces
 │   │   ├── users.go        # User types and store interfaces
+│   │   ├── password.go     # Password hashing and validation (NIST 800-63B)
 │   │   ├── sessions.go     # Session management
 │   │   └── sqlite.go       # SQLite implementations
 │   ├── audit/              # Audit logging
@@ -637,7 +651,7 @@ cloudpam/
 │   │   └── llm/            # LLM provider abstraction (OpenAI-compatible)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0013)
+├── migrations/             # SQL migrations (0001-0016)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
