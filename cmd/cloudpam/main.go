@@ -18,6 +18,7 @@ import (
 	awscollector "cloudpam/internal/discovery/aws"
 	"cloudpam/internal/api"
 	"cloudpam/internal/observability"
+	"cloudpam/internal/storage"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/planning/llm"
 
@@ -182,6 +183,11 @@ func main() {
 	aiSrv := api.NewAIPlanningServer(srv, aiService, convStore)
 	logger.Info("ai planning subsystem initialized")
 
+	// Initialize settings subsystem
+	settingsStore := storage.NewMemorySettingsStore()
+	settingsSrv := api.NewSettingsServer(srv, settingsStore)
+	logger.Info("settings subsystem initialized")
+
 	// Auth is always enabled — register protected routes with RBAC.
 	srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
 	authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
@@ -197,6 +203,7 @@ func main() {
 	analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 	recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
 	aiSrv.RegisterProtectedAIPlanningRoutes(dualMW, logger.Slog())
+	settingsSrv.RegisterProtectedSettingsRoutes(dualMW, logger.Slog())
 
 	if len(existingUsers) == 0 {
 		logger.Info("first-boot setup required", "hint", "visit the UI to create an admin account")

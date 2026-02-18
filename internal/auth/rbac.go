@@ -33,6 +33,7 @@ const (
 	ResourceAudit     = "audit"
 	ResourceUsers     = "users"
 	ResourceDiscovery = "discovery"
+	ResourceSettings  = "settings"
 )
 
 // Action constants for permission checks.
@@ -42,6 +43,7 @@ const (
 	ActionUpdate = "update"
 	ActionDelete = "delete"
 	ActionList   = "list"
+	ActionWrite  = "write"
 )
 
 // Permission represents an action on a resource.
@@ -87,6 +89,8 @@ var RolePermissions = map[Role][]Permission{
 		{ResourceDiscovery, ActionUpdate},
 		{ResourceDiscovery, ActionDelete},
 		{ResourceDiscovery, ActionList},
+		{ResourceSettings, ActionRead},
+		{ResourceSettings, ActionWrite},
 	},
 	RoleOperator: {
 		// Read/write access to pools, accounts, and discovery
