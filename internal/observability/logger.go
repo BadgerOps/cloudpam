@@ -14,7 +14,7 @@ type contextKey string
 
 const (
 	// requestIDKey is the context key for request IDs.
-	// This matches the key used in internal/http/context.go for compatibility.
+	// This matches the key used in internal/api/context.go for compatibility.
 	requestIDKey contextKey = "requestID"
 	// componentKey is the context key for component names.
 	componentKey contextKey = "component"

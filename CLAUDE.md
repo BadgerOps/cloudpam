@@ -143,7 +143,7 @@ APP_URL=http://localhost:8080 npm run screenshots  # Outputs to photos/
 │  ├── Sentry Integration                                     │
 │  └── Graceful Shutdown                                      │
 ├─────────────────────────────────────────────────────────────┤
-│  internal/http/                                             │
+│  internal/api/                                             │
 │  ├── Pool, Account, Block CRUD handlers                     │
 │  ├── CSV export/import handlers                             │
 │  ├── Auth, audit handlers                                   │
@@ -169,7 +169,7 @@ APP_URL=http://localhost:8080 npm run screenshots  # Outputs to photos/
 ┌─────────────────────────────────────────────────────────────┐
 │                     CloudPAM Target                         │
 ├─────────────────────────────────────────────────────────────┤
-│  internal/http/          │  internal/auth/                  │
+│  internal/api/          │  internal/auth/                  │
 │  ├── Middleware chain    │  ├── OIDC provider               │
 │  ├── Rate limiting       │  ├── Session management          │
 │  └── Request ID          │  └── RBAC authorization          │
@@ -233,7 +233,7 @@ The storage layer uses build tags to switch between implementations:
 
 ### HTTP Layer
 
-`internal/http/server.go` implements the REST API and serves the embedded UI:
+`internal/api/server.go` implements the REST API and serves the embedded UI:
 
 - **Server struct**: wraps `http.ServeMux` and `storage.Store`
 - **Route registration**: `RegisterRoutes()` sets up all endpoints
@@ -306,7 +306,7 @@ The server (`cmd/cloudpam/main.go`) implements graceful shutdown:
 
 ### CIDR Validation & Computation
 
-The HTTP server (`internal/http/server.go`) implements IPv4 CIDR logic:
+The HTTP server (`internal/api/server.go`) implements IPv4 CIDR logic:
 
 - **Overlap detection**: `prefixesOverlapIPv4()` checks if two prefixes overlap
 - **Child validation**: `validateChildCIDR()` ensures child CIDR is within parent bounds
@@ -342,7 +342,7 @@ This project has a Nix flake (`flake.nix`). **Always use `nix develop`** to ente
 
 - Tests use Go's standard `testing` package
 - Tests live alongside code as `*_test.go`
-- Use `httptest` helpers for API testing (see `internal/http/handlers_test.go`)
+- Use `httptest` helpers for API testing (see `internal/api/handlers_test.go`)
 - Run tests with `just test` before committing
 
 ### Storage Development
@@ -359,7 +359,7 @@ When modifying storage:
 
 When adding endpoints:
 
-- Add handler methods to `Server` in `internal/http/server.go`
+- Add handler methods to `Server` in `internal/api/server.go`
 - Register routes in `RegisterRoutes()`
 - Use `writeJSON()` and `writeErr()` helpers for responses
 - Follow RESTful conventions (use proper HTTP methods and status codes)

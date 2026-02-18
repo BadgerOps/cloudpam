@@ -1,4 +1,4 @@
-package http_test
+package api_test
 
 import (
 	"bytes"
@@ -16,7 +16,7 @@ import (
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
-	cloudpamhttp "cloudpam/internal/http"
+	"cloudpam/internal/api"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
 	"cloudpam/internal/testutil"
@@ -145,7 +145,7 @@ func TestIntegration_RateLimiting(t *testing.T) {
 	// Setup server with rate limiting enabled
 	cfg := testutil.TestServerConfig{
 		EnableRateLimit: true,
-		RateLimitConfig: cloudpamhttp.RateLimitConfig{
+		RateLimitConfig: api.RateLimitConfig{
 			RequestsPerSecond: 5, // Very low for testing
 			Burst:             5,
 		},
@@ -918,11 +918,11 @@ func TestIntegration_ScopeEnforcement(t *testing.T) {
 	})
 
 	mux := http.NewServeMux()
-	srv := cloudpamhttp.NewServer(mux, store, logger, nil, nil)
+	srv := api.NewServer(mux, store, logger, nil, nil)
 	srv.RegisterRoutes()
 
 	// Wrap with auth middleware (required)
-	handler := cloudpamhttp.AuthMiddleware(keyStore, true, logger.Slog())(mux)
+	handler := api.AuthMiddleware(keyStore, true, logger.Slog())(mux)
 
 	testServer := httptest.NewServer(handler)
 	defer testServer.Close()

@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `cmd/cloudpam/`: main entrypoint and storage selection.
-- `internal/http/`: HTTP server, routes, and handlers.
+- `internal/api/`: HTTP server, routes, and handlers.
 - `internal/storage/`: storage interface, in‑memory impl; `internal/storage/sqlite/` for SQLite.
 - `internal/domain/`: core types.
 - `migrations/`: SQL migrations (embedded in SQLite builds).
@@ -31,7 +31,7 @@ Examples:
 - Framework: Go `testing`. Tests live alongside code as `*_test.go`.
 - Run: `go test ./...` (CI also runs `-race`).
 - Coverage: `just cover` and optional threshold `just cover-threshold thr=80`.
-- Name tests `TestXxx` and exercise API via `httptest` helpers (see `internal/http/handlers_test.go`).
+- Name tests `TestXxx` and exercise API via `httptest` helpers (see `internal/api/handlers_test.go`).
 
 ## Commit & Pull Request Guidelines
 - Commits: short imperative subject with scope prefix when useful (e.g., `UI: …`, `chore: …`, `CI: …`); reference issues (`closes #25`).

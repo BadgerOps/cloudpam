@@ -141,7 +141,7 @@ ALTER TABLE pools ADD COLUMN updated_at TEXT;
 ## Phase 5C: API Enhancements
 
 ### Task 5C.1: Hierarchy Endpoint
-**File**: `internal/http/server.go`
+**File**: `internal/api/server.go`
 
 New endpoint: `GET /api/v1/pools/hierarchy`
 ```json
@@ -174,7 +174,7 @@ New endpoint: `GET /api/v1/pools/hierarchy`
 ```
 
 ### Task 5C.2: Pool Stats Endpoint
-**File**: `internal/http/server.go`
+**File**: `internal/api/server.go`
 
 New endpoint: `GET /api/v1/pools/{id}/stats`
 ```json
@@ -189,7 +189,7 @@ New endpoint: `GET /api/v1/pools/{id}/stats`
 ```
 
 ### Task 5C.3: Update Existing Endpoints
-**File**: `internal/http/server.go`
+**File**: `internal/api/server.go`
 
 - `POST /api/v1/pools` - Accept type, status, source, description, tags
 - `PATCH /api/v1/pools/{id}` - Allow updating type, status, description, tags

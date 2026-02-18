@@ -16,7 +16,7 @@ import (
 	"cloudpam/internal/auth"
 	"cloudpam/internal/discovery"
 	awscollector "cloudpam/internal/discovery/aws"
-	ih "cloudpam/internal/http"
+	"cloudpam/internal/api"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/planning/llm"
@@ -81,7 +81,7 @@ func main() {
 		logger.Info("metrics disabled")
 	}
 
-	rateCfg := ih.DefaultRateLimitConfig()
+	rateCfg := api.DefaultRateLimitConfig()
 	if rpsVal := strings.TrimSpace(os.Getenv("RATE_LIMIT_RPS")); rpsVal != "" {
 		if parsed, err := strconv.ParseFloat(rpsVal, 64); err != nil {
 			logger.Warn("invalid RATE_LIMIT_RPS; disabling rate limiting", "value", rpsVal, "error", err)
@@ -117,7 +117,7 @@ func main() {
 	keyStore := selectKeyStore(logger)
 	userStore := selectUserStore(logger)
 	sessionStore := selectSessionStore(logger)
-	srv := ih.NewServer(mux, store, logger, metrics, auditLogger)
+	srv := api.NewServer(mux, store, logger, metrics, auditLogger)
 
 	// Check if this is a fresh install (no users exist) for first-boot setup.
 	srv.SetUserStore(userStore)
@@ -141,18 +141,18 @@ func main() {
 	discoveryStore := selectDiscoveryStore(logger, store)
 	syncService := discovery.NewSyncService(discoveryStore)
 	syncService.RegisterCollector(awscollector.New())
-	discoverySrv := ih.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
+	discoverySrv := api.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
 	logger.Info("discovery subsystem initialized", "collectors", "aws")
 
 	// Initialize analysis subsystem
 	analysisService := planning.NewAnalysisService(store)
-	analysisSrv := ih.NewAnalysisServer(srv, analysisService)
+	analysisSrv := api.NewAnalysisServer(srv, analysisService)
 	logger.Info("analysis subsystem initialized")
 
 	// Initialize recommendation subsystem
 	recStore := selectRecommendationStore(logger, store)
 	recService := planning.NewRecommendationService(analysisService, recStore, store)
-	recSrv := ih.NewRecommendationServer(srv, recService, recStore)
+	recSrv := api.NewRecommendationServer(srv, recService, recStore)
 	logger.Info("recommendation subsystem initialized")
 
 	// Initialize AI planning subsystem
@@ -167,7 +167,7 @@ func main() {
 	}
 	convStore := selectConversationStore(logger, store)
 	aiService := planning.NewAIPlanningService(analysisService, convStore, store, llmProvider)
-	aiSrv := ih.NewAIPlanningServer(srv, aiService, convStore)
+	aiSrv := api.NewAIPlanningServer(srv, aiService, convStore)
 	logger.Info("ai planning subsystem initialized")
 
 	// When CLOUDPAM_AUTH_ENABLED is set (or fresh install needs setup), use protected routes with RBAC.
@@ -176,11 +176,11 @@ func main() {
 	needsSetup := len(existingUsers) == 0
 	if authEnabled || needsSetup {
 		srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
-		authSrv := ih.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
+		authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
 		authSrv.RegisterProtectedAuthRoutes(logger.Slog())
-		userSrv := ih.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
+		userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
 		userSrv.RegisterProtectedUserRoutes(logger.Slog())
-		dualMW := ih.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
+		dualMW := api.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
 		discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
 		analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 		recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
@@ -188,9 +188,9 @@ func main() {
 		logger.Info("authentication enabled (RBAC enforced)")
 	} else {
 		srv.RegisterRoutes()
-		authSrv := ih.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
+		authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
 		authSrv.RegisterAuthRoutes()
-		userSrv := ih.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
+		userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
 		userSrv.RegisterUserRoutes()
 		discoverySrv.RegisterDiscoveryRoutes()
 		analysisSrv.RegisterAnalysisRoutes()
@@ -216,12 +216,12 @@ func main() {
 
 	// Apply middleware stack (metrics, request ID, structured logging, rate limiting).
 	// Order: metrics (outermost) -> requestID -> logging -> rateLimiting (innermost before handler)
-	handler := ih.ApplyMiddlewares(
+	handler := api.ApplyMiddlewares(
 		mux,
 		observability.MetricsMiddleware(metrics),
-		ih.RequestIDMiddleware(),
-		ih.LoggingMiddleware(logger.Slog()),
-		ih.RateLimitMiddleware(rateCfg, logger.Slog()),
+		api.RequestIDMiddleware(),
+		api.LoggingMiddleware(logger.Slog()),
+		api.RateLimitMiddleware(rateCfg, logger.Slog()),
 	)
 	server := &http.Server{
 		Addr:              addr,

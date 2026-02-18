@@ -93,7 +93,7 @@ _ = server.Shutdown(ctx)
 
 ### P1-1: Missing Input Validation
 
-**File:** `internal/http/server.go`
+**File:** `internal/api/server.go`
 
 **Issues:**
 
@@ -164,7 +164,7 @@ Migrate to `log/slog` (Go 1.21+):
 **Impact:** Critical - Production security risk
 
 **Solution:**
-1. Create `internal/http/middleware.go`
+1. Create `internal/api/middleware.go`
 2. Implement token-bucket rate limiter using `golang.org/x/time/rate`
 3. Default: 100 requests/minute per IP address
 4. Configurable via env vars: `RATE_LIMIT_RPS` and `RATE_LIMIT_BURST`
@@ -176,7 +176,7 @@ Migrate to `log/slog` (Go 1.21+):
 
 ### P1-4: Missing Health/Readiness Endpoints
 
-**File:** `internal/http/server.go:479-481`
+**File:** `internal/api/server.go:479-481`
 
 **Issue:** Only `/healthz` exists with static response. No `/readyz` for Kubernetes readiness probes.
 
@@ -214,7 +214,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 **Solution:**
 1. Add `github.com/prometheus/client_golang` dependency
-2. Create `internal/http/metrics.go`
+2. Create `internal/api/metrics.go`
 3. Instrument key metrics:
    - `cloudpam_http_requests_total` (counter with method, path, status)
    - `cloudpam_http_duration_seconds` (histogram)
@@ -228,7 +228,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 ### P1-6: Test Coverage Below Target
 
-**Current:** 52.5% overall (internal/http: 51.6%, internal/storage: 72.2%)
+**Current:** 52.5% overall (internal/api: 51.6%, internal/storage: 72.2%)
 **Target:** 80%
 
 **Missing Coverage Areas:**
@@ -257,7 +257,7 @@ Add test files for:
 
 ### P2-1: Large Handler File Needs Refactoring
 
-**File:** `internal/http/server.go` (1171 lines)
+**File:** `internal/api/server.go` (1171 lines)
 
 **Issue:** Monolithic file with mixed concerns:
 - Route registration
@@ -270,7 +270,7 @@ Add test files for:
 
 **Solution:** Split into logical files:
 ```
-internal/http/
+internal/api/
 ├── server.go          (100 lines) - Server struct, RegisterRoutes
 ├── middleware.go      (50 lines)  - Middleware functions
 ├── handlers_pools.go  (300 lines) - Pool CRUD handlers
@@ -456,7 +456,7 @@ These can be completed in ~10 hours total:
 |----------|------|--------|--------|-------|
 | 1 | Add Store.Close() | 30 min | High | `internal/storage/*.go` |
 | 2 | Graceful shutdown | 1 hour | Critical | `cmd/cloudpam/main.go` |
-| 3 | /healthz + /readyz | 2 hours | High | `internal/http/server.go` |
+| 3 | /healthz + /readyz | 2 hours | High | `internal/api/server.go` |
 | 4 | Fix `\|\| true` bug | 15 min | Low | `internal/storage/store.go:104` |
 | 5 | Connection pool config | 30 min | Medium | `internal/storage/sqlite/sqlite.go` |
 | 6 | Structured logging | 2 hours | High | All `*.go` files |
@@ -611,7 +611,7 @@ type DiscoveredResource struct {
 
 ### Current Coverage
 - Overall: 52.5%
-- internal/http: 51.6%
+- internal/api: 51.6%
 - internal/storage: 72.2%
 
 ### Missing Test Scenarios
