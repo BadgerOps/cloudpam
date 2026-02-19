@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -487,13 +489,15 @@ func (os *OIDCServer) handleOIDCCallback(w http.ResponseWriter, r *http.Request)
 
 	// Check for error parameter from IdP (e.g., login_required for prompt=none).
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
+		// Sanitize errParam to prevent reflected XSS.
+		safeErr := html.EscapeString(errParam)
 		if isIframe {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body><script>window.parent.postMessage({type:"oidc-refresh",success:false,error:%q},"*");</script></body></html>`, errParam)
+			_, _ = fmt.Fprintf(w, `<!DOCTYPE html><html><body><script>window.parent.postMessage({type:"oidc-refresh",success:false,error:%q},"*");</script></body></html>`, safeErr)
 			return
 		}
-		http.Redirect(w, r, "/?error="+errParam, http.StatusFound)
+		http.Redirect(w, r, "/?error="+url.QueryEscape(errParam), http.StatusFound)
 		return
 	}
 
