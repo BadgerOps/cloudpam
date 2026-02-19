@@ -236,6 +236,90 @@ func TestListByUserID(t *testing.T) {
 	}
 }
 
+func TestLogin_LocalAuthDisabled_Rejected(t *testing.T) {
+	us, _, userStore := setupUserTestServer()
+
+	ctx := context.Background()
+	hash, _ := auth.HashPassword("TestPass123!")
+	user := &auth.User{
+		ID:           "user-local-auth",
+		Username:     "localuser",
+		Email:        "local@example.com",
+		Role:         auth.RoleViewer,
+		PasswordHash: hash,
+		IsActive:     true,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if err := userStore.Create(ctx, user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	// Set up settings store with local auth disabled.
+	settingsStore := storage.NewMemorySettingsStore()
+	settings, _ := settingsStore.GetSecuritySettings(ctx)
+	settings.LocalAuthEnabled = false
+	_ = settingsStore.UpdateSecuritySettings(ctx, settings)
+	us.SetSettingsStore(settingsStore)
+
+	// Attempt login with valid credentials.
+	body := `{"username":"localuser","password":"TestPass123!"}`
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	us.mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusForbidden {
+		t.Fatalf("expected 403 when local auth disabled, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var errResp apiError
+	if err := json.Unmarshal(rr.Body.Bytes(), &errResp); err != nil {
+		t.Fatalf("unmarshal error response: %v", err)
+	}
+	if errResp.Error != "local authentication is disabled" {
+		t.Errorf("expected error 'local authentication is disabled', got %q", errResp.Error)
+	}
+	if errResp.Detail != "use SSO to sign in" {
+		t.Errorf("expected detail 'use SSO to sign in', got %q", errResp.Detail)
+	}
+}
+
+func TestLogin_LocalAuthEnabled_Allowed(t *testing.T) {
+	us, _, userStore := setupUserTestServer()
+
+	ctx := context.Background()
+	hash, _ := auth.HashPassword("TestPass123!")
+	user := &auth.User{
+		ID:           "user-local-auth-ok",
+		Username:     "enableduser",
+		Email:        "enabled@example.com",
+		Role:         auth.RoleViewer,
+		PasswordHash: hash,
+		IsActive:     true,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if err := userStore.Create(ctx, user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	// Set up settings store with local auth enabled (default).
+	settingsStore := storage.NewMemorySettingsStore()
+	us.SetSettingsStore(settingsStore)
+
+	// Attempt login with valid credentials — should succeed.
+	body := `{"username":"enableduser","password":"TestPass123!"}`
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	us.mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200 when local auth enabled, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestSessionLimit_Enforcement(t *testing.T) {
 	us, sessionStore, userStore := setupUserTestServer()
 

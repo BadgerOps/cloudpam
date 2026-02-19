@@ -11,6 +11,7 @@ import (
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
+	"cloudpam/internal/storage"
 
 	"github.com/google/uuid"
 )
@@ -18,10 +19,11 @@ import (
 // UserServer extends Server with user management capabilities.
 type UserServer struct {
 	*Server
-	keyStore     auth.KeyStore
-	userStore    auth.UserStore
-	sessionStore auth.SessionStore
-	auditLogger  audit.AuditLogger
+	keyStore      auth.KeyStore
+	userStore     auth.UserStore
+	sessionStore  auth.SessionStore
+	auditLogger   audit.AuditLogger
+	settingsStore storage.SettingsStore
 }
 
 // NewUserServer creates a new UserServer.
@@ -33,6 +35,11 @@ func NewUserServer(s *Server, keyStore auth.KeyStore, userStore auth.UserStore, 
 		sessionStore: sessionStore,
 		auditLogger:  auditLogger,
 	}
+}
+
+// SetSettingsStore sets the settings store for local auth toggle checks.
+func (us *UserServer) SetSettingsStore(ss storage.SettingsStore) {
+	us.settingsStore = ss
 }
 
 // userRouteConfig holds optional configuration for user route registration.
@@ -181,6 +188,15 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if local authentication is enabled.
+	if us.settingsStore != nil {
+		settings, err := us.settingsStore.GetSecuritySettings(ctx)
+		if err == nil && settings != nil && !settings.LocalAuthEnabled {
+			writeJSON(w, http.StatusForbidden, apiError{Error: "local authentication is disabled", Detail: "use SSO to sign in"})
+			return
+		}
+	}
+
 	// Look up user.
 	user, err := us.userStore.GetByUsername(ctx, input.Username)
 	if err != nil {
@@ -317,19 +333,29 @@ func (us *UserServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	role := auth.GetEffectiveRole(ctx)
 
 	type meResponse struct {
-		AuthType string     `json:"auth_type"`
-		Role     auth.Role  `json:"role"`
-		User     *auth.User `json:"user,omitempty"`
-		KeyID    string     `json:"key_id,omitempty"`
-		KeyName  string     `json:"key_name,omitempty"`
+		AuthType         string     `json:"auth_type"`
+		Role             auth.Role  `json:"role"`
+		User             *auth.User `json:"user,omitempty"`
+		KeyID            string     `json:"key_id,omitempty"`
+		KeyName          string     `json:"key_name,omitempty"`
+		AuthProvider     string     `json:"auth_provider,omitempty"`
+		SessionExpiresAt string     `json:"session_expires_at,omitempty"`
 	}
 
 	if user := auth.UserFromContext(ctx); user != nil {
-		writeJSON(w, http.StatusOK, meResponse{
-			AuthType: "session",
-			Role:     role,
-			User:     user,
-		})
+		resp := meResponse{
+			AuthType:     "session",
+			Role:         role,
+			User:         user,
+			AuthProvider: user.AuthProvider,
+		}
+		if resp.AuthProvider == "" {
+			resp.AuthProvider = "local"
+		}
+		if session := auth.SessionFromContext(ctx); session != nil {
+			resp.SessionExpiresAt = session.ExpiresAt.Format(time.RFC3339)
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
 

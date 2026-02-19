@@ -274,6 +274,8 @@ export interface MeResponse {
   user?: UserInfo
   key_id?: string
   key_name?: string
+  auth_provider?: 'local' | 'oidc'
+  session_expires_at?: string
 }
 
 export interface CreateUserRequest {

@@ -15,9 +15,10 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 ## Implementation Status
 
-The project is in **Phase 4** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
+The project is in **Phase 5** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
-**Current State** (Sprint 19 complete):
+**Current State** (Sprint 20 complete):
+- SSO/OIDC: generic OIDC provider integration, JIT user provisioning, role mapping, silent session re-auth, client secret encryption, local auth toggle, provider management UI (Sprint 20)
 - Auth hardening: auth-always default, CSRF protection, password policy (NIST 800-63B), session limits, login rate limiting, trusted proxies, security settings UI, API key scope elevation prevention (Sprint 19)
 - AI Planning: LLM-powered conversational planning with SSE streaming, plan generation and apply (Sprints 17-18)
 - AWS Organizations discovery: org-mode agent, cross-account AssumeRole, bulk ingest, Terraform/CF modules, wizard org mode (Sprint 16b)
@@ -211,7 +212,7 @@ The storage layer uses build tags to switch between implementations:
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
-  - Current migrations: `0001_init.sql` through `0012_account_key_unique.sql`
+  - Current migrations: `0001_init.sql` through `0017_oidc_providers.sql`
 
 - **PostgreSQL Support** (`-tags postgres`)
   - Production-grade database with native CIDR operations
@@ -231,6 +232,7 @@ The storage layer uses build tags to switch between implementations:
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
 | `internal/planning/llm` | LLM provider abstraction (OpenAI-compatible) | Implemented (Phase 4) |
+| `internal/auth/oidc` | OIDC provider integration (discovery, exchange, claims, crypto) | Implemented (Phase 5) |
 
 ### HTTP Layer
 
@@ -260,6 +262,13 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/auth/users/{id}/revoke-sessions` - revoke all sessions for a user (POST)
   - `/api/v1/auth/setup` - first-boot admin account creation (POST)
   - `/api/v1/settings/security` - security settings (GET/PATCH)
+  - `/api/v1/auth/oidc/providers` - list enabled OIDC providers (GET, public)
+  - `/api/v1/auth/oidc/login` - initiate OIDC login flow (GET)
+  - `/api/v1/auth/oidc/callback` - OIDC callback handler (GET)
+  - `/api/v1/auth/oidc/refresh` - get OIDC refresh URL (POST)
+  - `/api/v1/settings/oidc/providers` - OIDC provider admin CRUD (GET/POST)
+  - `/api/v1/settings/oidc/providers/{id}` - OIDC provider admin (GET/PATCH/DELETE)
+  - `/api/v1/settings/oidc/providers/{id}/test` - test OIDC provider connection (POST)
   - `/api/v1/search` - unified search with CIDR containment queries
   - `/api/v1/discovery/resources` - list discovered cloud resources (filterable)
   - `/api/v1/discovery/resources/{id}` - get single discovered resource
@@ -377,7 +386,7 @@ When adding endpoints:
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` (usePools, useAccounts, useBlocks, useAudit, useDiscovery, useAuth, useToast, useRecommendations)
+- API hooks in `ui/src/hooks/` (usePools, useAccounts, useBlocks, useAudit, useDiscovery, useAuth, useToast, useRecommendations, useOIDCProviders, useOIDCAdmin, useSessionRefresh)
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)
@@ -397,6 +406,10 @@ When adding endpoints:
 - `CLOUDPAM_ADMIN_PASSWORD`: Bootstrap admin password (min 12 chars)
 - `CLOUDPAM_ADMIN_EMAIL`: Bootstrap admin email (default: `{username}@localhost`)
 - `CLOUDPAM_TRUSTED_PROXIES`: Comma-separated CIDRs for trusted reverse proxies (e.g., `10.0.0.0/8,172.16.0.0/12`)
+
+### OIDC/SSO
+- `CLOUDPAM_OIDC_ENCRYPTION_KEY`: 32-byte hex-encoded AES-256 key for OIDC client secret encryption (auto-generated with warning if not set)
+- `CLOUDPAM_OIDC_CALLBACK_URL`: OIDC callback URL (default: `http://localhost:8080/api/v1/auth/oidc/callback`)
 
 ### Observability
 - `CLOUDPAM_LOG_LEVEL`: Log level - debug, info, warn, error (default: `info`)
@@ -459,6 +472,16 @@ Common workflows:
 - Revoke user sessions: `POST /api/v1/auth/users/{id}/revoke-sessions`
 - First-boot setup: `POST /api/v1/auth/setup` with `{"username":"...","password":"...","email":"..."}`
 - Security settings: `GET /api/v1/settings/security`, `PATCH /api/v1/settings/security` with JSON body
+- OIDC providers (public): `GET /api/v1/auth/oidc/providers`
+- OIDC login: `GET /api/v1/auth/oidc/login?provider_id={id}` (redirects to IdP)
+- OIDC callback: `GET /api/v1/auth/oidc/callback` (handles IdP redirect)
+- OIDC refresh: `POST /api/v1/auth/oidc/refresh` (returns redirect URL for silent re-auth)
+- OIDC admin list: `GET /api/v1/settings/oidc/providers`
+- OIDC admin create: `POST /api/v1/settings/oidc/providers` with `{"name":"...","issuer_url":"...","client_id":"...","client_secret":"..."}`
+- OIDC admin get: `GET /api/v1/settings/oidc/providers/{id}`
+- OIDC admin update: `PATCH /api/v1/settings/oidc/providers/{id}` with partial fields
+- OIDC admin delete: `DELETE /api/v1/settings/oidc/providers/{id}`
+- OIDC admin test: `POST /api/v1/settings/oidc/providers/{id}/test`
 - Search: `GET /api/v1/search?q=prod&cidr_contains=10.1.2.5&type=pool,account`
 - Discovery resources: `GET /api/v1/discovery/resources?account_id=1&status=active&resource_type=vpc`
 - Discovery resource detail: `GET /api/v1/discovery/resources/{id}`
@@ -594,6 +617,7 @@ cloudpam/
 │   │   ├── discovery.go    # Discovery domain types
 │   │   ├── recommendations.go # Recommendation types
 │   │   ├── settings.go     # SecuritySettings type
+│   │   ├── oidc.go         # OIDCProvider type
 │   │   └── models.go       # Extended models (planned)
 │   ├── api/                # HTTP server, routes, handlers
 │   │   ├── server.go       # Server struct, route registration, helpers
@@ -609,6 +633,7 @@ cloudpam/
 │   │   ├── csrf.go                # CSRF double-submit cookie middleware
 │   │   ├── recommendation_handlers.go # Recommendation API (generate, apply, dismiss)
 │   │   ├── ai_handlers.go       # AI Planning API (chat, sessions, plan apply)
+│   │   ├── oidc_handlers.go     # OIDC login/callback/refresh + admin CRUD
 │   │   ├── middleware.go   # Middleware (logging, auth, rate limit, trusted proxies)
 │   │   ├── context.go      # Request context helpers
 │   │   ├── cidr.go         # IPv4 CIDR validation utilities
@@ -621,12 +646,15 @@ cloudpam/
 │   │   ├── recommendations_memory.go # In-memory RecommendationStore
 │   │   ├── settings.go          # SettingsStore interface
 │   │   ├── settings_memory.go   # In-memory SettingsStore
+│   │   ├── oidc.go              # OIDCProviderStore interface
+│   │   ├── oidc_memory.go       # In-memory OIDCProviderStore
 │   │   ├── errors.go       # Sentinel errors (ErrNotFound, etc.)
 │   │   ├── sqlite/         # SQLite implementation
 │   │   │   ├── sqlite.go
 │   │   │   ├── discovery.go    # SQLite DiscoveryStore
 │   │   │   ├── recommendations.go # SQLite RecommendationStore
 │   │   │   ├── settings.go     # SQLite SettingsStore
+│   │   │   ├── oidc.go         # SQLite OIDCProviderStore
 │   │   │   └── migrator.go
 │   │   └── postgres/       # PostgreSQL implementation
 │   │       ├── postgres.go
@@ -643,7 +671,11 @@ cloudpam/
 │   │   ├── users.go        # User types and store interfaces
 │   │   ├── password.go     # Password hashing and validation (NIST 800-63B)
 │   │   ├── sessions.go     # Session management
-│   │   └── sqlite.go       # SQLite implementations
+│   │   ├── sqlite.go       # SQLite implementations
+│   │   └── oidc/            # OIDC provider integration
+│   │       ├── provider.go  # OIDC discovery, auth URL, code exchange
+│   │       ├── claims.go    # ID token claims and role mapping
+│   │       └── crypto.go    # AES-256-GCM client secret encryption
 │   ├── audit/              # Audit logging
 │   ├── cidr/               # Reusable CIDR math utilities
 │   ├── validation/         # Input validation
@@ -651,12 +683,13 @@ cloudpam/
 │   │   └── llm/            # LLM provider abstraction (OpenAI-compatible)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0016)
+├── migrations/             # SQL migrations (0001-0017)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
 │   ├── ...
 │   ├── 0008_discovered_resources.sql  # Discovery tables
+│   ├── 0017_oidc_providers.sql        # OIDC providers + user OIDC columns
 │   └── postgres/           # PostgreSQL migrations
 ├── deploy/                 # Deployment configurations
 │   ├── terraform/aws-org-discovery/  # AWS Organizations discovery IAM
@@ -727,7 +760,7 @@ See `IMPLEMENTATION_ROADMAP.md` for the detailed 20-week plan. Summary:
 
 **Phase 5 (Enterprise):**
 - Multi-tenancy enforcement (schema exists, not enforced)
-- SSO/OIDC integration
+- ~~SSO/OIDC integration~~ ✅ (Sprint 20)
 - Log shipping / SIEM integration
 - Per-org rate limiting and quotas
 

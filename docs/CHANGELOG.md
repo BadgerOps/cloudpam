@@ -5,6 +5,73 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - SSO/OIDC Integration Sprint 20
+
+### Added
+
+#### SSO/OIDC Authentication
+- Generic OIDC provider integration using `coreos/go-oidc/v3` and `golang.org/x/oauth2`
+- OIDC Authorization Code Flow with PKCE-ready architecture
+- OIDC Discovery (`.well-known/openid-configuration`) for automatic endpoint configuration
+- ID Token verification via JWKS with RSA-signed JWTs
+- JIT (Just-In-Time) user provisioning from IdP claims with configurable role mapping
+- Claim-to-role mapping: IdP groups mapped to CloudPAM roles using `auth.RoleLevel` for priority
+- Silent session re-authentication via `prompt=none` hidden iframe with `Sec-Fetch-Dest: iframe` detection
+- Client secret encryption at rest using AES-256-GCM (`internal/auth/oidc/crypto.go`)
+- Local auth toggle: disable password login when OIDC is configured (break-glass admin remains)
+- User active-status cache in `DualAuthMiddleware` with 30-second TTL (`sync.Map`)
+
+#### OIDC API Endpoints
+- `GET /api/v1/auth/oidc/providers` — list enabled providers (public, no auth required)
+- `GET /api/v1/auth/oidc/login` — initiate OIDC login flow with state cookie
+- `GET /api/v1/auth/oidc/callback` — handle IdP callback, exchange code, JIT provision user
+- `POST /api/v1/auth/oidc/refresh` — get refresh redirect URL for silent re-auth
+- `GET /api/v1/settings/oidc/providers` — list all providers (admin)
+- `POST /api/v1/settings/oidc/providers` — create provider (admin)
+- `GET /api/v1/settings/oidc/providers/{id}` — get provider with masked secret (admin)
+- `PATCH /api/v1/settings/oidc/providers/{id}` — update provider (admin)
+- `DELETE /api/v1/settings/oidc/providers/{id}` — delete provider (admin)
+- `POST /api/v1/settings/oidc/providers/{id}/test` — test provider discovery (admin)
+
+#### OIDC Storage & Domain
+- `OIDCProvider` domain type with encrypted client secret storage
+- `OIDCProviderStore` interface (7 methods: Create/Get/GetByIssuer/List/ListEnabled/Update/Delete)
+- In-memory and SQLite `OIDCProviderStore` implementations
+- `GetByOIDCIdentity` method added to `UserStore` interface (memory, SQLite, PostgreSQL)
+- Migration `0017_oidc_providers.sql` (oidc_providers table + user OIDC columns)
+
+#### OIDC Frontend
+- SSO login buttons on login page (one per enabled provider)
+- OIDC provider management UI in Config > Security settings
+  - Provider list table with name, issuer URL, enabled status
+  - Add/Edit/Delete provider modals with full configuration
+  - Test Connection button for provider discovery validation
+  - Role mapping editor (IdP group → CloudPAM role)
+  - Local auth toggle with confirmation modal
+- Silent session re-auth hook (`useSessionRefresh`) for OIDC users
+  - Polls `/auth/me` every 60s, triggers re-auth in last 20% of session lifetime
+  - Hidden iframe with `prompt=none` for seamless token refresh
+
+#### OIDC Package (`internal/auth/oidc/`)
+- `provider.go` — Provider struct wrapping go-oidc + oauth2, NewProvider/AuthCodeURL/Exchange methods
+- `claims.go` — Claims struct and MapRole function for group-to-role mapping
+- `crypto.go` — AES-256-GCM Encrypt/Decrypt for client secrets
+
+#### New Environment Variables
+- `CLOUDPAM_OIDC_ENCRYPTION_KEY` — 32-byte hex-encoded AES key for client secret encryption (auto-generated if not set)
+- `CLOUDPAM_OIDC_CALLBACK_URL` — OIDC callback URL (default: `http://localhost:8080/api/v1/auth/oidc/callback`)
+
+#### Dependencies
+- `github.com/coreos/go-oidc/v3` v3.17.0
+- `golang.org/x/oauth2` v0.35.0
+- `github.com/go-jose/go-jose/v4` v4.1.3
+
+### Changed
+- `DualAuthMiddleware` now includes user active-status cache (30s TTL) to avoid per-request DB lookup
+- `handleMe` response extended with `auth_provider` and `session_expires_at` fields
+- CSRF middleware exempts `/api/v1/auth/oidc/*` paths (OIDC uses state parameter for security)
+- User domain type extended with `AuthProvider`, `OIDCSubject`, `OIDCIssuer` fields
+
 ## [0.7.0] - Auth Hardening Sprint 19
 
 ### BREAKING
@@ -668,6 +735,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
+[0.8.0]: https://github.com/BadgerOps/cloudpam/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/BadgerOps/cloudpam/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/BadgerOps/cloudpam/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/BadgerOps/cloudpam/compare/v0.5.0...v0.6.0

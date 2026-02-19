@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Server, User } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useOIDCProviders } from '../hooks/useOIDCProviders'
 
 export default function LoginPage() {
   const { loginWithPassword, isAuthenticated, needsSetup, authChecked } = useAuth()
+  const { providers, loading: providersLoading } = useOIDCProviders()
   const navigate = useNavigate()
 
   const [username, setUsername] = useState('')
@@ -111,6 +113,31 @@ export default function LoginPage() {
               {loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
+
+          {!providersLoading && providers.length > 0 && (
+            <>
+              <div className="relative my-5">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-200 dark:border-gray-700" />
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-white dark:bg-gray-800 px-2 text-gray-500 dark:text-gray-400">or</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {providers.map(provider => (
+                  <a
+                    key={provider.id}
+                    href={`/api/v1/auth/oidc/login?provider_id=${encodeURIComponent(provider.id)}`}
+                    className="w-full flex items-center justify-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    Sign in with {provider.name}
+                  </a>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

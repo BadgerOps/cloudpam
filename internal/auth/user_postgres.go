@@ -43,10 +43,11 @@ func (s *PostgresUserStore) Create(ctx context.Context, user *User) error {
 		return ErrUserNotFound
 	}
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO users (id, username, email, display_name, role, password_hash, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		INSERT INTO users (id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, auth_provider, oidc_subject, oidc_issuer)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 		user.ID, user.Username, user.Email, user.DisplayName, string(user.Role),
 		user.PasswordHash, user.IsActive, user.CreatedAt, user.UpdatedAt,
+		user.AuthProvider, user.OIDCSubject, user.OIDCIssuer,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -59,19 +60,19 @@ func (s *PostgresUserStore) Create(ctx context.Context, user *User) error {
 
 func (s *PostgresUserStore) GetByID(ctx context.Context, id string) (*User, error) {
 	return s.scanUser(s.pool.QueryRow(ctx, `
-		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at
+		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
 		FROM users WHERE id = $1`, id))
 }
 
 func (s *PostgresUserStore) GetByUsername(ctx context.Context, username string) (*User, error) {
 	return s.scanUser(s.pool.QueryRow(ctx, `
-		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at
+		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
 		FROM users WHERE username = $1`, username))
 }
 
 func (s *PostgresUserStore) List(ctx context.Context) ([]*User, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at
+		SELECT id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
 		FROM users ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -83,11 +84,21 @@ func (s *PostgresUserStore) List(ctx context.Context) ([]*User, error) {
 		var u User
 		var role string
 		var lastLoginAt *time.Time
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt, &lastLoginAt); err != nil {
+		var authProvider, oidcSubject, oidcIssuer *string
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt, &lastLoginAt, &authProvider, &oidcSubject, &oidcIssuer); err != nil {
 			return nil, err
 		}
 		u.Role = Role(role)
 		u.LastLoginAt = lastLoginAt
+		if authProvider != nil {
+			u.AuthProvider = *authProvider
+		}
+		if oidcSubject != nil {
+			u.OIDCSubject = *oidcSubject
+		}
+		if oidcIssuer != nil {
+			u.OIDCIssuer = *oidcIssuer
+		}
 		users = append(users, &u)
 	}
 	return users, rows.Err()
@@ -138,13 +149,21 @@ func (s *PostgresUserStore) UpdateLastLogin(ctx context.Context, id string, t ti
 	return nil
 }
 
+func (s *PostgresUserStore) GetByOIDCIdentity(ctx context.Context, issuer, subject string) (*User, error) {
+	return s.scanUser(s.pool.QueryRow(ctx, `
+		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
+		FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2`, issuer, subject))
+}
+
 func (s *PostgresUserStore) scanUser(row pgx.Row) (*User, error) {
 	var u User
 	var role string
 	var lastLoginAt *time.Time
+	var authProvider, oidcSubject, oidcIssuer *string
 
 	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &role,
-		&u.PasswordHash, &u.IsActive, &u.CreatedAt, &u.UpdatedAt, &lastLoginAt)
+		&u.PasswordHash, &u.IsActive, &u.CreatedAt, &u.UpdatedAt, &lastLoginAt,
+		&authProvider, &oidcSubject, &oidcIssuer)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -154,5 +173,14 @@ func (s *PostgresUserStore) scanUser(row pgx.Row) (*User, error) {
 
 	u.Role = Role(role)
 	u.LastLoginAt = lastLoginAt
+	if authProvider != nil {
+		u.AuthProvider = *authProvider
+	}
+	if oidcSubject != nil {
+		u.OIDCSubject = *oidcSubject
+	}
+	if oidcIssuer != nil {
+		u.OIDCIssuer = *oidcIssuer
+	}
 	return &u, nil
 }

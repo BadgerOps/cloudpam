@@ -43,8 +43,8 @@ func CSRFMiddleware() Middleware {
 				return
 			}
 
-			// Skip CSRF for login and setup endpoints (no session yet)
-			if r.URL.Path == "/api/v1/auth/login" || r.URL.Path == "/api/v1/auth/setup" {
+			// Skip CSRF for login, setup, and OIDC endpoints (OIDC uses state parameter for security)
+			if r.URL.Path == "/api/v1/auth/login" || r.URL.Path == "/api/v1/auth/setup" || strings.HasPrefix(r.URL.Path, "/api/v1/auth/oidc/") {
 				next.ServeHTTP(w, r)
 				return
 			}

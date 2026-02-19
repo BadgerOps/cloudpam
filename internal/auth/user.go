@@ -25,6 +25,9 @@ type User struct {
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
+	AuthProvider string     `json:"auth_provider,omitempty"` // "local" or "oidc"
+	OIDCSubject  string     `json:"oidc_subject,omitempty"`  // IdP "sub" claim
+	OIDCIssuer   string     `json:"oidc_issuer,omitempty"`   // IdP issuer URL
 }
 
 // copyUser creates a deep copy of a User.
@@ -33,14 +36,17 @@ func copyUser(u *User) *User {
 		return nil
 	}
 	cpy := &User{
-		ID:          u.ID,
-		Username:    u.Username,
-		Email:       u.Email,
-		DisplayName: u.DisplayName,
-		Role:        u.Role,
-		IsActive:    u.IsActive,
-		CreatedAt:   u.CreatedAt,
-		UpdatedAt:   u.UpdatedAt,
+		ID:           u.ID,
+		Username:     u.Username,
+		Email:        u.Email,
+		DisplayName:  u.DisplayName,
+		Role:         u.Role,
+		IsActive:     u.IsActive,
+		CreatedAt:    u.CreatedAt,
+		UpdatedAt:    u.UpdatedAt,
+		AuthProvider: u.AuthProvider,
+		OIDCSubject:  u.OIDCSubject,
+		OIDCIssuer:   u.OIDCIssuer,
 	}
 	if u.PasswordHash != nil {
 		cpy.PasswordHash = make([]byte, len(u.PasswordHash))

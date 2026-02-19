@@ -28,7 +28,57 @@ const (
 	defaultRateLimitRPS    = 100.0
 	defaultRateLimitBurst  = 200
 	minimumCleanupInterval = 30 * time.Second
+
+	// SECURITY TRADE-OFF: This cache balances database load against deactivation
+	// responsiveness. A 30-second TTL means a deactivated user could retain access
+	// for up to 30 seconds after deactivation. Shorter TTL = more DB hits per
+	// request; longer TTL = wider security window after account deactivation.
+	//
+	// For deployments requiring instant revocation, set activeStatusCacheTTL to 0,
+	// which checks the DB on every session-authenticated request.
+	//
+	// At 100 req/s with 30s cache: ~1 DB lookup per 30s per user
+	// At 100 req/s with 0s cache:  ~100 DB lookups per second per user
+	activeStatusCacheTTL = 30 * time.Second
 )
+
+// activeStatusEntry caches the result of a user active-status check.
+type activeStatusEntry struct {
+	isActive  bool
+	checkedAt time.Time
+}
+
+// userActiveCache provides a short-TTL cache for user active-status lookups,
+// avoiding a database hit on every session-authenticated request.
+type userActiveCache struct {
+	entries sync.Map // map[string]activeStatusEntry (keyed by user ID)
+}
+
+// check returns (isActive, cacheHit). If the cached entry is older than ttl,
+// it returns cacheHit=false so the caller can refresh from the database.
+func (c *userActiveCache) check(userID string, ttl time.Duration) (bool, bool) {
+	val, ok := c.entries.Load(userID)
+	if !ok {
+		return false, false
+	}
+	entry := val.(activeStatusEntry)
+	if ttl > 0 && time.Since(entry.checkedAt) > ttl {
+		return false, false
+	}
+	// ttl == 0 means always miss (instant revocation mode)
+	if ttl == 0 {
+		return false, false
+	}
+	return entry.isActive, true
+}
+
+// set stores a cached active-status result for the given user ID.
+func (c *userActiveCache) set(userID string, isActive bool) {
+	c.entries.Store(userID, activeStatusEntry{
+		isActive:  isActive,
+		checkedAt: time.Now(),
+	})
+}
 
 // Middleware represents an HTTP middleware that wraps a handler.
 type Middleware func(http.Handler) http.Handler
@@ -532,6 +582,8 @@ func DualAuthMiddleware(
 		logger = slog.Default()
 	}
 
+	activeCache := &userActiveCache{}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
@@ -540,10 +592,34 @@ func DualAuthMiddleware(
 			if cookie, err := r.Cookie("session"); err == nil && cookie.Value != "" {
 				session, err := sessionStore.Get(ctx, cookie.Value)
 				if err == nil && session != nil && session.IsValid() {
-					ctx = auth.ContextWithSession(ctx, session)
-					ctx = auth.ContextWithRole(ctx, session.Role)
-					if user, _ := userStore.GetByID(ctx, session.UserID); user != nil {
+					// Check if the user's account is still active (cached).
+					isActive, cacheHit := activeCache.check(session.UserID, activeStatusCacheTTL)
+					if !cacheHit {
+						// Cache miss or expired — fetch from DB.
+						user, _ := userStore.GetByID(ctx, session.UserID)
+						if user == nil {
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
+							return
+						}
+						isActive = user.IsActive
+						activeCache.set(session.UserID, isActive)
+						if !isActive {
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
+							return
+						}
+						ctx = auth.ContextWithSession(ctx, session)
+						ctx = auth.ContextWithRole(ctx, session.Role)
 						ctx = auth.ContextWithUser(ctx, user)
+					} else {
+						if !isActive {
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
+							return
+						}
+						ctx = auth.ContextWithSession(ctx, session)
+						ctx = auth.ContextWithRole(ctx, session.Role)
+						if user, _ := userStore.GetByID(ctx, session.UserID); user != nil {
+							ctx = auth.ContextWithUser(ctx, user)
+						}
 					}
 					r = r.WithContext(ctx)
 					next.ServeHTTP(w, r)

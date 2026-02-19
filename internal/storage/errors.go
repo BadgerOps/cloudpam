@@ -19,6 +19,9 @@ var (
 	// ErrValidation indicates the input failed validation
 	// (e.g., missing required fields).
 	ErrValidation = errors.New("validation error")
+
+	// ErrDuplicateIssuer indicates that an OIDC provider with the same issuer URL already exists.
+	ErrDuplicateIssuer = errors.New("duplicate issuer URL")
 )
 
 // WrapIfConflict wraps a database error as ErrConflict if it represents a
