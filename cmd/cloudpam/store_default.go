@@ -71,6 +71,14 @@ func selectConversationStore(_ observability.Logger, mainStore storage.Store) st
 	return storage.NewMemoryConversationStore(storage.NewMemoryStore())
 }
 
+// selectDriftStore returns an in-memory drift store.
+func selectDriftStore(_ observability.Logger, mainStore storage.Store) storage.DriftStore {
+	if ms, ok := mainStore.(*storage.MemoryStore); ok {
+		return storage.NewMemoryDriftStore(ms)
+	}
+	return storage.NewMemoryDriftStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus returns schema status string when not built with sqlite tag.
 func sqliteStatus(dsn string) string { return "" }
 

@@ -123,6 +123,15 @@ func selectConversationStore(logger observability.Logger, mainStore storage.Stor
 	return storage.NewMemoryConversationStore(storage.NewMemoryStore())
 }
 
+// selectDriftStore returns a PostgreSQL-backed drift store if the main store supports it.
+func selectDriftStore(logger observability.Logger, mainStore storage.Store) storage.DriftStore {
+	if ds, ok := mainStore.(storage.DriftStore); ok {
+		return ds
+	}
+	logger.Warn("main store does not implement DriftStore; using in-memory fallback")
+	return storage.NewMemoryDriftStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus is a no-op for postgres builds.
 func sqliteStatus(_ string) string { return "" }
 
