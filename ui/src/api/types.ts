@@ -471,6 +471,54 @@ export interface ApplyPlanResponse {
   pool_map: Record<string, number>
 }
 
+// --- Drift detection types ---
+
+export type DriftType = 'unmanaged' | 'cidr_mismatch' | 'orphaned_pool' | 'name_mismatch' | 'account_drift'
+export type DriftSeverity = 'critical' | 'warning' | 'info'
+export type DriftStatus = 'open' | 'resolved' | 'ignored'
+
+export interface DriftItem {
+  id: string
+  account_id: number
+  resource_id?: string
+  pool_id?: number
+  type: DriftType
+  severity: DriftSeverity
+  status: DriftStatus
+  title: string
+  description: string
+  resource_cidr?: string
+  pool_cidr?: string
+  details?: Record<string, string>
+  ignore_reason?: string
+  resolved_at?: string
+  detected_at: string
+  updated_at: string
+}
+
+export interface DriftSummary {
+  total_drifts: number
+  by_severity: Record<string, number>
+  by_type: Record<string, number>
+  accounts_scanned: number
+  resources_scanned: number
+  pools_scanned: number
+}
+
+export interface DriftListResponse {
+  items: DriftItem[]
+  total: number
+  page: number
+  page_size: number
+  summary: DriftSummary
+}
+
+export interface RunDriftDetectionResponse {
+  items: DriftItem[]
+  total: number
+  summary: DriftSummary
+}
+
 // --- Agent provisioning types ---
 
 export interface AgentProvisionResponse {

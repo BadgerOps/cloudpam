@@ -125,6 +125,15 @@ func selectConversationStore(logger observability.Logger, mainStore storage.Stor
 	return storage.NewMemoryConversationStore(storage.NewMemoryStore())
 }
 
+// selectDriftStore returns a SQLite-backed drift store if the main store supports it.
+func selectDriftStore(logger observability.Logger, mainStore storage.Store) storage.DriftStore {
+	if ds, ok := mainStore.(storage.DriftStore); ok {
+		return ds
+	}
+	logger.Warn("main store does not implement DriftStore; using in-memory fallback")
+	return storage.NewMemoryDriftStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus returns migration status when built with sqlite tag.
 func sqliteStatus(dsn string) string {
 	s, err := sqlitestore.Status(dsn)

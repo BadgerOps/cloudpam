@@ -15,6 +15,7 @@ import SchemaPage from './pages/SchemaPage'
 import ApiKeysPage from './pages/ApiKeysPage'
 import UsersPage from './pages/UsersPage'
 import RecommendationsPage from './pages/RecommendationsPage'
+import DriftPage from './pages/DriftPage'
 import AIPlannerPage from './pages/AIPlannerPage'
 import ProfilePage from './pages/ProfilePage'
 import LogDestinationsPage from './pages/LogDestinationsPage'
@@ -39,6 +40,7 @@ export default function App() {
                 <Route path="accounts" element={<AccountsPage />} />
                 <Route path="audit" element={<AuditPage />} />
                 <Route path="discovery" element={<DiscoveryPage />} />
+                <Route path="drift" element={<DriftPage />} />
                 <Route path="schema" element={<SchemaPage />} />
                 <Route path="recommendations" element={<RecommendationsPage />} />
                 <Route path="ai-planner" element={<AIPlannerPage />} />

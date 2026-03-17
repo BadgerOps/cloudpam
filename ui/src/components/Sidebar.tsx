@@ -15,6 +15,7 @@ import {
   Bot,
   Radio,
   Shield,
+  GitCompareArrows,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
@@ -76,6 +77,10 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
           <NavLink to="/discovery" className={linkClass}>
             <RefreshCw className="w-5 h-5" />
             <span>Discovery</span>
+          </NavLink>
+          <NavLink to="/drift" className={linkClass}>
+            <GitCompareArrows className="w-5 h-5" />
+            <span>Drift Detection</span>
           </NavLink>
           <NavLink to="/audit" className={linkClass}>
             <Clock className="w-5 h-5" />

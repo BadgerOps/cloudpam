@@ -185,6 +185,12 @@ func main() {
 	aiSrv := api.NewAIPlanningServer(srv, aiService, convStore)
 	logger.Info("ai planning subsystem initialized")
 
+	// Initialize drift detection subsystem
+	driftStore := selectDriftStore(logger, store)
+	driftDetector := discovery.NewDriftDetector(store, discoveryStore, driftStore)
+	driftSrv := api.NewDriftServer(srv, driftDetector, driftStore)
+	logger.Info("drift detection subsystem initialized")
+
 	// Initialize settings subsystem
 	settingsStore := storage.NewMemorySettingsStore()
 	settingsSrv := api.NewSettingsServer(srv, settingsStore)
@@ -211,6 +217,7 @@ func main() {
 	discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
 	analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 	recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
+	driftSrv.RegisterProtectedDriftRoutes(dualMW, logger.Slog())
 	aiSrv.RegisterProtectedAIPlanningRoutes(dualMW, logger.Slog())
 	settingsSrv.RegisterProtectedSettingsRoutes(dualMW, logger.Slog())
 	oidcSrv.RegisterOIDCRoutes(logger.Slog())
