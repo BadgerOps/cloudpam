@@ -18,6 +18,7 @@ import (
 	"cloudpam/internal/auth"
 	"cloudpam/internal/discovery"
 	awscollector "cloudpam/internal/discovery/aws"
+	gcpcollector "cloudpam/internal/discovery/gcp"
 	"cloudpam/internal/api"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/storage"
@@ -156,8 +157,9 @@ func main() {
 	discoveryStore := selectDiscoveryStore(logger, store)
 	syncService := discovery.NewSyncService(discoveryStore)
 	syncService.RegisterCollector(awscollector.New())
+	syncService.RegisterCollector(gcpcollector.New())
 	discoverySrv := api.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
-	logger.Info("discovery subsystem initialized", "collectors", "aws")
+	logger.Info("discovery subsystem initialized", "collectors", "aws,gcp")
 
 	// Initialize analysis subsystem
 	analysisService := planning.NewAnalysisService(store)
