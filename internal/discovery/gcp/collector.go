@@ -373,7 +373,9 @@ func doGet(ctx context.Context, client *http.Client, url string, dest any) error
 	if err != nil {
 		return fmt.Errorf("http get %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
