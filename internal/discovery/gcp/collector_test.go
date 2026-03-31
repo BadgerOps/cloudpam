@@ -292,7 +292,9 @@ func TestDiscover_RegionFilter(t *testing.T) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/compute/v1/projects/test-project/global/networks", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(networkList{})
+		if err := json.NewEncoder(w).Encode(networkList{}); err != nil {
+			t.Fatalf("encode empty network list response: %v", err)
+		}
 	})
 
 	mux.HandleFunc("/compute/v1/projects/test-project/aggregated/subnetworks", func(w http.ResponseWriter, r *http.Request) {
@@ -310,11 +312,15 @@ func TestDiscover_RegionFilter(t *testing.T) {
 				},
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Fatalf("encode filtered subnetwork list response: %v", err)
+		}
 	})
 
 	mux.HandleFunc("/compute/v1/projects/test-project/aggregated/addresses", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(aggregatedAddressList{})
+		if err := json.NewEncoder(w).Encode(aggregatedAddressList{}); err != nil {
+			t.Fatalf("encode empty address list response: %v", err)
+		}
 	})
 
 	server := httptest.NewServer(mux)
