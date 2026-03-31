@@ -244,6 +244,41 @@ export interface HealthResponse {
   needs_setup?: boolean
 }
 
+export interface UpdateCheckResponse {
+  current_version: string
+  latest_version: string
+  update_available: boolean
+  release_notes?: string
+  release_url?: string
+  published_at?: string
+  checked_at: string
+  warning?: string
+  error?: string
+}
+
+export interface UpgradeTriggerResponse {
+  status: string
+  target_version: string
+}
+
+export interface UpdateStatusResponse {
+  status: string
+  step?: string
+  message?: string
+  error?: string
+  current_version?: string
+  target_version?: string
+  target_image_tag?: string
+  requested_at?: string
+  requested_by?: string
+  started_at?: string
+  finished_at?: string
+  checked_at?: string
+  backup_path?: string
+  release_url?: string
+  [key: string]: unknown
+}
+
 // --- User types ---
 
 export interface UserInfo {

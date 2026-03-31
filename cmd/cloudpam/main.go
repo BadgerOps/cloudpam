@@ -15,13 +15,12 @@ import (
 
 	"github.com/getsentry/sentry-go"
 
+	"cloudpam/internal/api"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/discovery"
 	awscollector "cloudpam/internal/discovery/aws"
 	gcpcollector "cloudpam/internal/discovery/gcp"
-	"cloudpam/internal/api"
 	"cloudpam/internal/observability"
-	"cloudpam/internal/storage"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/planning/llm"
 
@@ -194,16 +193,20 @@ func main() {
 	logger.Info("drift detection subsystem initialized")
 
 	// Initialize settings subsystem
-	settingsStore := storage.NewMemorySettingsStore()
+	settingsStore := selectSettingsStore(logger, store)
 	settingsSrv := api.NewSettingsServer(srv, settingsStore)
 	logger.Info("settings subsystem initialized")
 
 	// OIDC subsystem
-	oidcStore := storage.NewMemoryOIDCProviderStore()
+	oidcStore := selectOIDCProviderStore(logger, store)
 	oidcEncKey := parseOIDCEncryptionKey(logger)
 	oidcCallbackURL := os.Getenv("CLOUDPAM_OIDC_CALLBACK_URL")
 	oidcSrv := api.NewOIDCServer(srv, oidcStore, sessionStore, userStore, settingsStore, oidcEncKey, oidcCallbackURL)
 	logger.Info("oidc subsystem initialized")
+
+	// Update subsystem
+	updateSrv := api.NewUpdateServer(srv)
+	logger.Info("update subsystem initialized")
 
 	// Auth is always enabled — register protected routes with RBAC.
 	srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
@@ -224,6 +227,7 @@ func main() {
 	settingsSrv.RegisterProtectedSettingsRoutes(dualMW, logger.Slog())
 	oidcSrv.RegisterOIDCRoutes(logger.Slog())
 	oidcSrv.RegisterOIDCAdminRoutes(dualMW, logger.Slog())
+	updateSrv.RegisterProtectedUpdateRoutes(dualMW, logger.Slog())
 	userSrv.SetSettingsStore(settingsStore)
 
 	if len(existingUsers) == 0 {

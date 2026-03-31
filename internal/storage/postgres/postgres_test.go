@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -97,6 +98,10 @@ func resetDB(t *testing.T) {
 	// Truncate in dependency order (children before parents)
 	tables := []string{
 		"pool_utilization_cache",
+		"oidc_providers",
+		"settings",
+		"sessions",
+		"users",
 		"pools",
 		"accounts",
 		"audit_events",
@@ -1814,6 +1819,176 @@ func TestStoreClose(t *testing.T) {
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
+	}
+}
+
+func TestSecuritySettingsStore(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	s := testDB.store
+
+	got, err := s.GetSecuritySettings(ctx)
+	if err != nil {
+		t.Fatalf("GetSecuritySettings default failed: %v", err)
+	}
+	defaults := domain.DefaultSecuritySettings()
+	if got.SessionDurationHours != defaults.SessionDurationHours ||
+		got.MaxSessionsPerUser != defaults.MaxSessionsPerUser ||
+		got.PasswordMinLength != defaults.PasswordMinLength ||
+		got.PasswordMaxLength != defaults.PasswordMaxLength ||
+		got.LoginRateLimitPerMin != defaults.LoginRateLimitPerMin ||
+		got.AccountLockoutAttempts != defaults.AccountLockoutAttempts ||
+		got.LocalAuthEnabled != defaults.LocalAuthEnabled ||
+		len(got.TrustedProxies) != len(defaults.TrustedProxies) {
+		t.Fatalf("expected defaults %+v, got %+v", defaults, *got)
+	}
+
+	updated := &domain.SecuritySettings{
+		SessionDurationHours:   12,
+		MaxSessionsPerUser:     3,
+		PasswordMinLength:      14,
+		PasswordMaxLength:      64,
+		LoginRateLimitPerMin:   9,
+		AccountLockoutAttempts: 5,
+		TrustedProxies:         []string{"10.0.0.0/8", "192.168.0.0/16"},
+		LocalAuthEnabled:       false,
+	}
+	if err := s.UpdateSecuritySettings(ctx, updated); err != nil {
+		t.Fatalf("UpdateSecuritySettings failed: %v", err)
+	}
+
+	got, err = s.GetSecuritySettings(ctx)
+	if err != nil {
+		t.Fatalf("GetSecuritySettings after update failed: %v", err)
+	}
+	if got.SessionDurationHours != updated.SessionDurationHours ||
+		got.MaxSessionsPerUser != updated.MaxSessionsPerUser ||
+		got.PasswordMinLength != updated.PasswordMinLength ||
+		got.PasswordMaxLength != updated.PasswordMaxLength ||
+		got.LoginRateLimitPerMin != updated.LoginRateLimitPerMin ||
+		got.AccountLockoutAttempts != updated.AccountLockoutAttempts ||
+		got.LocalAuthEnabled != updated.LocalAuthEnabled {
+		t.Fatalf("settings mismatch: got %+v want %+v", *got, *updated)
+	}
+	if len(got.TrustedProxies) != len(updated.TrustedProxies) {
+		t.Fatalf("trusted proxies length mismatch: got %v want %v", got.TrustedProxies, updated.TrustedProxies)
+	}
+	for i := range got.TrustedProxies {
+		if got.TrustedProxies[i] != updated.TrustedProxies[i] {
+			t.Fatalf("trusted proxy mismatch at %d: got %q want %q", i, got.TrustedProxies[i], updated.TrustedProxies[i])
+		}
+	}
+}
+
+func TestOIDCProviderStore(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	s := testDB.store
+
+	p1 := newTestProvider("p1", "Provider One", "https://issuer-one.example.com")
+	if err := s.CreateProvider(ctx, p1); err != nil {
+		t.Fatalf("CreateProvider failed: %v", err)
+	}
+
+	got, err := s.GetProvider(ctx, p1.ID)
+	if err != nil {
+		t.Fatalf("GetProvider failed: %v", err)
+	}
+	if got.Name != p1.Name || got.IssuerURL != p1.IssuerURL || got.ClientID != p1.ClientID {
+		t.Fatalf("unexpected provider: %+v", got)
+	}
+	if got.RoleMapping["admin"] != "admin" {
+		t.Fatalf("expected role mapping to round-trip, got %+v", got.RoleMapping)
+	}
+
+	gotByIssuer, err := s.GetProviderByIssuer(ctx, p1.IssuerURL)
+	if err != nil {
+		t.Fatalf("GetProviderByIssuer failed: %v", err)
+	}
+	if gotByIssuer.ID != p1.ID {
+		t.Fatalf("expected provider %q, got %q", p1.ID, gotByIssuer.ID)
+	}
+
+	p2 := newTestProvider("p2", "Provider Two", "https://issuer-two.example.com")
+	p2.Enabled = false
+	if err := s.CreateProvider(ctx, p2); err != nil {
+		t.Fatalf("CreateProvider second provider failed: %v", err)
+	}
+
+	list, err := s.ListProviders(ctx)
+	if err != nil {
+		t.Fatalf("ListProviders failed: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 providers, got %d", len(list))
+	}
+
+	enabled, err := s.ListEnabledProviders(ctx)
+	if err != nil {
+		t.Fatalf("ListEnabledProviders failed: %v", err)
+	}
+	if len(enabled) != 1 || enabled[0].ID != p1.ID {
+		t.Fatalf("expected only %q enabled, got %+v", p1.ID, enabled)
+	}
+
+	p1.Name = "Provider One Updated"
+	p1.IssuerURL = "https://issuer-one-updated.example.com"
+	p1.Enabled = false
+	p1.UpdatedAt = time.Now().UTC()
+	if err := s.UpdateProvider(ctx, p1); err != nil {
+		t.Fatalf("UpdateProvider failed: %v", err)
+	}
+
+	got, err = s.GetProvider(ctx, p1.ID)
+	if err != nil {
+		t.Fatalf("GetProvider after update failed: %v", err)
+	}
+	if got.Name != p1.Name || got.IssuerURL != p1.IssuerURL || got.Enabled != p1.Enabled {
+		t.Fatalf("provider update mismatch: got %+v want %+v", got, p1)
+	}
+
+	_, err = s.GetProviderByIssuer(ctx, "https://issuer-one.example.com")
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expected old issuer lookup to fail with ErrNotFound, got %v", err)
+	}
+
+	dupCreate := newTestProvider("p3", "Provider Three", p1.IssuerURL)
+	err = s.CreateProvider(ctx, dupCreate)
+	if !errors.Is(err, storage.ErrDuplicateIssuer) {
+		t.Fatalf("expected duplicate issuer on create, got %v", err)
+	}
+
+	p2.IssuerURL = p1.IssuerURL
+	p2.UpdatedAt = time.Now().UTC()
+	err = s.UpdateProvider(ctx, p2)
+	if !errors.Is(err, storage.ErrDuplicateIssuer) {
+		t.Fatalf("expected duplicate issuer on update, got %v", err)
+	}
+
+	if err := s.DeleteProvider(ctx, p2.ID); err != nil {
+		t.Fatalf("DeleteProvider failed: %v", err)
+	}
+	_, err = s.GetProvider(ctx, p2.ID)
+	if !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+}
+
+func newTestProvider(id, name, issuer string) *domain.OIDCProvider {
+	now := time.Now().UTC()
+	return &domain.OIDCProvider{
+		ID:                    id,
+		Name:                  name,
+		IssuerURL:             issuer,
+		ClientID:              "client-" + id,
+		ClientSecretEncrypted: "secret-encrypted",
+		Scopes:                "openid profile email",
+		RoleMapping:           map[string]string{"admin": "admin"},
+		DefaultRole:           "viewer",
+		AutoProvision:         true,
+		Enabled:               true,
+		CreatedAt:             now,
+		UpdatedAt:             now,
 	}
 }
 

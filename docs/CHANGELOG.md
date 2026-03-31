@@ -5,6 +5,18 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-31
+
+### Added
+- Admin-only update API foundation: `GET /api/v1/updates`, `POST /api/v1/updates/upgrade`, and `GET /api/v1/updates/status`
+- GitHub release polling with semver selection, release-note metadata, and cached update checks for CloudPAM releases
+- File-based upgrade trigger/status plumbing so the app can participate in a host-managed in-app updater flow on NixOS/Podman deployments
+- PostgreSQL-backed OIDC provider persistence and PostgreSQL-backed security settings persistence
+
+### Changed
+- Settings and OIDC subsystems now select the deployment-backed store when available instead of always using in-memory fallbacks
+- PostgreSQL storage tests now cover security settings and OIDC provider persistence behavior
+
 ## [0.8.1] - 2026-03-31
 
 ### Fixed

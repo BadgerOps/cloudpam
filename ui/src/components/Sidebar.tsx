@@ -16,6 +16,7 @@ import {
   Radio,
   Shield,
   GitCompareArrows,
+  ArrowUpCircle,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
@@ -126,6 +127,12 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
             <NavLink to="/config/security" className={linkClass}>
               <Shield className="w-5 h-5" />
               <span>Security</span>
+            </NavLink>
+          )}
+          {role === 'admin' && (
+            <NavLink to="/config/updates" className={linkClass}>
+              <ArrowUpCircle className="w-5 h-5" />
+              <span>Updates</span>
             </NavLink>
           )}
         </div>
