@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -230,11 +231,18 @@ func (s *Server) handleSPA() http.Handler {
 	fileServer := http.FileServer(http.FS(distSub))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Serve real files (JS, CSS, assets).
+		// Serve real files (JS, CSS, images) when they exist.
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		if path != "" {
 			if _, err := fs.Stat(distSub, path); err == nil {
 				fileServer.ServeHTTP(w, r)
+				return
+			}
+
+			// Do not return index.html for asset-like paths; that breaks module loading
+			// with a misleading MIME type error when the bundle is missing.
+			if strings.HasPrefix(path, "assets/") || filepath.Ext(path) != "" {
+				http.NotFound(w, r)
 				return
 			}
 		}
@@ -295,4 +303,3 @@ func (s *Server) handleAuditList(w http.ResponseWriter, r *http.Request) {
 		"offset": offset,
 	})
 }
-

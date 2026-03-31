@@ -1092,6 +1092,21 @@ func TestSPAFallback(t *testing.T) {
 	}
 }
 
+func TestSPAMissingAssetReturns404(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/assets/missing.js", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusNotFound {
+		t.Fatalf("expected 404 for missing asset, got %d", rr.Code)
+	}
+	if strings.Contains(rr.Body.String(), "<!DOCTYPE html>") {
+		t.Fatalf("expected missing asset to avoid SPA html fallback")
+	}
+}
+
 // TestPoolsHierarchy tests the GET /api/v1/pools/hierarchy endpoint
 func TestPoolsHierarchy(t *testing.T) {
 	srv, _ := setupTestServer()
