@@ -195,6 +195,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Container image vulnerability scans now use `aquasecurity/trivy-action` `v0.35.0` with Trivy `v0.69.3`, fixing release failures caused by the older action's broken `v0.69.1` setup path
+
 ### Changed — Build Pipeline & Container Hardening
 
 #### Container Images
