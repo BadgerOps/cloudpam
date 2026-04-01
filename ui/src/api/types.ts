@@ -257,27 +257,6 @@ export interface SystemInfoResponse {
 }
 
 export interface UpdateCheckResponse {
-  update_available: boolean
-  current_version: string
-  latest_version: string
-  release_notes: string
-  release_url: string
-  published_at: string
-  checked_at: string
-  upgrade_supported: boolean
-}
-
-export interface UpgradeStatusResponse {
-  status: 'idle' | 'running' | 'completed' | 'failed' | 'unsupported'
-  supported: boolean
-  message?: string
-  step?: number
-  total_steps?: number
-  progress?: number
-  updated_at?: string
-}
-
-export interface UpdateCheckResponse {
   current_version: string
   latest_version: string
   update_available: boolean
@@ -285,6 +264,7 @@ export interface UpdateCheckResponse {
   release_url?: string
   published_at?: string
   checked_at: string
+  upgrade_supported?: boolean
   warning?: string
   error?: string
 }
@@ -292,12 +272,17 @@ export interface UpdateCheckResponse {
 export interface UpgradeTriggerResponse {
   status: string
   target_version: string
+  message?: string
 }
 
 export interface UpdateStatusResponse {
   status: string
-  step?: string
+  supported?: boolean
   message?: string
+  step?: number | string
+  total_steps?: number
+  progress?: number
+  updated_at?: string
   error?: string
   current_version?: string
   target_version?: string
@@ -311,6 +296,8 @@ export interface UpdateStatusResponse {
   release_url?: string
   [key: string]: unknown
 }
+
+export type UpgradeStatusResponse = UpdateStatusResponse
 
 // --- User types ---
 

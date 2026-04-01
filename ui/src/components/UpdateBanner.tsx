@@ -41,9 +41,10 @@ export default function UpdateBanner() {
           setUpdateAvailable(true)
           setLatestVersion(result.latest_version)
           setReleaseNotes(result.release_notes || '')
-          setUpgradeSupported(result.upgrade_supported)
+          setUpgradeSupported(result.upgrade_supported ?? false)
         } else {
           setUpdateAvailable(false)
+          setUpgradeSupported(false)
         }
       } catch {
         // Ignore transient failures in the banner.
