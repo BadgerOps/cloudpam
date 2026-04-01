@@ -5,6 +5,90 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.9.1] - 2026-04-01
+
+### Fixed
+- Container image vulnerability scans now use `aquasecurity/trivy-action` `v0.35.0` with Trivy `v0.69.3`, fixing release failures caused by the older action's broken `v0.69.1` setup path
+
+### Added
+- Grapheon-style admin information architecture with dedicated `Release Notes`, `Identity`, and `Configuration` surfaces in the app shell
+- In-app release notes page at `/changelog`, backed by the embedded `docs/CHANGELOG.md` document
+- Admin update banner plus update-check API endpoints for current version, latest release metadata, and upgrade status
+- Optional single-host in-app upgrade flow using a file-triggered host service and upgrade status file
+- Configuration overview page with version metadata, release links, update controls, and shortcuts into operational settings
+- Identity admin page that groups auth providers, users, and built-in RBAC guidance into one surface
+
+### Changed
+- Primary admin navigation now mirrors Grapheon more closely by moving provider management, RBAC guidance, and user administration under `Identity`
+- Security settings now focus on policy controls while linking operators to the new identity surface for auth-provider administration
+- Login now respects the local-auth toggle, hiding the password form when password login is disabled
+- Health and system info responses now expose the active local-auth state and current application version
+- Release Notes now uses a Grapheon-style searchable timeline with expandable cards, category badges, and inline formatting for changelog entries
+
+### Changed — Build Pipeline & Container Hardening
+
+#### Container Images
+- Runtime base image changed from `alpine:3.21` to `cgr.dev/chainguard/static:latest` in both server and agent Dockerfiles — zero OS packages, ~15MB images
+- Removed `apk add ca-certificates tzdata curl` (ca-certs and tzdata provided by Chainguard base)
+- Removed manual user creation (`addgroup`/`adduser`) — uses Chainguard built-in `nonroot` user (UID 65532)
+- Removed `HEALTHCHECK` instructions (Kubernetes liveness/readiness probes handle health checks; Docker Compose users can add externally)
+- Helm chart `podSecurityContext` updated: `runAsUser` and `fsGroup` changed from 1000 to 65532 to match Chainguard `nonroot` UID
+
+#### Frontend Build Optimization
+- Vite build config: explicit `sourcemap: false`, `target: 'es2020'`, `cssMinify: true`
+- Rollup `manualChunks` splits vendor-react and vendor-icons into separate cacheable chunks
+- Hash-based chunk/entry/asset file naming for cache busting
+- Added `rollup-plugin-visualizer` devDep and `build:analyze` script for bundle analysis
+
+#### CI/CD Hardening
+- All GitHub Actions pinned to immutable commit SHAs across 6 workflow files (test, lint, container-images, release-builds, release, manual-builds)
+- New `govulncheck` job in `test.yml` — scans Go dependencies for known vulnerabilities on every push/PR
+- New Trivy container scan step in `container-images.yml` — scans server and agent images for HIGH/CRITICAL vulnerabilities after build (non-blocking)
+
+### Added - Sprint 16b: AWS Organizations Discovery
+
+#### Org-Mode Agent (`cmd/cloudpam-agent/`)
+- `config.go`: `AWSOrg` config struct with `enabled`, `role_name`, `external_id`, `regions`, `exclude_accounts` — env vars `CLOUDPAM_AWS_ORG_*`
+- `main.go`: `runOrgSync()` — enumerates org accounts, filters excludes, AssumeRole per member, discovers, builds `BulkIngestRequest`
+- `pusher.go`: `PushOrgResources()` — pushes bulk ingest payload to server with retry/backoff
+
+#### AWS SDK Extensions (`internal/discovery/aws/`)
+- `org.go`: `ListOrgAccounts()` — enumerates active AWS Organization accounts via `organizations:ListAccounts` paginator
+- `assume_role.go`: `AssumeRole()` — returns `aws.CredentialsProvider` via `stscreds.NewAssumeRoleProvider` with optional ExternalID
+- `collector.go`: `NewWithCredentials()` constructor — injects cross-account credentials into the existing collector
+
+#### Bulk Org Ingest API
+- `POST /api/v1/discovery/ingest/org` — accepts `BulkIngestRequest`, auto-creates CloudPAM Account records for new AWS accounts, upserts resources per account
+- `internal/domain/discovery.go`: `OrgAccountIngest`, `BulkIngestRequest`, `BulkIngestResponse` domain types
+- `internal/storage/store.go`: `GetAccountByKey(ctx, key)` on Store interface — lookup accounts by unique key (e.g. `aws:123456789012`)
+- `internal/storage/sqlite/sqlite.go`: SQLite `GetAccountByKey` implementation
+- `internal/storage/postgres/postgres.go`: PostgreSQL `GetAccountByKey` implementation
+- `migrations/0012_account_key_unique.sql`: unique index on `accounts.key`
+
+#### Infrastructure as Code (`deploy/`)
+- `deploy/terraform/aws-org-discovery/management-policy/`: Terraform module creating IAM role (EC2+ECS trust), instance profile, 3 policies (org discovery, EC2 read-only, STS identity)
+- `deploy/terraform/aws-org-discovery/member-role/`: Terraform module creating cross-account discovery role with least-privilege trust policy
+- `deploy/cloudformation/discovery-role-stackset.yaml`: CloudFormation StackSet template for deploying member role across all org accounts
+
+#### Frontend — Discovery Wizard Org Mode (`ui/src/components/DiscoveryWizard.tsx`)
+- Discovery mode toggle: "Single Account" vs "AWS Organization" radio cards
+- Org mode fields: Role Name, External ID, Regions, Exclude Accounts
+- Org-aware config generation for all deployment tabs (Shell, YAML, Terraform, Docker)
+- New "IAM Setup" tab (org-mode only) with Terraform snippets for member role + management policy
+- Agent connection polling: wizard polls for agent heartbeats every 5s, shows spinner while waiting, green status when connected
+- `onComplete` callback navigates to Agents tab on completion
+
+#### Dependencies
+- `github.com/aws/aws-sdk-go-v2/service/organizations` v1.50.2
+- `github.com/aws/aws-sdk-go-v2/credentials/stscreds` (STS AssumeRole)
+
+#### Documentation
+- `docs/DISCOVERY.md`: AWS Organizations discovery section — architecture, agent config, Terraform modules, bulk ingest API
+- `docs/CHANGELOG.md`: this entry
+- `CLAUDE.md`: updated with org discovery endpoint, env vars, migration, deployment modules
+
 ## [0.9.0] - 2026-03-31
 
 ### Added
@@ -204,88 +288,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apply Plan button on detected plan cards to create pools directly
 - `Bot` icon nav item in sidebar
 - Frontend tests for plan parser (5 tests)
-
-## [0.9.1] - 2026-04-01
-
-### Fixed
-- Container image vulnerability scans now use `aquasecurity/trivy-action` `v0.35.0` with Trivy `v0.69.3`, fixing release failures caused by the older action's broken `v0.69.1` setup path
-
-### Added
-- Grapheon-style admin information architecture with dedicated `Release Notes`, `Identity`, and `Configuration` surfaces in the app shell
-- In-app release notes page at `/changelog`, backed by the embedded `docs/CHANGELOG.md` document
-- Admin update banner plus update-check API endpoints for current version, latest release metadata, and upgrade status
-- Optional single-host in-app upgrade flow using a file-triggered host service and upgrade status file
-- Configuration overview page with version metadata, release links, update controls, and shortcuts into operational settings
-- Identity admin page that groups auth providers, users, and built-in RBAC guidance into one surface
-
-### Changed
-- Primary admin navigation now mirrors Grapheon more closely by moving provider management, RBAC guidance, and user administration under `Identity`
-- Security settings now focus on policy controls while linking operators to the new identity surface for auth-provider administration
-- Login now respects the local-auth toggle, hiding the password form when password login is disabled
-- Health and system info responses now expose the active local-auth state and current application version
-- Release Notes now uses a Grapheon-style searchable timeline with expandable cards, category badges, and inline formatting for changelog entries
-
-### Changed — Build Pipeline & Container Hardening
-
-#### Container Images
-- Runtime base image changed from `alpine:3.21` to `cgr.dev/chainguard/static:latest` in both server and agent Dockerfiles — zero OS packages, ~15MB images
-- Removed `apk add ca-certificates tzdata curl` (ca-certs and tzdata provided by Chainguard base)
-- Removed manual user creation (`addgroup`/`adduser`) — uses Chainguard built-in `nonroot` user (UID 65532)
-- Removed `HEALTHCHECK` instructions (Kubernetes liveness/readiness probes handle health checks; Docker Compose users can add externally)
-- Helm chart `podSecurityContext` updated: `runAsUser` and `fsGroup` changed from 1000 to 65532 to match Chainguard `nonroot` UID
-
-#### Frontend Build Optimization
-- Vite build config: explicit `sourcemap: false`, `target: 'es2020'`, `cssMinify: true`
-- Rollup `manualChunks` splits vendor-react and vendor-icons into separate cacheable chunks
-- Hash-based chunk/entry/asset file naming for cache busting
-- Added `rollup-plugin-visualizer` devDep and `build:analyze` script for bundle analysis
-
-#### CI/CD Hardening
-- All GitHub Actions pinned to immutable commit SHAs across 6 workflow files (test, lint, container-images, release-builds, release, manual-builds)
-- New `govulncheck` job in `test.yml` — scans Go dependencies for known vulnerabilities on every push/PR
-- New Trivy container scan step in `container-images.yml` — scans server and agent images for HIGH/CRITICAL vulnerabilities after build (non-blocking)
-
-### Added - Sprint 16b: AWS Organizations Discovery
-
-#### Org-Mode Agent (`cmd/cloudpam-agent/`)
-- `config.go`: `AWSOrg` config struct with `enabled`, `role_name`, `external_id`, `regions`, `exclude_accounts` — env vars `CLOUDPAM_AWS_ORG_*`
-- `main.go`: `runOrgSync()` — enumerates org accounts, filters excludes, AssumeRole per member, discovers, builds `BulkIngestRequest`
-- `pusher.go`: `PushOrgResources()` — pushes bulk ingest payload to server with retry/backoff
-
-#### AWS SDK Extensions (`internal/discovery/aws/`)
-- `org.go`: `ListOrgAccounts()` — enumerates active AWS Organization accounts via `organizations:ListAccounts` paginator
-- `assume_role.go`: `AssumeRole()` — returns `aws.CredentialsProvider` via `stscreds.NewAssumeRoleProvider` with optional ExternalID
-- `collector.go`: `NewWithCredentials()` constructor — injects cross-account credentials into the existing collector
-
-#### Bulk Org Ingest API
-- `POST /api/v1/discovery/ingest/org` — accepts `BulkIngestRequest`, auto-creates CloudPAM Account records for new AWS accounts, upserts resources per account
-- `internal/domain/discovery.go`: `OrgAccountIngest`, `BulkIngestRequest`, `BulkIngestResponse` domain types
-- `internal/storage/store.go`: `GetAccountByKey(ctx, key)` on Store interface — lookup accounts by unique key (e.g. `aws:123456789012`)
-- `internal/storage/sqlite/sqlite.go`: SQLite `GetAccountByKey` implementation
-- `internal/storage/postgres/postgres.go`: PostgreSQL `GetAccountByKey` implementation
-- `migrations/0012_account_key_unique.sql`: unique index on `accounts.key`
-
-#### Infrastructure as Code (`deploy/`)
-- `deploy/terraform/aws-org-discovery/management-policy/`: Terraform module creating IAM role (EC2+ECS trust), instance profile, 3 policies (org discovery, EC2 read-only, STS identity)
-- `deploy/terraform/aws-org-discovery/member-role/`: Terraform module creating cross-account discovery role with least-privilege trust policy
-- `deploy/cloudformation/discovery-role-stackset.yaml`: CloudFormation StackSet template for deploying member role across all org accounts
-
-#### Frontend — Discovery Wizard Org Mode (`ui/src/components/DiscoveryWizard.tsx`)
-- Discovery mode toggle: "Single Account" vs "AWS Organization" radio cards
-- Org mode fields: Role Name, External ID, Regions, Exclude Accounts
-- Org-aware config generation for all deployment tabs (Shell, YAML, Terraform, Docker)
-- New "IAM Setup" tab (org-mode only) with Terraform snippets for member role + management policy
-- Agent connection polling: wizard polls for agent heartbeats every 5s, shows spinner while waiting, green status when connected
-- `onComplete` callback navigates to Agents tab on completion
-
-#### Dependencies
-- `github.com/aws/aws-sdk-go-v2/service/organizations` v1.50.2
-- `github.com/aws/aws-sdk-go-v2/credentials/stscreds` (STS AssumeRole)
-
-#### Documentation
-- `docs/DISCOVERY.md`: AWS Organizations discovery section — architecture, agent config, Terraform modules, bulk ingest API
-- `docs/CHANGELOG.md`: this entry
-- `CLAUDE.md`: updated with org discovery endpoint, env vars, migration, deployment modules
 
 ## [0.3.2] - 2026-02-15
 
