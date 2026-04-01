@@ -210,6 +210,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Container image vulnerability scans now use `aquasecurity/trivy-action` `v0.35.0` with Trivy `v0.69.3`, fixing release failures caused by the older action's broken `v0.69.1` setup path
 
+### Added
+- Grapheon-style admin information architecture with dedicated `Release Notes`, `Identity`, and `Configuration` surfaces in the app shell
+- In-app release notes page at `/changelog`, backed by the embedded `docs/CHANGELOG.md` document
+- Admin update banner plus update-check API endpoints for current version, latest release metadata, and upgrade status
+- Optional single-host in-app upgrade flow using a file-triggered host service and upgrade status file
+- Configuration overview page with version metadata, release links, update controls, and shortcuts into operational settings
+- Identity admin page that groups auth providers, users, and built-in RBAC guidance into one surface
+
+### Changed
+- Primary admin navigation now mirrors Grapheon more closely by moving provider management, RBAC guidance, and user administration under `Identity`
+- Security settings now focus on policy controls while linking operators to the new identity surface for auth-provider administration
+- Login now respects the local-auth toggle, hiding the password form when password login is disabled
+- Health and system info responses now expose the active local-auth state and current application version
+
 ### Changed — Build Pipeline & Container Hardening
 
 #### Container Images

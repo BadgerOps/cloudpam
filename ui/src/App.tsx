@@ -21,6 +21,9 @@ import ProfilePage from './pages/ProfilePage'
 import LogDestinationsPage from './pages/LogDestinationsPage'
 import SecuritySettingsPage from './pages/SecuritySettingsPage'
 import UpdatesPage from './pages/UpdatesPage'
+import ChangelogPage from './pages/ChangelogPage'
+import IdentityPage from './pages/IdentityPage'
+import ConfigurationPage from './pages/ConfigurationPage'
 
 export default function App() {
   const toastState = useToastState()
@@ -46,11 +49,16 @@ export default function App() {
                 <Route path="recommendations" element={<RecommendationsPage />} />
                 <Route path="ai-planner" element={<AIPlannerPage />} />
                 <Route path="profile" element={<ProfilePage />} />
+                <Route path="changelog" element={<ChangelogPage />} />
                 <Route path="config/api-keys" element={<ApiKeysPage />} />
-                <Route path="config/users" element={<UsersPage />} />
-                <Route path="config/log-destinations" element={<LogDestinationsPage />} />
-                <Route path="config/security" element={<SecuritySettingsPage />} />
-                <Route path="config/updates" element={<UpdatesPage />} />
+                <Route element={<ProtectedRoute requiredRole="admin" />}>
+                  <Route path="identity" element={<IdentityPage />} />
+                  <Route path="config" element={<ConfigurationPage />} />
+                  <Route path="config/log-destinations" element={<LogDestinationsPage />} />
+                  <Route path="config/updates" element={<UpdatesPage />} />
+                  <Route path="config/users" element={<UsersPage />} />
+                  <Route path="config/security" element={<SecuritySettingsPage />} />
+                </Route>
               </Route>
             </Route>
           </Routes>

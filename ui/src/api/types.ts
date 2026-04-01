@@ -242,6 +242,18 @@ export interface HealthResponse {
   auth_enabled?: boolean
   local_auth_enabled?: boolean
   needs_setup?: boolean
+  version?: string
+}
+
+export interface SystemInfoResponse {
+  version: string
+  auth_enabled: boolean
+  local_auth_enabled: boolean
+  needs_setup: boolean
+  release_url: string
+  changelog_path: string
+  in_app_upgrade_enabled: boolean
+  upgrade_mode: 'file_trigger' | 'manual'
 }
 
 export interface UpdateCheckResponse {
@@ -252,6 +264,7 @@ export interface UpdateCheckResponse {
   release_url?: string
   published_at?: string
   checked_at: string
+  upgrade_supported?: boolean
   warning?: string
   error?: string
 }
@@ -259,12 +272,17 @@ export interface UpdateCheckResponse {
 export interface UpgradeTriggerResponse {
   status: string
   target_version: string
+  message?: string
 }
 
 export interface UpdateStatusResponse {
   status: string
-  step?: string
+  supported?: boolean
   message?: string
+  step?: number | string
+  total_steps?: number
+  progress?: number
+  updated_at?: string
   error?: string
   current_version?: string
   target_version?: string
@@ -278,6 +296,8 @@ export interface UpdateStatusResponse {
   release_url?: string
   [key: string]: unknown
 }
+
+export type UpgradeStatusResponse = UpdateStatusResponse
 
 // --- User types ---
 

@@ -5,6 +5,7 @@ import Header from './Header'
 import SearchModal from './SearchModal'
 import ImportExportModal from './ImportExportModal'
 import ToastContainer from './ToastContainer'
+import UpdateBanner from './UpdateBanner'
 import { useSessionRefresh } from '../hooks/useSessionRefresh'
 
 export default function Layout() {
@@ -30,6 +31,7 @@ export default function Layout() {
       <Sidebar onImportExport={() => setImportExportOpen(true)} />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header onSearchClick={openSearch} />
+        <UpdateBanner />
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>

@@ -21,6 +21,24 @@ import (
 	webui "cloudpam/web"
 )
 
+func cleanVersion(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "v")
+	if v == "" {
+		return "dev"
+	}
+	return v
+}
+
+func (s *Server) currentLocalAuthEnabled(ctx context.Context) bool {
+	if s.settingsStore != nil {
+		if settings, err := s.settingsStore.GetSecuritySettings(ctx); err == nil && settings != nil {
+			return settings.LocalAuthEnabled
+		}
+	}
+	return s.localAuthEnabled
+}
+
 func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -35,9 +53,50 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":             "ok",
 		"auth_enabled":       true,
-		"local_auth_enabled": true,
+		"local_auth_enabled": s.currentLocalAuthEnabled(r.Context()),
 		"needs_setup":        s.needsSetup,
+		"version":            cleanVersion(s.appVersion),
 	})
+}
+
+func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	version := cleanVersion(s.appVersion)
+	_, upgradeConfigured := configuredControlDir()
+	releaseURL := "https://github.com/BadgerOps/cloudpam/releases"
+	if version != "dev" {
+		releaseURL = fmt.Sprintf("https://github.com/BadgerOps/cloudpam/releases/tag/v%s", version)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":               version,
+		"auth_enabled":          true,
+		"local_auth_enabled":    s.currentLocalAuthEnabled(r.Context()),
+		"needs_setup":           s.needsSetup,
+		"release_url":           releaseURL,
+		"changelog_path":        "/changelog",
+		"in_app_upgrade_enabled": upgradeConfigured,
+		"upgrade_mode": func() string {
+			if upgradeConfigured {
+				return "file_trigger"
+			}
+			return "manual"
+		}(),
+	})
+}
+
+func (s *Server) handleChangelog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(apidocs.Changelog)
 }
 
 // ReadinessResponse represents the JSON response for the readiness check endpoint.
