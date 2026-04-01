@@ -52,7 +52,7 @@ func configuredControlDir() (string, bool) {
 	if v := strings.TrimSpace(os.Getenv("CLOUDPAM_UPGRADE_DATA_DIR")); v != "" {
 		return v, true
 	}
-	return defaultControlDir, false
+	return defaultControlDir, true
 }
 
 func NewUpdateServer(srv *Server) *UpdateServer {
@@ -100,7 +100,7 @@ func (us *UpdateServer) handleCheckUpdates(w http.ResponseWriter, r *http.Reques
 	}
 
 	latest, ok := latestStableRelease(releases)
-	currentVersion := cleanVersion(us.appVersion)
+	currentVersion := cleanVersion(currentAppVersion())
 	latestVersion := ""
 	updateAvailable := false
 	if ok {
@@ -154,7 +154,7 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 
 	request := map[string]any{
 		"requested_at":       time.Now().UTC().Format(time.RFC3339),
-		"current_version":    cleanVersion(us.appVersion),
+		"current_version":    cleanVersion(currentAppVersion()),
 		"target_version":     cleanVersion(latest.TagName),
 		"target_release_tag": latest.TagName,
 		"target_image_tag":   cleanVersion(latest.TagName),
@@ -294,6 +294,10 @@ func latestStableRelease(releases []updateRelease) (updateRelease, bool) {
 		}
 	}
 	return latest, found
+}
+
+func currentAppVersion() string {
+	return getenvDefault("APP_VERSION", "dev")
 }
 
 func isSemverTag(v string) bool {
