@@ -107,7 +107,7 @@ func (us *UpdateServer) handleCheckUpdates(w http.ResponseWriter, r *http.Reques
 		latestVersion = cleanVersion(latest.TagName)
 		updateAvailable = compareVersions(currentVersion, latestVersion)
 	}
-	_, upgradeSupported := configuredControlDir()
+	upgradeSupported := strings.TrimSpace(us.controlDir) != ""
 
 	resp := map[string]any{
 		"current_version":   currentVersion,
@@ -126,8 +126,8 @@ func (us *UpdateServer) handleCheckUpdates(w http.ResponseWriter, r *http.Reques
 }
 
 func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Request) {
-	controlDir, supported := configuredControlDir()
-	if !supported {
+	controlDir := strings.TrimSpace(us.controlDir)
+	if controlDir == "" {
 		us.writeErr(r.Context(), w, http.StatusNotImplemented, "in-app upgrade is not enabled", "set CLOUDPAM_CONTROL_DIR to enable file-triggered upgrades")
 		return
 	}
@@ -199,8 +199,8 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 }
 
 func (us *UpdateServer) handleGetUpgradeStatus(w http.ResponseWriter, r *http.Request) {
-	controlDir, supported := configuredControlDir()
-	if !supported {
+	controlDir := strings.TrimSpace(us.controlDir)
+	if controlDir == "" {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":    "unsupported",
 			"supported": false,
