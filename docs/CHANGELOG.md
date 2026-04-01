@@ -205,7 +205,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Bot` icon nav item in sidebar
 - Frontend tests for plan parser (5 tests)
 
-## [Unreleased]
+## [0.9.1] - 2026-04-01
 
 ### Fixed
 - Container image vulnerability scans now use `aquasecurity/trivy-action` `v0.35.0` with Trivy `v0.69.3`, fixing release failures caused by the older action's broken `v0.69.1` setup path
@@ -223,6 +223,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security settings now focus on policy controls while linking operators to the new identity surface for auth-provider administration
 - Login now respects the local-auth toggle, hiding the password form when password login is disabled
 - Health and system info responses now expose the active local-auth state and current application version
+- Release Notes now uses a Grapheon-style searchable timeline with expandable cards, category badges, and inline formatting for changelog entries
 
 ### Changed — Build Pipeline & Container Hardening
 
