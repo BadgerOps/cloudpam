@@ -157,12 +157,18 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to write upgrade request", err.Error())
 		return
 	}
-	defer f.Close()
 
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(request); err != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			us.logger.Warn("failed to close upgrade request file", "path", requestPath, "error", closeErr)
+		}
 		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to write upgrade request", err.Error())
+		return
+	}
+	if err := f.Close(); err != nil {
+		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to finalize upgrade request", err.Error())
 		return
 	}
 
@@ -202,10 +208,13 @@ func (us *UpdateServer) loadReleases(force bool) ([]updateRelease, bool, error) 
 		}
 		return nil, false, err
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		closeErr := resp.Body.Close()
 		err = errors.New("github api returned " + resp.Status)
+		if closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		if len(us.cache.releases) > 0 {
 			return append([]updateRelease(nil), us.cache.releases...), true, err
 		}
@@ -213,11 +222,23 @@ func (us *UpdateServer) loadReleases(force bool) ([]updateRelease, bool, error) 
 	}
 
 	var releases []updateRelease
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+	decodeErr := json.NewDecoder(resp.Body).Decode(&releases)
+	closeErr := resp.Body.Close()
+	if decodeErr != nil {
+		err = decodeErr
+		if closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		if len(us.cache.releases) > 0 {
 			return append([]updateRelease(nil), us.cache.releases...), true, err
 		}
 		return nil, false, err
+	}
+	if closeErr != nil {
+		if len(us.cache.releases) > 0 {
+			return append([]updateRelease(nil), us.cache.releases...), true, closeErr
+		}
+		return nil, false, closeErr
 	}
 
 	us.cache.releases = append([]updateRelease(nil), releases...)
@@ -298,11 +319,18 @@ func readJSONFile(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
 
 	var data map[string]any
-	if err := json.NewDecoder(f).Decode(&data); err != nil {
-		return nil, err
+	decodeErr := json.NewDecoder(f).Decode(&data)
+	closeErr := f.Close()
+	if decodeErr != nil {
+		if closeErr != nil {
+			return nil, errors.Join(decodeErr, closeErr)
+		}
+		return nil, decodeErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 	return data, nil
 }
