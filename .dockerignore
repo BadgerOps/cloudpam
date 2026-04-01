@@ -13,3 +13,4 @@ deploy
 docs/*.md
 *.md
 !README.md
+!docs/CHANGELOG.md
