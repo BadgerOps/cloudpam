@@ -37,6 +37,8 @@ type Server struct {
 	localAuthEnabled bool
 	needsSetup       bool
 	userStore        auth.UserStore
+	settingsStore    storage.SettingsStore
+	appVersion       string
 }
 
 // NewServer creates a new HTTP server with the given dependencies.
@@ -56,8 +58,14 @@ func NewServer(mux *http.ServeMux, store storage.Store, logger observability.Log
 // SetUserStore sets the user store for first-boot setup.
 func (s *Server) SetUserStore(us auth.UserStore) { s.userStore = us }
 
+// SetSettingsStore sets the settings store for runtime configuration lookups.
+func (s *Server) SetSettingsStore(ss storage.SettingsStore) { s.settingsStore = ss }
+
 // SetNeedsSetup marks the server as requiring first-boot admin setup.
 func (s *Server) SetNeedsSetup(v bool) { s.needsSetup = v }
+
+// SetAppVersion sets the running application version reported by system endpoints.
+func (s *Server) SetAppVersion(v string) { s.appVersion = v }
 
 // NewServerWithSlog creates a new HTTP server with a raw *slog.Logger.
 // This is for backward compatibility with existing code.
@@ -179,6 +187,10 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, sessionStore au
 
 	// Dual auth middleware: accepts both session cookies and API key Bearer tokens.
 	dualMW := DualAuthMiddleware(keyStore, sessionStore, userStore, true, slogger)
+
+	// Authenticated system metadata endpoints.
+	s.mux.Handle("/api/v1/system/info", dualMW(http.HandlerFunc(s.handleSystemInfo)))
+	s.mux.Handle("/api/v1/system/changelog", dualMW(http.HandlerFunc(s.handleChangelog)))
 
 	// Pool endpoints - require pools permissions
 	s.mux.Handle("/api/v1/pools", dualMW(s.protectedPoolsHandler(slogger)))

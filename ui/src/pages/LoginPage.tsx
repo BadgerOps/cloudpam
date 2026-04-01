@@ -5,7 +5,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useOIDCProviders } from '../hooks/useOIDCProviders'
 
 export default function LoginPage() {
-  const { loginWithPassword, isAuthenticated, needsSetup, authChecked } = useAuth()
+  const { loginWithPassword, isAuthenticated, needsSetup, authChecked, localAuthEnabled } = useAuth()
   const { providers, loading: providersLoading } = useOIDCProviders()
   const navigate = useNavigate()
 
@@ -60,70 +60,74 @@ export default function LoginPage() {
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6">
-          <form onSubmit={handleSubmit}>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              Username
-            </label>
-            <div className="relative mb-3">
-              <div className="absolute inset-y-0 left-0 flex items-center pl-3">
-                <User className="w-4 h-4 text-gray-400" />
+          {localAuthEnabled && (
+            <form onSubmit={handleSubmit}>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                Username
+              </label>
+              <div className="relative mb-3">
+                <div className="absolute inset-y-0 left-0 flex items-center pl-3">
+                  <User className="w-4 h-4 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={e => setUsername(e.target.value)}
+                  placeholder="admin"
+                  className="w-full pl-10 pr-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  autoFocus
+                  autoComplete="username"
+                />
               </div>
-              <input
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="admin"
-                className="w-full pl-10 pr-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                autoFocus
-                autoComplete="username"
-              />
-            </div>
 
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-              Password
-            </label>
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className="w-full pl-3 pr-10 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                autoComplete="current-password"
-              />
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  className="w-full pl-3 pr-10 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+
+              {error && (
+                <div className="mt-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded">
+                  {error}
+                </div>
+              )}
+
               <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-400 hover:text-gray-600"
+                type="submit"
+                disabled={loading || !username.trim() || !password}
+                className="w-full mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                {loading ? 'Signing in...' : 'Sign In'}
               </button>
-            </div>
-
-            {error && (
-              <div className="mt-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading || !username.trim() || !password}
-              className="w-full mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Signing in...' : 'Sign In'}
-            </button>
-          </form>
+            </form>
+          )}
 
           {!providersLoading && providers.length > 0 && (
             <>
-              <div className="relative my-5">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-200 dark:border-gray-700" />
+              {localAuthEnabled && (
+                <div className="relative my-5">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-200 dark:border-gray-700" />
+                  </div>
+                  <div className="relative flex justify-center text-xs">
+                    <span className="bg-white dark:bg-gray-800 px-2 text-gray-500 dark:text-gray-400">or</span>
+                  </div>
                 </div>
-                <div className="relative flex justify-center text-xs">
-                  <span className="bg-white dark:bg-gray-800 px-2 text-gray-500 dark:text-gray-400">or</span>
-                </div>
-              </div>
+              )}
 
               <div className="space-y-2">
                 {providers.map(provider => (
@@ -137,6 +141,17 @@ export default function LoginPage() {
                 ))}
               </div>
             </>
+          )}
+
+          {!localAuthEnabled && !providersLoading && providers.length === 0 && (
+            <div className="text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg">
+              Local authentication is disabled and no SSO providers are enabled.
+            </div>
+          )}
+          {localAuthEnabled === false && providers.length > 0 && (
+            <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+              Local password sign-in is disabled for this deployment.
+            </div>
           )}
         </div>
       </div>

@@ -10,13 +10,13 @@ import {
   Key,
   Map,
   Settings,
-  Users,
   Lightbulb,
   Bot,
   Radio,
   Shield,
   GitCompareArrows,
-  ArrowUpCircle,
+  FileText,
+  UserCog,
 } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
@@ -108,31 +108,31 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
 
         {/* Configuration section */}
         <div className="pt-3 mt-3 border-t border-gray-800">
-          <p className={sectionHeader}>Configuration</p>
+          <p className={sectionHeader}>Administration</p>
           <NavLink to="/config/api-keys" className={linkClass}>
             <Key className="w-5 h-5" />
             <span>API Keys</span>
           </NavLink>
-          {role === 'admin' && (
-            <NavLink to="/config/users" className={linkClass}>
-              <Users className="w-5 h-5" />
-              <span>Users</span>
-            </NavLink>
-          )}
-          <NavLink to="/config/log-destinations" className={linkClass}>
-            <Radio className="w-5 h-5" />
-            <span>Log Destinations</span>
+          <NavLink to="/changelog" className={linkClass}>
+            <FileText className="w-5 h-5" />
+            <span>Release Notes</span>
           </NavLink>
           {role === 'admin' && (
-            <NavLink to="/config/security" className={linkClass}>
-              <Shield className="w-5 h-5" />
-              <span>Security</span>
+            <NavLink to="/identity" className={linkClass}>
+              <UserCog className="w-5 h-5" />
+              <span>Identity</span>
             </NavLink>
           )}
           {role === 'admin' && (
-            <NavLink to="/config/updates" className={linkClass}>
-              <ArrowUpCircle className="w-5 h-5" />
-              <span>Updates</span>
+            <NavLink to="/config" className={linkClass}>
+              <Shield className="w-5 h-5" />
+              <span>Configuration</span>
+            </NavLink>
+          )}
+          {role === 'admin' && (
+            <NavLink to="/config/log-destinations" className={linkClass}>
+              <Radio className="w-5 h-5" />
+              <span>Log Destinations</span>
             </NavLink>
           )}
         </div>

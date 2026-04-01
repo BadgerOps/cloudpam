@@ -1,8 +1,12 @@
 import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 
-export default function ProtectedRoute() {
-  const { isAuthenticated, authEnabled, localAuthEnabled, needsSetup, authChecked } = useAuth()
+interface ProtectedRouteProps {
+  requiredRole?: string
+}
+
+export default function ProtectedRoute({ requiredRole }: ProtectedRouteProps) {
+  const { isAuthenticated, authEnabled, localAuthEnabled, needsSetup, authChecked, role } = useAuth()
 
   // Wait for the healthz check to finish before deciding
   if (!authChecked) {
@@ -17,6 +21,10 @@ export default function ProtectedRoute() {
   // Redirect to login when any auth mode is enabled and user isn't authenticated
   if ((authEnabled || localAuthEnabled) && !isAuthenticated) {
     return <Navigate to="/login" replace />
+  }
+
+  if (requiredRole && role !== requiredRole) {
+    return <Navigate to="/" replace />
   }
 
   return <Outlet />

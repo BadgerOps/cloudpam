@@ -39,22 +39,31 @@ type updateCache struct {
 
 type UpdateServer struct {
 	*Server
-	client       *http.Client
-	controlDir   string
-	releasesURL  string
-	releasesRepo string
-	cache        updateCache
+	client      *http.Client
+	controlDir  string
+	releasesURL string
+	cache       updateCache
+}
+
+func configuredControlDir() (string, bool) {
+	if v := strings.TrimSpace(os.Getenv("CLOUDPAM_CONTROL_DIR")); v != "" {
+		return v, true
+	}
+	if v := strings.TrimSpace(os.Getenv("CLOUDPAM_UPGRADE_DATA_DIR")); v != "" {
+		return v, true
+	}
+	return defaultControlDir, false
 }
 
 func NewUpdateServer(srv *Server) *UpdateServer {
 	repo := getenvDefault("CLOUDPAM_RELEASE_REPO", defaultCloudPAMRepo)
 	apiRoot := strings.TrimRight(getenvDefault("CLOUDPAM_GITHUB_API_ROOT", defaultGitHubAPIRoot), "/")
+	controlDir, _ := configuredControlDir()
 	return &UpdateServer{
-		Server:       srv,
-		client:       &http.Client{Timeout: 10 * time.Second},
-		controlDir:   getenvDefault("CLOUDPAM_CONTROL_DIR", defaultControlDir),
-		releasesRepo: repo,
-		releasesURL:  apiRoot + "/repos/" + repo + "/releases",
+		Server:      srv,
+		client:      &http.Client{Timeout: 10 * time.Second},
+		controlDir:  controlDir,
+		releasesURL: apiRoot + "/repos/" + repo + "/releases",
 	}
 }
 
@@ -82,30 +91,33 @@ func (us *UpdateServer) handleCheckUpdates(w http.ResponseWriter, r *http.Reques
 	releases, stale, err := us.loadReleases(force)
 	if err != nil && len(releases) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"update_available": false,
-			"error":            "could not fetch releases",
-			"checked_at":       time.Now().UTC().Format(time.RFC3339),
+			"update_available":  false,
+			"error":             "could not fetch releases",
+			"checked_at":        time.Now().UTC().Format(time.RFC3339),
+			"upgrade_supported": false,
 		})
 		return
 	}
 
 	latest, ok := latestStableRelease(releases)
-	currentVersion := cleanVersion(currentAppVersion())
+	currentVersion := cleanVersion(us.appVersion)
 	latestVersion := ""
 	updateAvailable := false
 	if ok {
 		latestVersion = cleanVersion(latest.TagName)
 		updateAvailable = compareVersions(currentVersion, latestVersion)
 	}
+	_, upgradeSupported := configuredControlDir()
 
 	resp := map[string]any{
-		"current_version":  currentVersion,
-		"latest_version":   latestVersion,
-		"update_available": updateAvailable,
-		"release_notes":    latest.Body,
-		"release_url":      latest.HTMLURL,
-		"published_at":     latest.PublishedAt,
-		"checked_at":       time.Now().UTC().Format(time.RFC3339),
+		"current_version":   currentVersion,
+		"latest_version":    latestVersion,
+		"update_available":  updateAvailable,
+		"release_notes":     latest.Body,
+		"release_url":       latest.HTMLURL,
+		"published_at":      latest.PublishedAt,
+		"checked_at":        time.Now().UTC().Format(time.RFC3339),
+		"upgrade_supported": upgradeSupported,
 	}
 	if stale || err != nil {
 		resp["warning"] = "using stale release metadata"
@@ -114,7 +126,13 @@ func (us *UpdateServer) handleCheckUpdates(w http.ResponseWriter, r *http.Reques
 }
 
 func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Request) {
-	statusPath := filepath.Join(us.controlDir, "upgrade-status.json")
+	controlDir, supported := configuredControlDir()
+	if !supported {
+		us.writeErr(r.Context(), w, http.StatusNotImplemented, "in-app upgrade is not enabled", "set CLOUDPAM_CONTROL_DIR to enable file-triggered upgrades")
+		return
+	}
+
+	statusPath := filepath.Join(controlDir, "upgrade-status.json")
 	if status, err := readJSONFile(statusPath); err == nil {
 		if state, _ := status["status"].(string); state == "running" {
 			us.writeErr(r.Context(), w, http.StatusConflict, "upgrade already in progress", "")
@@ -136,7 +154,7 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 
 	request := map[string]any{
 		"requested_at":       time.Now().UTC().Format(time.RFC3339),
-		"current_version":    cleanVersion(currentAppVersion()),
+		"current_version":    cleanVersion(us.appVersion),
 		"target_version":     cleanVersion(latest.TagName),
 		"target_release_tag": latest.TagName,
 		"target_image_tag":   cleanVersion(latest.TagName),
@@ -146,12 +164,12 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 		request["requested_by"] = user.Username
 	}
 
-	if err := os.MkdirAll(us.controlDir, 0o755); err != nil {
+	if err := os.MkdirAll(controlDir, 0o755); err != nil {
 		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to prepare control dir", err.Error())
 		return
 	}
 
-	requestPath := filepath.Join(us.controlDir, "upgrade-requested")
+	requestPath := filepath.Join(controlDir, "upgrade-requested")
 	f, err := os.Create(requestPath)
 	if err != nil {
 		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to write upgrade request", err.Error())
@@ -176,20 +194,34 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status":         "upgrade_requested",
 		"target_version": cleanVersion(latest.TagName),
+		"message":        "Upgrade request submitted",
 	})
 }
 
 func (us *UpdateServer) handleGetUpgradeStatus(w http.ResponseWriter, r *http.Request) {
-	statusPath := filepath.Join(us.controlDir, "upgrade-status.json")
+	controlDir, supported := configuredControlDir()
+	if !supported {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "unsupported",
+			"supported": false,
+		})
+		return
+	}
+
+	statusPath := filepath.Join(controlDir, "upgrade-status.json")
 	status, err := readJSONFile(statusPath)
 	if errors.Is(err, os.ErrNotExist) {
-		writeJSON(w, http.StatusOK, map[string]any{"status": "idle"})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "idle",
+			"supported": true,
+		})
 		return
 	}
 	if err != nil {
 		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to read upgrade status", err.Error())
 		return
 	}
+	status["supported"] = true
 	writeJSON(w, http.StatusOK, status)
 }
 
@@ -262,18 +294,6 @@ func latestStableRelease(releases []updateRelease) (updateRelease, bool) {
 		}
 	}
 	return latest, found
-}
-
-func currentAppVersion() string {
-	return getenvDefault("APP_VERSION", "dev")
-}
-
-func cleanVersion(v string) string {
-	v = strings.TrimSpace(v)
-	if strings.HasPrefix(v, "v") {
-		return v[1:]
-	}
-	return v
 }
 
 func isSemverTag(v string) bool {

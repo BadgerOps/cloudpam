@@ -1,4 +1,5 @@
 import type { ApiError } from './types'
+import type { SystemInfoResponse, UpdateCheckResponse, UpgradeStatusResponse } from './types'
 
 export class ApiRequestError extends Error {
   constructor(
@@ -64,6 +65,27 @@ export function get<T>(path: string): Promise<T> {
   return request<T>(path)
 }
 
+export async function getText(path: string): Promise<string> {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+  })
+
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent('auth:logout'))
+  }
+
+  if (!res.ok) {
+    const contentType = res.headers.get('content-type') || ''
+    if (contentType.includes('application/json')) {
+      const body = await res.json()
+      throw new ApiRequestError(res.status, body as ApiError)
+    }
+    throw new ApiRequestError(res.status, { error: `Unexpected response (${res.status})` })
+  }
+
+  return await res.text()
+}
+
 export function patch<T>(path: string, data: unknown): Promise<T> {
   return request<T>(path, {
     method: 'PATCH',
@@ -73,6 +95,27 @@ export function patch<T>(path: string, data: unknown): Promise<T> {
 
 export function del<T = void>(path: string): Promise<T> {
   return request<T>(path, { method: 'DELETE' })
+}
+
+export function getSystemInfo(): Promise<SystemInfoResponse> {
+  return get<SystemInfoResponse>('/api/v1/system/info')
+}
+
+export function getChangelogMarkdown(): Promise<string> {
+  return getText('/api/v1/system/changelog')
+}
+
+export function checkForUpdates(force = false): Promise<UpdateCheckResponse> {
+  const suffix = force ? '?force=true' : ''
+  return get<UpdateCheckResponse>(`/api/v1/updates${suffix}`)
+}
+
+export function triggerUpgrade(): Promise<{ status: string; target_version: string; message: string }> {
+  return post<{ status: string; target_version: string; message: string }>('/api/v1/updates/upgrade', {})
+}
+
+export function getUpgradeStatus(): Promise<UpgradeStatusResponse> {
+  return get<UpgradeStatusResponse>('/api/v1/updates/status')
 }
 
 export interface SSECallbacks {

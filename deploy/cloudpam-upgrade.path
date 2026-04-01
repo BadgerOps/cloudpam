@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for CloudPAM upgrade requests
+Documentation=https://github.com/BadgerOps/cloudpam
+
+[Path]
+PathExists=/var/lib/cloudpam/control/upgrade-requested
+MakeDirectory=yes
+
+[Install]
+WantedBy=multi-user.target

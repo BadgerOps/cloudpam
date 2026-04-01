@@ -133,6 +133,7 @@ func main() {
 	userStore := selectUserStore(logger)
 	sessionStore := selectSessionStore(logger)
 	srv := api.NewServer(mux, store, logger, metrics, auditLogger)
+	srv.SetAppVersion(version)
 
 	// Check if this is a fresh install (no users exist) for first-boot setup.
 	srv.SetUserStore(userStore)
@@ -195,6 +196,7 @@ func main() {
 	// Initialize settings subsystem
 	settingsStore := selectSettingsStore(logger, store)
 	settingsSrv := api.NewSettingsServer(srv, settingsStore)
+	srv.SetSettingsStore(settingsStore)
 	logger.Info("settings subsystem initialized")
 
 	// OIDC subsystem

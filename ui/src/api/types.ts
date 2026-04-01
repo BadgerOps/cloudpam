@@ -242,6 +242,39 @@ export interface HealthResponse {
   auth_enabled?: boolean
   local_auth_enabled?: boolean
   needs_setup?: boolean
+  version?: string
+}
+
+export interface SystemInfoResponse {
+  version: string
+  auth_enabled: boolean
+  local_auth_enabled: boolean
+  needs_setup: boolean
+  release_url: string
+  changelog_path: string
+  in_app_upgrade_enabled: boolean
+  upgrade_mode: 'file_trigger' | 'manual'
+}
+
+export interface UpdateCheckResponse {
+  update_available: boolean
+  current_version: string
+  latest_version: string
+  release_notes: string
+  release_url: string
+  published_at: string
+  checked_at: string
+  upgrade_supported: boolean
+}
+
+export interface UpgradeStatusResponse {
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'unsupported'
+  supported: boolean
+  message?: string
+  step?: number
+  total_steps?: number
+  progress?: number
+  updated_at?: string
 }
 
 export interface UpdateCheckResponse {

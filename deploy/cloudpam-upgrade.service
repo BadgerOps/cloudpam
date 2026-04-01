@@ -1,0 +1,18 @@
+[Unit]
+Description=CloudPAM container upgrade
+Documentation=https://github.com/BadgerOps/cloudpam
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/cloudpam/scripts/cloudpam-upgrade.sh
+Environment=DATA_DIR=/var/lib/cloudpam/control
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
