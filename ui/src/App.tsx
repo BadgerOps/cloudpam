@@ -20,6 +20,7 @@ import AIPlannerPage from './pages/AIPlannerPage'
 import ProfilePage from './pages/ProfilePage'
 import LogDestinationsPage from './pages/LogDestinationsPage'
 import SecuritySettingsPage from './pages/SecuritySettingsPage'
+import UpdatesPage from './pages/UpdatesPage'
 
 export default function App() {
   const toastState = useToastState()
@@ -49,6 +50,7 @@ export default function App() {
                 <Route path="config/users" element={<UsersPage />} />
                 <Route path="config/log-destinations" element={<LogDestinationsPage />} />
                 <Route path="config/security" element={<SecuritySettingsPage />} />
+                <Route path="config/updates" element={<UpdatesPage />} />
               </Route>
             </Route>
           </Routes>
