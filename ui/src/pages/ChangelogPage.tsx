@@ -8,8 +8,9 @@ import {
   Plus,
   RefreshCw,
   Search,
-  ShieldCheck,
+  Shield,
   Sparkles,
+  Wrench,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { getChangelogMarkdown, getSystemInfo } from '../api/client'
@@ -58,10 +59,17 @@ function categoryMeta(category: string): CategoryMeta {
       }
     case 'Fixed':
       return {
-        icon: <ShieldCheck className="h-4 w-4" />,
+        icon: <Wrench className="h-4 w-4" />,
         badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200',
         dotClass: 'bg-blue-500',
         iconClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200',
+      }
+    case 'Security':
+      return {
+        icon: <Shield className="h-4 w-4" />,
+        badgeClass: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200',
+        dotClass: 'bg-rose-500',
+        iconClass: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-200',
       }
     default:
       return {
@@ -363,11 +371,12 @@ export default function ChangelogPage() {
           </div>
         </div>
 
-        <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <SummaryCard icon={<FileText className="h-4 w-4" />} label="Releases" value={String(stats.releases)} />
           <SummaryCard icon={<Plus className="h-4 w-4" />} label="Added" value={String(stats.added)} />
           <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Changed" value={String(stats.changed)} />
-          <SummaryCard icon={<ShieldCheck className="h-4 w-4" />} label="Fixed" value={String(stats.fixed)} />
+          <SummaryCard icon={<Wrench className="h-4 w-4" />} label="Fixed" value={String(stats.fixed)} />
+          <SummaryCard icon={<Shield className="h-4 w-4" />} label="Security" value={String(stats.security)} />
         </div>
 
         <div className="mb-6 rounded-2xl border border-slate-200 bg-white/85 p-4 shadow-sm shadow-slate-200/60 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80 dark:shadow-black/20">

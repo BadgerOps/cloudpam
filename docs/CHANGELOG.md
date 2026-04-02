@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-02
+
+### Security
+- Updated `google.golang.org/grpc` to `v1.79.3` to pick up the upstream HTTP/2 `:path` validation fix shipped in the current Dependabot security update
+- Updated `go.opentelemetry.io/otel/sdk` to `v1.40.0` and aligned the related OpenTelemetry modules in `go.mod`/`go.sum`
+- Updated the UI dependency graph to resolve `rollup@4.59.0` and `picomatch@4.0.4` via npm overrides, covering the currently open Dependabot updates for the frontend toolchain
+
 ## [0.9.1] - 2026-04-01
 
 ### Fixed
