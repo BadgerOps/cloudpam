@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-04-02
+## [0.10.1] - 2026-04-02
 
 ### Security
 - Updated `google.golang.org/grpc` to `v1.79.3` to pick up the upstream HTTP/2 `:path` validation fix shipped in the current Dependabot security update
