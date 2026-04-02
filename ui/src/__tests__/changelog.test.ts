@@ -19,6 +19,9 @@ const sampleChangelog = `# Changelog
 - Restored missing JS bundles
   across SPA asset requests
 
+### Security
+- Hardened release dependency overrides
+
 ## [0.8.1] - 2026-03-30
 
 ### Changed
@@ -41,6 +44,9 @@ describe('parseChangelog', () => {
     })
     expect(releases[0].categories.Fixed).toEqual([
       'Restored missing JS bundles across SPA asset requests',
+    ])
+    expect(releases[0].categories.Security).toEqual([
+      'Hardened release dependency overrides',
     ])
     expect(releases[2]).toMatchObject({
       version: 'Unreleased',
@@ -81,6 +87,7 @@ describe('summarizeReleases', () => {
       added: 2,
       changed: 1,
       fixed: 1,
+      security: 1,
     })
   })
 })

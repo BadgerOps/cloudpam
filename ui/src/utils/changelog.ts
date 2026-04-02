@@ -118,9 +118,10 @@ export function summarizeReleases(releases: ReleaseEntry[]) {
       summary.added += release.categories.Added?.length ?? 0
       summary.changed += release.categories.Changed?.length ?? 0
       summary.fixed += release.categories.Fixed?.length ?? 0
+      summary.security += release.categories.Security?.length ?? 0
       return summary
     },
-    { releases: 0, added: 0, changed: 0, fixed: 0 },
+    { releases: 0, added: 0, changed: 0, fixed: 0, security: 0 },
   )
 }
 
