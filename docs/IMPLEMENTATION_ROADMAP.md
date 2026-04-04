@@ -13,7 +13,7 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 4. Support enterprise-scale deployments with multi-tenancy and SSO
 5. Maintain complete audit trails for compliance and governance
 
-**Timeline**: 20 weeks (5 phases)
+**Timeline**: 24 weeks (6 phases)
 **Target Audience**: Enterprise network teams, cloud architects, infrastructure engineers
 
 ---
@@ -32,6 +32,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 | AI Planning | Implemented, optional | OpenAI-compatible backend, SSE chat, stored sessions, plan extraction/apply |
 | OIDC / SSO | Implemented | Provider management, discovery, group mapping, JIT provisioning, local-auth toggle |
 | Operations | Partial | Metrics, Sentry, release notes, and host-managed upgrades exist; tracing is still missing |
+| UI / UX | Functional, inconsistent | Current UI is a sidebar-based app with page-local styling; Graphēon-style shell and design-system consistency are still future work |
 | Multi-tenancy | Planned | PostgreSQL schema has default-org scaffolding, but runtime isolation is not active |
 
 ## Phase 1: Foundation (Weeks 1-4)
@@ -690,6 +691,124 @@ For CloudPAM AI, the roadmap should follow those patterns instead of keeping AI 
 
 ---
 
+## Phase 6: UI/UX Convergence with Graphēon (Weeks 21-24)
+
+**Objective**: Move CloudPAM from a functional sidebar-based admin UI toward the Graphēon operator-console experience: a tighter global shell, shared visual primitives, denser dashboards, and status-first configuration workflows.
+
+### Current Gap Assessment
+
+The current CloudPAM UI already has broad route coverage and some useful building blocks, but it does not yet feel like a cohesive operator console:
+
+- `ui/src/components/Layout.tsx` uses a persistent left sidebar shell instead of Graphēon's sticky top navigation and compact global header.
+- `ui/src/index.css` contains almost no shared component primitives, so cards, tables, forms, and empty states are defined page-by-page.
+- `ui/src/pages/DashboardPage.tsx` is functional, but less dense and less action-oriented than Graphēon's dashboard.
+- Admin and operations surfaces are spread across multiple pages without the same status-first, workflow-driven feel Graphēon uses in `frontend/src/pages/Config.jsx` and `frontend/src/pages/AuthAdmin.jsx`.
+
+Useful Graphēon reference points in `~/code/grapheon`:
+
+- `frontend/src/App.jsx` - sticky top nav, compact app shell, role-aware navigation, user menu placement
+- `frontend/src/index.css` - shared card/button/input/table/badge primitives
+- `frontend/src/pages/Dashboard.jsx` - high-signal stat cards and quick-link dashboard composition
+- `frontend/src/pages/Config.jsx` - operations console for updates, maintenance, and long-running actions
+- `frontend/src/pages/AuthAdmin.jsx` - dedicated admin-management UX for integration/provider configuration
+- `frontend/src/components/UpdateBanner.jsx` and `frontend/src/components/UserMenu.jsx` - persistent status and account controls
+
+### Week 21: App Shell and Information Architecture
+
+**Activities**:
+- Replace the current sidebar-first shell with a Graphēon-style top navigation and compact header
+- Rework navigation grouping around operator workflows instead of implementation categories
+- Preserve role-aware visibility while making admin-only areas more explicit
+- Add global status affordances for updates, health, and background operations
+- Standardize page headers, breadcrumbs, and secondary actions
+
+**Deliverables**:
+- [ ] New top-nav application shell
+- [ ] Rationalized navigation model for IPAM, discovery, planning, identity, and configuration
+- [ ] Shared user chip/dropdown with role badge
+- [ ] Global status surface for updates and system health
+- [ ] Mobile-responsive shell behavior
+
+**Success Criteria**:
+- Core routes remain accessible with fewer navigation jumps
+- Admin-only areas are obvious without cluttering non-admin workflows
+- Shell works cleanly on laptop and desktop widths
+- Global status and account controls are always reachable
+
+### Week 22: Shared Design System and Page Primitives
+
+**Activities**:
+- Introduce shared card, table, form, button, badge, modal, and empty-state primitives
+- Create common loading, error, and success state patterns
+- Standardize spacing, border radius, elevation, and typography across pages
+- Consolidate status colors and badge semantics for providers, health, drift, and roles
+- Add reusable page section and metric-card patterns
+
+**Deliverables**:
+- [ ] Shared component styling layer in `ui/src/index.css` and/or reusable components
+- [ ] Common metric card, table container, form section, and alert patterns
+- [ ] Empty-state and skeleton/loading patterns used across major pages
+- [ ] Consistent status badge language and visual treatment
+- [ ] Page template guidelines for future UI work
+
+**Success Criteria**:
+- New pages do not restyle core controls from scratch
+- Tables and forms feel consistent across the app
+- Loading/error states are recognizable and predictable
+- Visual regressions are easier to catch because shared primitives own the styling
+
+### Week 23: Dashboard and Operations UX Migration
+
+**Activities**:
+- Rebuild the dashboard to be denser, more action-oriented, and closer to Graphēon's operator summary model
+- Upgrade configuration and identity pages into clearer admin consoles with grouped workflows
+- Expand update, maintenance, and integration surfaces to expose state transitions explicitly
+- Add quick links from dashboard cards into the highest-value workflows
+- Improve long-running task feedback for discovery, drift, updates, and AI/provider validation
+
+**Deliverables**:
+- [ ] Dashboard redesign with higher-signal stat cards and quick actions
+- [ ] Config/operations surfaces modeled more closely on Graphēon's `Config.jsx`
+- [ ] Identity/provider admin flows modeled more closely on Graphēon's `AuthAdmin.jsx`
+- [ ] Explicit progress, success, and failure states for background operations
+- [ ] Better operator-facing summaries for discovery, drift, and planning status
+
+**Success Criteria**:
+- Dashboard answers "what needs attention now?" without drilling into multiple pages
+- Configuration workflows are grouped by operator task rather than raw settings storage
+- Long-running actions expose current state, errors, and recovery paths clearly
+- Admin users can manage integrations without hunting across separate screens
+
+### Week 24: Page-by-Page Migration, QA, and Rollout
+
+**Activities**:
+- Migrate remaining pages onto the shared shell and primitives
+- Audit route-level role gating and hide irrelevant actions earlier in the UX
+- Capture before/after screenshots for the major workflows
+- Run visual and interaction QA for desktop and mobile layouts
+- Document the new UI conventions so follow-on work stays aligned with the Graphēon-inspired design
+
+**Deliverables**:
+- [ ] All major pages migrated to the new shell and shared primitives
+- [ ] Role-aware navigation and action visibility verified across routes
+- [ ] Screenshot set for dashboard, pools, accounts, discovery, identity, and config
+- [ ] UI regression checklist for ongoing releases
+- [ ] Internal UI guidelines for future contributors
+
+**Success Criteria**:
+- The product reads as one coherent application instead of a set of page-level implementations
+- Common workflows feel faster because navigation, states, and actions are consistent
+- Admin/operator tasks can be demonstrated end-to-end without UI dead ends
+- Future frontend work has a clear pattern library to extend
+
+**Phase 6 Success Metrics**:
+- The default operator path uses the new shell for all major workflows
+- Dashboard, identity, and configuration pages match the target Graphēon-style UX direction
+- Shared primitives cover the majority of cards, tables, forms, alerts, and badges
+- Mobile and desktop QA pass for the highest-traffic routes
+
+---
+
 ## Technical Dependencies
 
 ### Build-Before Dependencies
@@ -742,6 +861,16 @@ Phase 5
     ├── SSO/OIDC (Week 18)
     ├── Audit Logging (Week 19)
     └── Rate Limiting (Week 20)
+
+Phase 6
+└── Depends on enough Phase 2-5 functionality being stable to redesign the operator workflows around it
+    ├── App Shell / IA (Week 21)
+    │   └── Required by: shared page migration
+    ├── Design System (Week 22)
+    │   └── Required by: dashboard/admin workflow redesign
+    ├── Dashboard + Admin UX (Week 23)
+    │   └── Required by: page-by-page rollout
+    └── Migration + QA (Week 24)
 ```
 
 ### Cross-Phase Dependencies
@@ -750,6 +879,7 @@ Phase 5
 - **Phase 2 → Phase 3**: Discovered resources inform gap and fragmentation analysis
 - **Phase 1 → All**: Authentication required by all features
 - **Phase 3 → Phase 5**: Audit logging enhanced with enterprise features
+- **Phases 2-5 → Phase 6**: UI convergence is highest value once discovery, planning, identity, and operations flows are stable enough to reshape
 
 ---
 
