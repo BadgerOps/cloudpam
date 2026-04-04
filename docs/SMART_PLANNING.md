@@ -116,10 +116,10 @@ Predicts future address needs using linear regression, seasonal adjustment, and 
 | Provider | Configuration | Use Case |
 |----------|--------------|----------|
 | **OpenAI** | API key + model selection | Cloud-hosted, GPT-4 quality |
-| **Anthropic** | API key + model selection | Cloud-hosted, Claude quality |
 | **Azure OpenAI** | Endpoint + deployment | Enterprise compliance |
 | **Ollama** | Local endpoint | Air-gapped, self-hosted |
 | **vLLM** | OpenAI-compatible endpoint | Self-hosted, GPU acceleration |
+| **Other OpenAI-compatible APIs** | Endpoint override | Compatible self-hosted or gateway deployments |
 
 ### 4.2 Context Injection
 
@@ -162,25 +162,24 @@ Assistant: "I will extend the plan to include DR in us-west-2:
 
 ## 5. API Reference
 
-Smart Planning endpoints are documented in `openapi-smart-planning.yaml`:
+The current implementation exposes smart-planning behavior through the main `/api/v1/...` API:
 
 | Category | Endpoints |
 |----------|----------|
-| **Discovery** | POST /planning/import, GET /planning/discovered, POST /planning/sync |
-| **Analysis** | POST /planning/analyze, POST /planning/analyze/gaps, /fragmentation, /compliance, /growth |
-| **Recommendations** | GET /planning/recommendations, POST .../apply, POST .../dismiss |
-| **AI Planning** | POST /planning/ai/conversations, GET .../messages, POST .../plans/{id}/apply |
-| **Schema Wizard** | GET /planning/schema/templates, POST /planning/schema/generate, /validate, /apply |
-| **LLM Config** | GET/PUT /settings/llm, POST /settings/llm/test, GET/PUT /settings/llm/prompts |
+| **Discovery Context** | `GET /api/v1/discovery/resources`, `POST /api/v1/discovery/sync`, `POST /api/v1/drift/detect` |
+| **Analysis** | `POST /api/v1/analysis`, `POST /api/v1/analysis/gaps`, `POST /api/v1/analysis/fragmentation`, `POST /api/v1/analysis/compliance` |
+| **Recommendations** | `POST /api/v1/recommendations/generate`, `GET /api/v1/recommendations`, `POST /api/v1/recommendations/{id}/apply`, `POST /api/v1/recommendations/{id}/dismiss` |
+| **AI Planning** | `POST /api/v1/ai/chat`, `GET/POST /api/v1/ai/sessions`, `GET/DELETE /api/v1/ai/sessions/{id}`, `POST /api/v1/ai/sessions/{id}/apply-plan` |
+| **Schema Wizard** | `POST /api/v1/schema/check`, `POST /api/v1/schema/apply` |
 
-See [openapi-smart-planning.yaml](openapi-smart-planning.yaml) for full specification.
+The primary API contract is [openapi.yaml](openapi.yaml). [openapi-smart-planning.yaml](openapi-smart-planning.yaml) remains useful as design/reference material but does not exactly match the current route set.
 
 ## 6. Go Interfaces
 
-Service interfaces are defined in `internal/planning/interfaces.go`. See that file for:
-- DiscoveryService
-- AnalysisService
-- RecommendationService
-- AIPlanningService
-- SchemaWizardService
-- LLMProvider
+Current planning code lives in:
+- `internal/planning/analysis.go`
+- `internal/planning/recommendations.go`
+- `internal/planning/ai_service.go`
+- `internal/planning/llm/`
+
+There is no single `internal/planning/interfaces.go` file in the current codebase.
