@@ -400,6 +400,44 @@ This document started as a phased implementation plan. The detailed week-by-week
 
 **Objective**: Implement LLM integration, conversational planning interface, and plan generation.
 
+### Implementation Approach (informed by Graphēon integration patterns)
+
+Graphēon does not currently implement an LLM assistant or chat workflow. The useful reference is how it operationalizes external integrations: explicit admin configuration flows, discovery/test endpoints, role-gated management surfaces, and deployment/troubleshooting docs. Relevant examples in `~/code/grapheon` are:
+
+- `frontend/src/pages/AuthAdmin.jsx` - dedicated provider-management UI with discovery-oriented UX
+- `backend/routers/auth.py` - provider-backed auth flow with audit-friendly, explicit error handling
+- `docs/auth_provider.md` - deployment-focused operator documentation and troubleshooting guidance
+- `frontend/src/pages/Config.jsx` - status-first admin UX for long-running operational actions
+
+For CloudPAM AI, the roadmap should follow those patterns instead of keeping AI configuration as environment variables only.
+
+**Recommended implementation sequence:**
+
+1. **Admin-first provider management**
+   - Add a dedicated AI settings surface under `/api/v1/settings/ai/*` and the admin UI.
+   - Support CRUD for provider configs, default-provider selection, enable/disable state, and model presets.
+   - Persist secrets encrypted at rest rather than relying only on process env vars.
+
+2. **Provider verification and safe rollout states**
+   - Add `test` and `validate` endpoints for provider reachability, model compatibility, and streaming support.
+   - Track provider lifecycle states such as `disabled`, `configured`, `verified`, and `active`.
+   - Surface those states in the UI before exposing AI planning to non-admin users.
+
+3. **Policy and guardrail layer**
+   - Add per-provider limits for max tokens, temperature bounds, allowed models, and request timeouts.
+   - Add role gating for AI usage and a separate gate for high-impact actions like plan application.
+   - Audit AI session creation, provider changes, prompt-template changes, and plan-apply operations.
+
+4. **Operator-focused documentation and troubleshooting**
+   - Document reverse-proxy requirements, provider callback/network assumptions, secret management, and failure modes.
+   - Add troubleshooting guidance for invalid credentials, model mismatch, timeout, token-budget exhaustion, and partial outages.
+   - Treat deployment docs as part of the feature, not follow-up polish.
+
+5. **Production hardening before feature expansion**
+   - Add usage metrics, request/error tracing, and redacted diagnostic logging around provider calls.
+   - Add circuit-breaker or fallback behavior for provider outages before adding more model vendors.
+   - Keep Anthropic-native or multi-provider fallback work behind the management/verification layer above.
+
 ### Week 13: LLM Provider Abstraction
 
 **Activities**:
@@ -419,6 +457,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 - [x] Ollama implementation (via endpoint override)
 - [ ] Provider selection and fallback — current runtime uses one configured OpenAI-compatible backend
 - [x] Configuration validation
+- [ ] Admin-managed provider registry and test endpoints — recommended next step based on Graphēon-style integration patterns
 
 **Success Criteria**:
 - Support all 5 LLM providers
@@ -445,6 +484,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 - [x] Streaming response handling (SSE)
 - [x] Conversation endpoints: `/api/v1/ai/sessions/*`
 - [ ] WebSocket support — used SSE streaming instead
+- [ ] Provider status UX and operator-visible failure states
 
 **Success Criteria**:
 - Maintain conversation history
@@ -471,6 +511,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 - [ ] Risk assessment algorithm — not yet implemented
 - [x] Plan storage and retrieval (within conversations)
 - [x] Plan application endpoints (`/api/v1/ai/sessions/{id}/apply-plan`)
+- [ ] Draft/review/apply workflow with clearer admin/operator guardrails
 
 **Success Criteria**:
 - LLM generates valid pool specifications
@@ -488,6 +529,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 - Implement growth factor consideration
 - Build fallback recommendation system
 - Create plan analytics and success tracking
+- Add deployment docs, provider troubleshooting, and observability for AI operations
 
 **Deliverables**:
 - [x] Multi-turn conversation refinement
@@ -497,6 +539,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 - [x] Fallback to rule-based recommendations (recommendation engine)
 - [ ] Plan success metrics tracking — not yet implemented
 - [ ] Analytics endpoints — not yet implemented
+- [ ] Provider runbooks and operational troubleshooting docs — recommended before broader rollout
 
 **Success Criteria**:
 - Users can refine plans through conversation
