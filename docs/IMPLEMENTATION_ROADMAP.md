@@ -18,6 +18,22 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 ---
 
+## Status Refresh (validated against the codebase on 2026-04-04)
+
+This document started as a phased implementation plan. The detailed week-by-week sections below are still useful as design history, but they are no longer a reliable source of truth for current status.
+
+| Area | Current Status | Notes |
+|------|----------------|-------|
+| Core IPAM | Implemented | Pools, accounts, blocks, search, import/export, validation, audit |
+| Discovery: AWS | Implemented | Single-account and AWS Organizations discovery, agent flow, IaC helpers |
+| Discovery: GCP | Implemented, narrower than AWS | Networks, subnetworks, and external IP discovery exist; Azure is still missing |
+| Drift Detection | Implemented | Detection, listing, resolve, and ignore workflows are in place |
+| Smart Planning | Implemented | Analysis, recommendations, and schema planner are available |
+| AI Planning | Implemented, optional | OpenAI-compatible backend, SSE chat, stored sessions, plan extraction/apply |
+| OIDC / SSO | Implemented | Provider management, discovery, group mapping, JIT provisioning, local-auth toggle |
+| Operations | Partial | Metrics, Sentry, release notes, and host-managed upgrades exist; tracing is still missing |
+| Multi-tenancy | Planned | PostgreSQL schema has default-org scaffolding, but runtime isolation is not active |
+
 ## Phase 1: Foundation (Weeks 1-4)
 
 **Objective**: Build core API infrastructure, authentication, database layer, and basic pool management operations.
@@ -84,7 +100,7 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Implement audit logging for auth events
 
 **Deliverables**:
-- [ ] OIDC provider configuration interface — not yet implemented (local auth only)
+- [x] OIDC provider configuration interface
 - [x] Session store with encryption
 - [x] API token generation and storage (Argon2id hashing)
 - [x] Auth middleware stack
@@ -177,7 +193,7 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 **Deliverables**:
 - [x] Collector interface and SDK
 - [x] AWS collector (VPCs, subnets, EIPs) + AWS Organizations cross-account discovery
-- [ ] GCP collector (networks, subnetworks, IPs) — not yet implemented
+- [x] GCP collector (networks, subnetworks, external IPs)
 - [ ] Azure collector (VNets, subnets, NICs) — not yet implemented
 - [x] Discovery resource storage
 - [x] Collector registry and heartbeat
@@ -207,7 +223,7 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - [ ] Incremental sync engine — not yet implemented
 - [x] Resource reconciliation against existing pools
 - [x] Conflict detection and reporting
-- [ ] Orphan resource detection — not yet implemented
+- [ ] Orphan resource detection in sync jobs — drift detection covers orphaned discovered pools separately
 - [x] Sync job history and logging
 - [ ] Retry mechanism for failed syncs — not yet implemented
 
@@ -230,8 +246,8 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create reconciliation workflow UI
 
 **Deliverables**:
-- [ ] Drift detection engine — not yet implemented
-- [ ] Drift reporting endpoints — not yet implemented
+- [x] Drift detection engine
+- [x] Drift reporting endpoints
 - [ ] Reconciliation suggestions — not yet implemented
 - [x] Cloud account management UI
 - [x] Sync status dashboard
@@ -401,7 +417,7 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - [ ] Anthropic Claude implementation — not yet (uses OpenAI-compatible API)
 - [x] Azure OpenAI implementation (via endpoint override)
 - [x] Ollama implementation (via endpoint override)
-- [x] Provider selection and fallback
+- [ ] Provider selection and fallback — current runtime uses one configured OpenAI-compatible backend
 - [x] Configuration validation
 
 **Success Criteria**:
@@ -540,10 +556,10 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 - Create device management
 
 **Deliverables**:
-- [ ] SSO configuration endpoints — not yet implemented
-- [ ] Provider discovery implementation — not yet implemented
-- [ ] Group to role mapping UI — not yet implemented
-- [ ] Auto-user provisioning system — not yet implemented
+- [x] SSO configuration endpoints
+- [x] Provider discovery implementation
+- [x] Group to role mapping UI
+- [x] Auto-user provisioning system
 - [x] Session management endpoints (local sessions implemented)
 - [ ] MFA enrollment and verification — not yet implemented
 - [ ] Trusted device registration — not yet implemented
@@ -1059,4 +1075,3 @@ After initial launch, consider these enhancements:
 - **Last Updated**: 2026-02-18
 - **Owner**: CloudPAM Product Team
 - **Status**: Phases 1-4 substantially complete; Phase 5 in progress
-

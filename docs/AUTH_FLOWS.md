@@ -4,15 +4,39 @@ This document details the authentication and authorization architecture for Clou
 
 ## Overview
 
-CloudPAM supports two authentication methods:
-1. **OAuth 2.0 / OIDC** - For user sessions via web UI
-2. **API Keys** - For programmatic access and integrations
+CloudPAM currently supports three authentication methods:
+1. **Local username/password sessions** - Primary built-in browser login flow
+2. **OIDC / SSO sessions** - Optional browser login via an external identity provider
+3. **API Keys** - For programmatic access and integrations
 
 Authorization uses Role-Based Access Control (RBAC) with future support for Attribute-Based Access Control (ABAC).
 
 ## Authentication Flows
 
-### 1. OAuth 2.0 / OIDC Flow (User Sessions)
+### 1. Local Username/Password Flow (User Sessions)
+
+The built-in login flow authenticates against CloudPAM-managed users and creates an HttpOnly session cookie.
+
+#### API Endpoints
+
+```
+POST /api/v1/auth/login
+  - Accepts username/password
+  - Creates a server-side session and returns a session cookie
+
+POST /api/v1/auth/logout
+  - Invalidates the current session
+
+GET /api/v1/auth/me
+  - Returns the current authenticated user or API key identity
+
+POST /api/v1/auth/setup
+  - Creates the initial admin user on a fresh install
+```
+
+Local auth can be disabled from security settings when OIDC is configured, leaving SSO as the primary interactive login path.
+
+### 2. OAuth 2.0 / OIDC Flow (User Sessions)
 
 CloudPAM acts as an OIDC Relying Party, supporting any OIDC-compliant Identity Provider.
 
@@ -50,45 +74,45 @@ CloudPAM acts as an OIDC Relying Party, supporting any OIDC-compliant Identity P
 
 #### Token Flow Details
 
-1. **Authorization Request**: Frontend redirects to IdP with:
+1. **Authorization Request**: Browser redirects to IdP with:
    - `client_id`: CloudPAM's registered client ID
-   - `redirect_uri`: Callback URL (e.g., `https://cloudpam.example.com/auth/callback`)
+   - `redirect_uri`: Callback URL (e.g., `https://cloudpam.example.com/api/v1/auth/oidc/callback`)
    - `response_type`: `code`
    - `scope`: `openid profile email`
    - `state`: CSRF protection token
-   - `nonce`: Replay attack protection
+   - `nonce`: Replay/reuse protection handled by the OIDC provider implementation
 
 2. **Token Exchange**: Backend exchanges auth code for tokens:
-   - `access_token`: Short-lived (1 hour), used for API calls
    - `id_token`: Contains user identity claims
-   - `refresh_token`: Long-lived (7 days), used to refresh access tokens
+   - `access_token`: Used to call the provider's userinfo/discovery endpoints when needed
+   - Optional provider refresh semantics remain provider-specific
 
 3. **Session Management**:
-   - HTTP-only secure cookie stores encrypted session ID
-   - Session maps to user record and cached permissions
-   - Access token refresh happens automatically before expiration
+   - CloudPAM creates its own server-side session after successful OIDC login
+   - Session state is stored in the configured session store
+   - Silent re-auth is supported for OIDC users through the frontend refresh flow
 
 #### API Endpoints
 
 ```
-POST /api/v1/auth/login
-  - Initiates OAuth flow, returns redirect URL
+GET /api/v1/auth/oidc/providers
+  - Lists enabled public OIDC providers
 
-GET /api/v1/auth/callback?code=...&state=...
-  - Handles OAuth callback, exchanges code for tokens
-  - Creates/updates user record
-  - Returns session cookie
+GET /api/v1/auth/oidc/login?provider_id=...
+  - Initiates OIDC login and redirects to the provider
 
-POST /api/v1/auth/refresh
-  - Refreshes access token using refresh token
-  - Called automatically by frontend
+GET /api/v1/auth/oidc/callback?code=...&state=...
+  - Handles provider callback, exchanges code, provisions or loads the user, and creates a session cookie
 
-POST /api/v1/auth/logout
-  - Invalidates session
-  - Optionally triggers IdP logout (if supported)
+POST /api/v1/auth/oidc/refresh
+  - Returns a silent re-auth redirect target for OIDC sessions
 
-GET /api/v1/auth/userinfo
-  - Returns current user info from session
+GET /api/v1/settings/oidc/providers
+POST /api/v1/settings/oidc/providers
+PATCH /api/v1/settings/oidc/providers/{id}
+DELETE /api/v1/settings/oidc/providers/{id}
+POST /api/v1/settings/oidc/providers/{id}/test
+  - Admin OIDC provider management endpoints
 ```
 
 #### IdP Configuration
@@ -111,7 +135,7 @@ CloudPAM supports these Identity Providers:
 - `picture` - Avatar URL (optional)
 - `groups` - Group membership for role mapping (optional)
 
-### 2. API Key Authentication
+### 3. API Key Authentication
 
 For programmatic access without user context (CI/CD, scripts, integrations).
 

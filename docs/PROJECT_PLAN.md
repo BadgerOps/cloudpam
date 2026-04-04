@@ -4,7 +4,9 @@ This document captures the roadmap for CloudPAM, a cloud-native IP Address Manag
 
 ---
 
-## Current State (v0.4.1 — Sprint 18 Complete)
+## Current State (validated against the codebase on 2026-04-04)
+
+This summary reflects what is implemented in the current repository. The deeper milestone sections later in this document are retained as historical planning material and may lag the code.
 
 ### Implemented Features
 
@@ -18,7 +20,7 @@ This document captures the roadmap for CloudPAM, a cloud-native IP Address Manag
 
 **Storage:**
 - In-memory store (default, for development/testing)
-- SQLite store (`-tags sqlite`) with 13 migrations
+- SQLite store (`-tags sqlite`) with embedded migrations through `0018_drift_items.sql`
 - PostgreSQL store (`-tags postgres`) with pgx/v5
 - All three implement identical `Store` interface
 
@@ -29,13 +31,20 @@ This document captures the roadmap for CloudPAM, a cloud-native IP Address Manag
 - Session management (HttpOnly + Secure cookies)
 - Dual auth: session cookies (browser) + Bearer tokens (API)
 - Bootstrap admin user and first-boot setup wizard
+- Optional OIDC/SSO with provider discovery, group-to-role mapping, JIT user provisioning, and local-auth toggle
 
-**Cloud Discovery (AWS):**
+**Cloud Discovery:**
 - AWS collector: VPCs, subnets, Elastic IPs
 - AWS Organizations discovery with cross-account AssumeRole
 - Standalone discovery agent (`cmd/cloudpam-agent/`)
 - Bulk org ingest API, resource linking/unlinking
 - Terraform modules and CloudFormation StackSet for IAM
+- GCP collector: networks, subnetworks, and external addresses via the Compute API
+
+**Drift Detection:**
+- Drift detector for unmanaged resources, CIDR mismatches, and orphaned discovered pools
+- Drift API endpoints plus resolve/ignore workflow
+- Drift UI page and summary reporting
 
 **Smart Planning:**
 - Gap analysis, fragmentation scoring, compliance checks
@@ -43,16 +52,16 @@ This document captures the roadmap for CloudPAM, a cloud-native IP Address Manag
 - Schema Planner wizard (4-step: Template → Strategy → Dimensions → Preview)
 
 **AI Planning:**
-- LLM provider abstraction (OpenAI/Ollama/vLLM/Azure compatible)
+- OpenAI-compatible LLM provider abstraction with configurable endpoint override
 - Conversational planning with SSE streaming
-- Plan extraction from LLM responses, plan apply
+- Conversation persistence, plan extraction from LLM responses, and plan apply
 
 **API:**
-- RESTful JSON API with OpenAPI 3.1 spec (v0.7.0)
-- 30+ endpoints across pools, accounts, blocks, discovery, analysis, recommendations, AI, auth, audit
+- RESTful JSON API with OpenAPI 3.1 spec
+- Endpoints across pools, accounts, blocks, discovery, drift, analysis, recommendations, AI, auth, settings, updates, and audit
 
 **Frontend:**
-- Unified React/Vite/TypeScript SPA with 13 pages
+- Unified React/Vite/TypeScript SPA with admin, discovery, planning, auth, and changelog surfaces
 - Dark mode with three-mode toggle
 - Cmd+K search, hierarchical pool tree
 
@@ -62,15 +71,25 @@ This document captures the roadmap for CloudPAM, a cloud-native IP Address Manag
 - Sentry integration (errors + performance)
 - Graceful shutdown, health/readiness endpoints
 - Audit logging for all mutations
+- Embedded changelog, release metadata endpoints, and optional file-triggered host upgrade flow
 - Docker, Nix flake, CI/CD with GitHub Actions
+
+### Partial / Caveated Areas
+
+- GCP discovery is implemented in code and covered by tests, but AWS currently has the most complete setup guidance, org-mode workflow, and IaC support.
+- AI planning currently targets a single OpenAI-compatible backend configured via `CLOUDPAM_LLM_*`; there is no separate Anthropic-native integration or backend fallback selection.
+- The update flow is host-managed and file-triggered; CloudPAM can request and report upgrades, but it does not perform a universal self-update on its own.
+- Multi-tenancy exists only as PostgreSQL schema/default-org scaffolding; the running application remains single-tenant.
+- Some UI surfaces are intentionally unfinished: the Log Destinations page is a placeholder and the schema planner's Terraform export is still a stub.
 
 ### Not Yet Implemented
 
-- GCP/Azure cloud discovery collectors
-- Drift detection (discovered vs managed state)
-- SSO/OIDC integration
-- Multi-tenancy enforcement (schema exists, not active)
+- Azure cloud discovery
+- Active multi-tenant enforcement, organization management UI/API, and quotas
 - IPv6 support
+- Distributed tracing
+- Rich drift reconciliation suggestions or automatic remediation
+- External log destination delivery / SIEM forwarding
 - VLAN/VRF tracking
 - Host/Address tracking (deferred to M7+)
 
