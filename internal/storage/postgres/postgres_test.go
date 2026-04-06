@@ -11,9 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
@@ -24,46 +21,17 @@ import (
 // testDB holds a shared database connection for test suites.
 // It's initialized once via TestMain and reused across test functions.
 var testDB struct {
-	connStr   string
-	pool      *pgxpool.Pool
-	store     *Store
-	container testcontainers.Container
+	connStr string
+	pool    *pgxpool.Pool
+	store   *Store
 }
 
-// TestMain sets up a PostgreSQL database for tests.
-// It supports two modes:
-//  1. DATABASE_URL env var - uses an existing PostgreSQL instance (CI/custom)
-//  2. testcontainers-go - automatically starts a Chainguard PostgreSQL container
+// TestMain sets up a PostgreSQL database for tests from DATABASE_URL.
 func TestMain(m *testing.M) {
-	ctx := context.Background()
-
 	connStr := os.Getenv("DATABASE_URL")
 	if connStr == "" {
-		// Start a PostgreSQL container using testcontainers-go
-		// Use standard postgres:16-alpine for testcontainers compatibility.
-		// Chainguard image is used in docker-compose for local dev.
-		container, err := tcpostgres.Run(ctx,
-			"postgres:16-alpine",
-			tcpostgres.WithDatabase("cloudpam_test"),
-			tcpostgres.WithUsername("cloudpam"),
-			tcpostgres.WithPassword("cloudpam"),
-			testcontainers.WithWaitStrategy(
-				wait.ForLog("database system is ready to accept connections").
-					WithOccurrence(2).
-					WithStartupTimeout(60*time.Second)),
-		)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to start PostgreSQL container: %v\n", err)
-			os.Exit(1)
-		}
-		testDB.container = container
-
-		connStr, err = container.ConnectionString(ctx, "sslmode=disable")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to get connection string: %v\n", err)
-			_ = container.Terminate(ctx)
-			os.Exit(1)
-		}
+		fmt.Fprintln(os.Stderr, "DATABASE_URL must be set for postgres tests")
+		os.Exit(1)
 	}
 
 	testDB.connStr = connStr
@@ -72,9 +40,6 @@ func TestMain(m *testing.M) {
 	store, err := New(connStr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create store: %v\n", err)
-		if testDB.container != nil {
-			_ = testDB.container.Terminate(ctx)
-		}
 		os.Exit(1)
 	}
 	testDB.store = store
@@ -84,9 +49,6 @@ func TestMain(m *testing.M) {
 
 	// Cleanup
 	_ = store.Close()
-	if testDB.container != nil {
-		_ = testDB.container.Terminate(ctx)
-	}
 
 	os.Exit(code)
 }
