@@ -28,7 +28,7 @@
     "rollup-plugin-visualizer": "^5.14.0",
     "tailwindcss": "^4.0.0",
     "typescript": "~5.7.2",
-    "vite": "^6.0.5",
+    "vite": "^6.4.2",
     "vitest": "^4.0.18"
   },
   "overrides": {
