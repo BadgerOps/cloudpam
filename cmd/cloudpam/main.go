@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,6 +40,7 @@ func main() {
 	}
 	flag.StringVar(&addr, "addr", addr, "listen address (host:port)")
 	migrate := flag.String("migrate", "", "run migrations: 'up' to apply, 'status' to show status")
+	resetPasswordUsername := flag.String("reset-password", "", "reset a local user's password and exit; set CLOUDPAM_RESET_PASSWORD or pipe the password on stdin")
 	flag.Parse()
 
 	// Initialize Sentry if DSN is provided
@@ -65,6 +68,26 @@ func main() {
 	// Handle migrations CLI before starting server
 	if *migrate != "" {
 		runMigrationsCLI(logger, *migrate)
+		return
+	}
+
+	if *resetPasswordUsername != "" {
+		password, err := resetPasswordInput()
+		if err != nil {
+			logger.Error("password reset failed", "error", err)
+			os.Exit(1)
+		}
+		userStore := selectUserStore(logger)
+		sessionStore := selectSessionStore(logger)
+		if err := resetUserPassword(context.Background(), userStore, sessionStore, *resetPasswordUsername, password); err != nil {
+			logger.Error("password reset failed", "error", err)
+			closeIfPossible(logger, sessionStore, "session store")
+			closeIfPossible(logger, userStore, "user store")
+			os.Exit(1)
+		}
+		closeIfPossible(logger, sessionStore, "session store")
+		closeIfPossible(logger, userStore, "user store")
+		logger.Info("password reset complete")
 		return
 	}
 
@@ -324,6 +347,80 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+func resetPasswordInput() (string, error) {
+	if password := os.Getenv("CLOUDPAM_RESET_PASSWORD"); password != "" {
+		return password, nil
+	}
+
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return "", fmt.Errorf("stat stdin: %w", err)
+	}
+	if stat.Mode()&os.ModeCharDevice != 0 {
+		return "", fmt.Errorf("set CLOUDPAM_RESET_PASSWORD or pipe the new password on stdin")
+	}
+
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("read password from stdin: %w", err)
+	}
+	password := strings.TrimRight(string(raw), "\r\n")
+	if password == "" {
+		return "", fmt.Errorf("password is empty")
+	}
+	return password, nil
+}
+
+func resetUserPassword(ctx context.Context, userStore auth.UserStore, sessionStore auth.SessionStore, username, password string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return fmt.Errorf("username is required")
+	}
+	if err := auth.ValidatePassword(password, 0); err != nil {
+		return err
+	}
+
+	user, err := userStore.GetByUsername(ctx, username)
+	if err != nil {
+		return fmt.Errorf("lookup user: %w", err)
+	}
+	if user == nil {
+		return fmt.Errorf("user not found")
+	}
+
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+
+	now := time.Now().UTC()
+	user.PasswordHash = hash
+	user.IsActive = true
+	user.FailedLoginAttempts = 0
+	user.LastFailedLoginAt = nil
+	user.LockedAt = nil
+	user.LockoutUntil = nil
+	user.UpdatedAt = now
+
+	if err := userStore.Update(ctx, user); err != nil {
+		return fmt.Errorf("update user: %w", err)
+	}
+	if err := sessionStore.DeleteByUserID(ctx, user.ID); err != nil {
+		return fmt.Errorf("revoke sessions: %w", err)
+	}
+	return nil
+}
+
+func closeIfPossible(logger observability.Logger, v any, name string) {
+	closer, ok := v.(interface{ Close() error })
+	if !ok {
+		return
+	}
+	if err := closer.Close(); err != nil {
+		logger.Warn("close failed", "component", name, "error", err)
+	}
 }
 
 // bootstrapAdmin creates the initial admin user if it doesn't already exist.

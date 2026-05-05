@@ -142,6 +142,51 @@ docker compose logs -f cloudpam
 # Access at http://localhost:8080
 ```
 
+### Password Reset Operations
+
+Use the reset CLI when an operator needs to recover a local user password without starting another HTTP server. The command validates the new password, updates the stored hash, reactivates the user, clears failed-login and lockout state, and revokes that user's sessions. Use a binary or container image built with the storage backend tags required by the deployment.
+
+Local PostgreSQL-backed binary:
+
+```bash
+DATABASE_URL='postgres://cloudpam:secret@localhost:5432/cloudpam?sslmode=disable' \
+  CLOUDPAM_RESET_PASSWORD='<new-password>' \
+  ./cloudpam -reset-password <username>
+```
+
+Local SQLite-backed binary:
+
+```bash
+SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' \
+  CLOUDPAM_RESET_PASSWORD='<new-password>' \
+  ./cloudpam -reset-password <username>
+```
+
+Podman container using the container's existing database environment:
+
+```bash
+podman exec \
+  -e CLOUDPAM_RESET_PASSWORD='<new-password>' \
+  <cloudpam-container> \
+  cloudpam -reset-password <username>
+```
+
+Stdin avoids putting the new password in shell history:
+
+```bash
+printf '%s\n' '<new-password>' | \
+  DATABASE_URL='postgres://cloudpam:secret@localhost:5432/cloudpam?sslmode=disable' \
+  ./cloudpam -reset-password <username>
+```
+
+```bash
+printf '%s\n' '<new-password>' | \
+  podman exec -i <cloudpam-container> \
+  cloudpam -reset-password <username>
+```
+
+For PostgreSQL-backed deployments, confirm the local process or container has the same `DATABASE_URL` value that the server uses. For SQLite-backed deployments, confirm `SQLITE_DSN` points at the active database file.
+
 ### Development with Hot Reload
 
 ```yaml
@@ -1139,6 +1184,26 @@ spec:
               drop:
                 - ALL
 ```
+
+### Kubernetes Password Reset
+
+Reset a local user's password from inside a running CloudPAM pod so the command uses the same database environment as the server:
+
+```bash
+kubectl exec -n <namespace> deploy/<cloudpam-deployment> -- \
+  env CLOUDPAM_RESET_PASSWORD='<new-password>' \
+  cloudpam -reset-password <username>
+```
+
+To avoid shell history, pass the new password on stdin:
+
+```bash
+printf '%s\n' '<new-password>' | \
+  kubectl exec -i -n <namespace> deploy/<cloudpam-deployment> -- \
+  cloudpam -reset-password <username>
+```
+
+The command exits non-zero if the user does not exist, the password fails policy validation, or the pod cannot reach the configured backing store.
 
 ### GKE-specific Values
 
