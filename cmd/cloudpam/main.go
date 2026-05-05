@@ -80,14 +80,14 @@ func main() {
 		userStore := selectUserStore(logger)
 		sessionStore := selectSessionStore(logger)
 		if err := resetUserPassword(context.Background(), userStore, sessionStore, *resetPasswordUsername, password); err != nil {
-			logger.Error("password reset failed", "username", *resetPasswordUsername, "error", err)
+			logger.Error("password reset failed", "error", err)
 			closeIfPossible(logger, sessionStore, "session store")
 			closeIfPossible(logger, userStore, "user store")
 			os.Exit(1)
 		}
 		closeIfPossible(logger, sessionStore, "session store")
 		closeIfPossible(logger, userStore, "user store")
-		logger.Info("password reset complete", "username", *resetPasswordUsername)
+		logger.Info("password reset complete")
 		return
 	}
 
