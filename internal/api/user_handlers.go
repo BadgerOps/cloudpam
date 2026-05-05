@@ -11,6 +11,7 @@ import (
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
+	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 
 	"github.com/google/uuid"
@@ -142,6 +143,19 @@ func (us *UserServer) RegisterProtectedUserRoutes(logger *slog.Logger, opts ...U
 			return
 		}
 
+		// Check for /unlock sub-route.
+		if len(parts) == 2 && strings.TrimSuffix(parts[1], "/") == "unlock" {
+			if r.Method == http.MethodPost {
+				usersUpdateMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					us.handleUnlockUser(w, r, id)
+				})).ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("Allow", http.MethodPost)
+			us.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+			return
+		}
+
 		switch r.Method {
 		case http.MethodGet:
 			usersReadMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -189,9 +203,9 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if local authentication is enabled.
+	settings := us.securitySettings(ctx)
 	if us.settingsStore != nil {
-		settings, err := us.settingsStore.GetSecuritySettings(ctx)
-		if err == nil && settings != nil && !settings.LocalAuthEnabled {
+		if !settings.LocalAuthEnabled {
 			writeJSON(w, http.StatusForbidden, apiError{Error: "local authentication is disabled", Detail: "use SSO to sign in"})
 			return
 		}
@@ -209,6 +223,20 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	now := time.Now().UTC()
+	if user.LockedAt != nil {
+		if user.LockoutUntil != nil && now.Before(*user.LockoutUntil) {
+			us.logAuditEvent(ctx, audit.ActionLoginFailed, audit.ResourceSession, user.ID, user.Username, http.StatusLocked)
+			us.writeErr(ctx, w, http.StatusLocked, "account locked", "try again after "+user.LockoutUntil.Format(time.RFC3339))
+			return
+		}
+		if err := us.clearUserLockout(ctx, user); err != nil {
+			us.writeErr(ctx, w, http.StatusInternalServerError, "failed to unlock account", err.Error())
+			return
+		}
+		us.logAuditEventAs(ctx, "system", audit.ActorTypeAnonymous, audit.ActionAccountUnlocked, audit.ResourceUser, user.ID, user.Username, http.StatusOK)
+	}
+
 	// Check active.
 	if !user.IsActive {
 		us.logAuditEvent(ctx, audit.ActionLoginFailed, audit.ResourceSession, user.ID, user.Username, http.StatusForbidden)
@@ -218,13 +246,22 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Verify password.
 	if err := auth.VerifyPassword(input.Password, user.PasswordHash); err != nil {
-		us.logAuditEvent(ctx, audit.ActionLoginFailed, audit.ResourceSession, user.ID, user.Username, http.StatusUnauthorized)
+		locked, err := us.recordFailedLogin(ctx, user, settings)
+		if err != nil {
+			us.writeErr(ctx, w, http.StatusInternalServerError, "failed to record login failure", err.Error())
+			return
+		}
+		if locked {
+			us.writeErr(ctx, w, http.StatusLocked, "account locked", "too many failed login attempts")
+			return
+		}
 		us.writeErr(ctx, w, http.StatusUnauthorized, "invalid credentials", "")
 		return
 	}
 
 	// Create session.
-	session, err := auth.NewSession(user.ID, user.Role, auth.DefaultSessionDuration, nil)
+	sessionDuration := time.Duration(settings.SessionDurationHours) * time.Hour
+	session, err := auth.NewSession(user.ID, user.Role, sessionDuration, nil)
 	if err != nil {
 		us.writeErr(ctx, w, http.StatusInternalServerError, "failed to create session", err.Error())
 		return
@@ -236,7 +273,7 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Enforce max concurrent sessions per user.
 	if sessions, err := us.sessionStore.ListByUserID(ctx, user.ID); err == nil {
-		const maxSessions = 10
+		maxSessions := settings.MaxSessionsPerUser
 		if len(sessions) > maxSessions {
 			// Sort by creation time (oldest first) and evict excess.
 			sort.Slice(sessions, func(i, j int) bool {
@@ -250,7 +287,6 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update last login.
-	now := time.Now().UTC()
 	_ = us.userStore.UpdateLastLogin(ctx, user.ID, now)
 
 	// Set session cookie.
@@ -267,7 +303,7 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		Secure:   isSecure,
 		SameSite: sameSite,
-		MaxAge:   int(auth.DefaultSessionDuration.Seconds()),
+		MaxAge:   int(sessionDuration.Seconds()),
 	})
 
 	us.logAuditEvent(ctx, audit.ActionLogin, audit.ResourceSession, session.ID, user.Username, http.StatusOK)
@@ -408,6 +444,16 @@ func (us *UserServer) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	if len(parts) == 2 && strings.TrimSuffix(parts[1], "/") == "revoke-sessions" {
 		if r.Method == http.MethodPost {
 			us.handleRevokeSessions(w, r, id)
+			return
+		}
+		w.Header().Set("Allow", http.MethodPost)
+		us.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	if len(parts) == 2 && strings.TrimSuffix(parts[1], "/") == "unlock" {
+		if r.Method == http.MethodPost {
+			us.handleUnlockUser(w, r, id)
 			return
 		}
 		w.Header().Set("Allow", http.MethodPost)
@@ -729,20 +775,104 @@ func (us *UserServer) handleRevokeSessions(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]string{"status": "sessions revoked"})
 }
 
+// handleUnlockUser clears failed-login and lockout state for a user.
+func (us *UserServer) handleUnlockUser(w http.ResponseWriter, r *http.Request, id string) {
+	ctx := r.Context()
+
+	callerRole := auth.GetEffectiveRole(ctx)
+	if callerRole != auth.RoleAdmin && callerRole != auth.RoleNone {
+		us.writeErr(ctx, w, http.StatusForbidden, "forbidden", "only admins can unlock users")
+		return
+	}
+
+	user, err := us.userStore.GetByID(ctx, id)
+	if err != nil {
+		us.writeErr(ctx, w, http.StatusInternalServerError, "failed to get user", err.Error())
+		return
+	}
+	if user == nil {
+		us.writeErr(ctx, w, http.StatusNotFound, "user not found", "")
+		return
+	}
+
+	if err := us.clearUserLockout(ctx, user); err != nil {
+		us.writeErr(ctx, w, http.StatusInternalServerError, "failed to unlock user", err.Error())
+		return
+	}
+
+	us.logAuditEvent(ctx, audit.ActionAccountUnlocked, audit.ResourceUser, user.ID, user.Username, http.StatusOK)
+	writeJSON(w, http.StatusOK, user)
+}
+
+func (us *UserServer) securitySettings(ctx context.Context) domain.SecuritySettings {
+	settings := domain.DefaultSecuritySettings()
+	if us.settingsStore == nil {
+		return settings
+	}
+	if stored, err := us.settingsStore.GetSecuritySettings(ctx); err == nil && stored != nil {
+		settings = *domain.NormalizeSecuritySettings(stored)
+	}
+	return settings
+}
+
+func (us *UserServer) recordFailedLogin(ctx context.Context, user *auth.User, settings domain.SecuritySettings) (bool, error) {
+	now := time.Now().UTC()
+	user.FailedLoginAttempts++
+	user.LastFailedLoginAt = &now
+	user.UpdatedAt = now
+
+	locked := false
+	if settings.AccountLockoutAttempts > 0 && user.FailedLoginAttempts >= settings.AccountLockoutAttempts {
+		until := now.Add(time.Duration(settings.AccountLockoutCooldownMinutes) * time.Minute)
+		user.LockedAt = &now
+		user.LockoutUntil = &until
+		locked = true
+	}
+
+	if err := us.userStore.Update(ctx, user); err != nil {
+		return false, err
+	}
+
+	status := http.StatusUnauthorized
+	if locked {
+		status = http.StatusLocked
+	}
+	us.logAuditEvent(ctx, audit.ActionLoginFailed, audit.ResourceSession, user.ID, user.Username, status)
+	if locked {
+		us.logAuditEvent(ctx, audit.ActionAccountLocked, audit.ResourceUser, user.ID, user.Username, http.StatusLocked)
+	}
+	return locked, nil
+}
+
+func (us *UserServer) clearUserLockout(ctx context.Context, user *auth.User) error {
+	user.FailedLoginAttempts = 0
+	user.LastFailedLoginAt = nil
+	user.LockedAt = nil
+	user.LockoutUntil = nil
+	user.UpdatedAt = time.Now().UTC()
+	return us.userStore.Update(ctx, user)
+}
+
 // logAuditEvent is a helper to log audit events with actor context.
 func (us *UserServer) logAuditEvent(ctx context.Context, action, resourceType, resourceID, resourceName string, statusCode int) {
+	us.logAuditEventAs(ctx, "", "", action, resourceType, resourceID, resourceName, statusCode)
+}
+
+func (us *UserServer) logAuditEventAs(ctx context.Context, actor, actorType, action, resourceType, resourceID, resourceName string, statusCode int) {
 	if us.auditLogger == nil {
 		return
 	}
 
-	actor := "anonymous"
-	actorType := audit.ActorTypeAnonymous
-	if user := auth.UserFromContext(ctx); user != nil {
-		actor = user.Username
-		actorType = audit.ActorTypeUser
-	} else if key := auth.APIKeyFromContext(ctx); key != nil {
-		actor = key.Prefix
-		actorType = audit.ActorTypeAPIKey
+	if actor == "" {
+		actor = "anonymous"
+		actorType = audit.ActorTypeAnonymous
+		if user := auth.UserFromContext(ctx); user != nil {
+			actor = user.Username
+			actorType = audit.ActorTypeUser
+		} else if key := auth.APIKeyFromContext(ctx); key != nil {
+			actor = key.Prefix
+			actorType = audit.ActorTypeAPIKey
+		}
 	}
 
 	event := &audit.AuditEvent{

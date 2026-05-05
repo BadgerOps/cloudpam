@@ -41,12 +41,14 @@ func (s *SQLiteUserStore) Create(ctx context.Context, user *User) error {
 		return ErrUserNotFound
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, auth_provider, oidc_subject, oidc_issuer)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO users (id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_failed_login_at, failed_login_attempts, locked_at, lockout_until, auth_provider, oidc_subject, oidc_issuer)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		user.ID, user.Username, user.Email, user.DisplayName, string(user.Role),
 		user.PasswordHash, boolToInt(user.IsActive),
 		user.CreatedAt.Format(time.RFC3339Nano), user.UpdatedAt.Format(time.RFC3339Nano),
+		formatOptionalTime(user.LastFailedLoginAt), user.FailedLoginAttempts,
+		formatOptionalTime(user.LockedAt), formatOptionalTime(user.LockoutUntil),
 		user.AuthProvider, user.OIDCSubject, user.OIDCIssuer,
 	)
 	if err != nil {
@@ -60,21 +62,21 @@ func (s *SQLiteUserStore) Create(ctx context.Context, user *User) error {
 
 func (s *SQLiteUserStore) GetByID(ctx context.Context, id string) (*User, error) {
 	return s.scanUser(s.db.QueryRowContext(ctx, `
-		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
+		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, last_failed_login_at, failed_login_attempts, locked_at, lockout_until, auth_provider, oidc_subject, oidc_issuer
 		FROM users WHERE id = ?
 	`, id))
 }
 
 func (s *SQLiteUserStore) GetByUsername(ctx context.Context, username string) (*User, error) {
 	return s.scanUser(s.db.QueryRowContext(ctx, `
-		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
+		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, last_failed_login_at, failed_login_attempts, locked_at, lockout_until, auth_provider, oidc_subject, oidc_issuer
 		FROM users WHERE username = ?
 	`, username))
 }
 
 func (s *SQLiteUserStore) List(ctx context.Context) ([]*User, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
+		SELECT id, username, email, display_name, role, is_active, created_at, updated_at, last_login_at, last_failed_login_at, failed_login_attempts, locked_at, lockout_until, auth_provider, oidc_subject, oidc_issuer
 		FROM users ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -85,16 +87,19 @@ func (s *SQLiteUserStore) List(ctx context.Context) ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		var (
-			u                   User
-			role                string
-			isActive            int
+			u                    User
+			role                 string
+			isActive             int
 			createdAt, updatedAt string
-			lastLoginAt         sql.NullString
+			lastLoginAt          sql.NullString
+			lastFailedLoginAt    sql.NullString
+			lockedAt             sql.NullString
+			lockoutUntil         sql.NullString
 		)
 		var authProvider sql.NullString
 		var oidcSubject sql.NullString
 		var oidcIssuer sql.NullString
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &role, &isActive, &createdAt, &updatedAt, &lastLoginAt, &authProvider, &oidcSubject, &oidcIssuer); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &role, &isActive, &createdAt, &updatedAt, &lastLoginAt, &lastFailedLoginAt, &u.FailedLoginAttempts, &lockedAt, &lockoutUntil, &authProvider, &oidcSubject, &oidcIssuer); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		u.Role = Role(role)
@@ -104,6 +109,18 @@ func (s *SQLiteUserStore) List(ctx context.Context) ([]*User, error) {
 		if lastLoginAt.Valid {
 			t, _ := time.Parse(time.RFC3339Nano, lastLoginAt.String)
 			u.LastLoginAt = &t
+		}
+		if lastFailedLoginAt.Valid {
+			t, _ := time.Parse(time.RFC3339Nano, lastFailedLoginAt.String)
+			u.LastFailedLoginAt = &t
+		}
+		if lockedAt.Valid {
+			t, _ := time.Parse(time.RFC3339Nano, lockedAt.String)
+			u.LockedAt = &t
+		}
+		if lockoutUntil.Valid {
+			t, _ := time.Parse(time.RFC3339Nano, lockoutUntil.String)
+			u.LockoutUntil = &t
 		}
 		if authProvider.Valid {
 			u.AuthProvider = authProvider.String
@@ -126,12 +143,16 @@ func (s *SQLiteUserStore) Update(ctx context.Context, user *User) error {
 	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE users SET username = ?, email = ?, display_name = ?, role = ?,
-			password_hash = ?, is_active = ?, updated_at = ?
+			password_hash = ?, is_active = ?, updated_at = ?,
+			last_failed_login_at = ?, failed_login_attempts = ?, locked_at = ?, lockout_until = ?
 		WHERE id = ?
 	`,
 		user.Username, user.Email, user.DisplayName, string(user.Role),
 		user.PasswordHash, boolToInt(user.IsActive),
-		user.UpdatedAt.Format(time.RFC3339Nano), user.ID,
+		user.UpdatedAt.Format(time.RFC3339Nano),
+		formatOptionalTime(user.LastFailedLoginAt), user.FailedLoginAttempts,
+		formatOptionalTime(user.LockedAt), formatOptionalTime(user.LockoutUntil),
+		user.ID,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -159,7 +180,7 @@ func (s *SQLiteUserStore) Delete(ctx context.Context, id string) error {
 }
 
 func (s *SQLiteUserStore) UpdateLastLogin(ctx context.Context, id string, t time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE id = ?`,
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET last_login_at = ?, failed_login_attempts = 0, last_failed_login_at = NULL, locked_at = NULL, lockout_until = NULL WHERE id = ?`,
 		t.Format(time.RFC3339Nano), id)
 	if err != nil {
 		return fmt.Errorf("update last login: %w", err)
@@ -173,7 +194,7 @@ func (s *SQLiteUserStore) UpdateLastLogin(ctx context.Context, id string, t time
 
 func (s *SQLiteUserStore) GetByOIDCIdentity(ctx context.Context, issuer, subject string) (*User, error) {
 	return s.scanUser(s.db.QueryRowContext(ctx, `
-		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, auth_provider, oidc_subject, oidc_issuer
+		SELECT id, username, email, display_name, role, password_hash, is_active, created_at, updated_at, last_login_at, last_failed_login_at, failed_login_attempts, locked_at, lockout_until, auth_provider, oidc_subject, oidc_issuer
 		FROM users WHERE oidc_issuer = ? AND oidc_subject = ?
 	`, issuer, subject))
 }
@@ -185,6 +206,9 @@ func (s *SQLiteUserStore) scanUser(row *sql.Row) (*User, error) {
 		isActive             int
 		createdAt, updatedAt string
 		lastLoginAt          sql.NullString
+		lastFailedLoginAt    sql.NullString
+		lockedAt             sql.NullString
+		lockoutUntil         sql.NullString
 		authProvider         sql.NullString
 		oidcSubject          sql.NullString
 		oidcIssuer           sql.NullString
@@ -192,6 +216,7 @@ func (s *SQLiteUserStore) scanUser(row *sql.Row) (*User, error) {
 
 	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &role,
 		&u.PasswordHash, &isActive, &createdAt, &updatedAt, &lastLoginAt,
+		&lastFailedLoginAt, &u.FailedLoginAttempts, &lockedAt, &lockoutUntil,
 		&authProvider, &oidcSubject, &oidcIssuer)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -208,6 +233,18 @@ func (s *SQLiteUserStore) scanUser(row *sql.Row) (*User, error) {
 		t, _ := time.Parse(time.RFC3339Nano, lastLoginAt.String)
 		u.LastLoginAt = &t
 	}
+	if lastFailedLoginAt.Valid {
+		t, _ := time.Parse(time.RFC3339Nano, lastFailedLoginAt.String)
+		u.LastFailedLoginAt = &t
+	}
+	if lockedAt.Valid {
+		t, _ := time.Parse(time.RFC3339Nano, lockedAt.String)
+		u.LockedAt = &t
+	}
+	if lockoutUntil.Valid {
+		t, _ := time.Parse(time.RFC3339Nano, lockoutUntil.String)
+		u.LockoutUntil = &t
+	}
 	if authProvider.Valid {
 		u.AuthProvider = authProvider.String
 	}
@@ -218,4 +255,11 @@ func (s *SQLiteUserStore) scanUser(row *sql.Row) (*User, error) {
 		u.OIDCIssuer = oidcIssuer.String
 	}
 	return &u, nil
+}
+
+func formatOptionalTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return t.Format(time.RFC3339Nano)
 }

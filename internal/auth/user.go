@@ -15,19 +15,23 @@ var (
 
 // User represents a local user account.
 type User struct {
-	ID           string     `json:"id"`
-	Username     string     `json:"username"`
-	Email        string     `json:"email,omitempty"`
-	DisplayName  string     `json:"display_name,omitempty"`
-	Role         Role       `json:"role"`
-	PasswordHash []byte     `json:"-"` // bcrypt hash, never serialized
-	IsActive     bool       `json:"is_active"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	LastLoginAt  *time.Time `json:"last_login_at,omitempty"`
-	AuthProvider string     `json:"auth_provider,omitempty"` // "local" or "oidc"
-	OIDCSubject  string     `json:"oidc_subject,omitempty"`  // IdP "sub" claim
-	OIDCIssuer   string     `json:"oidc_issuer,omitempty"`   // IdP issuer URL
+	ID                  string     `json:"id"`
+	Username            string     `json:"username"`
+	Email               string     `json:"email,omitempty"`
+	DisplayName         string     `json:"display_name,omitempty"`
+	Role                Role       `json:"role"`
+	PasswordHash        []byte     `json:"-"` // bcrypt hash, never serialized
+	IsActive            bool       `json:"is_active"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	LastLoginAt         *time.Time `json:"last_login_at,omitempty"`
+	FailedLoginAttempts int        `json:"failed_login_attempts"`
+	LastFailedLoginAt   *time.Time `json:"last_failed_login_at,omitempty"`
+	LockedAt            *time.Time `json:"locked_at,omitempty"`
+	LockoutUntil        *time.Time `json:"lockout_until,omitempty"`
+	AuthProvider        string     `json:"auth_provider,omitempty"` // "local" or "oidc"
+	OIDCSubject         string     `json:"oidc_subject,omitempty"`  // IdP "sub" claim
+	OIDCIssuer          string     `json:"oidc_issuer,omitempty"`   // IdP issuer URL
 }
 
 // copyUser creates a deep copy of a User.
@@ -36,17 +40,18 @@ func copyUser(u *User) *User {
 		return nil
 	}
 	cpy := &User{
-		ID:           u.ID,
-		Username:     u.Username,
-		Email:        u.Email,
-		DisplayName:  u.DisplayName,
-		Role:         u.Role,
-		IsActive:     u.IsActive,
-		CreatedAt:    u.CreatedAt,
-		UpdatedAt:    u.UpdatedAt,
-		AuthProvider: u.AuthProvider,
-		OIDCSubject:  u.OIDCSubject,
-		OIDCIssuer:   u.OIDCIssuer,
+		ID:                  u.ID,
+		Username:            u.Username,
+		Email:               u.Email,
+		DisplayName:         u.DisplayName,
+		Role:                u.Role,
+		IsActive:            u.IsActive,
+		CreatedAt:           u.CreatedAt,
+		UpdatedAt:           u.UpdatedAt,
+		FailedLoginAttempts: u.FailedLoginAttempts,
+		AuthProvider:        u.AuthProvider,
+		OIDCSubject:         u.OIDCSubject,
+		OIDCIssuer:          u.OIDCIssuer,
 	}
 	if u.PasswordHash != nil {
 		cpy.PasswordHash = make([]byte, len(u.PasswordHash))
@@ -55,6 +60,18 @@ func copyUser(u *User) *User {
 	if u.LastLoginAt != nil {
 		t := *u.LastLoginAt
 		cpy.LastLoginAt = &t
+	}
+	if u.LastFailedLoginAt != nil {
+		t := *u.LastFailedLoginAt
+		cpy.LastFailedLoginAt = &t
+	}
+	if u.LockedAt != nil {
+		t := *u.LockedAt
+		cpy.LockedAt = &t
+	}
+	if u.LockoutUntil != nil {
+		t := *u.LockoutUntil
+		cpy.LockoutUntil = &t
 	}
 	return cpy
 }

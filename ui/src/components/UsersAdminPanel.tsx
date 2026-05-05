@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Users, Plus, AlertCircle, UserCheck, UserX } from 'lucide-react'
+import { Users, Plus, AlertCircle, UserCheck, UserX, LockOpen } from 'lucide-react'
 import { useUsers } from '../hooks/useUsers'
-import type { CreateUserRequest } from '../api/types'
+import type { CreateUserRequest, UserInfo } from '../api/types'
 
 const ROLE_OPTIONS = ['admin', 'operator', 'viewer', 'auditor']
 
@@ -10,7 +10,7 @@ interface UsersAdminPanelProps {
 }
 
 export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelProps) {
-  const { users, loading, error, create, update, deactivate } = useUsers()
+  const { users, loading, error, create, update, deactivate, unlock } = useUsers()
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState<CreateUserRequest>({
     username: '',
@@ -52,9 +52,19 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
     }
   }
 
+  async function handleUnlock(id: string) {
+    await unlock(id)
+  }
+
   function formatDate(d?: string | null) {
     if (!d) return '—'
     return new Date(d).toLocaleDateString()
+  }
+
+  function isLocked(u: UserInfo) {
+    if (!u.locked_at) return false
+    if (!u.lockout_until) return true
+    return new Date(u.lockout_until).getTime() > Date.now()
   }
 
   return (
@@ -189,6 +199,7 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Email</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Role</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Status</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Failures</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Last Login</th>
               <th className="text-right px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Actions</th>
             </tr>
@@ -196,13 +207,13 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                   Loading...
                 </td>
               </tr>
             ) : users.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                   <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />
                   No users found
                 </td>
@@ -255,7 +266,11 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {u.is_active ? (
+                    {isLocked(u) ? (
+                      <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded text-xs font-medium">
+                        Locked
+                      </span>
+                    ) : u.is_active ? (
                       <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded text-xs font-medium">
                         Active
                       </span>
@@ -265,8 +280,18 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                       </span>
                     )}
                   </td>
+                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.failed_login_attempts ?? 0}</td>
                   <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(u.last_login_at)}</td>
                   <td className="px-4 py-3 text-right">
+                    {isLocked(u) && (
+                      <button
+                        onClick={() => handleUnlock(u.id)}
+                        title="Unlock user"
+                        className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                      >
+                        <LockOpen className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleToggleActive(u.id, u.is_active)}
                       title={u.is_active ? 'Deactivate user' : 'Activate user'}

@@ -58,6 +58,9 @@ func TestSettingsHandler_GetDefaults(t *testing.T) {
 	if settings.AccountLockoutAttempts != defaults.AccountLockoutAttempts {
 		t.Errorf("account_lockout_attempts: got %d, want %d", settings.AccountLockoutAttempts, defaults.AccountLockoutAttempts)
 	}
+	if settings.AccountLockoutCooldownMinutes != defaults.AccountLockoutCooldownMinutes {
+		t.Errorf("account_lockout_cooldown_minutes: got %d, want %d", settings.AccountLockoutCooldownMinutes, defaults.AccountLockoutCooldownMinutes)
+	}
 }
 
 func TestSettingsHandler_UpdateValid(t *testing.T) {
@@ -70,6 +73,7 @@ func TestSettingsHandler_UpdateValid(t *testing.T) {
 		"password_max_length": 64,
 		"login_rate_limit_per_minute": 10,
 		"account_lockout_attempts": 5,
+		"account_lockout_cooldown_minutes": 30,
 		"trusted_proxies": ["10.0.0.0/8"]
 	}`
 	req := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/settings/security", strings.NewReader(body))
@@ -94,6 +98,9 @@ func TestSettingsHandler_UpdateValid(t *testing.T) {
 	}
 	if settings.PasswordMinLength != 16 {
 		t.Errorf("password_min_length: got %d, want 16", settings.PasswordMinLength)
+	}
+	if settings.AccountLockoutCooldownMinutes != 30 {
+		t.Errorf("account_lockout_cooldown_minutes: got %d, want 30", settings.AccountLockoutCooldownMinutes)
 	}
 
 	// Verify GET returns updated values
@@ -144,6 +151,10 @@ func TestSettingsHandler_UpdateInvalidBounds(t *testing.T) {
 		{
 			name: "account_lockout_attempts too high",
 			body: `{"session_duration_hours":24,"max_sessions_per_user":10,"password_min_length":12,"password_max_length":72,"login_rate_limit_per_minute":5,"account_lockout_attempts":101}`,
+		},
+		{
+			name: "account_lockout_cooldown_minutes too high",
+			body: `{"session_duration_hours":24,"max_sessions_per_user":10,"password_min_length":12,"password_max_length":72,"login_rate_limit_per_minute":5,"account_lockout_attempts":2,"account_lockout_cooldown_minutes":1441}`,
 		},
 	}
 

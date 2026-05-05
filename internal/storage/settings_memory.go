@@ -23,12 +23,12 @@ func (s *MemorySettingsStore) GetSecuritySettings(_ context.Context) (*domain.Se
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	copy := *s.security
-	return &copy, nil
+	return domain.NormalizeSecuritySettings(&copy), nil
 }
 
 func (s *MemorySettingsStore) UpdateSecuritySettings(_ context.Context, settings *domain.SecuritySettings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.security = settings
+	s.security = domain.NormalizeSecuritySettings(settings)
 	return nil
 }

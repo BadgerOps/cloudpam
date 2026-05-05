@@ -210,6 +210,22 @@ export default function SecuritySettingsPage() {
                 onChange={e => updateField('account_lockout_attempts', parseInt(e.target.value) || 0)}
                 className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
               />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Set to 0 to disable account lockout
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Lockout Cooldown (minutes)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={1440}
+                value={form.account_lockout_cooldown_minutes}
+                onChange={e => updateField('account_lockout_cooldown_minutes', parseInt(e.target.value) || 15)}
+                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+              />
             </div>
           </div>
         </div>

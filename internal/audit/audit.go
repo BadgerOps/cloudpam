@@ -78,7 +78,9 @@ const (
 
 // Additional action constants for auth events.
 const (
-	ActionLogin       = "login"
-	ActionLoginFailed = "login_failed"
-	ActionLogout      = "logout"
+	ActionLogin           = "login"
+	ActionLoginFailed     = "login_failed"
+	ActionLogout          = "logout"
+	ActionAccountLocked   = "account_locked"
+	ActionAccountUnlocked = "account_unlocked"
 )

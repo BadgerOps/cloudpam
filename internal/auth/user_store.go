@@ -40,7 +40,7 @@ type UserStore interface {
 // Thread-safe; suitable for development and single-instance deployments.
 type MemoryUserStore struct {
 	mu            sync.RWMutex
-	users         map[string]*User // keyed by ID
+	users         map[string]*User  // keyed by ID
 	usernameIndex map[string]string // username -> ID
 }
 
@@ -188,5 +188,9 @@ func (s *MemoryUserStore) UpdateLastLogin(_ context.Context, id string, t time.T
 	}
 
 	user.LastLoginAt = &t
+	user.FailedLoginAttempts = 0
+	user.LastFailedLoginAt = nil
+	user.LockedAt = nil
+	user.LockoutUntil = nil
 	return nil
 }
