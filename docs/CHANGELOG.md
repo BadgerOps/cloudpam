@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Account lockout for local password auth with persistent failed-login tracking, configurable cooldown, admin unlock action, and audit events for failed login, lock, and unlock transitions
-- Password reset CLI path for recovery from a running CloudPAM pod without starting the HTTP server
+- Password reset CLI path for local binaries, Kubernetes pods, and Podman containers without starting the HTTP server
 
 ## [0.10.1] - 2026-04-02
 

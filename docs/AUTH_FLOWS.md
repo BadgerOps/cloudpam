@@ -36,6 +36,72 @@ POST /api/v1/auth/setup
 
 Local auth can be disabled from security settings when OIDC is configured, leaving SSO as the primary interactive login path.
 
+#### Password Reset Recovery
+
+Operators can reset a local user's password without starting a second HTTP server. The command uses the same configured user/session stores as normal startup, so PostgreSQL-backed deployments use `DATABASE_URL` and SQLite-backed deployments use `SQLITE_DSN`. Use a binary or container image built with the storage backend tags required by that deployment.
+
+The reset command:
+- validates the new password against the default password policy
+- updates the user's bcrypt password hash
+- reactivates the user account
+- clears failed-login and lockout state
+- revokes existing sessions for that user
+
+Local binary with PostgreSQL:
+
+```bash
+DATABASE_URL='postgres://cloudpam:secret@db.example.com:5432/cloudpam?sslmode=require' \
+  CLOUDPAM_RESET_PASSWORD='<new-password>' \
+  ./cloudpam -reset-password <username>
+```
+
+Local binary with SQLite:
+
+```bash
+SQLITE_DSN='file:cloudpam.db?cache=shared&_fk=1' \
+  CLOUDPAM_RESET_PASSWORD='<new-password>' \
+  ./cloudpam -reset-password <username>
+```
+
+Kubernetes pod:
+
+```bash
+kubectl exec -n <namespace> deploy/<cloudpam-deployment> -- \
+  env CLOUDPAM_RESET_PASSWORD='<new-password>' \
+  cloudpam -reset-password <username>
+```
+
+Podman container:
+
+```bash
+podman exec \
+  -e CLOUDPAM_RESET_PASSWORD='<new-password>' \
+  <cloudpam-container> \
+  cloudpam -reset-password <username>
+```
+
+Stdin form, which avoids placing the password in the shell history, works with local binaries, Kubernetes, and Podman:
+
+```bash
+printf '%s\n' '<new-password>' | \
+  DATABASE_URL='postgres://cloudpam:secret@db.example.com:5432/cloudpam?sslmode=require' \
+  ./cloudpam -reset-password <username>
+```
+
+```bash
+printf '%s\n' '<new-password>' | \
+  kubectl exec -i -n <namespace> deploy/<cloudpam-deployment> -- \
+  cloudpam -reset-password <username>
+```
+
+```bash
+printf '%s\n' '<new-password>' | \
+  podman exec -i <cloudpam-container> \
+  cloudpam -reset-password <username>
+```
+
+The command exits non-zero if the user does not exist, the password fails policy validation, or the configured backing store cannot be reached. For PostgreSQL deployments, verify the process has the same `DATABASE_URL` environment that the server uses.
+
 ### 2. OAuth 2.0 / OIDC Flow (User Sessions)
 
 CloudPAM acts as an OIDC Relying Party, supporting any OIDC-compliant Identity Provider.
