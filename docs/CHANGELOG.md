@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-05-05
+
+### Added
+- Account lockout for local password auth with persistent failed-login tracking, configurable cooldown, admin unlock action, and audit events for failed login, lock, and unlock transitions
+
 ## [0.10.1] - 2026-04-02
 
 ### Security

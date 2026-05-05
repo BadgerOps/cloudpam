@@ -53,6 +53,9 @@ func (ss *SettingsServer) handleUpdateSecuritySettings(w http.ResponseWriter, r 
 		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
+	if input.AccountLockoutCooldownMinutes == 0 {
+		input.AccountLockoutCooldownMinutes = domain.DefaultSecuritySettings().AccountLockoutCooldownMinutes
+	}
 
 	// Validate bounds
 	if input.SessionDurationHours < 1 || input.SessionDurationHours > 720 {
@@ -79,7 +82,12 @@ func (ss *SettingsServer) handleUpdateSecuritySettings(w http.ResponseWriter, r 
 		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid account_lockout_attempts", "must be between 0 and 100")
 		return
 	}
+	if input.AccountLockoutCooldownMinutes < 1 || input.AccountLockoutCooldownMinutes > 1440 {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid account_lockout_cooldown_minutes", "must be between 1 and 1440")
+		return
+	}
 
+	input = *domain.NormalizeSecuritySettings(&input)
 	if err := ss.settingsStore.UpdateSecuritySettings(r.Context(), &input); err != nil {
 		ss.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to save settings", err.Error())
 		return

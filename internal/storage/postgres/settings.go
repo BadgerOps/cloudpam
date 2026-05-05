@@ -27,11 +27,12 @@ func (s *Store) GetSecuritySettings(ctx context.Context) (*domain.SecuritySettin
 	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
 		return nil, err
 	}
-	return &settings, nil
+	return domain.NormalizeSecuritySettings(&settings), nil
 }
 
 // UpdateSecuritySettings saves security settings to PostgreSQL.
 func (s *Store) UpdateSecuritySettings(ctx context.Context, settings *domain.SecuritySettings) error {
+	settings = domain.NormalizeSecuritySettings(settings)
 	raw, err := json.Marshal(settings)
 	if err != nil {
 		return err

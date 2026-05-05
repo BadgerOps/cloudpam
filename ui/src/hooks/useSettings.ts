@@ -8,6 +8,7 @@ export interface SecuritySettings {
   password_max_length: number
   login_rate_limit_per_minute: number
   account_lockout_attempts: number
+  account_lockout_cooldown_minutes: number
   trusted_proxies: string[]
   local_auth_enabled: boolean
 }

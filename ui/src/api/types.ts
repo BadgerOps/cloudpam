@@ -311,6 +311,10 @@ export interface UserInfo {
   created_at: string
   updated_at?: string
   last_login_at?: string | null
+  failed_login_attempts: number
+  last_failed_login_at?: string | null
+  locked_at?: string | null
+  lockout_until?: string | null
 }
 
 export interface LoginRequest {

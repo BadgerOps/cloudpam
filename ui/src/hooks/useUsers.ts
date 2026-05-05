@@ -45,9 +45,15 @@ export function useUsers() {
     await refresh()
   }, [refresh])
 
+  const unlock = useCallback(async (id: string): Promise<UserInfo> => {
+    const res = await post<UserInfo>(`/api/v1/auth/users/${id}/unlock`, {})
+    await refresh()
+    return res
+  }, [refresh])
+
   const changePassword = useCallback(async (id: string, req: ChangePasswordRequest) => {
     await patch(`/api/v1/auth/users/${id}/password`, req)
   }, [])
 
-  return { users, loading, error, create, update, deactivate, changePassword, refresh }
+  return { users, loading, error, create, update, deactivate, unlock, changePassword, refresh }
 }

@@ -17,6 +17,11 @@ import (
 )
 
 func setupUserTestServer() (*UserServer, auth.SessionStore, auth.UserStore) {
+	us, sessionStore, userStore, _ := setupUserTestServerWithAudit()
+	return us, sessionStore, userStore
+}
+
+func setupUserTestServerWithAudit() (*UserServer, auth.SessionStore, auth.UserStore, *audit.MemoryAuditLogger) {
 	st := storage.NewMemoryStore()
 	mux := stdhttp.NewServeMux()
 	logger := observability.NewLogger(observability.Config{
@@ -35,7 +40,7 @@ func setupUserTestServer() (*UserServer, auth.SessionStore, auth.UserStore) {
 	srv.registerUnprotectedTestRoutes()
 	us.RegisterUserRoutes()
 
-	return us, sessionStore, userStore
+	return us, sessionStore, userStore, auditLogger
 }
 
 func TestRevokeSessions_Success(t *testing.T) {
@@ -320,6 +325,141 @@ func TestLogin_LocalAuthEnabled_Allowed(t *testing.T) {
 	}
 }
 
+func TestLogin_AccountLockout_AuditAndManualUnlock(t *testing.T) {
+	us, _, userStore, auditLogger := setupUserTestServerWithAudit()
+
+	ctx := context.Background()
+	hash, _ := auth.HashPassword("TestPass123!")
+	user := &auth.User{
+		ID:           "user-lockout",
+		Username:     "lockoutuser",
+		Email:        "lockout@example.com",
+		Role:         auth.RoleViewer,
+		PasswordHash: hash,
+		IsActive:     true,
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
+	}
+	if err := userStore.Create(ctx, user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	settingsStore := storage.NewMemorySettingsStore()
+	settings, _ := settingsStore.GetSecuritySettings(ctx)
+	settings.AccountLockoutAttempts = 2
+	settings.AccountLockoutCooldownMinutes = 15
+	_ = settingsStore.UpdateSecuritySettings(ctx, settings)
+	us.SetSettingsStore(settingsStore)
+
+	body := `{"username":"lockoutuser","password":"wrong"}`
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	us.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusUnauthorized {
+		t.Fatalf("first failure: expected 401, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	us.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusLocked {
+		t.Fatalf("second failure: expected 423, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	lockedUser, err := userStore.GetByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("get locked user: %v", err)
+	}
+	if lockedUser.FailedLoginAttempts != 2 {
+		t.Errorf("failed attempts = %d, want 2", lockedUser.FailedLoginAttempts)
+	}
+	if lockedUser.LockedAt == nil || lockedUser.LockoutUntil == nil {
+		t.Fatalf("expected locked_at and lockout_until to be set")
+	}
+
+	events, _, err := auditLogger.List(ctx, audit.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if countAuditActions(events, audit.ActionLoginFailed) != 2 {
+		t.Fatalf("expected 2 login_failed audit events, got %#v", events)
+	}
+	if countAuditActions(events, audit.ActionAccountLocked) != 1 {
+		t.Fatalf("expected 1 account_locked audit event, got %#v", events)
+	}
+
+	admin := &auth.User{ID: "admin", Username: "admin", Role: auth.RoleAdmin, IsActive: true}
+	req = httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/users/"+user.ID+"/unlock", nil)
+	req = req.WithContext(auth.ContextWithRole(auth.ContextWithUser(req.Context(), admin), auth.RoleAdmin))
+	rr = httptest.NewRecorder()
+	us.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("unlock: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	unlockedUser, _ := userStore.GetByID(ctx, user.ID)
+	if unlockedUser.FailedLoginAttempts != 0 || unlockedUser.LockedAt != nil || unlockedUser.LockoutUntil != nil || unlockedUser.LastFailedLoginAt != nil {
+		t.Fatalf("expected lockout state cleared, got %+v", unlockedUser)
+	}
+	events, _, _ = auditLogger.List(ctx, audit.ListOptions{Limit: 10})
+	if countAuditActions(events, audit.ActionAccountUnlocked) != 1 {
+		t.Fatalf("expected 1 account_unlocked audit event, got %#v", events)
+	}
+}
+
+func TestLogin_ExpiredLockoutAutoUnlocksAndAllowsLogin(t *testing.T) {
+	us, _, userStore, auditLogger := setupUserTestServerWithAudit()
+
+	ctx := context.Background()
+	hash, _ := auth.HashPassword("TestPass123!")
+	now := time.Now().UTC()
+	lockedAt := now.Add(-20 * time.Minute)
+	lockoutUntil := now.Add(-5 * time.Minute)
+	lastFailed := lockedAt
+	user := &auth.User{
+		ID:                  "user-auto-unlock",
+		Username:            "autounlock",
+		Email:               "autounlock@example.com",
+		Role:                auth.RoleViewer,
+		PasswordHash:        hash,
+		IsActive:            true,
+		FailedLoginAttempts: 2,
+		LastFailedLoginAt:   &lastFailed,
+		LockedAt:            &lockedAt,
+		LockoutUntil:        &lockoutUntil,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+	if err := userStore.Create(ctx, user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	settingsStore := storage.NewMemorySettingsStore()
+	us.SetSettingsStore(settingsStore)
+
+	body := `{"username":"autounlock","password":"TestPass123!"}`
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	us.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("login: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	got, _ := userStore.GetByID(ctx, user.ID)
+	if got.FailedLoginAttempts != 0 || got.LockedAt != nil || got.LockoutUntil != nil || got.LastFailedLoginAt != nil {
+		t.Fatalf("expected lockout state cleared after auto-unlock, got %+v", got)
+	}
+	events, _, _ := auditLogger.List(ctx, audit.ListOptions{Limit: 10})
+	if countAuditActions(events, audit.ActionAccountUnlocked) != 1 {
+		t.Fatalf("expected auto account_unlocked audit event, got %#v", events)
+	}
+	if countAuditActions(events, audit.ActionLogin) != 1 {
+		t.Fatalf("expected successful login audit event, got %#v", events)
+	}
+}
+
 func TestSessionLimit_Enforcement(t *testing.T) {
 	us, sessionStore, userStore := setupUserTestServer()
 
@@ -366,4 +506,14 @@ func TestSessionLimit_Enforcement(t *testing.T) {
 	if len(sessions) != 10 {
 		t.Errorf("expected 10 sessions after eviction, got %d", len(sessions))
 	}
+}
+
+func countAuditActions(events []*audit.AuditEvent, action string) int {
+	count := 0
+	for _, event := range events {
+		if event.Action == action {
+			count++
+		}
+	}
+	return count
 }
