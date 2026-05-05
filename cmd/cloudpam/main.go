@@ -387,7 +387,7 @@ func resetUserPassword(ctx context.Context, userStore auth.UserStore, sessionSto
 		return fmt.Errorf("lookup user: %w", err)
 	}
 	if user == nil {
-		return fmt.Errorf("user %q not found", username)
+		return fmt.Errorf("user not found")
 	}
 
 	hash, err := auth.HashPassword(password)
