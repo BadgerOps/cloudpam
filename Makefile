@@ -5,7 +5,7 @@
 
 FALLBACK_TARGETS := dev build sqlite-build sqlite-run fmt lint test test-race cover tidy
 
-.PHONY: help $(FALLBACK_TARGETS)
+.PHONY: help $(FALLBACK_TARGETS) cover-threshold
 
 help:
 	@echo "Targets: $(FALLBACK_TARGETS)"
@@ -17,6 +17,14 @@ $(FALLBACK_TARGETS):
 		just $@; \
 	else \
 		$(MAKE) .fallback-$@; \
+	fi
+
+cover-threshold:
+	@if command -v just >/dev/null 2>&1; then \
+		echo "delegating to: just cover-threshold thr=$(thr)"; \
+		just cover-threshold thr=$(thr); \
+	else \
+		$(MAKE) .fallback-cover-threshold thr=$(thr); \
 	fi
 
 .fallback-dev:
@@ -54,6 +62,11 @@ $(FALLBACK_TARGETS):
 	go tool cover -func=coverage.out | tee coverage.txt
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "wrote coverage.out and coverage.html"
+
+.fallback-cover-threshold:
+	go test ./... -covermode=atomic -coverprofile=coverage.out -v
+	@total=$$(go tool cover -func=coverage.out | grep total: | awk '{print substr($$3, 1, length($$3)-1)}'); \
+	awk -v t="$$total" -v thr="$(thr)" 'BEGIN{ if (t+0 < thr+0) { printf("coverage %.2f%% is below threshold %.2f%%\n", t, thr); exit 1 } else { printf("coverage %.2f%% meets threshold %.2f%%\n", t, thr); } }'
 
 .fallback-tidy:
 	go mod tidy

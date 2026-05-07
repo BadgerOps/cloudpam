@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-07
+
+### Added
+- API key policy management in Security settings with configurable default expiry, maximum lifetime enforcement, rotation reminder warnings, and per-role scope ceilings
+- API key management indicators for key age, expiration status, days until expiry, and rotation-due state
+
+### Fixed
+- Nix dev shell coverage tooling now keeps the selected Go toolchain ahead of the Nix Go wrapper so `make cover` and `make cover-threshold thr=80` run correctly
+
 ## [0.11.1] - 2026-05-05
 
 ### Fixed

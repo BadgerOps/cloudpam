@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
@@ -86,6 +87,26 @@ func (ss *SettingsServer) handleUpdateSecuritySettings(w http.ResponseWriter, r 
 		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid account_lockout_cooldown_minutes", "must be between 1 and 1440")
 		return
 	}
+	if input.APIKeyDefaultExpiryDays < 0 || input.APIKeyDefaultExpiryDays > 3650 {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_default_expiry_days", "must be between 0 and 3650")
+		return
+	}
+	if input.APIKeyMaxLifetimeDays < 0 || input.APIKeyMaxLifetimeDays > 3650 {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_max_lifetime_days", "must be between 0 and 3650")
+		return
+	}
+	if input.APIKeyMaxLifetimeDays > 0 && input.APIKeyDefaultExpiryDays > input.APIKeyMaxLifetimeDays {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_default_expiry_days", "must be less than or equal to api_key_max_lifetime_days")
+		return
+	}
+	if input.APIKeyRotationReminderDays < 0 || input.APIKeyRotationReminderDays > 365 {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_rotation_reminder_days", "must be between 0 and 365")
+		return
+	}
+	if denied := validateAPIKeyScopePolicy(input.APIKeyAllowedScopesByRole); denied != "" {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_allowed_scopes_by_role", denied)
+		return
+	}
 
 	input = *domain.NormalizeSecuritySettings(&input)
 	if err := ss.settingsStore.UpdateSecuritySettings(r.Context(), &input); err != nil {
@@ -95,4 +116,31 @@ func (ss *SettingsServer) handleUpdateSecuritySettings(w http.ResponseWriter, r 
 
 	ss.logAudit(r.Context(), "update", "settings", "security", "security_settings", http.StatusOK)
 	writeJSON(w, http.StatusOK, input)
+}
+
+func validateAPIKeyScopePolicy(policy map[string][]string) string {
+	for role, scopes := range policy {
+		var authRole auth.Role
+		switch strings.TrimSpace(role) {
+		case "admin":
+			authRole = auth.RoleAdmin
+		case "operator":
+			authRole = auth.RoleOperator
+		case "viewer":
+			authRole = auth.RoleViewer
+		case "auditor":
+			authRole = auth.RoleAuditor
+		default:
+			return "unknown role " + role
+		}
+		for _, scope := range scopes {
+			if !auth.IsValidAPIKeyScope(scope) {
+				return "invalid scope " + scope
+			}
+			if auth.RoleLevel(auth.GetRoleFromScopes([]string{scope})) > auth.RoleLevel(authRole) {
+				return "scope " + scope + " exceeds role " + role
+			}
+		}
+	}
+	return ""
 }

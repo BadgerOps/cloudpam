@@ -24,7 +24,7 @@
       in
       {
         packages = {
-          default = pkgs.buildGoModule.override { go = pkgs.go_1_24; } {
+          default = pkgs.buildGoModule.override { go = pkgs.go_1_25; } {
             pname = "cloudpam";
             inherit version;
             src = self;
@@ -66,7 +66,7 @@
         # Development shell with Go, Just, linting tools, and git-aware prompt.
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            go_1_24
+            go_1_25
             just
             golangci-lint
             gopls
@@ -78,6 +78,14 @@
           ];
 
           shellHook = ''
+            # Keep nested "go tool ..." calls on the same selected toolchain.
+            # This matters when go.mod's toolchain directive selects a newer
+            # patch release than nixpkgs currently packages.
+            go_root="$(go env GOROOT)"
+            if [ -x "$go_root/bin/go" ]; then
+              export PATH="$go_root/bin:$PATH"
+            fi
+
             # Git-aware PS1: shows branch, short commit, and dirty state.
             __cloudpam_ps1() {
               local branch commit dirty

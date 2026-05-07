@@ -78,10 +78,13 @@ cover: ensure-cache
     @echo "wrote coverage.out and coverage.html"
 
 cover-threshold thr="0": ensure-cache
+    #!/usr/bin/env bash
     set -euo pipefail
+    threshold="{{thr}}"
+    threshold="${threshold#thr=}"
     {{go-env}} go test ./... -covermode=atomic -coverprofile=coverage.out -v
     total=$({{go-env}} go tool cover -func=coverage.out | grep total: | awk '{print substr($3, 1, length($3)-1)}')
-    awk -v t="$total" -v thr="{{thr}}" 'BEGIN{ if (t+0 < thr+0) { printf("coverage %.2f%% is below threshold %.2f%%\n", t, thr); exit 1 } else { printf("coverage %.2f%% meets threshold %.2f%%\n", t, thr); } }'
+    awk -v t="$total" -v thr="$threshold" 'BEGIN{ if (t+0 < thr+0) { printf("coverage %.2f%% is below threshold %.2f%%\n", t, thr); exit 1 } else { printf("coverage %.2f%% meets threshold %.2f%%\n", t, thr); } }'
 
 tidy: ensure-cache
     {{go-env}} go mod tidy

@@ -219,6 +219,10 @@ export interface ApiKeyInfo {
   expires_at?: string | null
   last_used_at?: string | null
   revoked: boolean
+  age_days?: number
+  expires_in_days?: number | null
+  expiry_status?: 'active' | 'expiring' | 'expired' | 'no_expiry' | 'revoked'
+  rotation_due?: boolean
 }
 
 export interface ApiKeyCreateRequest {

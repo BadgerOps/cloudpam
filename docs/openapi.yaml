@@ -32,6 +32,8 @@ tags:
     description: Cloud resource discovery and sync
   - name: Auth
     description: API key management
+  - name: Settings
+    description: Runtime security and platform settings
   - name: Audit
     description: Audit log queries
   - name: Recommendations
@@ -708,6 +710,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/settings/security:
+    get:
+      summary: Get security settings
+      tags: [Settings]
+      responses:
+        "200":
+          description: Security settings loaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecuritySettings"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      summary: Update security settings
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SecuritySettings"
+      responses:
+        "200":
+          description: Security settings updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SecuritySettings"
         default:
           $ref: "#/components/responses/Error"
   /api/v1/auth/keys:
@@ -1418,13 +1451,87 @@ components:
           type: array
           items:
             type: string
-            enum: ["pools:read", "pools:write", "accounts:read", "accounts:write", "audit:read", "keys:read", "keys:write", "*"]
+            enum: ["pools:read", "pools:write", "accounts:read", "accounts:write", "audit:read", "keys:read", "keys:write", "discovery:read", "discovery:write", "*"]
           description: Permissions granted to this key
         expires_in_days:
           type: integer
-          minimum: 1
-          description: Key expires after this many days (omit for no expiration)
+          minimum: 0
+          description: Key expires after this many days. Omit to use the configured default; 0 requests no expiration unless a maximum lifetime is enforced.
       required: [name]
+    SecuritySettings:
+      type: object
+      properties:
+        session_duration_hours:
+          type: integer
+          minimum: 1
+          maximum: 720
+        max_sessions_per_user:
+          type: integer
+          minimum: 1
+          maximum: 100
+        password_min_length:
+          type: integer
+          minimum: 8
+          maximum: 72
+        password_max_length:
+          type: integer
+          minimum: 8
+          maximum: 72
+        login_rate_limit_per_minute:
+          type: integer
+          minimum: 1
+          maximum: 60
+        account_lockout_attempts:
+          type: integer
+          minimum: 0
+          maximum: 100
+        account_lockout_cooldown_minutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+        trusted_proxies:
+          type: array
+          items:
+            type: string
+        local_auth_enabled:
+          type: boolean
+        api_key_default_expiry_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+          description: Default API key lifetime in days. 0 means no default expiration.
+        api_key_max_lifetime_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+          description: Maximum API key lifetime in days. 0 means no forced maximum.
+        api_key_rotation_reminder_days:
+          type: integer
+          minimum: 0
+          maximum: 365
+          description: Days before expiration when API key listings mark keys as rotation due and emit an audit warning.
+        api_key_allowed_scopes_by_role:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+              enum: ["pools:read", "pools:write", "accounts:read", "accounts:write", "audit:read", "keys:read", "keys:write", "discovery:read", "discovery:write", "*"]
+          description: Maximum API key scopes each role is allowed to issue.
+      required:
+        - session_duration_hours
+        - max_sessions_per_user
+        - password_min_length
+        - password_max_length
+        - login_rate_limit_per_minute
+        - account_lockout_attempts
+        - account_lockout_cooldown_minutes
+        - trusted_proxies
+        - local_auth_enabled
+        - api_key_default_expiry_days
+        - api_key_max_lifetime_days
+        - api_key_rotation_reminder_days
+        - api_key_allowed_scopes_by_role
     APIKeyCreated:
       type: object
       properties:
@@ -1479,7 +1586,21 @@ components:
           nullable: true
         revoked:
           type: boolean
-      required: [id, prefix, name, scopes, created_at, revoked]
+        age_days:
+          type: integer
+          minimum: 0
+          description: Whole days since key creation.
+        expires_in_days:
+          type: integer
+          nullable: true
+          description: Whole days until expiration, rounded up. Omitted for non-expiring keys.
+        expiry_status:
+          type: string
+          enum: [active, expiring, expired, no_expiry, revoked]
+        rotation_due:
+          type: boolean
+          description: True when the key is inside the configured rotation reminder window.
+      required: [id, prefix, name, scopes, created_at, revoked, age_days, expiry_status, rotation_due]
     AuditEvent:
       type: object
       properties:

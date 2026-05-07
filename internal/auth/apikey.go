@@ -51,14 +51,38 @@ var (
 	ErrInsufficientScopes = errors.New("insufficient scopes")
 )
 
+// ValidAPIKeyScopes is the set of scopes accepted by the API key issuer.
+var ValidAPIKeyScopes = []string{
+	"pools:read",
+	"pools:write",
+	"accounts:read",
+	"accounts:write",
+	"audit:read",
+	"keys:read",
+	"keys:write",
+	"discovery:read",
+	"discovery:write",
+	"*",
+}
+
+// IsValidAPIKeyScope returns true when scope is an accepted API key scope.
+func IsValidAPIKeyScope(scope string) bool {
+	for _, valid := range ValidAPIKeyScopes {
+		if scope == valid {
+			return true
+		}
+	}
+	return false
+}
+
 // APIKey represents a stored API key with metadata.
 type APIKey struct {
 	ID         string     `json:"id"`
-	Prefix     string     `json:"prefix"` // First 8 chars for identification
-	Name       string     `json:"name"`   // User-provided name
-	Hash       []byte     `json:"-"`      // Argon2id hash of the full key (never serialized)
-	Salt       []byte     `json:"-"`      // Salt used for hashing (never serialized)
-	Scopes     []string   `json:"scopes"` // Permissions: ["pools:read", "pools:write", ...]
+	Prefix     string     `json:"prefix"`             // First 8 chars for identification
+	Name       string     `json:"name"`               // User-provided name
+	Hash       []byte     `json:"-"`                  // Argon2id hash of the full key (never serialized)
+	Salt       []byte     `json:"-"`                  // Salt used for hashing (never serialized)
+	Scopes     []string   `json:"scopes"`             // Permissions: ["pools:read", "pools:write", ...]
 	OwnerID    *string    `json:"owner_id,omitempty"` // nil = bot/standalone key
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"` // nil = no expiration

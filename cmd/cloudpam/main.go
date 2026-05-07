@@ -236,6 +236,7 @@ func main() {
 	// Auth is always enabled — register protected routes with RBAC.
 	srv.RegisterProtectedRoutes(keyStore, sessionStore, userStore, logger.Slog())
 	authSrv := api.NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
+	authSrv.SetSettingsStore(settingsStore)
 	authSrv.RegisterProtectedAuthRoutes(logger.Slog())
 	userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
 	loginRL := api.LoginRateLimitMiddleware(api.LoginRateLimitConfig{

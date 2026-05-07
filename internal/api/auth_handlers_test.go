@@ -33,6 +33,7 @@ func setupAuthTestServer() (*AuthServer, *auth.MemoryKeyStore, *audit.MemoryAudi
 	userStore := auth.NewMemoryUserStore()
 
 	authSrv := NewAuthServerWithStores(srv, keyStore, sessionStore, userStore, auditLogger)
+	authSrv.SetSettingsStore(storage.NewMemorySettingsStore())
 	srv.registerUnprotectedTestRoutes()
 	authSrv.registerUnprotectedAuthTestRoutes()
 
@@ -105,6 +106,62 @@ func TestAPIKeys_Create_WithExpiration(t *testing.T) {
 
 	if resp.ExpiresAt == nil {
 		t.Error("ExpiresAt should be set")
+	}
+}
+
+func TestAPIKeys_Create_DefaultExpiryPolicy(t *testing.T) {
+	as, _, _ := setupAuthTestServer()
+	settingsStore := storage.NewMemorySettingsStore()
+	settings, _ := settingsStore.GetSecuritySettings(t.Context())
+	settings.APIKeyDefaultExpiryDays = 30
+	if err := settingsStore.UpdateSecuritySettings(t.Context(), settings); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+	as.SetSettingsStore(settingsStore)
+
+	body := `{"name": "Default Expiry Key", "scopes": ["pools:read"]}`
+	rr := doAuthJSON(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, stdhttp.StatusCreated)
+
+	var resp struct {
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.ExpiresAt == nil {
+		t.Fatal("expires_at should be set by default expiry policy")
+	}
+	if got := time.Until(*resp.ExpiresAt); got < 29*24*time.Hour || got > 31*24*time.Hour {
+		t.Fatalf("expires_at not near 30 days: %v", got)
+	}
+}
+
+func TestAPIKeys_Create_MaxLifetimePolicy(t *testing.T) {
+	as, _, _ := setupAuthTestServer()
+	settingsStore := storage.NewMemorySettingsStore()
+	settings, _ := settingsStore.GetSecuritySettings(t.Context())
+	settings.APIKeyMaxLifetimeDays = 90
+	if err := settingsStore.UpdateSecuritySettings(t.Context(), settings); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+	as.SetSettingsStore(settingsStore)
+
+	body := `{"name": "Too Long Key", "scopes": ["pools:read"], "expires_in_days": 120}`
+	rr := doAuthJSON(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, stdhttp.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "maximum lifetime") {
+		t.Errorf("expected maximum lifetime error, got: %s", rr.Body.String())
+	}
+
+	body = `{"name": "Forced Expiry Key", "scopes": ["pools:read"]}`
+	rr = doAuthJSON(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, stdhttp.StatusCreated)
+	var resp struct {
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.ExpiresAt == nil {
+		t.Fatal("expires_at should be set by max lifetime policy")
 	}
 }
 
@@ -449,6 +506,80 @@ func TestCreateAPIKey_ScopeElevation(t *testing.T) {
 	// Admin (level 4) creates admin-level key (scope "*" = level 4) -> 201
 	body = `{"name": "Admin Key", "scopes": ["*"]}`
 	doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleAdmin, stdhttp.StatusCreated)
+}
+
+func TestCreateAPIKey_RoleScopePolicy(t *testing.T) {
+	as, _, _ := setupAuthTestServer()
+	settingsStore := storage.NewMemorySettingsStore()
+	settings, _ := settingsStore.GetSecuritySettings(t.Context())
+	settings.APIKeyAllowedScopesByRole["operator"] = []string{"pools:read"}
+	if err := settingsStore.UpdateSecuritySettings(t.Context(), settings); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+	as.SetSettingsStore(settingsStore)
+
+	body := `{"name": "Denied Key", "scopes": ["accounts:read"]}`
+	rr := doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleOperator, stdhttp.StatusForbidden)
+	if !strings.Contains(rr.Body.String(), "scope denied by API key policy") {
+		t.Errorf("expected policy denial, got: %s", rr.Body.String())
+	}
+
+	body = `{"name": "Allowed Key", "scopes": ["pools:read"]}`
+	doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleOperator, stdhttp.StatusCreated)
+
+	settings, _ = settingsStore.GetSecuritySettings(t.Context())
+	settings.APIKeyAllowedScopesByRole["operator"] = []string{}
+	if err := settingsStore.UpdateSecuritySettings(t.Context(), settings); err != nil {
+		t.Fatalf("update empty policy: %v", err)
+	}
+	body = `{"name": "Empty Policy Key", "scopes": ["pools:read"]}`
+	doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleOperator, stdhttp.StatusForbidden)
+}
+
+func TestAPIKeys_ListExpiryIndicatorsAndAuditReminder(t *testing.T) {
+	as, _, auditLogger := setupAuthTestServer()
+	settingsStore := storage.NewMemorySettingsStore()
+	settings, _ := settingsStore.GetSecuritySettings(t.Context())
+	settings.APIKeyRotationReminderDays = 7
+	if err := settingsStore.UpdateSecuritySettings(t.Context(), settings); err != nil {
+		t.Fatalf("update settings: %v", err)
+	}
+	as.SetSettingsStore(settingsStore)
+
+	body := `{"name": "Expiring Key", "scopes": ["pools:read"], "expires_in_days": 3}`
+	doAuthJSON(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, stdhttp.StatusCreated)
+
+	rr := doAuthJSON(t, as.mux, stdhttp.MethodGet, "/api/v1/auth/keys", "", stdhttp.StatusOK)
+	var resp struct {
+		Keys []struct {
+			AgeDays       int    `json:"age_days"`
+			ExpiresInDays *int   `json:"expires_in_days"`
+			ExpiryStatus  string `json:"expiry_status"`
+			RotationDue   bool   `json:"rotation_due"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Keys) != 1 {
+		t.Fatalf("expected one key, got %d", len(resp.Keys))
+	}
+	if resp.Keys[0].ExpiryStatus != "expiring" || !resp.Keys[0].RotationDue {
+		t.Fatalf("expected expiring rotation due key, got %+v", resp.Keys[0])
+	}
+	if resp.Keys[0].ExpiresInDays == nil || *resp.Keys[0].ExpiresInDays > 3 {
+		t.Fatalf("expected expires_in_days near 3, got %+v", resp.Keys[0].ExpiresInDays)
+	}
+
+	doAuthJSON(t, as.mux, stdhttp.MethodGet, "/api/v1/auth/keys", "", stdhttp.StatusOK)
+
+	events, _, err := auditLogger.List(t.Context(), audit.ListOptions{Action: audit.ActionAPIKeyRotationDue})
+	if err != nil {
+		t.Fatalf("list audit events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected one rotation audit event, got %d", len(events))
+	}
 }
 
 func TestAudit_MethodNotAllowed(t *testing.T) {
