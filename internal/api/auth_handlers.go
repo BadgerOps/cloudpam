@@ -207,7 +207,7 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if deniedScope := deniedAPIKeyScope(settings, callerRole, input.Scopes); deniedScope != "" {
-			as.writeErr(r.Context(), w, http.StatusForbidden, "scope denied by API key policy", deniedScope)
+			as.writeErr(r.Context(), w, http.StatusForbidden, "scope denied by API key policy", "requested scope is not allowed for your role")
 			return
 		}
 	}

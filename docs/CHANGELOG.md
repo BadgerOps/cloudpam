@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Nix dev shell coverage tooling now keeps the selected Go toolchain ahead of the Nix Go wrapper so `make cover` and `make cover-threshold thr=80` run correctly
+- CI now pins Go 1.25.10 for the current standard-library vulnerability fixes reported by govulncheck
 
 ## [0.11.1] - 2026-05-05
 

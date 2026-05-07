@@ -10,7 +10,7 @@ on:
       go_version:
         description: Go version to use
         required: false
-        default: 1.25.x
+        default: 1.25.10
 
 permissions:
   contents: read

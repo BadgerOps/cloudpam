@@ -104,7 +104,7 @@ func (ss *SettingsServer) handleUpdateSecuritySettings(w http.ResponseWriter, r 
 		return
 	}
 	if denied := validateAPIKeyScopePolicy(input.APIKeyAllowedScopesByRole); denied != "" {
-		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_allowed_scopes_by_role", denied)
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_allowed_scopes_by_role", "scope policy contains an invalid or elevated scope")
 		return
 	}
 
