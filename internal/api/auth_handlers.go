@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,15 +11,18 @@ import (
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
+	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 // AuthServer extends Server with API key management and audit functionality.
 type AuthServer struct {
 	*Server
-	keyStore     auth.KeyStore
-	sessionStore auth.SessionStore
-	userStore    auth.UserStore
-	auditLogger  audit.AuditLogger
+	keyStore      auth.KeyStore
+	sessionStore  auth.SessionStore
+	userStore     auth.UserStore
+	auditLogger   audit.AuditLogger
+	settingsStore storage.SettingsStore
 }
 
 // NewAuthServer creates a new AuthServer with auth and audit capabilities.
@@ -38,6 +43,11 @@ func NewAuthServerWithStores(s *Server, keyStore auth.KeyStore, sessionStore aut
 		userStore:    userStore,
 		auditLogger:  auditLogger,
 	}
+}
+
+// SetSettingsStore attaches runtime security policy settings to the auth server.
+func (as *AuthServer) SetSettingsStore(store storage.SettingsStore) {
+	as.settingsStore = store
 }
 
 // RegisterAuthRoutes registers the auth API endpoints without RBAC.
@@ -176,25 +186,13 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	settings := as.securitySettings(ctx)
+
 	// Validate scopes
-	if len(input.Scopes) > 0 {
-		validScopes := map[string]bool{
-			"pools:read":      true,
-			"pools:write":     true,
-			"accounts:read":   true,
-			"accounts:write":  true,
-			"audit:read":      true,
-			"keys:read":       true,
-			"keys:write":      true,
-			"discovery:read":  true,
-			"discovery:write": true,
-			"*":               true, // admin scope
-		}
-		for _, scope := range input.Scopes {
-			if !validScopes[scope] {
-				as.writeErr(ctx, w, http.StatusBadRequest, "invalid scope", scope)
-				return
-			}
+	for _, scope := range input.Scopes {
+		if !auth.IsValidAPIKeyScope(scope) {
+			as.writeErr(ctx, w, http.StatusBadRequest, "invalid scope", scope)
+			return
 		}
 	}
 
@@ -208,13 +206,17 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 				"requested scopes require a higher privilege level than your current role")
 			return
 		}
+		if deniedScope := deniedAPIKeyScope(settings, callerRole, input.Scopes); deniedScope != "" {
+			as.writeErr(r.Context(), w, http.StatusForbidden, "scope denied by API key policy", "requested scope is not allowed for your role")
+			return
+		}
 	}
 
 	// Calculate expiration
-	var expiresAt *time.Time
-	if input.ExpiresInDays != nil && *input.ExpiresInDays > 0 {
-		t := time.Now().UTC().AddDate(0, 0, *input.ExpiresInDays)
-		expiresAt = &t
+	expiresAt, err := apiKeyExpiresAt(time.Now().UTC(), input.ExpiresInDays, settings)
+	if err != nil {
+		as.writeErr(ctx, w, http.StatusBadRequest, "invalid expires_in_days", err.Error())
+		return
 	}
 
 	// Generate the API key
@@ -297,17 +299,24 @@ func (as *AuthServer) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	settings := as.securitySettings(ctx)
+	now := time.Now().UTC()
+
 	// Transform to response format (never include hash)
 	type keyResponse struct {
-		ID         string     `json:"id"`
-		Prefix     string     `json:"prefix"`
-		Name       string     `json:"name"`
-		Scopes     []string   `json:"scopes"`
-		OwnerID    *string    `json:"owner_id,omitempty"`
-		CreatedAt  time.Time  `json:"created_at"`
-		ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-		LastUsedAt *time.Time `json:"last_used_at,omitempty"`
-		Revoked    bool       `json:"revoked"`
+		ID            string     `json:"id"`
+		Prefix        string     `json:"prefix"`
+		Name          string     `json:"name"`
+		Scopes        []string   `json:"scopes"`
+		OwnerID       *string    `json:"owner_id,omitempty"`
+		CreatedAt     time.Time  `json:"created_at"`
+		ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+		LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
+		Revoked       bool       `json:"revoked"`
+		AgeDays       int        `json:"age_days"`
+		ExpiresInDays *int       `json:"expires_in_days,omitempty"`
+		ExpiryStatus  string     `json:"expiry_status"`
+		RotationDue   bool       `json:"rotation_due"`
 	}
 
 	response := struct {
@@ -317,20 +326,171 @@ func (as *AuthServer) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i, k := range keys {
+		status, expiresInDays, rotationDue := apiKeyExpiryStatus(k, settings, now)
+		if rotationDue {
+			as.logAPIKeyRotationDue(ctx, k, expiresInDays)
+		}
 		response.Keys[i] = keyResponse{
-			ID:         k.ID,
-			Prefix:     k.Prefix,
-			Name:       k.Name,
-			Scopes:     k.Scopes,
-			OwnerID:    k.OwnerID,
-			CreatedAt:  k.CreatedAt,
-			ExpiresAt:  k.ExpiresAt,
-			LastUsedAt: k.LastUsedAt,
-			Revoked:    k.Revoked,
+			ID:            k.ID,
+			Prefix:        k.Prefix,
+			Name:          k.Name,
+			Scopes:        k.Scopes,
+			OwnerID:       k.OwnerID,
+			CreatedAt:     k.CreatedAt,
+			ExpiresAt:     k.ExpiresAt,
+			LastUsedAt:    k.LastUsedAt,
+			Revoked:       k.Revoked,
+			AgeDays:       daysSince(k.CreatedAt, now),
+			ExpiresInDays: expiresInDays,
+			ExpiryStatus:  status,
+			RotationDue:   rotationDue,
 		}
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (as *AuthServer) securitySettings(ctx context.Context) domain.SecuritySettings {
+	if as.settingsStore == nil {
+		return domain.DefaultSecuritySettings()
+	}
+	settings, err := as.settingsStore.GetSecuritySettings(ctx)
+	if err != nil || settings == nil {
+		return domain.DefaultSecuritySettings()
+	}
+	return *domain.NormalizeSecuritySettings(settings)
+}
+
+func apiKeyExpiresAt(now time.Time, requestedDays *int, settings domain.SecuritySettings) (*time.Time, error) {
+	var days int
+	explicit := requestedDays != nil
+	switch {
+	case explicit && *requestedDays < 0:
+		return nil, fmt.Errorf("must be 0 or greater")
+	case explicit:
+		days = *requestedDays
+	case settings.APIKeyDefaultExpiryDays > 0:
+		days = settings.APIKeyDefaultExpiryDays
+	}
+
+	if settings.APIKeyMaxLifetimeDays > 0 {
+		if days == 0 {
+			days = settings.APIKeyMaxLifetimeDays
+		} else if days > settings.APIKeyMaxLifetimeDays {
+			if explicit {
+				return nil, fmt.Errorf("must be less than or equal to API key maximum lifetime of %d days", settings.APIKeyMaxLifetimeDays)
+			}
+			days = settings.APIKeyMaxLifetimeDays
+		}
+	}
+
+	if days <= 0 {
+		return nil, nil
+	}
+	expiresAt := now.AddDate(0, 0, days)
+	return &expiresAt, nil
+}
+
+func deniedAPIKeyScope(settings domain.SecuritySettings, role auth.Role, scopes []string) string {
+	allowed, ok := settings.APIKeyAllowedScopesByRole[string(role)]
+	if !ok {
+		return ""
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, scope := range allowed {
+		allowedSet[scope] = struct{}{}
+	}
+	for _, scope := range scopes {
+		if _, ok := allowedSet[scope]; !ok {
+			return scope
+		}
+	}
+	return ""
+}
+
+func apiKeyExpiryStatus(key *auth.APIKey, settings domain.SecuritySettings, now time.Time) (string, *int, bool) {
+	if key.Revoked {
+		return "revoked", nil, false
+	}
+	if key.ExpiresAt == nil {
+		return "no_expiry", nil, false
+	}
+	days := daysUntil(*key.ExpiresAt, now)
+	if !key.ExpiresAt.After(now) {
+		return "expired", &days, false
+	}
+	rotationDue := settings.APIKeyRotationReminderDays > 0 && days <= settings.APIKeyRotationReminderDays
+	if rotationDue {
+		return "expiring", &days, true
+	}
+	return "active", &days, false
+}
+
+func daysSince(t, now time.Time) int {
+	if t.IsZero() || t.After(now) {
+		return 0
+	}
+	return int(now.Sub(t).Hours() / 24)
+}
+
+func daysUntil(t, now time.Time) int {
+	if !t.After(now) {
+		return 0
+	}
+	d := t.Sub(now)
+	days := int(d / (24 * time.Hour))
+	if d%(24*time.Hour) != 0 {
+		days++
+	}
+	return days
+}
+
+func (as *AuthServer) logAPIKeyRotationDue(ctx context.Context, key *auth.APIKey, expiresInDays *int) {
+	if as.auditLogger == nil || key == nil {
+		return
+	}
+	actor, actorType := auditActorFromContext(ctx)
+	after := map[string]any{
+		"prefix": key.Prefix,
+	}
+	if expiresInDays != nil {
+		after["expires_in_days"] = *expiresInDays
+	}
+	if key.ExpiresAt != nil {
+		after["expires_at"] = key.ExpiresAt.Format(time.RFC3339)
+	}
+	if events, err := as.auditLogger.GetByResource(ctx, audit.ResourceAPIKey, key.ID); err == nil {
+		for _, event := range events {
+			if event.Action != audit.ActionAPIKeyRotationDue || event.Changes == nil {
+				continue
+			}
+			if event.Changes.After["expires_at"] == after["expires_at"] {
+				return
+			}
+		}
+	}
+	_ = as.auditLogger.Log(ctx, &audit.AuditEvent{
+		Timestamp:    time.Now().UTC(),
+		Actor:        actor,
+		ActorType:    actorType,
+		Action:       audit.ActionAPIKeyRotationDue,
+		ResourceType: audit.ResourceAPIKey,
+		ResourceID:   key.ID,
+		ResourceName: key.Name,
+		Changes:      &audit.Changes{After: after},
+		RequestID:    RequestIDFromContext(ctx),
+		StatusCode:   http.StatusOK,
+	})
+}
+
+func auditActorFromContext(ctx context.Context) (string, string) {
+	if user := auth.UserFromContext(ctx); user != nil {
+		return user.ID, audit.ActorTypeUser
+	}
+	if key := auth.APIKeyFromContext(ctx); key != nil {
+		return key.Prefix, audit.ActorTypeAPIKey
+	}
+	return "anonymous", audit.ActorTypeAnonymous
 }
 
 // handleAPIKeyByID handles DELETE /api/v1/auth/keys/{id} (revoke).

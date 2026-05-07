@@ -5,6 +5,29 @@ import { useSecuritySettings } from '../hooks/useSettings'
 import type { SecuritySettings } from '../hooks/useSettings'
 import { useToast } from '../hooks/useToast'
 
+const API_KEY_SCOPE_OPTIONS = [
+  'pools:read', 'pools:write',
+  'accounts:read', 'accounts:write',
+  'keys:read', 'keys:write',
+  'discovery:read', 'discovery:write',
+  'audit:read',
+  '*',
+]
+
+const API_KEY_ROLE_LABELS: Record<string, string> = {
+  admin: 'Admin',
+  operator: 'Operator',
+  viewer: 'Viewer',
+  auditor: 'Auditor',
+}
+
+const API_KEY_SCOPE_OPTIONS_BY_ROLE: Record<string, string[]> = {
+  admin: API_KEY_SCOPE_OPTIONS,
+  operator: ['pools:read', 'pools:write', 'accounts:read', 'accounts:write', 'discovery:read', 'discovery:write'],
+  viewer: ['pools:read', 'accounts:read', 'discovery:read'],
+  auditor: ['audit:read'],
+}
+
 export default function SecuritySettingsPage() {
   const { settings, loading, error, updateSettings } = useSecuritySettings()
   const { showToast } = useToast()
@@ -38,6 +61,18 @@ export default function SecuritySettingsPage() {
 
   function updateField<K extends keyof SecuritySettings>(key: K, value: SecuritySettings[K]) {
     setForm(prev => prev ? { ...prev, [key]: value } : prev)
+  }
+
+  function toggleAPIKeyScope(role: string, scope: string) {
+    setForm(prev => {
+      if (!prev) return prev
+      const policy = { ...(prev.api_key_allowed_scopes_by_role ?? {}) }
+      const current = policy[role] ?? []
+      policy[role] = current.includes(scope)
+        ? current.filter(s => s !== scope)
+        : [...current, scope]
+      return { ...prev, api_key_allowed_scopes_by_role: policy }
+    })
   }
 
   if (loading) {
@@ -176,6 +211,84 @@ export default function SecuritySettingsPage() {
                 className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
               />
             </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-4">
+            <Key className="w-5 h-5 text-cyan-500" />
+            API Key Policy
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Default Expiry (days)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={3650}
+                value={form.api_key_default_expiry_days}
+                onChange={e => updateField('api_key_default_expiry_days', parseInt(e.target.value) || 0)}
+                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">0 keeps keys non-expiring by default</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Max Lifetime (days)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={3650}
+                value={form.api_key_max_lifetime_days}
+                onChange={e => updateField('api_key_max_lifetime_days', parseInt(e.target.value) || 0)}
+                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">0 disables forced expiry</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Rotation Reminder (days)
+              </label>
+              <input
+                type="number"
+                min={0}
+                max={365}
+                value={form.api_key_rotation_reminder_days}
+                onChange={e => updateField('api_key_rotation_reminder_days', parseInt(e.target.value) || 0)}
+                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">0 disables reminder audit events</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {Object.entries(API_KEY_ROLE_LABELS).map(([role, label]) => (
+              <div key={role}>
+                <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{label} allowed scopes</div>
+                <div className="flex flex-wrap gap-2">
+                  {(API_KEY_SCOPE_OPTIONS_BY_ROLE[role] ?? []).map(scope => {
+                    const selected = (form.api_key_allowed_scopes_by_role?.[role] ?? []).includes(scope)
+                    return (
+                      <button
+                        key={`${role}-${scope}`}
+                        type="button"
+                        onClick={() => toggleAPIKeyScope(role, scope)}
+                        className={`px-2.5 py-1 rounded text-xs font-medium border transition-colors ${
+                          selected
+                            ? 'bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700'
+                            : 'bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-600'
+                        }`}
+                      >
+                        {scope}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
 

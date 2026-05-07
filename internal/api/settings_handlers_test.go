@@ -61,6 +61,18 @@ func TestSettingsHandler_GetDefaults(t *testing.T) {
 	if settings.AccountLockoutCooldownMinutes != defaults.AccountLockoutCooldownMinutes {
 		t.Errorf("account_lockout_cooldown_minutes: got %d, want %d", settings.AccountLockoutCooldownMinutes, defaults.AccountLockoutCooldownMinutes)
 	}
+	if settings.APIKeyDefaultExpiryDays != defaults.APIKeyDefaultExpiryDays {
+		t.Errorf("api_key_default_expiry_days: got %d, want %d", settings.APIKeyDefaultExpiryDays, defaults.APIKeyDefaultExpiryDays)
+	}
+	if settings.APIKeyMaxLifetimeDays != defaults.APIKeyMaxLifetimeDays {
+		t.Errorf("api_key_max_lifetime_days: got %d, want %d", settings.APIKeyMaxLifetimeDays, defaults.APIKeyMaxLifetimeDays)
+	}
+	if settings.APIKeyRotationReminderDays != defaults.APIKeyRotationReminderDays {
+		t.Errorf("api_key_rotation_reminder_days: got %d, want %d", settings.APIKeyRotationReminderDays, defaults.APIKeyRotationReminderDays)
+	}
+	if len(settings.APIKeyAllowedScopesByRole["admin"]) == 0 {
+		t.Error("api_key_allowed_scopes_by_role should include admin defaults")
+	}
 }
 
 func TestSettingsHandler_UpdateValid(t *testing.T) {
@@ -74,7 +86,16 @@ func TestSettingsHandler_UpdateValid(t *testing.T) {
 		"login_rate_limit_per_minute": 10,
 		"account_lockout_attempts": 5,
 		"account_lockout_cooldown_minutes": 30,
-		"trusted_proxies": ["10.0.0.0/8"]
+		"trusted_proxies": ["10.0.0.0/8"],
+		"api_key_default_expiry_days": 30,
+		"api_key_max_lifetime_days": 365,
+		"api_key_rotation_reminder_days": 14,
+		"api_key_allowed_scopes_by_role": {
+			"admin": ["*"],
+			"operator": ["pools:read", "pools:write"],
+			"viewer": ["pools:read"],
+			"auditor": ["audit:read"]
+		}
 	}`
 	req := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/settings/security", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -101,6 +122,15 @@ func TestSettingsHandler_UpdateValid(t *testing.T) {
 	}
 	if settings.AccountLockoutCooldownMinutes != 30 {
 		t.Errorf("account_lockout_cooldown_minutes: got %d, want 30", settings.AccountLockoutCooldownMinutes)
+	}
+	if settings.APIKeyDefaultExpiryDays != 30 {
+		t.Errorf("api_key_default_expiry_days: got %d, want 30", settings.APIKeyDefaultExpiryDays)
+	}
+	if settings.APIKeyMaxLifetimeDays != 365 {
+		t.Errorf("api_key_max_lifetime_days: got %d, want 365", settings.APIKeyMaxLifetimeDays)
+	}
+	if got := settings.APIKeyAllowedScopesByRole["operator"]; len(got) != 2 {
+		t.Errorf("operator allowed scopes length: got %d, want 2", len(got))
 	}
 
 	// Verify GET returns updated values
@@ -155,6 +185,14 @@ func TestSettingsHandler_UpdateInvalidBounds(t *testing.T) {
 		{
 			name: "account_lockout_cooldown_minutes too high",
 			body: `{"session_duration_hours":24,"max_sessions_per_user":10,"password_min_length":12,"password_max_length":72,"login_rate_limit_per_minute":5,"account_lockout_attempts":2,"account_lockout_cooldown_minutes":1441}`,
+		},
+		{
+			name: "api_key_default_expiry_days greater than max",
+			body: `{"session_duration_hours":24,"max_sessions_per_user":10,"password_min_length":12,"password_max_length":72,"login_rate_limit_per_minute":5,"account_lockout_attempts":0,"api_key_default_expiry_days":120,"api_key_max_lifetime_days":90}`,
+		},
+		{
+			name: "api key policy invalid scope",
+			body: `{"session_duration_hours":24,"max_sessions_per_user":10,"password_min_length":12,"password_max_length":72,"login_rate_limit_per_minute":5,"account_lockout_attempts":0,"api_key_allowed_scopes_by_role":{"viewer":["bad:scope"]}}`,
 		},
 	}
 

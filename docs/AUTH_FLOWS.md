@@ -251,14 +251,24 @@ API keys have granular scopes limiting their access:
 | `accounts:read` | Read cloud account info |
 | `accounts:write` | Manage cloud accounts |
 | `discovery:read` | Read discovered resources |
-| `discovery:sync` | Trigger discovery syncs |
-| `schema:read` | Read schema plans/templates |
-| `schema:write` | Create and apply schema plans |
+| `discovery:write` | Trigger discovery syncs and agent ingest |
 | `audit:read` | Read audit logs |
-| `users:read` | Read user information (admin) |
-| `users:write` | Manage users (admin) |
-| `org:read` | Read organization settings |
-| `org:write` | Manage organization (admin) |
+| `keys:read` | List API keys |
+| `keys:write` | Create, revoke, and delete API keys |
+| `*` | Full administrator scope |
+
+#### API Key Policy
+
+Administrators manage API key policy from **Configuration > Security** via `GET/PATCH /api/v1/settings/security`.
+
+| Setting | Behavior |
+|---------|----------|
+| `api_key_default_expiry_days` | Default lifetime applied when a new key omits `expires_in_days`. `0` keeps the historical no-expiration default. |
+| `api_key_max_lifetime_days` | Forced maximum lifetime. When set, non-expiring key requests are capped to this lifetime and longer explicit requests are rejected. |
+| `api_key_rotation_reminder_days` | Keys inside this expiration window are marked `rotation_due` on the API keys page and produce an `api_key_rotation_due` audit event. |
+| `api_key_allowed_scopes_by_role` | Per-role maximum scopes for new keys. A caller cannot grant scopes above their own role or outside the configured role policy. |
+
+`GET /api/v1/auth/keys` includes `age_days`, `expires_in_days`, `expiry_status`, and `rotation_due` fields so operators can see stale, expiring, expired, revoked, and non-expiring keys in the UI.
 
 #### Rate Limiting
 
@@ -279,8 +289,9 @@ rate_limit:
 | Role | Description | Key Permissions |
 |------|-------------|-----------------|
 | **Admin** | Full access | All permissions |
-| **Editor** | Manage resources | pools:*, accounts:*, schema:*, discovery:* |
-| **Viewer** | Read-only access | *:read only |
+| **Operator** | Manage IPAM and discovery resources | pools:*, accounts:*, discovery:* |
+| **Viewer** | Read-only access | pools:read, accounts:read, discovery:read |
+| **Auditor** | Audit-only access | audit:read |
 
 ### Permission Structure
 

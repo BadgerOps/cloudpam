@@ -11,6 +11,10 @@ export interface SecuritySettings {
   account_lockout_cooldown_minutes: number
   trusted_proxies: string[]
   local_auth_enabled: boolean
+  api_key_default_expiry_days: number
+  api_key_max_lifetime_days: number
+  api_key_rotation_reminder_days: number
+  api_key_allowed_scopes_by_role: Record<string, string[]>
 }
 
 export function useSecuritySettings() {

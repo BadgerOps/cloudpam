@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Key, Plus, Ban, Copy, Check, AlertCircle } from 'lucide-react'
 import { useApiKeys } from '../hooks/useApiKeys'
+import { useSecuritySettings } from '../hooks/useSettings'
 import type { ApiKeyCreateResponse } from '../api/types'
 
 // Must match backend validScopes in auth_handlers.go createAPIKey
@@ -28,6 +29,7 @@ const SCOPE_LABELS: Record<string, string> = {
 
 export default function ApiKeysPage() {
   const { keys, loading, error, create, revoke } = useApiKeys()
+  const { settings } = useSecuritySettings()
   const [showCreate, setShowCreate] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
   const [selectedScopes, setSelectedScopes] = useState<string[]>(['pools:read', 'accounts:read'])
@@ -74,6 +76,29 @@ export default function ApiKeysPage() {
   function formatDate(d?: string | null) {
     if (!d) return '—'
     return new Date(d).toLocaleDateString()
+  }
+
+  function formatAge(days?: number) {
+    if (days === undefined) return '—'
+    if (days === 0) return '<1 day'
+    return `${days}d`
+  }
+
+  function statusBadge(k: { revoked: boolean; expiry_status?: string; expires_in_days?: number | null }): [string, string] {
+    if (k.revoked || k.expiry_status === 'revoked') {
+      return ['Revoked', 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400']
+    }
+    if (k.expiry_status === 'expired') {
+      return ['Expired', 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400']
+    }
+    if (k.expiry_status === 'expiring') {
+      const days = k.expires_in_days ?? 0
+      return [`Expiring ${days}d`, 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400']
+    }
+    if (k.expiry_status === 'no_expiry') {
+      return ['No expiry', 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300']
+    }
+    return ['Active', 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400']
   }
 
   return (
@@ -169,6 +194,11 @@ export default function ApiKeysPage() {
                 placeholder="No expiration"
                 className="w-48 px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
               />
+              {settings && (
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Default {settings.api_key_default_expiry_days || 'none'} · Max {settings.api_key_max_lifetime_days || 'none'}
+                </p>
+              )}
             </div>
 
             {createError && (
@@ -202,6 +232,7 @@ export default function ApiKeysPage() {
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Name</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Prefix</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Scopes</th>
+              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Age</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Created</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Expires</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Status</th>
@@ -211,13 +242,13 @@ export default function ApiKeysPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                   Loading...
                 </td>
               </tr>
             ) : keys.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                   <Key className="w-8 h-8 mx-auto mb-2 opacity-40" />
                   No API keys found
                 </td>
@@ -241,18 +272,18 @@ export default function ApiKeysPage() {
                       )}
                     </div>
                   </td>
+                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatAge(k.age_days)}</td>
                   <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.created_at)}</td>
                   <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.expires_at)}</td>
                   <td className="px-4 py-3">
-                    {k.revoked ? (
-                      <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded text-xs font-medium">
-                        Revoked
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded text-xs font-medium">
-                        Active
-                      </span>
-                    )}
+                    {(() => {
+                      const [label, classes] = statusBadge(k)
+                      return (
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${classes}`}>
+                          {label}
+                        </span>
+                      )
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-right">
                     {!k.revoked && (
