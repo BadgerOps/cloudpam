@@ -26,15 +26,15 @@ func (s *Server) protectedPoolsHandler(logger *slog.Logger) http.Handler {
 		switch r.Method {
 		case http.MethodGet:
 			// List pools requires pools:list or pools:read
-			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionList) &&
-				!auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionList) &&
+				!auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionRead) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
 			s.listPools(w, r)
 		case http.MethodPost:
 			// Create pool requires pools:create
-			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionCreate) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionCreate) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -66,7 +66,7 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				return
 			}
 			// Requires pools:read
-			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionRead) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -87,7 +87,7 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				return
 			}
 			// Requires pools:read
-			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionRead) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -102,7 +102,7 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				return
 			}
 			// Requires pools:read
-			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionRead) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -113,7 +113,7 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 		// Handle /pools/{id}
 		switch r.Method {
 		case http.MethodGet:
-			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionRead) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionRead) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -129,14 +129,14 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 			writeJSON(w, http.StatusOK, p)
 
 		case http.MethodPatch:
-			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionUpdate) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionUpdate) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
 			s.updatePool(w, r, id64)
 
 		case http.MethodDelete:
-			if !auth.HasPermission(role, auth.ResourcePools, auth.ActionDelete) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourcePools, auth.ActionDelete) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}

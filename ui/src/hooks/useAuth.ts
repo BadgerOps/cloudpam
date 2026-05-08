@@ -5,12 +5,15 @@ import type { HealthResponse, UserInfo, LoginResponse, MeResponse } from '../api
 const AUTH_NAME_KEY = 'cloudpam_key_name'
 const AUTH_ROLE_KEY = 'cloudpam_role'
 const AUTH_TYPE_KEY = 'cloudpam_auth_type'
+const AUTH_PERMISSIONS_KEY = 'cloudpam_permissions'
 
 export interface AuthContextValue {
   keyName: string | null
   role: string | null
   authType: 'session' | 'api_key' | null
   currentUser: UserInfo | null
+  permissions: string[]
+  hasPermission: (permission: string) => boolean
   isAuthenticated: boolean
   authEnabled: boolean
   localAuthEnabled: boolean
@@ -25,6 +28,8 @@ export const AuthContext = createContext<AuthContextValue>({
   role: null,
   authType: null,
   currentUser: null,
+  permissions: [],
+  hasPermission: () => false,
   isAuthenticated: false,
   authEnabled: false,
   localAuthEnabled: false,
@@ -46,6 +51,15 @@ export function useAuthState(): AuthContextValue {
     () => (localStorage.getItem(AUTH_TYPE_KEY) as 'session' | 'api_key') || null
   )
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
+  const [permissions, setPermissions] = useState<string[]>(() => {
+    const raw = localStorage.getItem(AUTH_PERMISSIONS_KEY)
+    if (!raw) return []
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return []
+    }
+  })
   const [authEnabled, setAuthEnabled] = useState(false)
   const [localAuthEnabled, setLocalAuthEnabled] = useState(false)
   const [needsSetup, setNeedsSetup] = useState(false)
@@ -74,8 +88,10 @@ export function useAuthState(): AuthContextValue {
           setIsAuthenticated(true)
           setRole(me.role)
           setAuthType(me.auth_type)
+          setPermissions(me.permissions ?? [])
           localStorage.setItem(AUTH_ROLE_KEY, me.role)
           localStorage.setItem(AUTH_TYPE_KEY, me.auth_type)
+          localStorage.setItem(AUTH_PERMISSIONS_KEY, JSON.stringify(me.permissions ?? []))
 
           if (me.auth_type === 'session' && me.user) {
             setCurrentUser(me.user)
@@ -103,9 +119,11 @@ export function useAuthState(): AuthContextValue {
     setRole(null)
     setAuthType(null)
     setCurrentUser(null)
+    setPermissions([])
     localStorage.removeItem(AUTH_NAME_KEY)
     localStorage.removeItem(AUTH_ROLE_KEY)
     localStorage.removeItem(AUTH_TYPE_KEY)
+    localStorage.removeItem(AUTH_PERMISSIONS_KEY)
   }
 
   // Listen for forced logout from API client (401 responses)
@@ -133,12 +151,14 @@ export function useAuthState(): AuthContextValue {
     setIsAuthenticated(true)
     setCurrentUser(data.user)
     setRole(data.user.role)
+    setPermissions(data.permissions ?? [])
     setKeyName(data.user.display_name || data.user.username)
     setAuthType('session')
 
     localStorage.setItem(AUTH_NAME_KEY, data.user.display_name || data.user.username)
     localStorage.setItem(AUTH_ROLE_KEY, data.user.role)
     localStorage.setItem(AUTH_TYPE_KEY, 'session')
+    localStorage.setItem(AUTH_PERMISSIONS_KEY, JSON.stringify(data.permissions ?? []))
   }, [])
 
   const logout = useCallback(async () => {
@@ -153,11 +173,17 @@ export function useAuthState(): AuthContextValue {
     clearAuth()
   }, [])
 
+  const hasPermission = useCallback((permission: string) => {
+    return role === 'admin' || permissions.includes(permission)
+  }, [permissions, role])
+
   return {
     keyName,
     role,
     authType,
     currentUser,
+    permissions,
+    hasPermission,
     isAuthenticated,
     authEnabled,
     localAuthEnabled,

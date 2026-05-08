@@ -290,67 +290,79 @@ rate_limit:
 |------|-------------|-----------------|
 | **Admin** | Full access | All permissions |
 | **Operator** | Manage IPAM and discovery resources | pools:*, accounts:*, discovery:* |
-| **Viewer** | Read-only access | pools:read, accounts:read, discovery:read |
-| **Auditor** | Audit-only access | audit:read |
+| **Viewer** | Read-only access | pools:read/list, accounts:read/list, discovery:read/list |
+| **Auditor** | Audit-only access | audit:read/list |
 
 ### Permission Structure
 
-Permissions follow the pattern: `resource:action`
+Permissions follow the pattern: `resource:action`. The catalog below mirrors the API permission checks and the **Identity > RBAC** permission matrix.
 
 ```
-pools:read          - View pools
-pools:write         - Create/update pools
-pools:delete        - Delete pools
-pools:allocate      - Allocate from pools
+pools:create        - Create address pools and planned allocations
+pools:read          - View pool details, blocks, utilization, and schema checks
+pools:update        - Edit pool metadata, hierarchy, and assignment
+pools:delete        - Delete pools and planned allocations
+pools:list          - Browse pool lists and tree views
 
-accounts:read       - View cloud accounts
-accounts:write      - Create/update accounts
-accounts:delete     - Remove accounts
-accounts:sync       - Trigger syncs
+accounts:create     - Create cloud account records
+accounts:read       - View account details and account-linked resources
+accounts:update     - Edit account metadata
+accounts:delete     - Delete account records
+accounts:list       - Browse account lists
 
-schema:read         - View plans/templates
-schema:write        - Create/update plans
-schema:apply        - Apply schema plans
+apikeys:create      - Create API tokens within the caller's permission envelope
+apikeys:read        - View API key metadata
+apikeys:update      - Reserved for future API key metadata updates
+apikeys:delete      - Revoke API keys
+apikeys:list        - Browse API key metadata
 
-discovery:read      - View discovered resources
-discovery:link      - Link resources to pools
-discovery:sync      - Trigger discovery
+audit:read          - View audit event details
+audit:list          - Browse audit events
 
-audit:read          - View audit logs
-audit:export        - Export audit data
+users:create        - Create local user accounts
+users:read          - View user account details
+users:update        - Edit users, roles, password state, and active status
+users:delete        - Deactivate user accounts
+users:list          - Browse user accounts
 
-users:read          - View users
-users:invite        - Invite new users
-users:write         - Update users
-users:delete        - Remove users
+discovery:create    - Start discovery syncs and register agents
+discovery:read      - View discovered resources, agents, drift, and recommendations
+discovery:update    - Apply discovery results and reconcile drift
+discovery:delete    - Reserved for future discovery cleanup operations
+discovery:list      - Browse discovery resources, jobs, agents, drift, and recommendations
 
-roles:read          - View roles
-roles:write         - Manage custom roles
-
-org:read            - View org settings
-org:write           - Update org settings
-
-teams:read          - View teams
-teams:write         - Manage teams
+settings:read       - View security, OIDC, update, and system configuration
+settings:write      - Change security, OIDC, update, and system configuration
 ```
 
 ### Custom Roles
 
-Admins can create custom roles with specific permission sets:
+Admins can create custom roles from **Identity > RBAC** or through the role API. Built-in roles are immutable. Custom roles can be assigned to users from **Identity > Users**, and a custom role cannot be deleted while it is assigned to any active user.
 
 ```json
 {
-  "name": "Network Engineer",
+  "name": "network-engineer",
   "description": "Can manage pools and view discovery",
   "permissions": [
     "pools:read",
-    "pools:write",
-    "pools:allocate",
+    "pools:list",
+    "pools:update",
     "discovery:read",
-    "accounts:read",
-    "schema:read"
+    "discovery:list",
+    "accounts:read"
   ]
 }
+```
+
+Role administration endpoints require `settings:read` for list/read operations and `settings:write` for create/update/delete operations:
+
+```
+GET    /api/v1/auth/permissions
+GET    /api/v1/auth/roles
+POST   /api/v1/auth/roles
+GET    /api/v1/auth/roles/{name}
+PATCH  /api/v1/auth/roles/{name}
+DELETE /api/v1/auth/roles/{name}
 ```
 
 ### Team-Based Access (Pool Scoping)

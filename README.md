@@ -14,7 +14,7 @@ CloudPAM is a modern IPAM solution designed for hybrid and multi-cloud environme
 - **Schema Wizard** - Design IP schemas with conflict detection before deploying
 - **AI Planning** - Optional OpenAI-compatible conversational planner with SSE streaming and plan apply
 - **CIDR Search** - Unified search with containment queries across pools and accounts
-- **Auth & RBAC** - Local users, session cookies, API keys, and optional OIDC/SSO
+- **Auth & RBAC** - Local users, session cookies, API keys, custom roles, and optional OIDC/SSO
 - **Release Notes & Updates** - Embedded changelog plus release-check and host-managed upgrade endpoints
 - **Audit Logging** - Full activity tracking with filterable event log
 - **Observability** - Structured logging (slog), Prometheus metrics, Sentry integration
@@ -60,7 +60,7 @@ See the [Deployment Guide](docs/DEPLOYMENT.md) for production setup.
 | **Database** | PostgreSQL 15+ (production) / SQLite (development) / In-memory (demo) |
 | **Frontend** | React 18 + Vite + TypeScript + Tailwind CSS |
 | **API** | OpenAPI 3.1 |
-| **Auth** | Local sessions + API keys + OIDC + RBAC |
+| **Auth** | Local sessions + API keys + OIDC + custom-role RBAC |
 | **Logging** | slog (Go std lib) |
 | **Metrics** | Prometheus |
 | **Error Tracking** | Sentry (backend + frontend) |

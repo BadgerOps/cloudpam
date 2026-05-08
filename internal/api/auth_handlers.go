@@ -95,15 +95,15 @@ func (as *AuthServer) protectedAPIKeysHandler(logger *slog.Logger) http.Handler 
 		switch r.Method {
 		case http.MethodPost:
 			// Create API key requires apikeys:create
-			if !auth.HasPermission(role, auth.ResourceAPIKeys, auth.ActionCreate) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourceAPIKeys, auth.ActionCreate) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
 			as.createAPIKey(w, r)
 		case http.MethodGet:
 			// List API keys requires apikeys:list or apikeys:read
-			if !auth.HasPermission(role, auth.ResourceAPIKeys, auth.ActionList) &&
-				!auth.HasPermission(role, auth.ResourceAPIKeys, auth.ActionRead) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourceAPIKeys, auth.ActionList) &&
+				!auth.HasPermissionContext(ctx, role, auth.ResourceAPIKeys, auth.ActionRead) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -132,7 +132,7 @@ func (as *AuthServer) protectedAPIKeyByIDHandler(logger *slog.Logger) http.Handl
 		switch r.Method {
 		case http.MethodDelete:
 			// Revoke API key requires apikeys:delete
-			if !auth.HasPermission(role, auth.ResourceAPIKeys, auth.ActionDelete) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourceAPIKeys, auth.ActionDelete) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -201,14 +201,23 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	callerRole := auth.GetEffectiveRole(r.Context())
 	if callerRole != auth.RoleNone {
 		requestedRole := auth.GetRoleFromScopes(input.Scopes)
-		if auth.RoleLevel(requestedRole) > auth.RoleLevel(callerRole) {
+		if auth.IsBuiltinRole(callerRole) && auth.RoleLevel(requestedRole) > auth.RoleLevel(callerRole) {
 			as.writeErr(r.Context(), w, http.StatusForbidden, "scope elevation denied",
 				"requested scopes require a higher privilege level than your current role")
 			return
 		}
-		if deniedScope := deniedAPIKeyScope(settings, callerRole, input.Scopes); deniedScope != "" {
-			as.writeErr(r.Context(), w, http.StatusForbidden, "scope denied by API key policy", "requested scope is not allowed for your role")
-			return
+		for _, scope := range input.Scopes {
+			if !auth.ScopeAllowedByRolePermissions(ctx, callerRole, scope) {
+				as.writeErr(r.Context(), w, http.StatusForbidden, "scope elevation denied",
+					"requested scope exceeds your current permissions")
+				return
+			}
+		}
+		if auth.IsBuiltinRole(callerRole) {
+			if deniedScope := deniedAPIKeyScope(settings, callerRole, input.Scopes); deniedScope != "" {
+				as.writeErr(r.Context(), w, http.StatusForbidden, "scope denied by API key policy", "requested scope is not allowed for your role")
+				return
+			}
 		}
 	}
 

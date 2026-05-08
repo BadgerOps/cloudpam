@@ -124,6 +124,28 @@ func selectUserStore(logger observability.Logger) auth.UserStore {
 	return us
 }
 
+func selectRoleStore(logger observability.Logger, userStore auth.UserStore) auth.RoleStore {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	if usePostgres() {
+		rs, err := auth.NewPostgresRoleStore(databaseURL(), userStore)
+		if err != nil {
+			logger.Error("postgres role store init failed; falling back to sqlite", "error", err)
+		} else {
+			logger.Info("using postgres role store")
+			return rs
+		}
+	}
+	rs, err := auth.NewSQLiteRoleStore(sqliteDSN(), userStore)
+	if err != nil {
+		logger.Error("sqlite role store init failed; falling back to memory", "error", err)
+		return auth.NewMemoryRoleStore(userStore)
+	}
+	logger.Info("using sqlite role store")
+	return rs
+}
+
 func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())

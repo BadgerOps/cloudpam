@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { CheckCircle, Loader2, Plus, Pencil, Shield, Trash2, Users, KeyRound } from 'lucide-react'
+import { AlertCircle, CheckCircle, Loader2, Lock, Plus, Pencil, Save, Shield, Trash2, Users, KeyRound } from 'lucide-react'
 import { useToast } from '../hooks/useToast'
 import { useSecuritySettings } from '../hooks/useSettings'
 import { useOIDCAdmin } from '../hooks/useOIDCAdmin'
+import { permissionID, useRoles } from '../hooks/useRoles'
 import type { OIDCProvider, OIDCProviderCreate, OIDCProviderUpdate } from '../hooks/useOIDCAdmin'
 import UsersAdminPanel from '../components/UsersAdminPanel'
 
@@ -13,28 +14,9 @@ const TABS = [
   { id: 'rbac', label: 'RBAC' },
 ] as const
 
-const BUILTIN_RBAC = [
-  {
-    role: 'admin',
-    summary: 'Full access across identity, settings, discovery, IPAM, audit, and API key management.',
-    permissions: ['pools:*', 'accounts:*', 'apikeys:*', 'audit:read', 'users:*', 'discovery:*', 'settings:*'],
-  },
-  {
-    role: 'operator',
-    summary: 'Read/write access for IPAM and discovery operations, but no identity or settings administration.',
-    permissions: ['pools:*', 'accounts:*', 'discovery:create/read/update/list'],
-  },
-  {
-    role: 'viewer',
-    summary: 'Read-only access for IPAM and discovery data.',
-    permissions: ['pools:read/list', 'accounts:read/list', 'discovery:read/list'],
-  },
-  {
-    role: 'auditor',
-    summary: 'Audit log access only.',
-    permissions: ['audit:read/list'],
-  },
-] as const
+function roleLabel(role: string) {
+  return role.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
 
 interface ProviderFormProps {
   provider?: OIDCProvider | null
@@ -213,6 +195,266 @@ function ProviderFormModal({ provider, onSave, onClose }: ProviderFormProps) {
         </form>
       </div>
     </div>
+  )
+}
+
+function RolesAdminPanel() {
+  const { showToast } = useToast()
+  const { roles, permissions, loading, error, create, update, remove } = useRoles()
+  const [selectedName, setSelectedName] = useState<string>('')
+  const [creating, setCreating] = useState(false)
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [selectedPermissions, setSelectedPermissions] = useState<Set<string>>(new Set())
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const selectedRole = roles.find(role => role.name === selectedName) ?? roles[0] ?? null
+  const activeRole = creating ? null : selectedRole
+  const readOnly = activeRole?.is_builtin === true
+
+  const groupedPermissions = useMemo(() => {
+    const groups = new Map<string, typeof permissions>()
+    for (const permission of permissions) {
+      const group = permission.category || permission.resource
+      groups.set(group, [...(groups.get(group) ?? []), permission])
+    }
+    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b))
+  }, [permissions])
+
+  useEffect(() => {
+    if (!selectedName && roles.length > 0) {
+      setSelectedName(roles[0].name)
+    }
+  }, [roles, selectedName])
+
+  useEffect(() => {
+    if (creating || !activeRole) return
+    setName(activeRole.name)
+    setDescription(activeRole.description ?? '')
+    setSelectedPermissions(new Set(activeRole.permissions.map(permissionID)))
+    setSaveError(null)
+  }, [activeRole, creating])
+
+  function startCreate() {
+    setCreating(true)
+    setName('')
+    setDescription('')
+    setSelectedPermissions(new Set())
+    setSaveError(null)
+  }
+
+  function cancelCreate() {
+    setCreating(false)
+    if (selectedRole) {
+      setName(selectedRole.name)
+      setDescription(selectedRole.description ?? '')
+      setSelectedPermissions(new Set(selectedRole.permissions.map(permissionID)))
+    }
+  }
+
+  function togglePermission(id: string) {
+    if (readOnly) return
+    setSelectedPermissions(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function saveRole() {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const payload = {
+        name: name.trim(),
+        description: description.trim(),
+        permissions: Array.from(selectedPermissions).sort(),
+      }
+      if (creating) {
+        const role = await create(payload)
+        setSelectedName(role.name)
+        setCreating(false)
+        showToast('Role created', 'success')
+      } else if (activeRole) {
+        await update(activeRole.name, payload)
+        showToast('Role updated', 'success')
+      }
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save role')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteRole() {
+    if (!activeRole || activeRole.is_builtin) return
+    if (!window.confirm(`Delete role ${activeRole.name}?`)) return
+    try {
+      await remove(activeRole.name)
+      setSelectedName('')
+      showToast('Role deleted', 'success')
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to delete role')
+    }
+  }
+
+  return (
+    <section className="bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-6">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+            <Users className="w-5 h-5 text-blue-500" />
+            Roles & Permissions
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Build custom roles from the same permissions enforced by the API.
+          </p>
+        </div>
+        <button
+          onClick={startCreate}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+        >
+          <Plus className="w-4 h-4" />
+          Create Role
+        </button>
+      </div>
+
+      {error && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+          <AlertCircle className="w-4 h-4" />
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="mt-6 flex items-center gap-2 text-gray-500 dark:text-gray-400">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          Loading roles...
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-6 lg:grid-cols-[260px_1fr]">
+          <div className="space-y-2">
+            {roles.map(role => (
+              <button
+                key={role.name}
+                onClick={() => { setCreating(false); setSelectedName(role.name) }}
+                className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                  !creating && selectedRole?.name === role.name
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
+                    : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700/40'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-gray-900 dark:text-white">{roleLabel(role.name)}</span>
+                  {role.is_builtin ? <Lock className="w-3.5 h-3.5 text-gray-400" /> : <Pencil className="w-3.5 h-3.5 text-gray-400" />}
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{role.permissions.length} permissions</p>
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="text-sm">
+                <span className="block mb-1 text-gray-700 dark:text-gray-300">Role Name</span>
+                <input
+                  value={name}
+                  disabled={!creating}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="network-operator"
+                  className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white disabled:bg-gray-100 disabled:text-gray-500 dark:disabled:bg-gray-900"
+                />
+              </label>
+              <label className="text-sm">
+                <span className="block mb-1 text-gray-700 dark:text-gray-300">Description</span>
+                <input
+                  value={description}
+                  disabled={readOnly}
+                  onChange={e => setDescription(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white disabled:bg-gray-100 disabled:text-gray-500 dark:disabled:bg-gray-900"
+                />
+              </label>
+            </div>
+
+            {readOnly && (
+              <div className="mt-3 rounded-lg bg-gray-50 dark:bg-gray-900/40 px-3 py-2 text-sm text-gray-600 dark:text-gray-400">
+                Built-in roles are managed by CloudPAM and cannot be edited.
+              </div>
+            )}
+            {saveError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+                {saveError}
+              </div>
+            )}
+
+            <div className="mt-5 space-y-5">
+              {groupedPermissions.map(([category, items]) => (
+                <div key={category}>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{category}</h3>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                    {items.map(permission => (
+                      <label
+                        key={permission.id}
+                        className={`rounded-lg border px-3 py-2 text-sm ${
+                          selectedPermissions.has(permission.id)
+                            ? 'border-blue-300 bg-blue-50 dark:border-blue-900 dark:bg-blue-950/30'
+                            : 'border-gray-200 dark:border-gray-700'
+                        } ${readOnly ? 'cursor-default' : 'cursor-pointer hover:border-blue-300'}`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedPermissions.has(permission.id)}
+                            disabled={readOnly}
+                            onChange={() => togglePermission(permission.id)}
+                            className="mt-1"
+                          />
+                          <div>
+                            <div className="font-medium text-gray-900 dark:text-white">{permission.name}</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">{permission.id}</div>
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-5 flex items-center justify-between gap-3">
+              <div className="text-sm text-gray-500 dark:text-gray-400">
+                {selectedPermissions.size} selected
+              </div>
+              <div className="flex items-center gap-2">
+                {creating && (
+                  <button onClick={cancelCreate} className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm text-gray-700 dark:text-gray-300">
+                    Cancel
+                  </button>
+                )}
+                {!creating && activeRole && !activeRole.is_builtin && (
+                  <button onClick={deleteRole} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30">
+                    <Trash2 className="w-4 h-4" />
+                    Delete
+                  </button>
+                )}
+                {!readOnly && (
+                  <button onClick={saveRole} disabled={saving || !name.trim()} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Save
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-6 rounded-lg bg-gray-50 dark:bg-gray-900/40 px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+        Session, password, rate-limit, and proxy policy stay under <Link to="/config/security" className="text-blue-600 dark:text-blue-400">Configuration → Security Policy</Link>.
+      </div>
+    </section>
   )
 }
 
@@ -423,37 +665,7 @@ export default function IdentityPage() {
 
       {activeTab === 'users' && <UsersAdminPanel embedded />}
 
-      {activeTab === 'rbac' && (
-        <div className="space-y-4">
-          <section className="bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-              <Users className="w-5 h-5 text-blue-500" />
-              Built-In Roles
-            </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              CloudPAM currently uses fixed roles defined in the server. Custom role editing can land later without changing this layout.
-            </p>
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              {BUILTIN_RBAC.map(role => (
-                <div key={role.role} className="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-white uppercase">{role.role}</h3>
-                  <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{role.summary}</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {role.permissions.map(permission => (
-                      <span key={permission} className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
-                        {permission}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-6 rounded-lg bg-gray-50 dark:bg-gray-900/40 px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-              Session, password, rate-limit, and proxy policy stay under <Link to="/config/security" className="text-blue-600 dark:text-blue-400">Configuration → Security Policy</Link>.
-            </div>
-          </section>
-        </div>
-      )}
+      {activeTab === 'rbac' && <RolesAdminPanel />}
 
       {showProviderForm && (
         <ProviderFormModal

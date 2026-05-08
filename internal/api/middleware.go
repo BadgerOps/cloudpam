@@ -1013,7 +1013,7 @@ func RequirePermissionMiddleware(resource, action string, logger *slog.Logger) M
 			}
 
 			// Check permission
-			if !auth.HasPermission(role, resource, action) {
+			if !auth.HasPermissionContext(ctx, role, resource, action) {
 				// Log authorization failure
 				attrs := appendRequestID(ctx, []any{
 					"method", r.Method,
@@ -1062,7 +1062,7 @@ func RequireAnyPermissionMiddleware(permissions []auth.Permission, logger *slog.
 
 			// Check if any permission is granted
 			for _, perm := range permissions {
-				if auth.HasPermission(role, perm.Resource, perm.Action) {
+				if auth.HasPermissionContext(ctx, role, perm.Resource, perm.Action) {
 					next.ServeHTTP(w, r)
 					return
 				}

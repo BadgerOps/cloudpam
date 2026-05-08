@@ -41,6 +41,11 @@ func selectUserStore(_ observability.Logger) auth.UserStore {
 	return auth.NewMemoryUserStore()
 }
 
+// selectRoleStore returns an in-memory role store.
+func selectRoleStore(_ observability.Logger, userStore auth.UserStore) auth.RoleStore {
+	return auth.NewMemoryRoleStore(userStore)
+}
+
 // selectSessionStore returns an in-memory session store.
 func selectSessionStore(_ observability.Logger) auth.SessionStore {
 	return auth.NewMemorySessionStore()

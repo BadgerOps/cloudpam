@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-05-08
+
+### Added
+- Custom RBAC roles with app-wide permission catalog endpoints, persisted role/permission storage, and immutable built-in role handling
+- Identity RBAC UI for creating, editing, deleting, and reviewing roles against the same permission matrix enforced by the API
+- User management role selectors now include custom roles, and role deletion is blocked while assigned to active users
+
+### Changed
+- Session metadata now includes effective permissions so the frontend can gate administration pages by permission instead of admin-only role checks
+- API key scope creation now validates requested scopes against the caller's effective role permissions, including custom roles
+
 ## [0.12.0] - 2026-05-07
 
 ### Added

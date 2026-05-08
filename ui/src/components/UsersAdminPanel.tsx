@@ -1,9 +1,8 @@
 import { useState } from 'react'
 import { Users, Plus, AlertCircle, UserCheck, UserX, LockOpen } from 'lucide-react'
 import { useUsers } from '../hooks/useUsers'
+import { useRoles } from '../hooks/useRoles'
 import type { CreateUserRequest, UserInfo } from '../api/types'
-
-const ROLE_OPTIONS = ['admin', 'operator', 'viewer', 'auditor']
 
 interface UsersAdminPanelProps {
   embedded?: boolean
@@ -11,6 +10,8 @@ interface UsersAdminPanelProps {
 
 export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelProps) {
   const { users, loading, error, create, update, deactivate, unlock } = useUsers()
+  const { roles } = useRoles()
+  const roleOptions = roles.length > 0 ? roles : ['admin', 'operator', 'viewer', 'auditor'].map(name => ({ name, is_builtin: true }))
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState<CreateUserRequest>({
     username: '',
@@ -152,8 +153,8 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                 onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
                 className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
               >
-                {ROLE_OPTIONS.map(r => (
-                  <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                {roleOptions.map(r => (
+                  <option key={r.name} value={r.name}>{roleLabel(r.name)}{r.is_builtin ? '' : ' (custom)'}</option>
                 ))}
               </select>
             </div>
@@ -238,8 +239,8 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                           onChange={e => setEditRole(e.target.value)}
                           className="px-2 py-1 border rounded text-xs dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                         >
-                          {ROLE_OPTIONS.map(r => (
-                            <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
+                          {roleOptions.map(r => (
+                            <option key={r.name} value={r.name}>{roleLabel(r.name)}{r.is_builtin ? '' : ' (custom)'}</option>
                           ))}
                         </select>
                         <button
@@ -308,4 +309,8 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
       </div>
     </div>
   )
+}
+
+function roleLabel(role: string) {
+  return role.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }

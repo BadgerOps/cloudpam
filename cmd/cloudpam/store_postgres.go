@@ -81,6 +81,21 @@ func selectUserStore(logger observability.Logger) auth.UserStore {
 	return us
 }
 
+// selectRoleStore returns a PostgreSQL-backed role store.
+func selectRoleStore(logger observability.Logger, userStore auth.UserStore) auth.RoleStore {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	url := databaseURL()
+	rs, err := auth.NewPostgresRoleStore(url, userStore)
+	if err != nil {
+		logger.Error("postgres role store init failed; falling back to memory", "error", err)
+		return auth.NewMemoryRoleStore(userStore)
+	}
+	logger.Info("using postgres role store")
+	return rs
+}
+
 // selectSessionStore returns a PostgreSQL-backed session store.
 func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	if logger == nil {

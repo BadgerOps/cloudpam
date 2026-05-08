@@ -22,14 +22,14 @@ func (s *Server) protectedAccountsHandler(logger *slog.Logger) http.Handler {
 
 		switch r.Method {
 		case http.MethodGet:
-			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionList) &&
-				!auth.HasPermission(role, auth.ResourceAccounts, auth.ActionRead) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourceAccounts, auth.ActionList) &&
+				!auth.HasPermissionContext(ctx, role, auth.ResourceAccounts, auth.ActionRead) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
 			s.listAccounts(w, r)
 		case http.MethodPost:
-			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionCreate) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourceAccounts, auth.ActionCreate) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -61,7 +61,7 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 
 		switch r.Method {
 		case http.MethodGet:
-			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionRead) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourceAccounts, auth.ActionRead) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -77,7 +77,7 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 			writeJSON(w, http.StatusOK, a)
 
 		case http.MethodPatch:
-			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionUpdate) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourceAccounts, auth.ActionUpdate) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
@@ -105,7 +105,7 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 			writeJSON(w, http.StatusOK, a)
 
 		case http.MethodDelete:
-			if !auth.HasPermission(role, auth.ResourceAccounts, auth.ActionDelete) {
+			if !auth.HasPermissionContext(ctx, role, auth.ResourceAccounts, auth.ActionDelete) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
