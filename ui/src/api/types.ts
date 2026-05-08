@@ -329,6 +329,7 @@ export interface LoginRequest {
 export interface LoginResponse {
   user: UserInfo
   expires_at: string
+  permissions?: string[]
 }
 
 export interface MeResponse {
@@ -339,6 +340,7 @@ export interface MeResponse {
   key_name?: string
   auth_provider?: 'local' | 'oidc'
   session_expires_at?: string
+  permissions?: string[]
 }
 
 export interface CreateUserRequest {
@@ -363,6 +365,39 @@ export interface ChangePasswordRequest {
 
 export interface UsersListResponse {
   users: UserInfo[]
+}
+
+export interface PermissionInfo {
+  id: string
+  resource: string
+  action: string
+  name: string
+  description: string
+  category: string
+}
+
+export interface RoleInfo {
+  id: string
+  name: string
+  description: string
+  is_builtin: boolean
+  permissions: Array<{ resource: string; action: string }>
+  created_at?: string
+  updated_at?: string
+}
+
+export interface RolesListResponse {
+  roles: RoleInfo[]
+}
+
+export interface PermissionsListResponse {
+  permissions: PermissionInfo[]
+}
+
+export interface RoleSaveRequest {
+  name?: string
+  description: string
+  permissions: string[]
 }
 
 // --- Discovery types ---

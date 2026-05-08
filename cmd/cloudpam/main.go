@@ -154,12 +154,15 @@ func main() {
 	auditLogger := selectAuditLogger(logger)
 	keyStore := selectKeyStore(logger)
 	userStore := selectUserStore(logger)
+	roleStore := selectRoleStore(logger, userStore)
+	auth.SetRoleStoreProvider(roleStore)
 	sessionStore := selectSessionStore(logger)
 	srv := api.NewServer(mux, store, logger, metrics, auditLogger)
 	srv.SetAppVersion(version)
 
 	// Check if this is a fresh install (no users exist) for first-boot setup.
 	srv.SetUserStore(userStore)
+	srv.SetRoleStore(roleStore)
 	existingUsers, _ := userStore.List(context.Background())
 	if len(existingUsers) == 0 {
 		srv.SetNeedsSetup(true)
@@ -239,12 +242,15 @@ func main() {
 	authSrv.SetSettingsStore(settingsStore)
 	authSrv.RegisterProtectedAuthRoutes(logger.Slog())
 	userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
+	userSrv.SetRoleStore(roleStore)
 	loginRL := api.LoginRateLimitMiddleware(api.LoginRateLimitConfig{
 		AttemptsPerMinute: 5,
 		ProxyConfig:       proxyConfig,
 	})
 	userSrv.RegisterProtectedUserRoutes(logger.Slog(), api.WithLoginRateLimit(loginRL))
 	dualMW := api.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
+	roleSrv := api.NewRoleServer(srv, roleStore)
+	roleSrv.RegisterProtectedRoleRoutes(dualMW, logger.Slog())
 	discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
 	analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 	recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
@@ -333,6 +339,7 @@ func main() {
 	} else {
 		logger.Info("database connection closed")
 	}
+	closeIfPossible(logger, roleStore, "role store")
 
 	// Flush Sentry events
 	if sentryEnabled {

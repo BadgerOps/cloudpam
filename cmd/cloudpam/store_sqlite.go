@@ -81,6 +81,21 @@ func selectUserStore(logger observability.Logger) auth.UserStore {
 	return us
 }
 
+// selectRoleStore returns a SQLite-backed role store.
+func selectRoleStore(logger observability.Logger, userStore auth.UserStore) auth.RoleStore {
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	dsn := sqliteDSN()
+	rs, err := auth.NewSQLiteRoleStore(dsn, userStore)
+	if err != nil {
+		logger.Error("sqlite role store init failed; falling back to memory", "error", err)
+		return auth.NewMemoryRoleStore(userStore)
+	}
+	logger.Info("using sqlite role store")
+	return rs
+}
+
 // selectSessionStore returns a SQLite-backed session store.
 func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	if logger == nil {

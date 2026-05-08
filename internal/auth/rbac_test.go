@@ -286,6 +286,52 @@ func BenchmarkHasPermission(b *testing.B) {
 	}
 }
 
+func TestScopesAllowPermission(t *testing.T) {
+	tests := []struct {
+		name     string
+		scopes   []string
+		resource string
+		action   string
+		want     bool
+	}{
+		{
+			name:     "read scope grants read and list",
+			scopes:   []string{"pools:read"},
+			resource: ResourcePools,
+			action:   ActionList,
+			want:     true,
+		},
+		{
+			name:     "read scope does not grant other resources",
+			scopes:   []string{"pools:read"},
+			resource: ResourceAccounts,
+			action:   ActionRead,
+			want:     false,
+		},
+		{
+			name:     "write scope grants mutation",
+			scopes:   []string{"keys:write"},
+			resource: ResourceAPIKeys,
+			action:   ActionDelete,
+			want:     true,
+		},
+		{
+			name:     "wildcard grants all",
+			scopes:   []string{"*"},
+			resource: ResourceSettings,
+			action:   ActionWrite,
+			want:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ScopesAllowPermission(tt.scopes, tt.resource, tt.action); got != tt.want {
+				t.Fatalf("ScopesAllowPermission() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func BenchmarkGetRoleFromScopes(b *testing.B) {
 	scopes := []string{"pools:read", "pools:write", "accounts:read"}
 	for i := 0; i < b.N; i++ {

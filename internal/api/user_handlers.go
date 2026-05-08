@@ -22,6 +22,7 @@ type UserServer struct {
 	*Server
 	keyStore      auth.KeyStore
 	userStore     auth.UserStore
+	roleStore     auth.RoleStore
 	sessionStore  auth.SessionStore
 	auditLogger   audit.AuditLogger
 	settingsStore storage.SettingsStore
@@ -41,6 +42,11 @@ func NewUserServer(s *Server, keyStore auth.KeyStore, userStore auth.UserStore, 
 // SetSettingsStore sets the settings store for local auth toggle checks.
 func (us *UserServer) SetSettingsStore(ss storage.SettingsStore) {
 	us.settingsStore = ss
+}
+
+// SetRoleStore sets the role store used to validate custom role assignments.
+func (us *UserServer) SetRoleStore(rs auth.RoleStore) {
+	us.roleStore = rs
 }
 
 // userRouteConfig holds optional configuration for user route registration.
@@ -309,11 +315,13 @@ func (us *UserServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	us.logAuditEvent(ctx, audit.ActionLogin, audit.ResourceSession, session.ID, user.Username, http.StatusOK)
 
 	writeJSON(w, http.StatusOK, struct {
-		User      *auth.User `json:"user"`
-		ExpiresAt time.Time  `json:"expires_at"`
+		User        *auth.User `json:"user"`
+		ExpiresAt   time.Time  `json:"expires_at"`
+		Permissions []string   `json:"permissions"`
 	}{
-		User:      user,
-		ExpiresAt: session.ExpiresAt,
+		User:        user,
+		ExpiresAt:   session.ExpiresAt,
+		Permissions: permissionStrings(auth.GetPermissionsContext(ctx, user.Role)),
 	})
 }
 
@@ -376,6 +384,7 @@ func (us *UserServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		KeyName          string     `json:"key_name,omitempty"`
 		AuthProvider     string     `json:"auth_provider,omitempty"`
 		SessionExpiresAt string     `json:"session_expires_at,omitempty"`
+		Permissions      []string   `json:"permissions,omitempty"`
 	}
 
 	if user := auth.UserFromContext(ctx); user != nil {
@@ -384,6 +393,7 @@ func (us *UserServer) handleMe(w http.ResponseWriter, r *http.Request) {
 			Role:         role,
 			User:         user,
 			AuthProvider: user.AuthProvider,
+			Permissions:  permissionStrings(auth.GetPermissionsContext(ctx, role)),
 		}
 		if resp.AuthProvider == "" {
 			resp.AuthProvider = "local"
@@ -397,10 +407,11 @@ func (us *UserServer) handleMe(w http.ResponseWriter, r *http.Request) {
 
 	if key := auth.APIKeyFromContext(ctx); key != nil {
 		writeJSON(w, http.StatusOK, meResponse{
-			AuthType: "api_key",
-			Role:     role,
-			KeyID:    key.ID,
-			KeyName:  key.Name,
+			AuthType:    "api_key",
+			Role:        role,
+			KeyID:       key.ID,
+			KeyName:     key.Name,
+			Permissions: permissionStrings(auth.GetPermissionsContext(ctx, role)),
 		})
 		return
 	}
@@ -529,9 +540,10 @@ func (us *UserServer) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role := auth.ParseRole(input.Role)
-	if role == auth.RoleNone {
-		role = auth.RoleViewer // default
+	role, ok := us.normalizeAndValidateRole(ctx, input.Role, true)
+	if !ok {
+		us.writeErr(ctx, w, http.StatusBadRequest, "invalid role", input.Role)
+		return
 	}
 
 	hash, err := auth.HashPassword(input.Password)
@@ -618,8 +630,8 @@ func (us *UserServer) updateUser(w http.ResponseWriter, r *http.Request, id stri
 		user.DisplayName = strings.TrimSpace(*input.DisplayName)
 	}
 	if input.Role != nil {
-		role := auth.ParseRole(*input.Role)
-		if role == auth.RoleNone {
+		role, ok := us.normalizeAndValidateRole(ctx, *input.Role, false)
+		if !ok {
 			us.writeErr(ctx, w, http.StatusBadRequest, "invalid role", *input.Role)
 			return
 		}
@@ -643,6 +655,32 @@ func (us *UserServer) updateUser(w http.ResponseWriter, r *http.Request, id stri
 	us.logAuditEvent(ctx, audit.ActionUpdate, audit.ResourceUser, user.ID, user.Username, http.StatusOK)
 
 	writeJSON(w, http.StatusOK, user)
+}
+
+func (us *UserServer) normalizeAndValidateRole(ctx context.Context, value string, defaultViewer bool) (auth.Role, bool) {
+	role := auth.NormalizeRoleName(value)
+	if role == auth.RoleNone && defaultViewer {
+		role = auth.RoleViewer
+	}
+	if role == auth.RoleNone {
+		return auth.RoleNone, false
+	}
+	if us.roleStore != nil {
+		if _, err := us.roleStore.GetRole(ctx, role); err == nil {
+			return role, true
+		}
+		return auth.RoleNone, false
+	}
+	return role, auth.RoleExists(ctx, role)
+}
+
+func permissionStrings(perms []auth.Permission) []string {
+	out := make([]string, 0, len(perms))
+	for _, perm := range perms {
+		out = append(out, perm.String())
+	}
+	sort.Strings(out)
+	return out
 }
 
 // deactivateUser soft-deletes a user by setting is_active=false and clearing sessions.
@@ -686,7 +724,7 @@ func (us *UserServer) changePassword(w http.ResponseWriter, r *http.Request, id 
 	currentUser := auth.UserFromContext(ctx)
 	role := auth.GetEffectiveRole(ctx)
 	isSelf := currentUser != nil && currentUser.ID == id
-	isAdmin := auth.HasPermission(role, auth.ResourceUsers, auth.ActionUpdate)
+	isAdmin := auth.HasPermissionContext(ctx, role, auth.ResourceUsers, auth.ActionUpdate)
 
 	if !isSelf && !isAdmin {
 		writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})

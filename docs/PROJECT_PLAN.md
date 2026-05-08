@@ -26,7 +26,7 @@ This summary reflects what is implemented in the current repository. The deeper 
 
 **Authentication & Authorization:**
 - API key authentication with Argon2id hashing
-- RBAC with 4 roles: admin, operator, viewer, auditor
+- RBAC with immutable built-ins (admin, operator, viewer, auditor) plus admin-managed custom roles built from app-wide `resource:action` permissions
 - Local user management with password authentication
 - Session management (HttpOnly + Secure cookies)
 - Dual auth: session cookies (browser) + Bearer tokens (API)

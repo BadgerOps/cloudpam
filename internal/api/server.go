@@ -37,6 +37,7 @@ type Server struct {
 	localAuthEnabled bool
 	needsSetup       bool
 	userStore        auth.UserStore
+	roleStore        auth.RoleStore
 	settingsStore    storage.SettingsStore
 	appVersion       string
 }
@@ -57,6 +58,9 @@ func NewServer(mux *http.ServeMux, store storage.Store, logger observability.Log
 
 // SetUserStore sets the user store for first-boot setup.
 func (s *Server) SetUserStore(us auth.UserStore) { s.userStore = us }
+
+// SetRoleStore sets the role store for custom RBAC lookups.
+func (s *Server) SetRoleStore(rs auth.RoleStore) { s.roleStore = rs }
 
 // SetSettingsStore sets the settings store for runtime configuration lookups.
 func (s *Server) SetSettingsStore(ss storage.SettingsStore) { s.settingsStore = ss }

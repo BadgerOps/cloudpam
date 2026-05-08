@@ -51,13 +51,17 @@ export default function App() {
                 <Route path="profile" element={<ProfilePage />} />
                 <Route path="changelog" element={<ChangelogPage />} />
                 <Route path="config/api-keys" element={<ApiKeysPage />} />
-                <Route element={<ProtectedRoute requiredRole="admin" />}>
+                <Route element={<ProtectedRoute requiredAnyPermissions={['settings:read', 'users:list']} />}>
                   <Route path="identity" element={<IdentityPage />} />
+                </Route>
+                <Route element={<ProtectedRoute requiredPermission="settings:read" />}>
                   <Route path="config" element={<ConfigurationPage />} />
                   <Route path="config/log-destinations" element={<LogDestinationsPage />} />
                   <Route path="config/updates" element={<UpdatesPage />} />
-                  <Route path="config/users" element={<UsersPage />} />
                   <Route path="config/security" element={<SecuritySettingsPage />} />
+                </Route>
+                <Route element={<ProtectedRoute requiredPermission="users:list" />}>
+                  <Route path="config/users" element={<UsersPage />} />
                 </Route>
               </Route>
             </Route>

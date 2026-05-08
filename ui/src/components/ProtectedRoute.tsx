@@ -3,10 +3,12 @@ import { useAuth } from '../hooks/useAuth'
 
 interface ProtectedRouteProps {
   requiredRole?: string
+  requiredPermission?: string
+  requiredAnyPermissions?: string[]
 }
 
-export default function ProtectedRoute({ requiredRole }: ProtectedRouteProps) {
-  const { isAuthenticated, authEnabled, localAuthEnabled, needsSetup, authChecked, role } = useAuth()
+export default function ProtectedRoute({ requiredRole, requiredPermission, requiredAnyPermissions }: ProtectedRouteProps) {
+  const { isAuthenticated, authEnabled, localAuthEnabled, needsSetup, authChecked, role, hasPermission } = useAuth()
 
   // Wait for the healthz check to finish before deciding
   if (!authChecked) {
@@ -24,6 +26,12 @@ export default function ProtectedRoute({ requiredRole }: ProtectedRouteProps) {
   }
 
   if (requiredRole && role !== requiredRole) {
+    return <Navigate to="/" replace />
+  }
+  if (requiredPermission && !hasPermission(requiredPermission)) {
+    return <Navigate to="/" replace />
+  }
+  if (requiredAnyPermissions?.length && !requiredAnyPermissions.some(hasPermission)) {
     return <Navigate to="/" replace />
   }
 

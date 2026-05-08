@@ -134,7 +134,7 @@ func GetEffectiveRole(ctx context.Context) Role {
 // Returns nil if permitted, or ErrInsufficientScopes if not.
 func RequirePermission(ctx context.Context, resource, action string) error {
 	role := GetEffectiveRole(ctx)
-	if !HasPermission(role, resource, action) {
+	if !HasPermissionContext(ctx, role, resource, action) {
 		return ErrInsufficientScopes
 	}
 	return nil

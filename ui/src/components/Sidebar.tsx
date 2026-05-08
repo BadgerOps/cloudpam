@@ -32,8 +32,11 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ onImportExport }: SidebarProps) {
-  const { isAuthenticated, role } = useAuth()
+  const { isAuthenticated, hasPermission } = useAuth()
   const navigate = useNavigate()
+  const canSettings = hasPermission('settings:read')
+  const canUsers = hasPermission('users:list')
+  const canAudit = hasPermission('audit:read') || hasPermission('audit:list')
 
   return (
     <aside className="w-64 bg-gray-900 dark:bg-gray-950 text-white flex flex-col flex-shrink-0">
@@ -83,10 +86,12 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
             <GitCompareArrows className="w-5 h-5" />
             <span>Drift Detection</span>
           </NavLink>
-          <NavLink to="/audit" className={linkClass}>
-            <Clock className="w-5 h-5" />
-            <span>Audit Log</span>
-          </NavLink>
+          {canAudit && (
+            <NavLink to="/audit" className={linkClass}>
+              <Clock className="w-5 h-5" />
+              <span>Audit Log</span>
+            </NavLink>
+          )}
         </div>
 
         {/* Planning section */}
@@ -117,19 +122,19 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
             <FileText className="w-5 h-5" />
             <span>Release Notes</span>
           </NavLink>
-          {role === 'admin' && (
+          {(canSettings || canUsers) && (
             <NavLink to="/identity" className={linkClass}>
               <UserCog className="w-5 h-5" />
               <span>Identity</span>
             </NavLink>
           )}
-          {role === 'admin' && (
+          {canSettings && (
             <NavLink to="/config" className={linkClass}>
               <Shield className="w-5 h-5" />
               <span>Configuration</span>
             </NavLink>
           )}
-          {role === 'admin' && (
+          {canSettings && (
             <NavLink to="/config/log-destinations" className={linkClass}>
               <Radio className="w-5 h-5" />
               <span>Log Destinations</span>

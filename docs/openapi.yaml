@@ -803,6 +803,114 @@ paths:
                 $ref: "#/components/schemas/Error"
         default:
           $ref: "#/components/responses/Error"
+  /api/v1/auth/permissions:
+    get:
+      summary: List RBAC permissions
+      tags: [Auth]
+      description: Requires `settings:read`.
+      responses:
+        "200":
+          description: Permission catalog listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  permissions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PermissionInfo"
+                required: [permissions]
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/roles:
+    get:
+      summary: List RBAC roles
+      tags: [Auth]
+      description: Requires `settings:read`.
+      responses:
+        "200":
+          description: Roles listed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roles:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RoleInfo"
+                required: [roles]
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      summary: Create custom RBAC role
+      tags: [Auth]
+      description: Requires `settings:write`. Built-in role names cannot be created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleSaveRequest"
+      responses:
+        "201":
+          description: Role created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleInfo"
+        default:
+          $ref: "#/components/responses/Error"
+  /api/v1/auth/roles/{roleName}:
+    parameters:
+      - name: roleName
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Role slug/name
+    get:
+      summary: Get RBAC role
+      tags: [Auth]
+      description: Requires `settings:read`.
+      responses:
+        "200":
+          description: Role found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleInfo"
+        default:
+          $ref: "#/components/responses/Error"
+    patch:
+      summary: Update custom RBAC role
+      tags: [Auth]
+      description: Requires `settings:write`. Built-in roles are immutable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleSaveRequest"
+      responses:
+        "200":
+          description: Role updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleInfo"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      summary: Delete custom RBAC role
+      tags: [Auth]
+      description: Requires `settings:write`. Fails when the role is built-in or assigned to an active user.
+      responses:
+        "204":
+          description: Role deleted
+        default:
+          $ref: "#/components/responses/Error"
   /api/v1/audit:
     get:
       summary: Query audit log
@@ -1458,6 +1566,71 @@ components:
           minimum: 0
           description: Key expires after this many days. Omit to use the configured default; 0 requests no expiration unless a maximum lifetime is enforced.
       required: [name]
+    Permission:
+      type: object
+      properties:
+        resource:
+          type: string
+        action:
+          type: string
+      required: [resource, action]
+    PermissionInfo:
+      type: object
+      properties:
+        id:
+          type: string
+          example: pools:read
+        resource:
+          type: string
+          example: pools
+        action:
+          type: string
+          example: read
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+      required: [id, resource, action, name, description, category]
+    RoleInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          example: network-operator
+        description:
+          type: string
+        is_builtin:
+          type: boolean
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Permission"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required: [id, name, is_builtin, permissions]
+    RoleSaveRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Required for creates; ignored on updates.
+          example: network-operator
+        description:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+            example: pools:read
+      required: [description, permissions]
     SecuritySettings:
       type: object
       properties:
