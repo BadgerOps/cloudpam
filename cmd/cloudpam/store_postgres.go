@@ -29,8 +29,8 @@ func selectStore(logger observability.Logger) storage.Store {
 	url := databaseURL()
 	st, err := pgstore.New(url)
 	if err != nil {
-		logger.Error("postgres init failed; falling back to memory store", "error", err)
-		return storage.NewMemoryStore()
+		logger.Error("postgres init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using postgres store")
 	return st
@@ -44,8 +44,8 @@ func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
 	url := databaseURL()
 	al, err := audit.NewPostgresAuditLogger(url)
 	if err != nil {
-		logger.Error("postgres audit logger init failed; falling back to memory", "error", err)
-		return audit.NewMemoryAuditLogger()
+		logger.Error("postgres audit logger init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using postgres audit logger")
 	return al
@@ -59,8 +59,8 @@ func selectKeyStore(logger observability.Logger) auth.KeyStore {
 	url := databaseURL()
 	ks, err := auth.NewPostgresKeyStore(url)
 	if err != nil {
-		logger.Error("postgres key store init failed; falling back to memory", "error", err)
-		return auth.NewMemoryKeyStore()
+		logger.Error("postgres key store init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using postgres key store")
 	return ks
@@ -74,8 +74,8 @@ func selectUserStore(logger observability.Logger) auth.UserStore {
 	url := databaseURL()
 	us, err := auth.NewPostgresUserStore(url)
 	if err != nil {
-		logger.Error("postgres user store init failed; falling back to memory", "error", err)
-		return auth.NewMemoryUserStore()
+		logger.Error("postgres user store init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using postgres user store")
 	return us
@@ -89,8 +89,8 @@ func selectRoleStore(logger observability.Logger, userStore auth.UserStore) auth
 	url := databaseURL()
 	rs, err := auth.NewPostgresRoleStore(url, userStore)
 	if err != nil {
-		logger.Error("postgres role store init failed; falling back to memory", "error", err)
-		return auth.NewMemoryRoleStore(userStore)
+		logger.Error("postgres role store init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using postgres role store")
 	return rs
@@ -104,8 +104,8 @@ func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	url := databaseURL()
 	ss, err := auth.NewPostgresSessionStore(url)
 	if err != nil {
-		logger.Error("postgres session store init failed; falling back to memory", "error", err)
-		return auth.NewMemorySessionStore()
+		logger.Error("postgres session store init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using postgres session store")
 	return ss
