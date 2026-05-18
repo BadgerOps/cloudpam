@@ -42,10 +42,9 @@ func (a *AIPlanningServer) RegisterProtectedAIPlanningRoutes(dualMW Middleware, 
 
 	a.srv.mux.Handle("/api/v1/ai/chat", dualMW(readMW(http.HandlerFunc(a.handleChat))))
 	a.srv.mux.Handle("/api/v1/ai/sessions", dualMW(readMW(http.HandlerFunc(a.handleSessions))))
-	// sessions/ handles GET, DELETE, and apply-plan (which needs create)
+	a.srv.mux.Handle("POST /api/v1/ai/sessions/{id}/apply-plan", dualMW(createMW(http.HandlerFunc(a.handleSessionByID))))
+	// sessions/ handles GET and DELETE for individual planning sessions.
 	a.srv.mux.Handle("/api/v1/ai/sessions/", dualMW(updateMW(http.HandlerFunc(a.handleSessionByID))))
-	// Override apply-plan to require pools:create
-	_ = createMW // used implicitly through handleSessionByID routing
 }
 
 // handleChat streams an SSE response for a chat message.
