@@ -75,8 +75,8 @@ The project uses [Just](https://github.com/casey/just) as its command runner. In
 
 ### Development
 ```bash
-just dev              # Run server on :8080 (in-memory store)
-go run ./cmd/cloudpam # Direct Go command (alternative)
+just dev                         # Run server on :8080 (in-memory store)
+DEV_MODE=1 go run ./cmd/cloudpam # Direct Go command (alternative)
 ```
 
 ### Frontend Development

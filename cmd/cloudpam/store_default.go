@@ -17,38 +17,58 @@ func selectStore(logger observability.Logger) storage.Store {
 	if logger == nil {
 		logger = observability.NewLogger(observability.DefaultConfig())
 	}
+	requireMemoryMode(logger)
 	if os.Getenv("SQLITE_DSN") != "" {
-		logger.Warn("SQLITE_DSN set but binary not built with -tags sqlite; using in-memory store")
+		logger.Error("SQLITE_DSN set but binary not built with -tags sqlite")
+		os.Exit(1)
 	}
 	if os.Getenv("DATABASE_URL") != "" {
-		logger.Warn("DATABASE_URL set but binary not built with -tags postgres; using in-memory store")
+		logger.Error("DATABASE_URL set but binary not built with -tags postgres")
+		os.Exit(1)
 	}
+	logger.Warn("using dev in-memory store")
 	return storage.NewMemoryStore()
 }
 
 // selectAuditLogger returns an in-memory audit logger when built without 'sqlite' tag.
 func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
+	requireMemoryMode(logger)
 	return audit.NewMemoryAuditLogger()
 }
 
 // selectKeyStore returns an in-memory key store when built without 'sqlite' tag.
 func selectKeyStore(logger observability.Logger) auth.KeyStore {
+	requireMemoryMode(logger)
 	return auth.NewMemoryKeyStore()
 }
 
 // selectUserStore returns an in-memory user store.
-func selectUserStore(_ observability.Logger) auth.UserStore {
+func selectUserStore(logger observability.Logger) auth.UserStore {
+	requireMemoryMode(logger)
 	return auth.NewMemoryUserStore()
 }
 
 // selectRoleStore returns an in-memory role store.
-func selectRoleStore(_ observability.Logger, userStore auth.UserStore) auth.RoleStore {
+func selectRoleStore(logger observability.Logger, userStore auth.UserStore) auth.RoleStore {
+	requireMemoryMode(logger)
 	return auth.NewMemoryRoleStore(userStore)
 }
 
 // selectSessionStore returns an in-memory session store.
-func selectSessionStore(_ observability.Logger) auth.SessionStore {
+func selectSessionStore(logger observability.Logger) auth.SessionStore {
+	requireMemoryMode(logger)
 	return auth.NewMemorySessionStore()
+}
+
+func requireMemoryMode(logger observability.Logger) {
+	if os.Getenv("DEV_MODE") == "1" || os.Getenv("CLOUDPAM_DEV_MODE") == "1" || os.Getenv("CLOUDPAM_STORAGE") == "memory" {
+		return
+	}
+	if logger == nil {
+		logger = observability.NewLogger(observability.DefaultConfig())
+	}
+	logger.Error("in-memory storage requires explicit dev opt-in", "required_env", "DEV_MODE=1")
+	os.Exit(1)
 }
 
 // selectDiscoveryStore returns an in-memory discovery store.

@@ -11,7 +11,7 @@
 - `scripts/` and `photos/`: Playwright screenshot tooling and outputs (LFS‑tracked).
 
 ## Build, Test, and Development Commands
-- `make dev` or `just dev`: run server on `:8080` (in‑memory store).
+- `make dev` or `just dev`: run server on `:8080` with `DEV_MODE=1` (in‑memory store).
 - `make build` or `just build`: build `cloudpam` binary.
 - `make sqlite-build` / `make sqlite-run`: build with `-tags sqlite` and run with `SQLITE_DSN` (e.g., `file:cloudpam.db?cache=shared&_fk=1`).
 - `make test` / `make test-race`: run tests (optionally with `-race`).
@@ -41,7 +41,7 @@ Examples:
 
 ## Security & Configuration Tips
 - Env: `ADDR` or `PORT` (listen), `SQLITE_DSN` (SQLite DSN), `APP_VERSION` (migration stamp).
-- Default store is in‑memory unless built with `-tags sqlite`. Migrations apply automatically on startup in SQLite builds.
+- In‑memory storage requires explicit dev opt-in (`DEV_MODE=1`) unless built with `-tags sqlite` or `-tags postgres`. Migrations apply automatically on startup in SQLite builds.
 
 ## Documentation
 - Start with `README.md`, `docs/PROJECT_PLAN.md`, and `docs/CHANGELOG.md` for roadmap and changes.

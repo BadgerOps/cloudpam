@@ -37,8 +37,8 @@ cd cloudpam
 # Run with in-memory store (no dependencies needed)
 just dev
 
-# Or run directly
-go run ./cmd/cloudpam
+# Or run directly with explicit dev-mode memory storage
+DEV_MODE=1 go run ./cmd/cloudpam
 
 # Access the UI
 open http://localhost:8080
