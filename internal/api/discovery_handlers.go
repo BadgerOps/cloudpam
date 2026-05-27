@@ -605,6 +605,18 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 	resp := domain.BulkIngestResponse{}
 	syncTime := time.Now().UTC()
 
+	if req.AgentID != "" {
+		agentID, err := uuid.Parse(req.AgentID)
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid agent_id", "")
+			return
+		}
+		if err := d.refreshAgentLastSeen(r.Context(), agentID, syncTime); err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "update agent heartbeat failed", err.Error())
+			return
+		}
+	}
+
 	for _, orgAcct := range req.Accounts {
 		if orgAcct.AWSAccountID == "" {
 			resp.Errors = append(resp.Errors, "skipped account with empty aws_account_id")
@@ -661,4 +673,17 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (d *DiscoveryServer) refreshAgentLastSeen(ctx context.Context, agentID uuid.UUID, seenAt time.Time) error {
+	agent, err := d.store.GetAgent(ctx, agentID)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	agent.LastSeenAt = seenAt
+	return d.store.UpsertAgent(ctx, *agent)
 }

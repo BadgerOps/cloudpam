@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-05-27
+
+### Fixed
+- Organization-mode discovery agents now refresh their registered health status during org ingest instead of going stale while syncs continue to run.
+
 ## [0.13.1] - 2026-05-27
 
 ### Fixed
@@ -817,7 +822,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
-[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/BadgerOps/cloudpam/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/BadgerOps/cloudpam/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/BadgerOps/cloudpam/compare/v0.12.0...v0.13.0
 [0.8.1]: https://github.com/BadgerOps/cloudpam/compare/v0.8.0...v0.8.1
