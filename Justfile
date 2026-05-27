@@ -10,11 +10,13 @@ openapi_html_dir := justfile_directory() + "/docs/openapi-html"
 default:
     @just --list
 
+alias run := dev
+
 ensure-cache:
     mkdir -p "{{cache}}"
 
 dev: ensure-cache
-    {{go-env}} go run ./cmd/cloudpam
+    DEV_MODE=1 {{go-env}} go run ./cmd/cloudpam
 
 build: ensure-cache
     {{go-env}} go build -o cloudpam ./cmd/cloudpam
@@ -112,7 +114,7 @@ build-full: ui-build build
 # Run Go backend and Vite dev server concurrently (Ctrl-C stops both)
 dev-all: ensure-cache ui-install
     trap 'kill 0' EXIT; \
-    {{go-env}} go run ./cmd/cloudpam & \
+    DEV_MODE=1 {{go-env}} go run ./cmd/cloudpam & \
     cd ui && npm run dev & \
     wait
 

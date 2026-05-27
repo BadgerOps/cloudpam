@@ -3,7 +3,7 @@
 # If `just` is installed, Make will delegate targets to it.
 # Otherwise, Make runs the fallback recipes defined below.
 
-FALLBACK_TARGETS := dev build sqlite-build sqlite-run fmt lint test test-race cover tidy
+FALLBACK_TARGETS := dev run build sqlite-build sqlite-run fmt lint test test-race cover tidy
 
 .PHONY: help $(FALLBACK_TARGETS) cover-threshold
 
@@ -28,7 +28,9 @@ cover-threshold:
 	fi
 
 .fallback-dev:
-	go run ./cmd/cloudpam
+	DEV_MODE=1 go run ./cmd/cloudpam
+
+.fallback-run: .fallback-dev
 
 .fallback-build:
 	go build -o cloudpam ./cmd/cloudpam

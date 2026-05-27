@@ -42,7 +42,8 @@ func selectStore(logger observability.Logger) storage.Store {
 		url := databaseURL()
 		st, err := pgstore.New(url)
 		if err != nil {
-			logger.Error("postgres init failed; falling back to sqlite", "error", err)
+			logger.Error("postgres init failed", "error", err)
+			os.Exit(1)
 		} else {
 			logger.Info("using postgres store")
 			return st
@@ -51,8 +52,8 @@ func selectStore(logger observability.Logger) storage.Store {
 	dsn := sqliteDSN()
 	st, err := sqlitestore.New(dsn)
 	if err != nil {
-		logger.Error("sqlite init failed; falling back to memory store", "error", err)
-		return storage.NewMemoryStore()
+		logger.Error("sqlite init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using sqlite store", "dsn", dsn)
 	return st
@@ -65,7 +66,8 @@ func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
 	if usePostgres() {
 		al, err := audit.NewPostgresAuditLogger(databaseURL())
 		if err != nil {
-			logger.Error("postgres audit logger init failed; falling back to sqlite", "error", err)
+			logger.Error("postgres audit logger init failed", "error", err)
+			os.Exit(1)
 		} else {
 			logger.Info("using postgres audit logger")
 			return al
@@ -73,8 +75,8 @@ func selectAuditLogger(logger observability.Logger) audit.AuditLogger {
 	}
 	al, err := audit.NewSQLiteAuditLogger(sqliteDSN())
 	if err != nil {
-		logger.Error("sqlite audit logger init failed; falling back to memory", "error", err)
-		return audit.NewMemoryAuditLogger()
+		logger.Error("sqlite audit logger init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using sqlite audit logger")
 	return al
@@ -87,7 +89,8 @@ func selectKeyStore(logger observability.Logger) auth.KeyStore {
 	if usePostgres() {
 		ks, err := auth.NewPostgresKeyStore(databaseURL())
 		if err != nil {
-			logger.Error("postgres key store init failed; falling back to sqlite", "error", err)
+			logger.Error("postgres key store init failed", "error", err)
+			os.Exit(1)
 		} else {
 			logger.Info("using postgres key store")
 			return ks
@@ -95,8 +98,8 @@ func selectKeyStore(logger observability.Logger) auth.KeyStore {
 	}
 	ks, err := auth.NewSQLiteKeyStore(sqliteDSN())
 	if err != nil {
-		logger.Error("sqlite key store init failed; falling back to memory", "error", err)
-		return auth.NewMemoryKeyStore()
+		logger.Error("sqlite key store init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using sqlite key store")
 	return ks
@@ -109,7 +112,8 @@ func selectUserStore(logger observability.Logger) auth.UserStore {
 	if usePostgres() {
 		us, err := auth.NewPostgresUserStore(databaseURL())
 		if err != nil {
-			logger.Error("postgres user store init failed; falling back to sqlite", "error", err)
+			logger.Error("postgres user store init failed", "error", err)
+			os.Exit(1)
 		} else {
 			logger.Info("using postgres user store")
 			return us
@@ -117,8 +121,8 @@ func selectUserStore(logger observability.Logger) auth.UserStore {
 	}
 	us, err := auth.NewSQLiteUserStore(sqliteDSN())
 	if err != nil {
-		logger.Error("sqlite user store init failed; falling back to memory", "error", err)
-		return auth.NewMemoryUserStore()
+		logger.Error("sqlite user store init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using sqlite user store")
 	return us
@@ -131,7 +135,8 @@ func selectRoleStore(logger observability.Logger, userStore auth.UserStore) auth
 	if usePostgres() {
 		rs, err := auth.NewPostgresRoleStore(databaseURL(), userStore)
 		if err != nil {
-			logger.Error("postgres role store init failed; falling back to sqlite", "error", err)
+			logger.Error("postgres role store init failed", "error", err)
+			os.Exit(1)
 		} else {
 			logger.Info("using postgres role store")
 			return rs
@@ -139,8 +144,8 @@ func selectRoleStore(logger observability.Logger, userStore auth.UserStore) auth
 	}
 	rs, err := auth.NewSQLiteRoleStore(sqliteDSN(), userStore)
 	if err != nil {
-		logger.Error("sqlite role store init failed; falling back to memory", "error", err)
-		return auth.NewMemoryRoleStore(userStore)
+		logger.Error("sqlite role store init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using sqlite role store")
 	return rs
@@ -153,7 +158,8 @@ func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	if usePostgres() {
 		ss, err := auth.NewPostgresSessionStore(databaseURL())
 		if err != nil {
-			logger.Error("postgres session store init failed; falling back to sqlite", "error", err)
+			logger.Error("postgres session store init failed", "error", err)
+			os.Exit(1)
 		} else {
 			logger.Info("using postgres session store")
 			return ss
@@ -161,8 +167,8 @@ func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	}
 	ss, err := auth.NewSQLiteSessionStore(sqliteDSN())
 	if err != nil {
-		logger.Error("sqlite session store init failed; falling back to memory", "error", err)
-		return auth.NewMemorySessionStore()
+		logger.Error("sqlite session store init failed", "error", err)
+		os.Exit(1)
 	}
 	logger.Info("using sqlite session store")
 	return ss
