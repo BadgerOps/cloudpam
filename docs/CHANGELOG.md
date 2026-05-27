@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-05-27
+
+### Fixed
+- AWS discovery now fails the sync when any configured region or required EC2 resource type cannot be scanned, preventing partial inventories from staling still-active resources.
+
 ## [0.13.0] - 2026-05-08
 
 ### Added
@@ -812,12 +817,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
+[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/BadgerOps/cloudpam/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/BadgerOps/cloudpam/compare/v0.12.0...v0.13.0
 [0.8.1]: https://github.com/BadgerOps/cloudpam/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/BadgerOps/cloudpam/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/BadgerOps/cloudpam/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/BadgerOps/cloudpam/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/BadgerOps/cloudpam/compare/v0.5.0...v0.6.0
-[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.8.1...HEAD
 [0.3.2]: https://github.com/BadgerOps/cloudpam/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/BadgerOps/cloudpam/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/BadgerOps/cloudpam/releases/tag/v0.3.0

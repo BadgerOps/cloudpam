@@ -3,7 +3,9 @@ package aws
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -18,6 +20,14 @@ import (
 // Collector discovers AWS VPCs, subnets, and Elastic IPs.
 type Collector struct {
 	credsProvider aws.CredentialsProvider
+	loadConfig    func(context.Context, string, aws.CredentialsProvider) (aws.Config, error)
+	newEC2Client  func(aws.Config) ec2API
+}
+
+type ec2API interface {
+	DescribeVpcs(context.Context, *ec2.DescribeVpcsInput, ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error)
+	DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error)
+	DescribeAddresses(context.Context, *ec2.DescribeAddressesInput, ...func(*ec2.Options)) (*ec2.DescribeAddressesOutput, error)
 }
 
 // New creates a new AWS collector using the default credential chain.
@@ -45,18 +55,18 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 	}
 
 	var allResources []domain.DiscoveredResource
+	var errs []error
 	now := time.Now().UTC()
 
 	// Discover in each region
 	for _, region := range regions {
 		cfg, err := c.loadConfigForRegion(ctx, region)
 		if err != nil {
-			// Log error but continue with other regions
-			fmt.Printf("failed to load config for region %s: %v\n", region, err)
+			errs = append(errs, fmt.Errorf("load config for region %s: %w", displayRegion(region), err))
 			continue
 		}
 
-		client := ec2.NewFromConfig(cfg)
+		client := c.ec2Client(cfg)
 
 		// Get actual region from config (in case it was empty)
 		actualRegion := cfg.Region
@@ -67,7 +77,7 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 		// Discover VPCs
 		vpcs, err := c.discoverVPCs(ctx, client, account, actualRegion, now)
 		if err != nil {
-			fmt.Printf("failed to discover VPCs in region %s: %v\n", actualRegion, err)
+			errs = append(errs, fmt.Errorf("discover VPCs in region %s: %w", displayRegion(actualRegion), err))
 			continue
 		}
 		allResources = append(allResources, vpcs...)
@@ -75,7 +85,7 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 		// Discover subnets
 		subnets, err := c.discoverSubnets(ctx, client, account, actualRegion, now)
 		if err != nil {
-			fmt.Printf("failed to discover subnets in region %s: %v\n", actualRegion, err)
+			errs = append(errs, fmt.Errorf("discover subnets in region %s: %w", displayRegion(actualRegion), err))
 			continue
 		}
 		allResources = append(allResources, subnets...)
@@ -83,16 +93,28 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 		// Discover Elastic IPs
 		eips, err := c.discoverElasticIPs(ctx, client, account, actualRegion, now)
 		if err != nil {
-			fmt.Printf("failed to discover Elastic IPs in region %s: %v\n", actualRegion, err)
+			errs = append(errs, fmt.Errorf("discover Elastic IPs in region %s: %w", displayRegion(actualRegion), err))
 			continue
 		}
 		allResources = append(allResources, eips...)
+	}
+
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("incomplete AWS discovery: %w", errors.Join(errs...))
 	}
 
 	return allResources, nil
 }
 
 func (c *Collector) loadConfigForRegion(ctx context.Context, region string) (aws.Config, error) {
+	if c.loadConfig != nil {
+		return c.loadConfig(ctx, region, c.credsProvider)
+	}
+
+	return loadDefaultConfigForRegion(ctx, region, c.credsProvider)
+}
+
+func loadDefaultConfigForRegion(ctx context.Context, region string, credsProvider aws.CredentialsProvider) (aws.Config, error) {
 	var opts []func(*config.LoadOptions) error
 
 	// Set region if provided
@@ -101,14 +123,28 @@ func (c *Collector) loadConfigForRegion(ctx context.Context, region string) (aws
 	}
 
 	// Use injected credentials if available (cross-account AssumeRole)
-	if c.credsProvider != nil {
-		opts = append(opts, config.WithCredentialsProvider(c.credsProvider))
+	if credsProvider != nil {
+		opts = append(opts, config.WithCredentialsProvider(credsProvider))
 	}
 
 	return config.LoadDefaultConfig(ctx, opts...)
 }
 
-func (c *Collector) discoverVPCs(ctx context.Context, client *ec2.Client, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
+func (c *Collector) ec2Client(cfg aws.Config) ec2API {
+	if c.newEC2Client != nil {
+		return c.newEC2Client(cfg)
+	}
+	return ec2.NewFromConfig(cfg)
+}
+
+func displayRegion(region string) string {
+	if strings.TrimSpace(region) == "" {
+		return "default"
+	}
+	return region
+}
+
+func (c *Collector) discoverVPCs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
 	out, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
 	if err != nil {
 		return nil, err
@@ -142,7 +178,7 @@ func (c *Collector) discoverVPCs(ctx context.Context, client *ec2.Client, accoun
 	return resources, nil
 }
 
-func (c *Collector) discoverSubnets(ctx context.Context, client *ec2.Client, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
+func (c *Collector) discoverSubnets(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
 	out, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{})
 	if err != nil {
 		return nil, err
@@ -180,7 +216,7 @@ func (c *Collector) discoverSubnets(ctx context.Context, client *ec2.Client, acc
 	return resources, nil
 }
 
-func (c *Collector) discoverElasticIPs(ctx context.Context, client *ec2.Client, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
+func (c *Collector) discoverElasticIPs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
 	out, err := client.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
 	if err != nil {
 		return nil, err
