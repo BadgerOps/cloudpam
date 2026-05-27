@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-05-27
+
+### Fixed
+- Organization-mode agents now send regular heartbeats so they appear live in the Agents UI while continuing to push bulk organization discovery data.
+- Agent Docker images now start without a required config-file argument, allowing env/bootstrap-token launches to work without mounting `/etc/cloudpam/agent.yaml`.
+- Generated agent launch examples now use the agent's real YAML and environment keys, including `CLOUDPAM_ACCOUNT_ID`, `CLOUDPAM_AWS_REGIONS`, `AWS_REGION`, and `AWS_DEFAULT_REGION`.
+- Manual discovery now queues a connected healthy agent to scan immediately before falling back to server-local discovery when no agent is available.
+- Agent ingest can complete server-requested sync jobs so the Sync history tracks remote scans initiated from the UI.
+
 ## [0.13.3] - 2026-05-27
 
 ### Fixed
@@ -827,7 +836,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
-[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.13.3...HEAD
+[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.13.4...HEAD
+[0.13.4]: https://github.com/BadgerOps/cloudpam/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/BadgerOps/cloudpam/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/BadgerOps/cloudpam/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/BadgerOps/cloudpam/compare/v0.13.0...v0.13.1

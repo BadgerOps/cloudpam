@@ -149,19 +149,19 @@ const (
 
 // DiscoveryAgent represents a remote discovery agent.
 type DiscoveryAgent struct {
-	ID                uuid.UUID           `json:"id"`
-	Name              string              `json:"name"`
-	AccountID         int64               `json:"account_id"`
-	APIKeyID          string              `json:"api_key_id"`
-	Status            AgentStatus         `json:"status"` // computed at read time (healthy/stale/offline)
-	ApprovalStatus    AgentApprovalStatus `json:"approval_status"`
-	Version           string              `json:"version"`
-	Hostname          string              `json:"hostname"`
-	LastSeenAt        time.Time           `json:"last_seen_at"`
-	RegisteredAt      *time.Time          `json:"registered_at,omitempty"`
-	ApprovedAt        *time.Time          `json:"approved_at,omitempty"`
-	ApprovedBy        *string             `json:"approved_by,omitempty"`
-	CreatedAt         time.Time           `json:"created_at"`
+	ID             uuid.UUID           `json:"id"`
+	Name           string              `json:"name"`
+	AccountID      int64               `json:"account_id"`
+	APIKeyID       string              `json:"api_key_id"`
+	Status         AgentStatus         `json:"status"` // computed at read time (healthy/stale/offline)
+	ApprovalStatus AgentApprovalStatus `json:"approval_status"`
+	Version        string              `json:"version"`
+	Hostname       string              `json:"hostname"`
+	LastSeenAt     time.Time           `json:"last_seen_at"`
+	RegisteredAt   *time.Time          `json:"registered_at,omitempty"`
+	ApprovedAt     *time.Time          `json:"approved_at,omitempty"`
+	ApprovedBy     *string             `json:"approved_by,omitempty"`
+	CreatedAt      time.Time           `json:"created_at"`
 }
 
 // IngestRequest is the request body for the /api/v1/discovery/ingest endpoint.
@@ -169,6 +169,7 @@ type IngestRequest struct {
 	AccountID int64                `json:"account_id"`
 	Resources []DiscoveredResource `json:"resources"`
 	AgentID   *uuid.UUID           `json:"agent_id,omitempty"`
+	SyncJobID *uuid.UUID           `json:"sync_job_id,omitempty"`
 }
 
 // IngestResponse is the response body for the /api/v1/discovery/ingest endpoint.
@@ -187,6 +188,14 @@ type AgentHeartbeatRequest struct {
 	AccountID int64     `json:"account_id"`
 	Version   string    `json:"version"`
 	Hostname  string    `json:"hostname"`
+}
+
+// AgentHeartbeatResponse is returned to agents after each heartbeat.
+// A sync job means the server has requested an immediate agent-side scan.
+type AgentHeartbeatResponse struct {
+	Status    string     `json:"status"`
+	SyncJobID *uuid.UUID `json:"sync_job_id,omitempty"`
+	AccountID int64      `json:"account_id,omitempty"`
 }
 
 // DiscoveryAgentsResponse is the response for listing discovery agents.
@@ -248,8 +257,9 @@ type OrgAccountIngest struct {
 
 // BulkIngestRequest is the request body for the /api/v1/discovery/ingest/org endpoint.
 type BulkIngestRequest struct {
-	Accounts []OrgAccountIngest `json:"accounts"`
-	AgentID  string             `json:"agent_id,omitempty"`
+	Accounts  []OrgAccountIngest `json:"accounts"`
+	AgentID   string             `json:"agent_id,omitempty"`
+	SyncJobID *uuid.UUID         `json:"sync_job_id,omitempty"`
 }
 
 // BulkIngestResponse is the response body for the /api/v1/discovery/ingest/org endpoint.
@@ -259,4 +269,3 @@ type BulkIngestResponse struct {
 	TotalResources    int      `json:"total_resources"`
 	Errors            []string `json:"errors,omitempty"`
 }
-

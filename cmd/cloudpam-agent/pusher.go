@@ -88,11 +88,12 @@ func (p *Pusher) Register(ctx context.Context, name string, accountID int64, ver
 }
 
 // PushResources sends discovered resources to the server with retry logic.
-func (p *Pusher) PushResources(ctx context.Context, accountID int64, resources []domain.DiscoveredResource, maxRetries int, backoff time.Duration) error {
+func (p *Pusher) PushResources(ctx context.Context, accountID int64, resources []domain.DiscoveredResource, syncJobID *uuid.UUID, maxRetries int, backoff time.Duration) error {
 	req := domain.IngestRequest{
 		AccountID: accountID,
 		Resources: resources,
 		AgentID:   &p.agentID,
+		SyncJobID: syncJobID,
 	}
 
 	body, err := json.Marshal(req)
@@ -247,7 +248,7 @@ func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequ
 }
 
 // Heartbeat sends a heartbeat to the server.
-func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, version, hostname string) error {
+func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, version, hostname string) (*domain.AgentHeartbeatResponse, error) {
 	req := domain.AgentHeartbeatRequest{
 		AgentID:   p.agentID,
 		Name:      name,
@@ -258,13 +259,13 @@ func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, ve
 
 	body, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("marshal heartbeat request: %w", err)
+		return nil, fmt.Errorf("marshal heartbeat request: %w", err)
 	}
 
 	url := p.serverURL + "/api/v1/discovery/agents/heartbeat"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -272,13 +273,17 @@ func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, ve
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("http request: %w", err)
+		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var heartbeatResp domain.AgentHeartbeatResponse
+		if err := json.NewDecoder(resp.Body).Decode(&heartbeatResp); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
 		p.logger.Debug("heartbeat sent", "agent_id", p.agentID)
-		return nil
+		return &heartbeatResp, nil
 	}
 
 	var errBody struct {
@@ -286,5 +291,5 @@ func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, ve
 		Detail string `json:"detail"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&errBody)
-	return fmt.Errorf("heartbeat failed (status %d): %s - %s", resp.StatusCode, errBody.Error, errBody.Detail)
+	return nil, fmt.Errorf("heartbeat failed (status %d): %s - %s", resp.StatusCode, errBody.Error, errBody.Detail)
 }

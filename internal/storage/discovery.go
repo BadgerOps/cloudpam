@@ -44,6 +44,10 @@ type DiscoveryStore interface {
 	// ListSyncJobs returns recent sync jobs for an account, ordered by created_at desc.
 	ListSyncJobs(ctx context.Context, accountID int64, limit int) ([]domain.SyncJob, error)
 
+	// ClaimPendingAgentSync returns the oldest pending sync job assigned to an agent
+	// and marks it running. Returns ErrNotFound when no request is pending.
+	ClaimPendingAgentSync(ctx context.Context, agentID uuid.UUID) (*domain.SyncJob, error)
+
 	// UpsertAgent inserts or updates a discovery agent (upserts by agent ID).
 	UpsertAgent(ctx context.Context, agent domain.DiscoveryAgent) error
 
@@ -52,5 +56,4 @@ type DiscoveryStore interface {
 
 	// ListAgents returns all discovery agents, optionally filtered by account ID.
 	ListAgents(ctx context.Context, accountID int64) ([]domain.DiscoveryAgent, error)
-
 }

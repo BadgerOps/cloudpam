@@ -105,16 +105,17 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 	defer heartbeatTicker.Stop()
 
 	// Choose sync function based on mode
-	syncFn := func() { runSync(ctx, cfg, collector, pusher, logger) }
+	syncFn := func(syncJobID *uuid.UUID) { runSync(ctx, cfg, collector, pusher, syncJobID, logger) }
 	if cfg.AWSOrg.Enabled {
 		logger.Info("org mode enabled", "role_name", cfg.AWSOrg.RoleName, "regions", cfg.AWSOrg.Regions)
-		syncFn = func() { runOrgSync(ctx, cfg, pusher, logger) }
+		syncFn = func(syncJobID *uuid.UUID) { runOrgSync(ctx, cfg, pusher, syncJobID, logger) }
 	}
 
-	// Initial sync and heartbeat
-	syncFn()
-	if !cfg.AWSOrg.Enabled {
-		_ = pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
+	// Initial sync and heartbeat. Org-mode agents still need to appear as live
+	// agents in the server UI even though discovery itself is pushed in bulk.
+	syncFn(nil)
+	if cfg.AccountID > 0 {
+		_, _ = pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
 	}
 
 	for {
@@ -124,19 +125,25 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 			return nil
 
 		case <-syncTicker.C:
-			syncFn()
+			syncFn(nil)
 
 		case <-heartbeatTicker.C:
-			if !cfg.AWSOrg.Enabled {
-				if err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname); err != nil {
+			if cfg.AccountID > 0 {
+				resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
+				if err != nil {
 					logger.Error("heartbeat failed", "error", err)
+					continue
+				}
+				if resp != nil && resp.SyncJobID != nil {
+					logger.Info("received server-requested sync", "sync_job_id", resp.SyncJobID, "account_id", resp.AccountID)
+					syncFn(resp.SyncJobID)
 				}
 			}
 		}
 	}
 }
 
-func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, logger *slog.Logger) {
+func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
 	logger.Info("starting org discovery sync")
 
 	// Enumerate all active accounts in the organization
@@ -207,7 +214,8 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, logger *slog.L
 	}
 
 	req := domain.BulkIngestRequest{
-		Accounts: ingestAccounts,
+		Accounts:  ingestAccounts,
+		SyncJobID: syncJobID,
 	}
 
 	if err := pusher.PushOrgResources(ctx, req, cfg.MaxRetries, cfg.RetryBackoff); err != nil {
@@ -218,7 +226,7 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, logger *slog.L
 	logger.Info("org sync completed", "accounts", len(ingestAccounts))
 }
 
-func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pusher *Pusher, logger *slog.Logger) {
+func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
 	logger.Info("starting discovery sync", "account_id", cfg.AccountID)
 
 	// Create mock account with AWS regions
@@ -238,7 +246,7 @@ func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pu
 	logger.Info("discovered resources", "count", len(resources))
 
 	// Push to server with retry
-	if err := pusher.PushResources(ctx, account.ID, resources, cfg.MaxRetries, cfg.RetryBackoff); err != nil {
+	if err := pusher.PushResources(ctx, account.ID, resources, syncJobID, cfg.MaxRetries, cfg.RetryBackoff); err != nil {
 		logger.Error("push resources failed", "error", err)
 		return
 	}
