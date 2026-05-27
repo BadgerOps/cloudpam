@@ -69,11 +69,7 @@ func (d *DriftDetector) Detect(ctx context.Context, req domain.RunDriftDetection
 			return nil, fmt.Errorf("clear open drifts for account %d: %w", acct.ID, err)
 		}
 
-		resources, _, err := d.discStore.ListDiscoveredResources(ctx, acct.ID, domain.DiscoveryFilters{
-			Status:   string(domain.DiscoveryStatusActive),
-			Page:     1,
-			PageSize: 10000,
-		})
+		resources, err := d.listActiveResources(ctx, acct.ID)
 		if err != nil {
 			return nil, fmt.Errorf("list resources for account %d: %w", acct.ID, err)
 		}
@@ -192,6 +188,25 @@ func (d *DriftDetector) Detect(ctx context.Context, req domain.RunDriftDetection
 		Total:   len(allItems),
 		Summary: summary,
 	}, nil
+}
+
+func (d *DriftDetector) listActiveResources(ctx context.Context, accountID int64) ([]domain.DiscoveredResource, error) {
+	const pageSize = 1000
+	var all []domain.DiscoveredResource
+	for page := 1; ; page++ {
+		resources, total, err := d.discStore.ListDiscoveredResources(ctx, accountID, domain.DiscoveryFilters{
+			Status:   string(domain.DiscoveryStatusActive),
+			Page:     page,
+			PageSize: pageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, resources...)
+		if len(resources) == 0 || len(all) >= total {
+			return all, nil
+		}
+	}
 }
 
 func buildSummary(items []domain.DriftItem, accountsScanned, resourcesScanned, poolsScanned int) domain.DriftSummary {

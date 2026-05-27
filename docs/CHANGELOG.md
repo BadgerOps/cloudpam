@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-05-27
+
+### Fixed
+- Discovery sync jobs and agent ingests now fail when resource processing fails, report create/update counts against the full account inventory, and include all active resources during drift detection pagination.
+
 ## [0.13.2] - 2026-05-27
 
 ### Fixed
@@ -822,7 +827,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
-[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.13.3...HEAD
+[0.13.3]: https://github.com/BadgerOps/cloudpam/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/BadgerOps/cloudpam/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/BadgerOps/cloudpam/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/BadgerOps/cloudpam/compare/v0.12.0...v0.13.0
