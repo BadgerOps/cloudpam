@@ -171,6 +171,10 @@ func (p *Pusher) PushResources(ctx context.Context, accountID int64, resources [
 
 // PushOrgResources sends bulk org ingest request to the server with retry logic.
 func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequest, maxRetries int, backoff time.Duration) error {
+	if req.AgentID == "" {
+		req.AgentID = p.agentID.String()
+	}
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal org ingest request: %w", err)
