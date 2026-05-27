@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-05-27
+
+### Fixed
+- Plan Discovery now recognizes newly connected agents by their provisioned API key ID, so the deployment step leaves the waiting state even when agent names are reused or differ from the provisioning prompt.
+
 ## [0.13.4] - 2026-05-27
 
 ### Fixed
