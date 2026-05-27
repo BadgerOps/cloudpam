@@ -79,15 +79,18 @@ func (s *SyncService) Sync(ctx context.Context, account domain.Account) (*domain
 	created, updated, staleCount, processErr := s.ProcessResources(ctx, account.ID, resources, now)
 
 	completedAt := time.Now().UTC()
-	job.Status = domain.SyncJobStatusCompleted
 	job.CompletedAt = &completedAt
 	job.ResourcesFound = len(resources)
 	job.ResourcesCreated = created
 	job.ResourcesUpdated = updated
 	job.ResourcesDeleted = staleCount
 	if processErr != nil {
+		job.Status = domain.SyncJobStatusFailed
 		job.ErrorMessage = processErr.Error()
+		_ = s.store.UpdateSyncJob(ctx, job)
+		return &job, fmt.Errorf("process resources: %w", processErr)
 	}
+	job.Status = domain.SyncJobStatusCompleted
 	_ = s.store.UpdateSyncJob(ctx, job)
 
 	return &job, nil
@@ -105,7 +108,10 @@ func (s *SyncService) ProcessResources(
 	// Upsert discovered resources
 	for _, res := range resources {
 		// Check if resource already exists
-		existing, _ := s.findByAccountAndResourceID(ctx, accountID, res.ResourceID)
+		existing, findErr := s.findByAccountAndResourceID(ctx, accountID, res.ResourceID)
+		if findErr != nil && err == nil {
+			err = fmt.Errorf("lookup existing resource %q: %w", res.ResourceID, findErr)
+		}
 		if existing != nil {
 			updated++
 		} else {
@@ -130,17 +136,22 @@ func (s *SyncService) ProcessResources(
 
 // findByAccountAndResourceID checks if a resource exists (helper for counting creates vs updates).
 func (s *SyncService) findByAccountAndResourceID(ctx context.Context, accountID int64, resourceID string) (*domain.DiscoveredResource, error) {
-	resources, _, err := s.store.ListDiscoveredResources(ctx, accountID, domain.DiscoveryFilters{
-		Page:     1,
-		PageSize: 1,
-	})
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range resources {
-		if r.ResourceID == resourceID {
-			return &r, nil
+	const pageSize = 1000
+	for page := 1; ; page++ {
+		resources, total, err := s.store.ListDiscoveredResources(ctx, accountID, domain.DiscoveryFilters{
+			Page:     page,
+			PageSize: pageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range resources {
+			if r.ResourceID == resourceID {
+				return &r, nil
+			}
+		}
+		if len(resources) == 0 || page*pageSize >= total {
+			return nil, nil
 		}
 	}
-	return nil, nil
 }

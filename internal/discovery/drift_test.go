@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -222,6 +223,49 @@ func TestDriftDetector_Idempotent(t *testing.T) {
 	items, total, _ := driftStore.ListDriftItems(ctx, domain.DriftFilters{Status: "open"})
 	if total != 1 || len(items) != 1 {
 		t.Fatalf("expected 1 open item in store, got %d", total)
+	}
+}
+
+func TestDriftDetector_PagesThroughAllActiveResources(t *testing.T) {
+	ctx := context.Background()
+	ms := storage.NewMemoryStore()
+	ds := storage.NewMemoryDiscoveryStore(ms)
+	driftStore := storage.NewMemoryDriftStore(ms)
+
+	acct, err := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:666", Name: "Acct6", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	for i := 0; i < 1001; i++ {
+		if err := ds.UpsertDiscoveredResource(ctx, domain.DiscoveredResource{
+			ID:           uuid.New(),
+			AccountID:    acct.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeSubnet,
+			ResourceID:   "subnet-" + strconv.Itoa(i),
+			Name:         "subnet",
+			CIDR:         "10.5.0.0/24",
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now.Add(time.Duration(i) * time.Second),
+			LastSeenAt:   now,
+		}); err != nil {
+			t.Fatalf("upsert resource %d: %v", i, err)
+		}
+	}
+
+	detector := NewDriftDetector(ms, ds, driftStore)
+	resp, err := detector.Detect(ctx, domain.RunDriftDetectionRequest{AccountIDs: []int64{acct.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Summary.ResourcesScanned != 1001 {
+		t.Fatalf("ResourcesScanned = %d, want 1001", resp.Summary.ResourcesScanned)
+	}
+	if resp.Total != 1001 {
+		t.Fatalf("Total drift items = %d, want 1001", resp.Total)
 	}
 }
 

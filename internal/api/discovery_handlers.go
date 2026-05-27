@@ -433,15 +433,19 @@ func (d *DiscoveryServer) handleIngest(w http.ResponseWriter, r *http.Request) {
 	// Update job with results
 	completedAtTime := time.Now().UTC()
 	completedAt := &completedAtTime
-	job.Status = domain.SyncJobStatusCompleted
 	job.CompletedAt = completedAt
 	job.ResourcesFound = len(req.Resources)
 	job.ResourcesCreated = created
 	job.ResourcesUpdated = updated
 	job.ResourcesDeleted = staleCount
 	if processErr != nil {
+		job.Status = domain.SyncJobStatusFailed
 		job.ErrorMessage = processErr.Error()
+		_ = d.store.UpdateSyncJob(r.Context(), job)
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "process resources failed", processErr.Error())
+		return
 	}
+	job.Status = domain.SyncJobStatusCompleted
 	_ = d.store.UpdateSyncJob(r.Context(), job)
 
 	resp := domain.IngestResponse{
