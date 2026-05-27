@@ -30,6 +30,3 @@ COPY --from=builder /build/cloudpam-agent /usr/local/bin/cloudpam-agent
 USER nonroot
 
 ENTRYPOINT ["cloudpam-agent"]
-
-# Default args (can be overridden)
-CMD ["-config", "/etc/cloudpam/agent.yaml"]

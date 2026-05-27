@@ -272,6 +272,24 @@ func (d *DiscoveryServer) triggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if agent := d.selectConnectedAgent(r.Context(), body.AccountID); agent != nil {
+		now := time.Now().UTC()
+		job, err := d.store.CreateSyncJob(r.Context(), domain.SyncJob{
+			ID:        uuid.New(),
+			AccountID: account.ID,
+			Status:    domain.SyncJobStatusPending,
+			Source:    "agent",
+			AgentID:   &agent.ID,
+			CreatedAt: now,
+		})
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "create agent sync job failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+		return
+	}
+
 	job, err := d.syncService.Sync(r.Context(), account)
 	if err != nil {
 		// Job was still created even on failure — return it
@@ -284,6 +302,28 @@ func (d *DiscoveryServer) triggerSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, job)
+}
+
+func (d *DiscoveryServer) selectConnectedAgent(ctx context.Context, accountID int64) *domain.DiscoveryAgent {
+	agents, err := d.store.ListAgents(ctx, 0)
+	if err != nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	var fallback *domain.DiscoveryAgent
+	for i := range agents {
+		agent := agents[i]
+		if computeAgentStatus(agent.LastSeenAt, now) != domain.AgentStatusHealthy {
+			continue
+		}
+		if agent.AccountID == accountID {
+			return &agent
+		}
+		if fallback == nil {
+			fallback = &agent
+		}
+	}
+	return fallback
 }
 
 func (d *DiscoveryServer) listSyncJobs(w http.ResponseWriter, r *http.Request) {
@@ -410,21 +450,35 @@ func (d *DiscoveryServer) handleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create sync job
+	// Create or continue sync job
 	nowTime := time.Now().UTC()
-	job := domain.SyncJob{
-		ID:        uuid.New(),
-		AccountID: account.ID,
-		Status:    domain.SyncJobStatusRunning,
-		Source:    "agent",
-		AgentID:   req.AgentID,
-		StartedAt: &nowTime,
-		CreatedAt: nowTime,
-	}
-	job, err = d.store.CreateSyncJob(r.Context(), job)
-	if err != nil {
-		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "create sync job failed", err.Error())
-		return
+	var job domain.SyncJob
+	if req.SyncJobID != nil {
+		existing, getErr := d.store.GetSyncJob(r.Context(), *req.SyncJobID)
+		if getErr != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "sync job not found", getErr.Error())
+			return
+		}
+		job = *existing
+		job.Status = domain.SyncJobStatusRunning
+		job.Source = "agent"
+		job.AgentID = req.AgentID
+		job.StartedAt = &nowTime
+	} else {
+		job = domain.SyncJob{
+			ID:        uuid.New(),
+			AccountID: account.ID,
+			Status:    domain.SyncJobStatusRunning,
+			Source:    "agent",
+			AgentID:   req.AgentID,
+			StartedAt: &nowTime,
+			CreatedAt: nowTime,
+		}
+		job, err = d.store.CreateSyncJob(r.Context(), job)
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "create sync job failed", err.Error())
+			return
+		}
 	}
 
 	// Process resources using shared logic
@@ -501,7 +555,18 @@ func (d *DiscoveryServer) handleAgentHeartbeat(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	resp := domain.AgentHeartbeatResponse{Status: "ok"}
+	job, err := d.store.ClaimPendingAgentSync(r.Context(), req.AgentID)
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "claim sync job failed", err.Error())
+		return
+	}
+	if job != nil {
+		resp.SyncJobID = &job.ID
+		resp.AccountID = job.AccountID
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleListAgents handles GET /api/v1/discovery/agents
@@ -608,6 +673,21 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 
 	resp := domain.BulkIngestResponse{}
 	syncTime := time.Now().UTC()
+	var syncJob *domain.SyncJob
+
+	if req.SyncJobID != nil {
+		job, err := d.store.GetSyncJob(r.Context(), *req.SyncJobID)
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "sync job not found", err.Error())
+			return
+		}
+		job.Status = domain.SyncJobStatusRunning
+		job.Source = "agent"
+		if job.StartedAt == nil {
+			job.StartedAt = &syncTime
+		}
+		syncJob = job
+	}
 
 	if req.AgentID != "" {
 		agentID, err := uuid.Parse(req.AgentID)
@@ -674,6 +754,18 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 
 		resp.AccountsProcessed++
 		resp.TotalResources += len(orgAcct.Resources)
+	}
+
+	if syncJob != nil {
+		completedAt := time.Now().UTC()
+		syncJob.CompletedAt = &completedAt
+		syncJob.ResourcesFound = resp.TotalResources
+		syncJob.Status = domain.SyncJobStatusCompleted
+		if len(resp.Errors) > 0 {
+			syncJob.Status = domain.SyncJobStatusFailed
+			syncJob.ErrorMessage = strings.Join(resp.Errors, "; ")
+		}
+		_ = d.store.UpdateSyncJob(r.Context(), *syncJob)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

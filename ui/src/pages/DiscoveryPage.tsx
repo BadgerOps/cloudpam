@@ -568,7 +568,7 @@ function SyncTab({
   if (jobs.length === 0) {
     return (
       <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-        No sync jobs yet. Click "Sync Now" to run the first discovery.
+        No sync jobs yet. Click "Sync Now" to request a connected agent scan, or fall back to server-side discovery when no agent is healthy.
       </div>
     )
   }
@@ -945,7 +945,7 @@ ec2:DescribeAddresses`}
             </pre>
             <p>
               <strong>Step 4:</strong> Select the account above and click{' '}
-              <strong>Sync Now</strong>.
+              <strong>Sync Now</strong>. If an agent is healthy, CloudPAM asks that agent to scan instead of using server-local AWS credentials.
             </p>
           </div>
         )}

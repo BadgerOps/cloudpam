@@ -348,6 +348,47 @@ func (s *Store) ListSyncJobs(ctx context.Context, accountID int64, limit int) ([
 	return out, rows.Err()
 }
 
+// ClaimPendingAgentSync atomically claims the oldest pending sync job assigned to an agent.
+func (s *Store) ClaimPendingAgentSync(ctx context.Context, agentID uuid.UUID) (*domain.SyncJob, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	row := tx.QueryRowContext(ctx,
+		`SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at
+		 FROM sync_jobs
+		 WHERE status = ? AND source = 'agent' AND agent_id = ?
+		 ORDER BY created_at ASC
+		 LIMIT 1`,
+		string(domain.SyncJobStatusPending), agentID.String(),
+	)
+	job, err := scanSyncJob(row)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+	res, err := tx.ExecContext(ctx,
+		`UPDATE sync_jobs SET status = ?, started_at = ? WHERE id = ? AND status = ?`,
+		string(domain.SyncJobStatusRunning), nowStr, job.ID.String(), string(domain.SyncJobStatusPending),
+	)
+	if err != nil {
+		return nil, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return nil, storage.ErrNotFound
+	}
+	job.Status = domain.SyncJobStatusRunning
+	job.StartedAt = &now
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
 // scanDiscoveredResource scans a row into a DiscoveredResource.
 func scanDiscoveredResource(rows *sql.Rows) (domain.DiscoveredResource, error) {
 	var r domain.DiscoveredResource
@@ -482,4 +523,3 @@ func (s *Store) ListAgents(ctx context.Context, accountID int64) ([]domain.Disco
 	}
 	return agents, rows.Err()
 }
-

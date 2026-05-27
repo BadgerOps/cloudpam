@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -9,6 +10,60 @@ import (
 
 	"cloudpam/internal/domain"
 )
+
+func TestTriggerSyncQueuesHealthyAgent(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{
+		Key:      "aws:123456789012",
+		Name:     "prod",
+		Provider: "aws",
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	agentID := uuid.New()
+	if err := ds.UpsertAgent(t.Context(), domain.DiscoveryAgent{
+		ID:         agentID,
+		Name:       "org-agent",
+		AccountID:  1,
+		APIKeyID:   "key-1",
+		Version:    "1.0.0",
+		Hostname:   "host-1",
+		LastSeenAt: time.Now().UTC(),
+		CreatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert agent: %v", err)
+	}
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/sync",
+		`{"account_id":`+itoa(account.ID)+`}`, http.StatusOK)
+	var job domain.SyncJob
+	if err := json.Unmarshal(rr.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode job: %v", err)
+	}
+	if job.Status != domain.SyncJobStatusPending || job.Source != "agent" {
+		t.Fatalf("job = %+v, want pending agent job", job)
+	}
+	if job.AgentID == nil || *job.AgentID != agentID {
+		t.Fatalf("AgentID = %v, want %s", job.AgentID, agentID)
+	}
+
+	claimed, err := ds.ClaimPendingAgentSync(t.Context(), agentID)
+	if err != nil {
+		t.Fatalf("claim pending sync: %v", err)
+	}
+	if claimed.ID != job.ID {
+		t.Fatalf("claimed job = %s, want %s", claimed.ID, job.ID)
+	}
+	if claimed.AccountID != account.ID {
+		t.Fatalf("AccountID = %d, want %d", claimed.AccountID, account.ID)
+	}
+	if claimed.Status != domain.SyncJobStatusRunning || claimed.StartedAt == nil {
+		t.Fatalf("claimed job = %+v, want running with started_at", claimed)
+	}
+}
 
 func TestOrgIngestRefreshesRegisteredAgentLastSeen(t *testing.T) {
 	discSrv, _, ds, _ := setupDiscoveryTestServer()

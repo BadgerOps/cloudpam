@@ -235,6 +235,30 @@ func (m *MemoryDiscoveryStore) ListSyncJobs(_ context.Context, accountID int64, 
 	return jobs, nil
 }
 
+func (m *MemoryDiscoveryStore) ClaimPendingAgentSync(_ context.Context, agentID uuid.UUID) (*domain.SyncJob, error) {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+
+	var selected *domain.SyncJob
+	for _, j := range m.syncJobs {
+		if j.Status != domain.SyncJobStatusPending || j.Source != "agent" || j.AgentID == nil || *j.AgentID != agentID {
+			continue
+		}
+		job := j
+		if selected == nil || job.CreatedAt.Before(selected.CreatedAt) {
+			selected = &job
+		}
+	}
+	if selected == nil {
+		return nil, ErrNotFound
+	}
+	now := time.Now().UTC()
+	selected.Status = domain.SyncJobStatusRunning
+	selected.StartedAt = &now
+	m.syncJobs[selected.ID] = *selected
+	return selected, nil
+}
+
 func (m *MemoryDiscoveryStore) UpsertAgent(_ context.Context, agent domain.DiscoveryAgent) error {
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
@@ -283,4 +307,3 @@ func (m *MemoryDiscoveryStore) ListAgents(_ context.Context, accountID int64) ([
 
 	return agents, nil
 }
-

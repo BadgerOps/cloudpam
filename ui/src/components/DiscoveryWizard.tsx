@@ -176,19 +176,23 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const shellConfigSingle = `#!/bin/bash
 export CLOUDPAM_BOOTSTRAP_TOKEN="${token}"
 export CLOUDPAM_ACCOUNT_ID=${accountId}
+export CLOUDPAM_AWS_REGIONS="${accountRegions.join(',')}"
 ./cloudpam-agent`
 
   const yamlConfigSingle = `server_url: "${serverUrl}"
 bootstrap_token: "${token}"
 account_id: ${accountId}
 agent_name: "${agentNameFinal}"
-interval: 5m
-aws:
-  regions: [${accountRegions.map(r => `"${r}"`).join(', ')}]`
+sync_interval: "15m"
+heartbeat_interval: "1m"
+aws_regions: [${accountRegions.map(r => `"${r}"`).join(', ')}]`
 
   // Org-mode configs
   const shellConfigOrg = `#!/bin/bash
 export CLOUDPAM_BOOTSTRAP_TOKEN="${token}"
+export CLOUDPAM_ACCOUNT_ID=${accountId}
+export AWS_REGION="${orgRegions[0] ?? 'us-east-1'}"
+export AWS_DEFAULT_REGION="${orgRegions[0] ?? 'us-east-1'}"
 export CLOUDPAM_AWS_ORG_ENABLED=true
 export CLOUDPAM_AWS_ORG_ROLE_NAME="${orgRoleName}"${orgExternalId ? `
 export CLOUDPAM_AWS_ORG_EXTERNAL_ID="${orgExternalId}"` : ''}
@@ -198,7 +202,10 @@ export CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS="${orgExclude.join(',')}"` : ''}
 
   const yamlConfigOrg = `server_url: "${serverUrl}"
 bootstrap_token: "${token}"
+account_id: ${accountId}
 agent_name: "${agentNameFinal}"
+sync_interval: "15m"
+heartbeat_interval: "1m"
 aws_org:
   enabled: true
   role_name: "${orgRoleName}"${orgExternalId ? `
@@ -216,6 +223,7 @@ resource "null_resource" "cloudpam_agent" {
     command = <<-EOT
       CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
       CLOUDPAM_ACCOUNT_ID=${accountId} \\
+      CLOUDPAM_AWS_REGIONS=${accountRegions.join(',')} \\
       ./cloudpam-agent
     EOT
   }
@@ -230,10 +238,14 @@ resource "null_resource" "cloudpam_agent" {
   provisioner "local-exec" {
     command = <<-EOT
       CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
+      CLOUDPAM_ACCOUNT_ID=${accountId} \\
+      AWS_REGION=${orgRegions[0] ?? 'us-east-1'} \\
+      AWS_DEFAULT_REGION=${orgRegions[0] ?? 'us-east-1'} \\
       CLOUDPAM_AWS_ORG_ENABLED=true \\
       CLOUDPAM_AWS_ORG_ROLE_NAME=${orgRoleName} \\${orgExternalId ? `
       CLOUDPAM_AWS_ORG_EXTERNAL_ID=${orgExternalId} \\` : ''}
-      CLOUDPAM_AWS_ORG_REGIONS=${orgRegions.join(',')} \\
+      CLOUDPAM_AWS_ORG_REGIONS=${orgRegions.join(',')} \\${orgExclude.length > 0 ? `
+      CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${orgExclude.join(',')} \\` : ''}
       ./cloudpam-agent
     EOT
   }
@@ -243,11 +255,15 @@ resource "null_resource" "cloudpam_agent" {
   --name cloudpam-agent \\
   -e CLOUDPAM_BOOTSTRAP_TOKEN="${token}" \\
   -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
+  -e CLOUDPAM_AWS_REGIONS="${accountRegions.join(',')}" \\
   cloudpam/agent:latest`
 
   const dockerConfigOrg = `docker run -d \\
   --name cloudpam-agent \\
   -e CLOUDPAM_BOOTSTRAP_TOKEN="${token}" \\
+  -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
+  -e AWS_REGION="${orgRegions[0] ?? 'us-east-1'}" \\
+  -e AWS_DEFAULT_REGION="${orgRegions[0] ?? 'us-east-1'}" \\
   -e CLOUDPAM_AWS_ORG_ENABLED=true \\
   -e CLOUDPAM_AWS_ORG_ROLE_NAME="${orgRoleName}" \\${orgExternalId ? `
   -e CLOUDPAM_AWS_ORG_EXTERNAL_ID="${orgExternalId}" \\` : ''}
