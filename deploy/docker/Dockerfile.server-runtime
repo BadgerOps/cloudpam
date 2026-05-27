@@ -1,0 +1,13 @@
+# syntax=docker/dockerfile:1
+
+FROM cgr.dev/chainguard/static:latest
+
+ARG TARGETOS
+ARG TARGETARCH
+
+COPY dist/server/${TARGETOS}-${TARGETARCH}/cloudpam /usr/local/bin/cloudpam
+
+USER nonroot
+EXPOSE 8080
+
+ENTRYPOINT ["cloudpam"]

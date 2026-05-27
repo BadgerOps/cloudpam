@@ -29,8 +29,49 @@ jobs:
         with:
           ref: ${{ env.TAG }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - name: Setup Go
+        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version: '1.25.x'
+
+      - name: Cache Go build
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-container-server-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-container-server-
+            ${{ runner.os }}-go-
+
+      - name: Cache npm
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-ui-${{ hashFiles('ui/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-ui-
+
+      - name: Build UI
+        run: |
+          set -euxo pipefail
+          cd ui
+          npm ci
+          npm run build
+
+      - name: Build server binaries
+        run: |
+          set -euxo pipefail
+          for arch in amd64 arm64; do
+            out="dist/server/linux-${arch}"
+            mkdir -p "${out}"
+            GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build \
+              -trimpath \
+              -tags 'sqlite postgres' \
+              -ldflags "-s -w -X main.version=${TAG}" \
+              -o "${out}/cloudpam" ./cmd/cloudpam
+          done
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -47,6 +88,8 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/badgerops/cloudpam/server
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}},value=${{ env.TAG }}
             type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
@@ -56,15 +99,11 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          file: ./Dockerfile
+          file: ./deploy/docker/Dockerfile.server-runtime
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ env.TAG }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Scan server image for vulnerabilities
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
@@ -86,8 +125,33 @@ jobs:
         with:
           ref: ${{ env.TAG }}
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - name: Setup Go
+        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version: '1.25.x'
+
+      - name: Cache Go build
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-container-agent-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-container-agent-
+            ${{ runner.os }}-go-
+
+      - name: Build agent binaries
+        run: |
+          set -euxo pipefail
+          for arch in amd64 arm64; do
+            out="dist/agent/linux-${arch}"
+            mkdir -p "${out}"
+            GOOS=linux GOARCH="${arch}" CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags "-s -w -X main.version=${TAG}" \
+              -o "${out}/cloudpam-agent" ./cmd/cloudpam-agent
+          done
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
@@ -104,6 +168,8 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ${{ env.REGISTRY }}/badgerops/cloudpam/agent
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}},value=${{ env.TAG }}
             type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
@@ -113,15 +179,11 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          file: ./deploy/docker/Dockerfile.agent
+          file: ./deploy/docker/Dockerfile.agent-runtime
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ env.TAG }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Scan agent image for vulnerabilities
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0

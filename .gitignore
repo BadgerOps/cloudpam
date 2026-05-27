@@ -29,6 +29,7 @@ coverage.out
 *.sqlite3
 cloudpam.db
 docs/openapi-html/
+dist/
 
 # Node/web
 node_modules/
