@@ -80,7 +80,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   // Check if the provisioned agent has connected
   useEffect(() => {
     if (provisionResult && agents.length > 0) {
-      const match = agents.find(a => a.name === provisionResult.agent_name)
+      const match =
+        agents.find(a => a.api_key_id === provisionResult.api_key_id) ??
+        agents.find(a => a.name === provisionResult.agent_name && a.status === 'healthy')
       if (match) {
         setConnectedAgent(match)
         if (pollRef.current) {
