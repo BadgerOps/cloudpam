@@ -481,15 +481,13 @@ func (d *DiscoveryServer) triggerSync(w http.ResponseWriter, r *http.Request) {
 			d.srv.writeErr(r.Context(), w, http.StatusConflict, "agent is not healthy", "")
 			return
 		}
-		accountID := agent.AccountID
-		if body.AccountID > 0 {
-			accountID = body.AccountID
-		}
-		if _, found, err := d.srv.store.GetAccount(r.Context(), accountID); err != nil {
+		accountID, err := d.resolveAgentSyncAccountID(r.Context(), *agent, body.AccountID)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				d.srv.writeErr(r.Context(), w, http.StatusNotFound, "agent account not found", "")
+				return
+			}
 			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "account lookup failed", err.Error())
-			return
-		} else if !found {
-			d.srv.writeErr(r.Context(), w, http.StatusNotFound, "account not found", "")
 			return
 		}
 		job, err := d.createAgentSyncJob(r.Context(), accountID, agent.ID)
@@ -566,12 +564,14 @@ func (d *DiscoveryServer) queueAllHealthyAgentSyncs(ctx context.Context) ([]doma
 		if seen[agent.ID] || computeAgentStatus(agent.LastSeenAt, now) != domain.AgentStatusHealthy {
 			continue
 		}
-		if _, found, err := d.srv.store.GetAccount(ctx, agent.AccountID); err != nil {
-			return nil, err
-		} else if !found {
+		accountID, err := d.resolveAgentSyncAccountID(ctx, agent, 0)
+		if errors.Is(err, storage.ErrNotFound) {
 			continue
 		}
-		job, err := d.createAgentSyncJob(ctx, agent.AccountID, agent.ID)
+		if err != nil {
+			return nil, err
+		}
+		job, err := d.createAgentSyncJob(ctx, accountID, agent.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -579,6 +579,35 @@ func (d *DiscoveryServer) queueAllHealthyAgentSyncs(ctx context.Context) ([]doma
 		seen[agent.ID] = true
 	}
 	return jobs, nil
+}
+
+func (d *DiscoveryServer) resolveAgentSyncAccountID(ctx context.Context, agent domain.DiscoveryAgent, requestedAccountID int64) (int64, error) {
+	if requestedAccountID > 0 {
+		if _, found, err := d.srv.store.GetAccount(ctx, requestedAccountID); err != nil {
+			return 0, err
+		} else if !found {
+			return 0, storage.ErrNotFound
+		}
+		return requestedAccountID, nil
+	}
+
+	if agent.AccountID > 0 {
+		if _, found, err := d.srv.store.GetAccount(ctx, agent.AccountID); err != nil {
+			return 0, err
+		} else if found {
+			return agent.AccountID, nil
+		}
+
+		account, err := d.srv.store.GetAccountByKey(ctx, "aws:"+strconv.FormatInt(agent.AccountID, 10))
+		if err == nil {
+			return account.ID, nil
+		}
+		if !errors.Is(err, storage.ErrNotFound) {
+			return 0, err
+		}
+	}
+
+	return 0, storage.ErrNotFound
 }
 
 func (d *DiscoveryServer) selectConnectedAgent(ctx context.Context, accountID int64) *domain.DiscoveryAgent {
