@@ -5,7 +5,7 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.14.3] - 2026-05-28
+## [0.14.4] - 2026-05-28
 
 ### Added
 - Discovery resource linking now opens a recommendation-driven dialog that suggests exact CIDR matches, containing parent pools, and same-account pools instead of requiring a raw pool ID prompt.
@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - The Discovery page header and resource list now adapt better on smaller screens, with compact resource cards replacing the wide table on mobile.
 - The main navigation collapses to an icon rail on narrow screens so mobile pages keep enough working space for forms, tables, and dialogs.
+
+## [0.14.3] - 2026-05-28
 
 ### Fixed
 - PostgreSQL-backed deployments now persist discovery agents, discovered resources, and sync jobs instead of falling back to in-memory discovery storage on every server restart or upgrade.
