@@ -5,6 +5,16 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.5] - 2026-05-28
+
+### Added
+- Address Pools now has a real Edit Pool flow from both the pool table and detail panel so name, account, type, status, and description can be updated in place.
+
+### Fixed
+- Allocated Blocks now includes imported or discovery-built top-level VPC and subnet pools instead of hiding them because they have no parent pool.
+- Allocated Blocks responses now include pool type, status, and source metadata so discovered VPCs and subnets render with their actual classification.
+- Pool PATCH requests that omit `account_id` now preserve the existing account assignment instead of accidentally clearing it during name, status, type, or description edits.
+
 ## [0.14.4] - 2026-05-28
 
 ### Added

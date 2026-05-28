@@ -132,8 +132,8 @@ export interface Block {
   id: number
   name: string
   cidr: string
-  parent_id: number
-  parent_name: string
+  parent_id?: number | null
+  parent_name?: string
   account_id?: number
   account_name?: string
   account_platform?: string
@@ -142,6 +142,7 @@ export interface Block {
   account_regions?: string[]
   type?: string
   status?: string
+  source?: string
   created_at: string
 }
 

@@ -422,6 +422,35 @@ func TestAnalytics_MetadataInBlocks(t *testing.T) {
 	}
 }
 
+func TestPoolPatchPreservesAccountWhenAccountIDIsOmitted(t *testing.T) {
+	srv, _ := setupTestServer()
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:111111111111","name":"Prod"}`, stdhttp.StatusCreated)
+	var account struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &account); err != nil {
+		t.Fatalf("unmarshal account: %v", err)
+	}
+
+	rr = doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"prod-vpc","cidr":"10.60.0.0/16","account_id":`+strconv.FormatInt(account.ID, 10)+`,"type":"vpc"}`, stdhttp.StatusCreated)
+	var created poolDTO
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal pool: %v", err)
+	}
+	if created.AccountID == nil || *created.AccountID != account.ID {
+		t.Fatalf("created account_id = %v, want %d", created.AccountID, account.ID)
+	}
+
+	rr = doJSON(t, srv.mux, stdhttp.MethodPatch, "/api/v1/pools/"+strconv.FormatInt(created.ID, 10), `{"name":"prod-vpc-renamed"}`, stdhttp.StatusOK)
+	var updated poolDTO
+	if err := json.Unmarshal(rr.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("unmarshal updated pool: %v", err)
+	}
+	if updated.AccountID == nil || *updated.AccountID != account.ID {
+		t.Fatalf("updated account_id = %v, want %d", updated.AccountID, account.ID)
+	}
+}
+
 func TestBlocks_HostsAndNoExistsElsewhere(t *testing.T) {
 	srv, _ := setupTestServer()
 	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.60.0.0/16"}`, stdhttp.StatusCreated)

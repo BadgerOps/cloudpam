@@ -122,4 +122,35 @@ func TestImportDiscoveredSchemaCreatesAndLinksPools(t *testing.T) {
 	if vpc.PoolID == nil || subnet.PoolID == nil {
 		t.Fatalf("resources were not linked: vpc=%v subnet=%v", vpc.PoolID, subnet.PoolID)
 	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/blocks?page_size=all", "", http.StatusOK)
+	var blocks struct {
+		Items []struct {
+			ID       int64  `json:"id"`
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Status   string `json:"status"`
+			Source   string `json:"source"`
+			CIDR     string `json:"cidr"`
+			ParentID *int64 `json:"parent_id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &blocks); err != nil {
+		t.Fatalf("unmarshal blocks: %v", err)
+	}
+	if len(blocks.Items) != 2 {
+		t.Fatalf("len(blocks) = %d, want imported vpc and subnet", len(blocks.Items))
+	}
+	var sawRootVPC, sawSubnet bool
+	for _, block := range blocks.Items {
+		if block.CIDR == "10.0.0.0/16" && block.Type == "vpc" && block.Source == "discovered" && block.ParentID == nil {
+			sawRootVPC = true
+		}
+		if block.CIDR == "10.0.1.0/24" && block.Type == "subnet" && block.Status == "active" && block.ParentID != nil {
+			sawSubnet = true
+		}
+	}
+	if !sawRootVPC || !sawSubnet {
+		t.Fatalf("discovered blocks missing from allocated blocks: %+v", blocks.Items)
+	}
 }
