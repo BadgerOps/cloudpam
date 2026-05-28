@@ -161,6 +161,7 @@ Save the `token` value — it's shown only once.
 
 ```bash
 CLOUDPAM_BOOTSTRAP_TOKEN=eyJhZ2VudF9uYW1lIjoi... \
+CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \
 CLOUDPAM_ACCOUNT_ID=1 \
 ./cloudpam-agent
 ```
@@ -181,6 +182,7 @@ You can also configure the agent explicitly using environment variables or a YAM
 CLOUDPAM_SERVER_URL=https://cloudpam.example.com \
 CLOUDPAM_API_KEY=cpk_abc123... \
 CLOUDPAM_AGENT_NAME=prod-us-east-1 \
+CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \
 CLOUDPAM_ACCOUNT_ID=1 \
 CLOUDPAM_AWS_REGIONS=us-east-1,us-west-2 \
 ./cloudpam-agent
@@ -193,6 +195,7 @@ CLOUDPAM_AWS_REGIONS=us-east-1,us-west-2 \
 server_url: https://cloudpam.example.com
 api_key: cpk_abc123...
 agent_name: prod-us-east-1
+agent_id_file: /var/lib/cloudpam-agent/agent-id
 account_id: 1
 aws_regions:
   - us-east-1
@@ -212,6 +215,8 @@ heartbeat_interval: 1m
 | `server_url` | `CLOUDPAM_SERVER_URL` | (required) | CloudPAM server URL |
 | `api_key` | `CLOUDPAM_API_KEY` | (required) | API key with `discovery:write` scope |
 | `agent_name` | `CLOUDPAM_AGENT_NAME` | (required) | Human-readable agent name |
+| `agent_id` | `CLOUDPAM_AGENT_ID` | | Explicit discovery agent UUID |
+| `agent_id_file` | `CLOUDPAM_AGENT_ID_FILE` | deterministic fallback | Host-side file used to persist a generated discovery agent UUID |
 | `account_id` | `CLOUDPAM_ACCOUNT_ID` | (required) | CloudPAM account ID to discover for |
 | `bootstrap_token` | `CLOUDPAM_BOOTSTRAP_TOKEN` | | Base64 provisioning bundle (replaces server_url, api_key, agent_name) |
 | `aws_regions` | `CLOUDPAM_AWS_REGIONS` | SDK default | Comma-separated AWS regions |
@@ -229,6 +234,8 @@ When `bootstrap_token` is set and `api_key` is not, the token is decoded and its
 docker build -f deploy/docker/Dockerfile.agent -t cloudpam-agent .
 
 docker run -e CLOUDPAM_BOOTSTRAP_TOKEN=eyJhZ2VudF9uYW1lIjoi... \
+           -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \
+           -e CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \
            -e CLOUDPAM_ACCOUNT_ID=1 \
            -e AWS_REGION=us-east-1 \
            cloudpam-agent

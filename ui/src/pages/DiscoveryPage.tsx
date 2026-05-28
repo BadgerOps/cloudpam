@@ -12,6 +12,7 @@ import {
   Wand2,
   Loader2,
   UploadCloud,
+  Trash2,
 } from 'lucide-react'
 import {
   useDiscoveryResources,
@@ -74,6 +75,7 @@ export default function DiscoveryPage() {
     loading: agentsLoading,
     error: agentsError,
     fetch: fetchAgents,
+    deleteAgent,
   } = useDiscoveryAgents()
   const { showToast } = useToast()
   const agentsRefreshInterval = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -246,6 +248,19 @@ export default function DiscoveryPage() {
       showToast(err instanceof Error ? err.message : 'Import failed', 'error')
     } finally {
       setImportLoading(false)
+    }
+  }
+
+  async function handleDeleteAgent(agent: DiscoveryAgent) {
+    if (!confirm(`Delete discovery agent "${agent.name}"? The agent will reappear if it is still running and heartbeating.`)) {
+      return
+    }
+    try {
+      await deleteAgent(agent.id)
+      showToast('Agent deleted', 'success')
+      fetchAgents()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Delete agent failed', 'error')
     }
   }
 
@@ -472,6 +487,7 @@ export default function DiscoveryPage() {
             setSelectedScanAgentId(agentId)
             void handleSync(agentId)
           }}
+          onDelete={(agent) => void handleDeleteAgent(agent)}
         />
       )}
 
@@ -823,11 +839,13 @@ function AgentsTab({
   loading,
   error,
   onScan,
+  onDelete,
 }: {
   agents: DiscoveryAgent[]
   loading: boolean
   error: string | null
   onScan: (agentId: string) => void
+  onDelete: (agent: DiscoveryAgent) => void
 }) {
   if (error) {
     return (
@@ -879,6 +897,7 @@ function AgentsTab({
                 Deploy the agent with the token:
                 <pre className="mt-1 bg-gray-100 dark:bg-gray-800 rounded px-2 py-1.5 text-xs font-mono overflow-x-auto whitespace-pre">
 {`CLOUDPAM_BOOTSTRAP_TOKEN=<token> \\
+CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
 CLOUDPAM_ACCOUNT_ID=1 \\
 ./cloudpam-agent`}
                 </pre>
@@ -938,14 +957,24 @@ CLOUDPAM_ACCOUNT_ID=1 \\
                 {formatTimeAgo(agent.last_seen_at)}
               </td>
               <td className="px-4 py-2 text-right">
-                <button
-                  onClick={() => onScan(agent.id)}
-                  disabled={agent.status !== 'healthy'}
-                  className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300 dark:disabled:bg-blue-900"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Scan
-                </button>
+                <div className="inline-flex items-center gap-2">
+                  <button
+                    onClick={() => onScan(agent.id)}
+                    disabled={agent.status !== 'healthy'}
+                    className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300 dark:disabled:bg-blue-900"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Scan
+                  </button>
+                  <button
+                    onClick={() => onDelete(agent)}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                    title="Delete agent"
+                    aria-label={`Delete ${agent.name}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
