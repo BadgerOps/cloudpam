@@ -179,12 +179,14 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   // Single-account configs
   const shellConfigSingle = `#!/bin/bash
 export CLOUDPAM_BOOTSTRAP_TOKEN="${token}"
+export CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id"
 export CLOUDPAM_ACCOUNT_ID=${accountId}
 export CLOUDPAM_AWS_REGIONS="${accountRegions.join(',')}"
 ./cloudpam-agent`
 
   const yamlConfigSingle = `server_url: "${serverUrl}"
 bootstrap_token: "${token}"
+agent_id_file: "/var/lib/cloudpam-agent/agent-id"
 account_id: ${accountId}
 agent_name: "${agentNameFinal}"
 sync_interval: "15m"
@@ -194,6 +196,7 @@ aws_regions: [${accountRegions.map(r => `"${r}"`).join(', ')}]`
   // Org-mode configs
   const shellConfigOrg = `#!/bin/bash
 export CLOUDPAM_BOOTSTRAP_TOKEN="${token}"
+export CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id"
 export CLOUDPAM_ACCOUNT_ID=${accountId}
 export AWS_REGION="${orgRegions[0] ?? 'us-east-1'}"
 export AWS_DEFAULT_REGION="${orgRegions[0] ?? 'us-east-1'}"
@@ -206,6 +209,7 @@ export CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS="${orgExclude.join(',')}"` : ''}
 
   const yamlConfigOrg = `server_url: "${serverUrl}"
 bootstrap_token: "${token}"
+agent_id_file: "/var/lib/cloudpam-agent/agent-id"
 account_id: ${accountId}
 agent_name: "${agentNameFinal}"
 sync_interval: "15m"
@@ -226,6 +230,7 @@ resource "null_resource" "cloudpam_agent" {
   provisioner "local-exec" {
     command = <<-EOT
       CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
+      CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
       CLOUDPAM_ACCOUNT_ID=${accountId} \\
       CLOUDPAM_AWS_REGIONS=${accountRegions.join(',')} \\
       ./cloudpam-agent
@@ -242,6 +247,7 @@ resource "null_resource" "cloudpam_agent" {
   provisioner "local-exec" {
     command = <<-EOT
       CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
+      CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
       CLOUDPAM_ACCOUNT_ID=${accountId} \\
       AWS_REGION=${orgRegions[0] ?? 'us-east-1'} \\
       AWS_DEFAULT_REGION=${orgRegions[0] ?? 'us-east-1'} \\
@@ -257,14 +263,18 @@ resource "null_resource" "cloudpam_agent" {
 
   const dockerConfigSingle = `docker run -d \\
   --name cloudpam-agent \\
+  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\
   -e CLOUDPAM_BOOTSTRAP_TOKEN="${token}" \\
+  -e CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id" \\
   -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
   -e CLOUDPAM_AWS_REGIONS="${accountRegions.join(',')}" \\
   ghcr.io/badgerops/cloudpam/agent:latest`
 
   const dockerConfigOrg = `docker run -d \\
   --name cloudpam-agent \\
+  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\
   -e CLOUDPAM_BOOTSTRAP_TOKEN="${token}" \\
+  -e CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id" \\
   -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
   -e AWS_REGION="${orgRegions[0] ?? 'us-east-1'}" \\
   -e AWS_DEFAULT_REGION="${orgRegions[0] ?? 'us-east-1'}" \\

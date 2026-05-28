@@ -43,9 +43,12 @@ func main() {
 		"heartbeat_interval", cfg.HeartbeatInterval,
 	)
 
-	// Generate agent ID
-	agentID := uuid.New()
-	logger.Info("agent id generated", "agent_id", agentID)
+	agentID, err := cfg.ResolveAgentID()
+	if err != nil {
+		logger.Error("failed to resolve agent id", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("agent id resolved", "agent_id", agentID)
 
 	// Get hostname
 	hostname, _ := os.Hostname()

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"strings"
@@ -281,5 +282,30 @@ func TestAgentApproveReject(t *testing.T) {
 	// Non-existent agent
 	doJSON(t, discSrv.srv.mux, stdhttp.MethodPost,
 		"/api/v1/discovery/agents/"+uuid.New().String()+"/approve", "",
+		stdhttp.StatusNotFound)
+}
+
+func TestDeleteAgent(t *testing.T) {
+	discSrv, _, ds, _ := setupDiscoveryTestServer()
+
+	agentID := uuid.New()
+	if err := ds.UpsertAgent(t.Context(), domain.DiscoveryAgent{
+		ID:        agentID,
+		Name:      "old-agent",
+		AccountID: 1,
+	}); err != nil {
+		t.Fatalf("upsert agent: %v", err)
+	}
+
+	doJSON(t, discSrv.srv.mux, stdhttp.MethodDelete,
+		"/api/v1/discovery/agents/"+agentID.String(), "",
+		stdhttp.StatusOK)
+
+	if _, err := ds.GetAgent(t.Context(), agentID); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound after delete, got %v", err)
+	}
+
+	doJSON(t, discSrv.srv.mux, stdhttp.MethodDelete,
+		"/api/v1/discovery/agents/"+agentID.String(), "",
 		stdhttp.StatusNotFound)
 }

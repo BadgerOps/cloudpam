@@ -168,5 +168,9 @@ export function useDiscoveryAgents() {
     }
   }, [])
 
-  return { agents, loading, error, fetch }
+  const deleteAgent = useCallback(async (agentId: string) => {
+    await del(`/api/v1/discovery/agents/${agentId}`)
+  }, [])
+
+  return { agents, loading, error, fetch, deleteAgent }
 }

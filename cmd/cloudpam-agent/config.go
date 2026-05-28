@@ -1,14 +1,18 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"cloudpam/internal/domain"
 
@@ -29,6 +33,8 @@ type Config struct {
 	ServerURL         string        `yaml:"server_url"`
 	APIKey            string        `yaml:"api_key"`
 	AgentName         string        `yaml:"agent_name"`
+	AgentID           string        `yaml:"agent_id"`
+	AgentIDFile       string        `yaml:"agent_id_file"`
 	AccountID         int64         `yaml:"account_id"`
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
@@ -76,10 +82,18 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("CLOUDPAM_AGENT_NAME"); v != "" {
 		cfg.AgentName = v
 	}
+	if v := os.Getenv("CLOUDPAM_AGENT_ID"); v != "" {
+		cfg.AgentID = v
+	}
+	if v := os.Getenv("CLOUDPAM_AGENT_ID_FILE"); v != "" {
+		cfg.AgentIDFile = v
+	}
 	if v := os.Getenv("CLOUDPAM_ACCOUNT_ID"); v != "" {
-		if id, err := strconv.ParseInt(v, 10, 64); err == nil {
-			cfg.AccountID = id
+		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CLOUDPAM_ACCOUNT_ID: %w", err)
 		}
+		cfg.AccountID = id
 	}
 	if v := os.Getenv("CLOUDPAM_SYNC_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
@@ -121,6 +135,61 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func (c *Config) ResolveAgentID() (uuid.UUID, error) {
+	if strings.TrimSpace(c.AgentID) != "" {
+		id, err := uuid.Parse(strings.TrimSpace(c.AgentID))
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("invalid agent_id: %w", err)
+		}
+		return id, nil
+	}
+
+	if strings.TrimSpace(c.AgentIDFile) != "" {
+		id, err := readOrCreateAgentIDFile(strings.TrimSpace(c.AgentIDFile))
+		if err != nil {
+			return uuid.Nil, err
+		}
+		return id, nil
+	}
+
+	return deterministicAgentID(c), nil
+}
+
+func readOrCreateAgentIDFile(path string) (uuid.UUID, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		id, parseErr := uuid.Parse(strings.TrimSpace(string(data)))
+		if parseErr != nil {
+			return uuid.Nil, fmt.Errorf("parse agent_id_file %s: %w", path, parseErr)
+		}
+		return id, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return uuid.Nil, fmt.Errorf("read agent_id_file %s: %w", path, err)
+	}
+
+	id := uuid.New()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return uuid.Nil, fmt.Errorf("create agent_id_file directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(id.String()+"\n"), 0o600); err != nil {
+		return uuid.Nil, fmt.Errorf("write agent_id_file %s: %w", path, err)
+	}
+	return id, nil
+}
+
+func deterministicAgentID(c *Config) uuid.UUID {
+	seed := strings.Join([]string{c.ServerURL, c.AgentName, strconv.FormatInt(c.AccountID, 10)}, "\x00")
+	sum := sha256.Sum256([]byte(seed))
+	sum[6] = (sum[6] & 0x0f) | 0x40
+	sum[8] = (sum[8] & 0x3f) | 0x80
+	id, err := uuid.FromBytes(sum[:16])
+	if err != nil {
+		return uuid.New()
+	}
+	return id
 }
 
 // Validate checks that required configuration fields are set.

@@ -289,6 +289,23 @@ func (m *MemoryDiscoveryStore) GetAgent(_ context.Context, id uuid.UUID) (*domai
 	return &a, nil
 }
 
+func (m *MemoryDiscoveryStore) DeleteAgent(_ context.Context, id uuid.UUID) error {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+
+	if _, ok := m.agents[id]; !ok {
+		return ErrNotFound
+	}
+	delete(m.agents, id)
+	for jobID, job := range m.syncJobs {
+		if job.AgentID != nil && *job.AgentID == id {
+			job.AgentID = nil
+			m.syncJobs[jobID] = job
+		}
+	}
+	return nil
+}
+
 func (m *MemoryDiscoveryStore) ListAgents(_ context.Context, accountID int64) ([]domain.DiscoveryAgent, error) {
 	m.store.mu.RLock()
 	defer m.store.mu.RUnlock()

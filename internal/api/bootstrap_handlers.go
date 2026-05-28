@@ -267,6 +267,32 @@ func (d *DiscoveryServer) handleRejectAgent(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (d *DiscoveryServer) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", http.MethodDelete)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/discovery/agents/")
+	agentID, err := uuid.Parse(strings.TrimRight(idStr, "/"))
+	if err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid agent id", "")
+		return
+	}
+
+	if err := d.store.DeleteAgent(r.Context(), agentID); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			d.srv.writeErr(r.Context(), w, http.StatusNotFound, "agent not found", "")
+			return
+		}
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "delete agent failed", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 // handleAgentsSubroutes dispatches /api/v1/discovery/agents/ subroutes.
 // Handles: /{id}, /{id}/approve, /{id}/reject, /register, /provision, /heartbeat
 func (d *DiscoveryServer) handleAgentsSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -284,6 +310,8 @@ func (d *DiscoveryServer) handleAgentsSubroutes(w http.ResponseWriter, r *http.R
 		d.handleApproveAgent(w, r)
 	case strings.HasSuffix(path, "/reject"):
 		d.handleRejectAgent(w, r)
+	case r.Method == http.MethodDelete:
+		d.handleDeleteAgent(w, r)
 	default:
 		d.handleGetAgent(w, r)
 	}

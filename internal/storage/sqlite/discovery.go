@@ -487,6 +487,18 @@ func (s *Store) GetAgent(ctx context.Context, id uuid.UUID) (*domain.DiscoveryAg
 	return &a, nil
 }
 
+func (s *Store) DeleteAgent(ctx context.Context, id uuid.UUID) error {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM discovery_agents WHERE id = ?", id.String())
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return storage.ErrNotFound
+	}
+	return nil
+}
+
 // ListAgents returns all discovery agents, optionally filtered by account ID.
 func (s *Store) ListAgents(ctx context.Context, accountID int64) ([]domain.DiscoveryAgent, error) {
 	query := "SELECT id, name, account_id, api_key_id, version, hostname, last_seen_at, created_at FROM discovery_agents"

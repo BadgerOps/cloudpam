@@ -5,6 +5,21 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-05-28
+
+### Added
+- Discovery agents can now be deleted from the Agents tab or via `DELETE /api/v1/discovery/agents/{id}` for cleaning up retired or duplicate agent records.
+
+### Changed
+- Discovery agents now resolve a stable identity from explicit config/env, a host-side `agent_id_file`, or a deterministic fallback so process restarts reuse the same server-side agent record.
+- Generated agent examples now include `CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id`, with Docker examples mounting `/var/lib/cloudpam-agent`, so host deployments persist agent identity across restarts.
+
+### Fixed
+- Discovery agents no longer create a new server-side agent record each time the process restarts with the same persisted or deterministic identity inputs.
+
+### Security
+- Deterministic fallback agent IDs now derive only from non-secret identity fields and no longer hash API key material.
+
 ## [0.14.0] - 2026-05-28
 
 ### Added

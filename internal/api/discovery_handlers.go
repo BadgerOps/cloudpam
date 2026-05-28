@@ -70,6 +70,7 @@ func (d *DiscoveryServer) protectedAgentsSubroutes(logger *slog.Logger) http.Han
 	readMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionRead, logger)
 	createMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionCreate, logger)
 	updateMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionUpdate, logger)
+	deleteMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionDelete, logger)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/discovery/agents/")
@@ -86,6 +87,8 @@ func (d *DiscoveryServer) protectedAgentsSubroutes(logger *slog.Logger) http.Han
 			createMW(http.HandlerFunc(d.handleAgentHeartbeat)).ServeHTTP(w, r)
 		case strings.HasSuffix(path, "/approve"), strings.HasSuffix(path, "/reject"):
 			updateMW(http.HandlerFunc(d.handleAgentsSubroutes)).ServeHTTP(w, r)
+		case r.Method == http.MethodDelete:
+			deleteMW(http.HandlerFunc(d.handleDeleteAgent)).ServeHTTP(w, r)
 		default:
 			readMW(http.HandlerFunc(d.handleGetAgent)).ServeHTTP(w, r)
 		}
@@ -800,8 +803,8 @@ func (d *DiscoveryServer) handleAgentHeartbeat(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if req.Name == "" || req.AccountID < 1 {
-		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "name and account_id are required", "")
+	if req.AgentID == uuid.Nil || req.Name == "" || req.AccountID < 1 {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "agent_id, name, and account_id are required", "")
 		return
 	}
 

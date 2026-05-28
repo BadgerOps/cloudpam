@@ -54,6 +54,9 @@ type DiscoveryStore interface {
 	// GetAgent returns a discovery agent by ID.
 	GetAgent(ctx context.Context, id uuid.UUID) (*domain.DiscoveryAgent, error)
 
+	// DeleteAgent deletes a discovery agent by ID.
+	DeleteAgent(ctx context.Context, id uuid.UUID) error
+
 	// ListAgents returns all discovery agents, optionally filtered by account ID.
 	ListAgents(ctx context.Context, accountID int64) ([]domain.DiscoveryAgent, error)
 }
