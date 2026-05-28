@@ -65,6 +65,79 @@ func TestTriggerSyncQueuesHealthyAgent(t *testing.T) {
 	}
 }
 
+func TestTriggerSyncAgentUsesRequestedAccountWhenStoredAccountMissing(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{
+		Key:      "aws:123456789012",
+		Name:     "prod",
+		Provider: "aws",
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	agentID := uuid.New()
+	if err := ds.UpsertAgent(t.Context(), domain.DiscoveryAgent{
+		ID:         agentID,
+		Name:       "org-agent",
+		AccountID:  125672604241,
+		APIKeyID:   "key-1",
+		LastSeenAt: time.Now().UTC(),
+		CreatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert agent: %v", err)
+	}
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/sync",
+		`{"agent_id":"`+agentID.String()+`","account_id":`+itoa(account.ID)+`}`, http.StatusOK)
+	var job domain.SyncJob
+	if err := json.Unmarshal(rr.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode job: %v", err)
+	}
+	if job.AccountID != account.ID {
+		t.Fatalf("AccountID = %d, want %d", job.AccountID, account.ID)
+	}
+	if job.AgentID == nil || *job.AgentID != agentID {
+		t.Fatalf("AgentID = %v, want %s", job.AgentID, agentID)
+	}
+}
+
+func TestTriggerSyncAgentResolvesAWSAccountKeyFallback(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{
+		Key:      "aws:125672604241",
+		Name:     "management",
+		Provider: "aws",
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	agentID := uuid.New()
+	if err := ds.UpsertAgent(t.Context(), domain.DiscoveryAgent{
+		ID:         agentID,
+		Name:       "org-agent",
+		AccountID:  125672604241,
+		APIKeyID:   "key-1",
+		LastSeenAt: time.Now().UTC(),
+		CreatedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert agent: %v", err)
+	}
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/sync",
+		`{"agent_id":"`+agentID.String()+`"}`, http.StatusOK)
+	var job domain.SyncJob
+	if err := json.Unmarshal(rr.Body.Bytes(), &job); err != nil {
+		t.Fatalf("decode job: %v", err)
+	}
+	if job.AccountID != account.ID {
+		t.Fatalf("AccountID = %d, want %d", job.AccountID, account.ID)
+	}
+}
+
 func TestOrgIngestRefreshesRegisteredAgentLastSeen(t *testing.T) {
 	discSrv, _, ds, _ := setupDiscoveryTestServer()
 

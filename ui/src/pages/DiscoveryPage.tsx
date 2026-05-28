@@ -199,7 +199,7 @@ export default function DiscoveryPage() {
         targetAgentId === 'all' && healthyAgents.length > 0
           ? await triggerSync({ allAgents: true })
           : targetAgentId !== 'all'
-            ? await triggerSync({ agentId: targetAgentId })
+            ? await triggerSync({ accountId: selectedAccountId, agentId: targetAgentId })
             : await triggerSync({ accountId: selectedAccountId })
 
       const queuedJobs = 'items' in response ? response.items : [response]
