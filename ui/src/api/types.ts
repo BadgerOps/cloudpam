@@ -434,6 +434,8 @@ export interface SyncJob {
   id: string
   account_id: number
   status: SyncJobStatus
+  source?: 'local' | 'agent'
+  agent_id?: string | null
   started_at?: string | null
   completed_at?: string | null
   resources_found: number
@@ -447,6 +449,8 @@ export interface SyncJob {
 export interface SyncJobsResponse {
   items: SyncJob[]
 }
+
+export type SyncTriggerResponse = SyncJob | SyncJobsResponse
 
 export type AgentStatus = 'healthy' | 'stale' | 'offline'
 
@@ -464,6 +468,14 @@ export interface DiscoveryAgent {
 
 export interface DiscoveryAgentsResponse {
   items: DiscoveryAgent[]
+}
+
+export interface DiscoveryImportResponse {
+  accounts_imported: number
+  pools_created: number
+  resources_linked: number
+  skipped: number
+  errors: string[]
 }
 
 // --- Recommendation types ---

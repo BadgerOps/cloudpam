@@ -148,13 +148,13 @@ func (c *Config) Validate() error {
 	if c.AgentName == "" {
 		return errors.New("agent_name is required (set CLOUDPAM_AGENT_NAME or yaml)")
 	}
+	if c.AccountID < 1 {
+		return errors.New("account_id must be a positive integer (set CLOUDPAM_ACCOUNT_ID or yaml)")
+	}
 	if c.AWSOrg.Enabled {
-		// In org mode, account_id is not required (accounts are discovered dynamically)
 		if c.AWSOrg.RoleName == "" {
 			c.AWSOrg.RoleName = "CloudPAMDiscoveryRole"
 		}
-	} else if c.AccountID < 1 {
-		return errors.New("account_id must be a positive integer (set CLOUDPAM_ACCOUNT_ID or yaml)")
 	}
 	if c.SyncInterval < 1*time.Minute {
 		return errors.New("sync_interval must be at least 1 minute")

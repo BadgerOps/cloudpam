@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +38,7 @@ func NewDiscoveryServer(srv *Server, store storage.DiscoveryStore, syncService *
 func (d *DiscoveryServer) RegisterDiscoveryRoutes() {
 	d.srv.mux.HandleFunc("/api/v1/discovery/resources", d.handleResources)
 	d.srv.mux.HandleFunc("/api/v1/discovery/resources/", d.handleResourcesSubroutes)
+	d.srv.mux.HandleFunc("/api/v1/discovery/import", d.handleImportDiscoveredSchema)
 	d.srv.mux.HandleFunc("/api/v1/discovery/sync", d.handleSync)
 	d.srv.mux.HandleFunc("/api/v1/discovery/sync/", d.handleSyncSubroutes)
 	d.srv.mux.HandleFunc("/api/v1/discovery/ingest", d.handleIngest)
@@ -50,6 +54,7 @@ func (d *DiscoveryServer) RegisterProtectedDiscoveryRoutes(dualMW Middleware, lo
 
 	d.srv.mux.Handle("/api/v1/discovery/resources", dualMW(readMW(http.HandlerFunc(d.handleResources))))
 	d.srv.mux.Handle("/api/v1/discovery/resources/", dualMW(d.protectedResourcesSubroutes(logger)))
+	d.srv.mux.Handle("/api/v1/discovery/import", dualMW(createMW(http.HandlerFunc(d.handleImportDiscoveredSchema))))
 	d.srv.mux.Handle("/api/v1/discovery/sync", dualMW(d.protectedSyncHandler(logger)))
 	d.srv.mux.Handle("/api/v1/discovery/sync/", dualMW(readMW(http.HandlerFunc(d.handleSyncSubroutes))))
 
@@ -234,6 +239,183 @@ func (d *DiscoveryServer) handleLink(w http.ResponseWriter, r *http.Request, id 
 	}
 }
 
+type discoveryImportResponse struct {
+	AccountsImported int      `json:"accounts_imported"`
+	PoolsCreated     int      `json:"pools_created"`
+	ResourcesLinked  int      `json:"resources_linked"`
+	Skipped          int      `json:"skipped"`
+	Errors           []string `json:"errors"`
+}
+
+// handleImportDiscoveredSchema imports active discovered VPC/subnet resources as pools.
+func (d *DiscoveryServer) handleImportDiscoveredSchema(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	var body struct {
+		AccountID int64 `json:"account_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AccountID < 1 {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "account_id is required and must be a positive integer", "")
+		return
+	}
+
+	if _, found, err := d.srv.store.GetAccount(r.Context(), body.AccountID); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "account lookup failed", err.Error())
+		return
+	} else if !found {
+		d.srv.writeErr(r.Context(), w, http.StatusNotFound, "account not found", "")
+		return
+	}
+
+	resources, _, err := d.store.ListDiscoveredResources(r.Context(), body.AccountID, domain.DiscoveryFilters{
+		Status:   string(domain.DiscoveryStatusActive),
+		Page:     1,
+		PageSize: 10000,
+	})
+	if err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list resources failed", err.Error())
+		return
+	}
+
+	resp := d.importDiscoveredPools(r.Context(), body.AccountID, resources)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID int64, resources []domain.DiscoveredResource) discoveryImportResponse {
+	resp := discoveryImportResponse{Errors: []string{}}
+	sort.SliceStable(resources, func(i, j int) bool {
+		if resources[i].ResourceType == resources[j].ResourceType {
+			return resources[i].ResourceID < resources[j].ResourceID
+		}
+		if resources[i].ResourceType == domain.ResourceTypeVPC {
+			return true
+		}
+		if resources[j].ResourceType == domain.ResourceTypeVPC {
+			return false
+		}
+		return resources[i].ResourceType < resources[j].ResourceType
+	})
+
+	existingPools, err := d.srv.store.ListPools(ctx)
+	if err != nil {
+		resp.Errors = append(resp.Errors, "list pools: "+err.Error())
+		return resp
+	}
+	poolByDiscoveryID := make(map[string]int64)
+	poolByShape := make(map[string]int64)
+	for _, pool := range existingPools {
+		if pool.Tags != nil {
+			if id := pool.Tags["discovery_resource_id"]; id != "" {
+				poolByDiscoveryID[id] = pool.ID
+			}
+		}
+		poolByShape[poolShapeKey(pool.AccountID, pool.ParentID, string(pool.Type), pool.CIDR)] = pool.ID
+	}
+
+	resourceToPool := make(map[string]int64)
+	for _, res := range resources {
+		if res.PoolID != nil {
+			resourceToPool[res.ResourceID] = *res.PoolID
+			resp.Skipped++
+			continue
+		}
+		if res.CIDR == "" || (res.ResourceType != domain.ResourceTypeVPC && res.ResourceType != domain.ResourceTypeSubnet) {
+			resp.Skipped++
+			continue
+		}
+		if _, err := netip.ParsePrefix(res.CIDR); err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: invalid CIDR %q", res.ResourceID, res.CIDR))
+			resp.Skipped++
+			continue
+		}
+
+		poolType := domain.PoolTypeSubnet
+		if res.ResourceType == domain.ResourceTypeVPC {
+			poolType = domain.PoolTypeVPC
+		}
+
+		var parentID *int64
+		if res.ParentResourceID != nil {
+			if id, ok := resourceToPool[*res.ParentResourceID]; ok {
+				parentID = &id
+			}
+		}
+
+		if id, ok := poolByDiscoveryID[res.ResourceID]; ok {
+			if err := d.store.LinkResourceToPool(ctx, res.ID, id); err != nil {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link existing pool: %v", res.ResourceID, err))
+			} else {
+				resourceToPool[res.ResourceID] = id
+				resp.ResourcesLinked++
+			}
+			continue
+		}
+		if id, ok := poolByShape[poolShapeKey(&accountID, parentID, string(poolType), res.CIDR)]; ok {
+			if err := d.store.LinkResourceToPool(ctx, res.ID, id); err != nil {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link matching pool: %v", res.ResourceID, err))
+			} else {
+				resourceToPool[res.ResourceID] = id
+				resp.ResourcesLinked++
+			}
+			continue
+		}
+
+		name := strings.TrimSpace(res.Name)
+		if name == "" {
+			name = res.ResourceID
+		}
+		pool, err := d.srv.store.CreatePool(ctx, domain.CreatePool{
+			Name:      name,
+			CIDR:      res.CIDR,
+			ParentID:  parentID,
+			AccountID: &accountID,
+			Type:      poolType,
+			Status:    domain.PoolStatusActive,
+			Source:    domain.PoolSourceDiscovered,
+			Description: fmt.Sprintf("Imported from %s discovery resource %s in %s",
+				res.Provider, res.ResourceID, res.Region),
+			Tags: map[string]string{
+				"discovery_resource_id": res.ResourceID,
+				"discovery_provider":    res.Provider,
+				"discovery_region":      res.Region,
+				"discovery_type":        string(res.ResourceType),
+			},
+		})
+		if err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: create pool: %v", res.ResourceID, err))
+			resp.Skipped++
+			continue
+		}
+		if err := d.store.LinkResourceToPool(ctx, res.ID, pool.ID); err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
+		} else {
+			resp.ResourcesLinked++
+		}
+		resourceToPool[res.ResourceID] = pool.ID
+		poolByDiscoveryID[res.ResourceID] = pool.ID
+		poolByShape[poolShapeKey(pool.AccountID, pool.ParentID, string(pool.Type), pool.CIDR)] = pool.ID
+		resp.PoolsCreated++
+	}
+
+	return resp
+}
+
+func poolShapeKey(accountID *int64, parentID *int64, poolType string, cidr string) string {
+	account := int64(0)
+	parent := int64(0)
+	if accountID != nil {
+		account = *accountID
+	}
+	if parentID != nil {
+		parent = *parentID
+	}
+	return fmt.Sprintf("%d|%d|%s|%s", account, parent, poolType, cidr)
+}
+
 // handleSync handles POST /api/v1/discovery/sync (trigger) and GET (list jobs)
 func (d *DiscoveryServer) handleSync(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -249,9 +431,74 @@ func (d *DiscoveryServer) handleSync(w http.ResponseWriter, r *http.Request) {
 
 func (d *DiscoveryServer) triggerSync(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		AccountID int64 `json:"account_id"`
+		AccountID int64  `json:"account_id"`
+		AgentID   string `json:"agent_id"`
+		AllAgents bool   `json:"all_agents"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AccountID < 1 {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	if d.syncService == nil {
+		d.srv.writeErr(r.Context(), w, http.StatusServiceUnavailable, "sync service not available", "")
+		return
+	}
+
+	if body.AllAgents {
+		jobs, err := d.queueAllHealthyAgentSyncs(r.Context())
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "queue agent syncs failed", err.Error())
+			return
+		}
+		if len(jobs) == 0 {
+			d.srv.writeErr(r.Context(), w, http.StatusConflict, "no healthy discovery agents are connected", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, domain.SyncJobsResponse{Items: jobs})
+		return
+	}
+
+	if body.AgentID != "" {
+		agentID, err := uuid.Parse(body.AgentID)
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid agent_id", "")
+			return
+		}
+		agent, err := d.store.GetAgent(r.Context(), agentID)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				d.srv.writeErr(r.Context(), w, http.StatusNotFound, "agent not found", "")
+				return
+			}
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "get agent failed", err.Error())
+			return
+		}
+		if computeAgentStatus(agent.LastSeenAt, time.Now().UTC()) != domain.AgentStatusHealthy {
+			d.srv.writeErr(r.Context(), w, http.StatusConflict, "agent is not healthy", "")
+			return
+		}
+		accountID := agent.AccountID
+		if body.AccountID > 0 {
+			accountID = body.AccountID
+		}
+		if _, found, err := d.srv.store.GetAccount(r.Context(), accountID); err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "account lookup failed", err.Error())
+			return
+		} else if !found {
+			d.srv.writeErr(r.Context(), w, http.StatusNotFound, "account not found", "")
+			return
+		}
+		job, err := d.createAgentSyncJob(r.Context(), accountID, agent.ID)
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "create agent sync job failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+		return
+	}
+
+	if body.AccountID < 1 {
 		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "account_id is required and must be a positive integer", "")
 		return
 	}
@@ -267,21 +514,8 @@ func (d *DiscoveryServer) triggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if d.syncService == nil {
-		d.srv.writeErr(r.Context(), w, http.StatusServiceUnavailable, "sync service not available", "")
-		return
-	}
-
 	if agent := d.selectConnectedAgent(r.Context(), body.AccountID); agent != nil {
-		now := time.Now().UTC()
-		job, err := d.store.CreateSyncJob(r.Context(), domain.SyncJob{
-			ID:        uuid.New(),
-			AccountID: account.ID,
-			Status:    domain.SyncJobStatusPending,
-			Source:    "agent",
-			AgentID:   &agent.ID,
-			CreatedAt: now,
-		})
+		job, err := d.createAgentSyncJob(r.Context(), account.ID, agent.ID)
 		if err != nil {
 			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "create agent sync job failed", err.Error())
 			return
@@ -302,6 +536,46 @@ func (d *DiscoveryServer) triggerSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, job)
+}
+
+func (d *DiscoveryServer) createAgentSyncJob(ctx context.Context, accountID int64, agentID uuid.UUID) (domain.SyncJob, error) {
+	now := time.Now().UTC()
+	return d.store.CreateSyncJob(ctx, domain.SyncJob{
+		ID:        uuid.New(),
+		AccountID: accountID,
+		Status:    domain.SyncJobStatusPending,
+		Source:    "agent",
+		AgentID:   &agentID,
+		CreatedAt: now,
+	})
+}
+
+func (d *DiscoveryServer) queueAllHealthyAgentSyncs(ctx context.Context) ([]domain.SyncJob, error) {
+	agents, err := d.store.ListAgents(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	jobs := make([]domain.SyncJob, 0, len(agents))
+	seen := make(map[uuid.UUID]bool)
+	for i := range agents {
+		agent := agents[i]
+		if seen[agent.ID] || computeAgentStatus(agent.LastSeenAt, now) != domain.AgentStatusHealthy {
+			continue
+		}
+		if _, found, err := d.srv.store.GetAccount(ctx, agent.AccountID); err != nil {
+			return nil, err
+		} else if !found {
+			continue
+		}
+		job, err := d.createAgentSyncJob(ctx, agent.AccountID, agent.ID)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+		seen[agent.ID] = true
+	}
+	return jobs, nil
 }
 
 func (d *DiscoveryServer) selectConnectedAgent(ctx context.Context, accountID int64) *domain.DiscoveryAgent {
