@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Container image releases now cross-compile Linux binaries on the Actions runner and package them with thin runtime Dockerfiles, avoiding slow arm64 builds under QEMU emulation.
+
 ## [0.13.5] - 2026-05-27
 
 ### Fixed
