@@ -21,11 +21,11 @@ import {
 import { useAuth } from '../hooks/useAuth'
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
-  `w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+  `w-full flex items-center justify-center md:justify-start gap-3 px-3 py-2 rounded-lg transition-colors ${
     isActive ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800'
   }`
 
-const sectionHeader = 'px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500'
+const sectionHeader = 'hidden md:block px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-500'
 
 interface SidebarProps {
   onImportExport: () => void
@@ -39,39 +39,39 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
   const canAudit = hasPermission('audit:read') || hasPermission('audit:list')
 
   return (
-    <aside className="w-64 bg-gray-900 dark:bg-gray-950 text-white flex flex-col flex-shrink-0">
-      <div className="p-4 border-b border-gray-800">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-600 rounded-lg">
+    <aside className="w-16 md:w-64 bg-gray-900 dark:bg-gray-950 text-white flex flex-col flex-shrink-0">
+      <div className="p-3 md:p-4 border-b border-gray-800">
+        <div className="flex items-center justify-center md:justify-start gap-3">
+          <div className="p-2 bg-blue-600 rounded-lg flex-shrink-0">
             <Server className="w-6 h-6" />
           </div>
-          <div>
+          <div className="hidden md:block">
             <h1 className="font-bold text-lg">CloudPAM</h1>
             <p className="text-xs text-gray-400">IP Address Management</p>
           </div>
         </div>
       </div>
 
-      <nav aria-label="Main navigation" className="flex-1 p-4 space-y-1 overflow-y-auto">
+      <nav aria-label="Main navigation" className="flex-1 p-2 md:p-4 space-y-1 overflow-y-auto">
         <NavLink to="/" end className={linkClass}>
-          <LayoutDashboard className="w-5 h-5" />
-          <span>Dashboard</span>
+          <LayoutDashboard className="w-5 h-5 flex-shrink-0" />
+          <span className="hidden md:inline">Dashboard</span>
         </NavLink>
 
         {/* IPAM section */}
         <div className="pt-3 mt-3 border-t border-gray-800">
           <p className={sectionHeader}>IPAM</p>
           <NavLink to="/pools" className={linkClass}>
-            <Server className="w-5 h-5" />
-            <span>Address Pools</span>
+            <Server className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Address Pools</span>
           </NavLink>
           <NavLink to="/blocks" className={linkClass}>
-            <LayoutGrid className="w-5 h-5" />
-            <span>Allocated Blocks</span>
+            <LayoutGrid className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Allocated Blocks</span>
           </NavLink>
           <NavLink to="/accounts" className={linkClass}>
-            <Cloud className="w-5 h-5" />
-            <span>Cloud Accounts</span>
+            <Cloud className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Cloud Accounts</span>
           </NavLink>
         </div>
 
@@ -79,17 +79,17 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
         <div className="pt-3 mt-3 border-t border-gray-800">
           <p className={sectionHeader}>Operations</p>
           <NavLink to="/discovery" className={linkClass}>
-            <RefreshCw className="w-5 h-5" />
-            <span>Discovery</span>
+            <RefreshCw className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Discovery</span>
           </NavLink>
           <NavLink to="/drift" className={linkClass}>
-            <GitCompareArrows className="w-5 h-5" />
-            <span>Drift Detection</span>
+            <GitCompareArrows className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Drift Detection</span>
           </NavLink>
           {canAudit && (
             <NavLink to="/audit" className={linkClass}>
-              <Clock className="w-5 h-5" />
-              <span>Audit Log</span>
+              <Clock className="w-5 h-5 flex-shrink-0" />
+              <span className="hidden md:inline">Audit Log</span>
             </NavLink>
           )}
         </div>
@@ -98,16 +98,16 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
         <div className="pt-3 mt-3 border-t border-gray-800">
           <p className={sectionHeader}>Planning</p>
           <NavLink to="/schema" className={linkClass}>
-            <Map className="w-5 h-5" />
-            <span>Schema Planner</span>
+            <Map className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Schema Planner</span>
           </NavLink>
           <NavLink to="/recommendations" className={linkClass}>
-            <Lightbulb className="w-5 h-5" />
-            <span>Recommendations</span>
+            <Lightbulb className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Recommendations</span>
           </NavLink>
           <NavLink to="/ai-planner" className={linkClass}>
-            <Bot className="w-5 h-5" />
-            <span>AI Planner</span>
+            <Bot className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">AI Planner</span>
           </NavLink>
         </div>
 
@@ -115,50 +115,52 @@ export default function Sidebar({ onImportExport }: SidebarProps) {
         <div className="pt-3 mt-3 border-t border-gray-800">
           <p className={sectionHeader}>Administration</p>
           <NavLink to="/config/api-keys" className={linkClass}>
-            <Key className="w-5 h-5" />
-            <span>API Keys</span>
+            <Key className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">API Keys</span>
           </NavLink>
           <NavLink to="/changelog" className={linkClass}>
-            <FileText className="w-5 h-5" />
-            <span>Release Notes</span>
+            <FileText className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Release Notes</span>
           </NavLink>
           {(canSettings || canUsers) && (
             <NavLink to="/identity" className={linkClass}>
-              <UserCog className="w-5 h-5" />
-              <span>Identity</span>
+              <UserCog className="w-5 h-5 flex-shrink-0" />
+              <span className="hidden md:inline">Identity</span>
             </NavLink>
           )}
           {canSettings && (
             <NavLink to="/config" className={linkClass}>
-              <Shield className="w-5 h-5" />
-              <span>Configuration</span>
+              <Shield className="w-5 h-5 flex-shrink-0" />
+              <span className="hidden md:inline">Configuration</span>
             </NavLink>
           )}
           {canSettings && (
             <NavLink to="/config/log-destinations" className={linkClass}>
-              <Radio className="w-5 h-5" />
-              <span>Log Destinations</span>
+              <Radio className="w-5 h-5 flex-shrink-0" />
+              <span className="hidden md:inline">Log Destinations</span>
             </NavLink>
           )}
         </div>
       </nav>
 
-      <div className="p-4 border-t border-gray-800 space-y-1">
+      <div className="p-2 md:p-4 border-t border-gray-800 space-y-1">
         <button
           onClick={onImportExport}
-          className="w-full flex items-center gap-3 px-3 py-2 text-gray-300 hover:bg-gray-800 rounded-lg"
+          className="w-full flex items-center justify-center md:justify-start gap-3 px-3 py-2 text-gray-300 hover:bg-gray-800 rounded-lg"
+          aria-label="Import/Export"
         >
-          <Upload className="w-5 h-5" />
-          <span>Import/Export</span>
+          <Upload className="w-5 h-5 flex-shrink-0" />
+          <span className="hidden md:inline">Import/Export</span>
         </button>
 
         {!isAuthenticated && (
           <button
             onClick={() => navigate('/login')}
-            className="w-full flex items-center gap-3 px-3 py-2 text-gray-300 hover:bg-gray-800 rounded-lg"
+            className="w-full flex items-center justify-center md:justify-start gap-3 px-3 py-2 text-gray-300 hover:bg-gray-800 rounded-lg"
+            aria-label="Login"
           >
-            <Settings className="w-5 h-5" />
-            <span>Login</span>
+            <Settings className="w-5 h-5 flex-shrink-0" />
+            <span className="hidden md:inline">Login</span>
           </button>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
   RefreshCw,
   Link2,
@@ -13,6 +13,8 @@ import {
   Loader2,
   UploadCloud,
   Trash2,
+  X,
+  Plus,
 } from 'lucide-react'
 import {
   useDiscoveryResources,
@@ -20,13 +22,16 @@ import {
   useDiscoveryAgents,
 } from '../hooks/useDiscovery'
 import { useAccounts } from '../hooks/useAccounts'
+import { usePools } from '../hooks/usePools'
 import { useToast } from '../hooks/useToast'
 import StatusBadge from '../components/StatusBadge'
 import DiscoveryWizard from '../components/DiscoveryWizard'
 import { formatTimeAgo } from '../utils/format'
 import type {
   Account,
+  CreatePoolRequest,
   DiscoveredResource,
+  Pool,
   SyncJob,
   DiscoveryAgent,
   AgentStatus,
@@ -77,6 +82,7 @@ export default function DiscoveryPage() {
     fetch: fetchAgents,
     deleteAgent,
   } = useDiscoveryAgents()
+  const { pools, fetchPools, createPool } = usePools()
   const { showToast } = useToast()
   const agentsRefreshInterval = useRef<ReturnType<typeof setInterval> | null>(null)
   const scanPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -84,6 +90,8 @@ export default function DiscoveryPage() {
   const [scanLoading, setScanLoading] = useState(false)
   const [importLoading, setImportLoading] = useState(false)
   const [trackedScanJobs, setTrackedScanJobs] = useState<SyncJob[]>([])
+  const [linkingResource, setLinkingResource] = useState<DiscoveredResource | null>(null)
+  const [linkingLoading, setLinkingLoading] = useState(false)
 
   useEffect(() => {
     fetchAccounts()
@@ -92,6 +100,10 @@ export default function DiscoveryPage() {
   useEffect(() => {
     fetchAgents()
   }, [fetchAgents])
+
+  useEffect(() => {
+    fetchPools()
+  }, [fetchPools])
 
   // Auto-select first account
   useEffect(() => {
@@ -265,19 +277,36 @@ export default function DiscoveryPage() {
   }
 
   async function handleLink(resource: DiscoveredResource) {
-    const poolIdStr = prompt('Enter pool ID to link:')
-    if (!poolIdStr) return
-    const poolId = parseInt(poolIdStr, 10)
-    if (isNaN(poolId) || poolId < 1) {
-      showToast('Invalid pool ID', 'error')
-      return
-    }
+    setLinkingResource(resource)
+  }
+
+  async function handleApplyLink(resource: DiscoveredResource, poolId: number) {
+    setLinkingLoading(true)
     try {
       await linkToPool(resource.id, poolId)
       showToast('Resource linked to pool', 'success')
+      setLinkingResource(null)
       loadResources()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Link failed', 'error')
+    } finally {
+      setLinkingLoading(false)
+    }
+  }
+
+  async function handleCreateAndLink(resource: DiscoveredResource, data: CreatePoolRequest) {
+    setLinkingLoading(true)
+    try {
+      const pool = await createPool(data)
+      await linkToPool(resource.id, pool.id)
+      showToast('Pool created and resource linked', 'success')
+      setLinkingResource(null)
+      fetchPools()
+      loadResources()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Create and link failed', 'error')
+    } finally {
+      setLinkingLoading(false)
     }
   }
 
@@ -339,9 +368,9 @@ export default function DiscoveryPage() {
   }
 
   return (
-    <div className="flex-1 overflow-auto p-6">
+    <div className="flex-1 overflow-auto p-4 sm:p-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mb-4">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
             Cloud Discovery
@@ -354,11 +383,11 @@ export default function DiscoveryPage() {
             <BookOpen className="w-4 h-4" />
           </button>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={selectedAccountId ?? ''}
             onChange={(e) => setSelectedAccountId(Number(e.target.value))}
-            className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-1.5 text-sm"
+            className="min-w-[180px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-1.5 text-sm"
           >
             {accounts.map((a: Account) => (
               <option key={a.id} value={a.id}>
@@ -368,7 +397,7 @@ export default function DiscoveryPage() {
           </select>
           <button
             onClick={() => setShowWizard(true)}
-            className="flex items-center gap-2 rounded bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 text-sm"
+            className="inline-flex items-center gap-2 rounded bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 text-sm"
           >
             <Wand2 className="w-4 h-4" />
             Add Agent
@@ -376,7 +405,7 @@ export default function DiscoveryPage() {
           <button
             onClick={handleImportSchema}
             disabled={importLoading}
-            className="flex items-center gap-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 px-4 py-1.5 text-sm disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 px-3 py-1.5 text-sm disabled:opacity-50"
           >
             {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
             Import Schema
@@ -384,7 +413,7 @@ export default function DiscoveryPage() {
           <select
             value={selectedScanAgentId}
             onChange={(e) => setSelectedScanAgentId(e.target.value)}
-            className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-1.5 text-sm"
+            className="min-w-[190px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-1.5 text-sm"
           >
             <option value="all">
               {healthyAgents.length > 0 ? `All connected agents (${healthyAgents.length})` : 'Selected account'}
@@ -398,7 +427,7 @@ export default function DiscoveryPage() {
           <button
             onClick={() => void handleSync()}
             disabled={scanLoading}
-            className="flex items-center gap-2 rounded bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 text-sm disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 text-sm disabled:opacity-50"
           >
             {scanLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Scan Now
@@ -471,6 +500,7 @@ export default function DiscoveryPage() {
           onLinkedChange={setLinkedFilter}
           onLink={handleLink}
           onUnlink={handleUnlink}
+          pools={pools}
         />
       )}
 
@@ -502,6 +532,17 @@ export default function DiscoveryPage() {
           }}
         />
       )}
+
+      {linkingResource && (
+        <ResourceLinkModal
+          resource={linkingResource}
+          pools={pools}
+          loading={linkingLoading}
+          onClose={() => setLinkingResource(null)}
+          onLink={(poolId) => void handleApplyLink(linkingResource, poolId)}
+          onCreateAndLink={(data) => void handleCreateAndLink(linkingResource, data)}
+        />
+      )}
     </div>
   )
 }
@@ -520,6 +561,7 @@ function ResourcesTab({
   onLinkedChange,
   onLink,
   onUnlink,
+  pools,
 }: {
   resources: DiscoveredResource[]
   loading: boolean
@@ -534,6 +576,7 @@ function ResourcesTab({
   onLinkedChange: (l: string) => void
   onLink: (r: DiscoveredResource) => void
   onUnlink: (r: DiscoveredResource) => void
+  pools: Pool[]
 }) {
   return (
     <>
@@ -600,7 +643,8 @@ function ResourcesTab({
           <SetupGuide defaultOpen />
         </div>
       ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <>
+        <div className="hidden md:block bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
@@ -660,9 +704,7 @@ function ResourcesTab({
                   </td>
                   <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
                     {r.pool_id ? (
-                      <span className="text-blue-600 dark:text-blue-400">
-                        Pool #{r.pool_id}
-                      </span>
+                      <PoolLabel poolId={r.pool_id} pools={pools} />
                     ) : (
                       <span className="text-gray-400 dark:text-gray-500">
                         unlinked
@@ -696,9 +738,399 @@ function ResourcesTab({
             </tbody>
           </table>
         </div>
+        <div className="grid gap-3 md:hidden">
+          {resources.map((r) => (
+            <ResourceCard
+              key={r.id}
+              resource={r}
+              pools={pools}
+              onLink={onLink}
+              onUnlink={onUnlink}
+            />
+          ))}
+        </div>
+        </>
       )}
     </>
   )
+}
+
+function PoolLabel({ poolId, pools }: { poolId: number; pools: Pool[] }) {
+  const pool = pools.find((p) => p.id === poolId)
+  if (!pool) {
+    return <span className="text-blue-600 dark:text-blue-400">Pool #{poolId}</span>
+  }
+  return (
+    <span className="text-blue-600 dark:text-blue-400">
+      {pool.name} <span className="font-mono text-xs text-gray-500 dark:text-gray-400">{pool.cidr}</span>
+    </span>
+  )
+}
+
+function ResourceCard({
+  resource,
+  pools,
+  onLink,
+  onUnlink,
+}: {
+  resource: DiscoveredResource
+  pools: Pool[]
+  onLink: (r: DiscoveredResource) => void
+  onUnlink: (r: DiscoveredResource) => void
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm dark:border-gray-700 dark:bg-gray-800">
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <ResourceTypeBadge type={resource.resource_type} />
+            <StatusBadge label={resource.status} />
+          </div>
+          <div className="mt-2 truncate font-medium text-gray-900 dark:text-gray-100">
+            {resource.name || resource.resource_id}
+          </div>
+          {resource.name && (
+            <div className="truncate text-xs text-gray-500 dark:text-gray-400">
+              {resource.resource_id}
+            </div>
+          )}
+        </div>
+        {resource.pool_id ? (
+          <button
+            onClick={() => onUnlink(resource)}
+            title="Unlink from pool"
+            className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+          >
+            <Unlink className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            onClick={() => onLink(resource)}
+            title="Link to pool"
+            className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+          >
+            <Link2 className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div>
+          <div className="text-gray-500 dark:text-gray-400">CIDR</div>
+          <div className="font-mono text-gray-800 dark:text-gray-200">{resource.cidr || '-'}</div>
+        </div>
+        <div>
+          <div className="text-gray-500 dark:text-gray-400">Region</div>
+          <div className="text-gray-800 dark:text-gray-200">{resource.region || '-'}</div>
+        </div>
+        <div className="col-span-2">
+          <div className="text-gray-500 dark:text-gray-400">Pool</div>
+          {resource.pool_id ? (
+            <PoolLabel poolId={resource.pool_id} pools={pools} />
+          ) : (
+            <span className="text-gray-400 dark:text-gray-500">unlinked</span>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ResourceLinkModal({
+  resource,
+  pools,
+  loading,
+  onClose,
+  onLink,
+  onCreateAndLink,
+}: {
+  resource: DiscoveredResource
+  pools: Pool[]
+  loading: boolean
+  onClose: () => void
+  onLink: (poolId: number) => void
+  onCreateAndLink: (data: CreatePoolRequest) => void
+}) {
+  const candidates = useMemo(() => rankPoolCandidates(resource, pools), [resource, pools])
+  const parentCandidates = useMemo(
+    () => candidates.filter((c) => c.reason === 'contains'),
+    [candidates],
+  )
+  const [selectedPoolId, setSelectedPoolId] = useState<number | null>(candidates[0]?.pool.id ?? null)
+  const [mode, setMode] = useState<'link' | 'create'>(candidates.length > 0 ? 'link' : 'create')
+  const [poolName, setPoolName] = useState(defaultPoolName(resource))
+  const [poolType, setPoolType] = useState<CreatePoolRequest['type']>(poolTypeForResource(resource))
+  const [parentId, setParentId] = useState<number | ''>(parentCandidates[0]?.pool.id ?? '')
+
+  useEffect(() => {
+    setSelectedPoolId(candidates[0]?.pool.id ?? null)
+    setMode(candidates.length > 0 ? 'link' : 'create')
+    setPoolName(defaultPoolName(resource))
+    setPoolType(poolTypeForResource(resource))
+    setParentId(parentCandidates[0]?.pool.id ?? '')
+  }, [candidates, parentCandidates, resource])
+
+  const linkablePools = candidates.length > 0 ? candidates : pools.map((pool) => ({ pool, reason: 'manual' as const, score: 0 }))
+  const canCreate = Boolean(resource.cidr && (resource.resource_type === 'vpc' || resource.resource_type === 'subnet'))
+  const modeButton = (active: boolean) =>
+    'rounded px-3 py-1.5 ' +
+    (active
+      ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100'
+      : 'text-gray-600 dark:text-gray-300')
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/35 p-0 sm:items-center sm:justify-center sm:p-4">
+      <div className="max-h-[92vh] w-full overflow-auto rounded-t-lg bg-white shadow-xl dark:bg-gray-900 sm:max-w-3xl sm:rounded-lg">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Link discovered resource</h2>
+            <div className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+              {resource.name || resource.resource_id} {resource.cidr ? <span className="font-mono">{resource.cidr}</span> : null}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            title="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4 p-4">
+          <div className="inline-flex rounded border border-gray-200 bg-gray-50 p-1 text-sm dark:border-gray-700 dark:bg-gray-800">
+            <button type="button" onClick={() => setMode('link')} className={modeButton(mode === 'link')}>
+              Link existing
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('create')}
+              disabled={!canCreate}
+              className={modeButton(mode === 'create') + ' disabled:cursor-not-allowed disabled:opacity-50'}
+            >
+              Build from discovery
+            </button>
+          </div>
+
+          {mode === 'link' ? (
+            <div className="space-y-3">
+              <div className="rounded border border-gray-200 dark:border-gray-700">
+                {linkablePools.length === 0 ? (
+                  <div className="p-4 text-sm text-gray-500 dark:text-gray-400">No pools exist yet.</div>
+                ) : (
+                  linkablePools.slice(0, 12).map(({ pool, reason }) => (
+                    <label
+                      key={pool.id}
+                      className="flex cursor-pointer items-start gap-3 border-b border-gray-100 p-3 last:border-b-0 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/60"
+                    >
+                      <input
+                        type="radio"
+                        checked={selectedPoolId === pool.id}
+                        onChange={() => setSelectedPoolId(pool.id)}
+                        className="mt-1"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-gray-900 dark:text-gray-100">{pool.name}</span>
+                          <span className="font-mono text-xs text-gray-500 dark:text-gray-400">{pool.cidr}</span>
+                          <StatusBadge label={pool.type} variant="type" />
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          {candidateReasonLabel(reason)}
+                        </div>
+                      </div>
+                    </label>
+                  ))
+                )}
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || !selectedPoolId}
+                  onClick={() => selectedPoolId && onLink(selectedPoolId)}
+                  className="inline-flex items-center gap-2 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+                  Link
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form
+              className="space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (!resource.cidr) return
+                onCreateAndLink({
+                  name: poolName.trim(),
+                  cidr: resource.cidr,
+                  account_id: resource.account_id,
+                  parent_id: parentId === '' ? undefined : parentId,
+                  type: poolType,
+                  status: 'active',
+                  source: 'discovered',
+                  description: 'Imported from ' + resource.provider + ' ' + resource.resource_type + ' ' + resource.resource_id + ' in ' + resource.region,
+                  tags: {
+                    discovery_resource_id: resource.resource_id,
+                    discovery_provider: resource.provider,
+                    discovery_region: resource.region,
+                    discovery_type: resource.resource_type,
+                  },
+                })
+              }}
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Name</span>
+                  <input
+                    required
+                    value={poolName}
+                    onChange={(e) => setPoolName(e.target.value)}
+                    className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CIDR</span>
+                  <input
+                    disabled
+                    value={resource.cidr || ''}
+                    className="w-full rounded border border-gray-300 bg-gray-50 px-3 py-1.5 font-mono text-sm text-gray-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Type</span>
+                  <select
+                    value={poolType}
+                    onChange={(e) => setPoolType(e.target.value as CreatePoolRequest['type'])}
+                    className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  >
+                    <option value="vpc">VPC</option>
+                    <option value="subnet">Subnet</option>
+                    <option value="environment">Environment</option>
+                    <option value="region">Region</option>
+                    <option value="supernet">Supernet</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Parent</span>
+                  <select
+                    value={parentId}
+                    onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  >
+                    <option value="">None</option>
+                    {parentCandidates.map(({ pool }) => (
+                      <option key={pool.id} value={pool.id}>
+                        {pool.name} ({pool.cidr})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading || !canCreate || poolName.trim().length === 0}
+                  className="inline-flex items-center gap-2 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  Create and link
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+type CandidateReason = 'exact' | 'contains' | 'same-account' | 'manual'
+
+function rankPoolCandidates(resource: DiscoveredResource, pools: Pool[]): Array<{ pool: Pool; reason: CandidateReason; score: number }> {
+  return pools
+    .map((pool) => {
+      let score = 0
+      let reason: CandidateReason = 'manual'
+      if (resource.cidr && cidrEqual(pool.cidr, resource.cidr)) {
+        score = 100
+        reason = 'exact'
+      } else if (resource.cidr && cidrContains(pool.cidr, resource.cidr)) {
+        score = 80 + prefixLength(pool.cidr)
+        reason = 'contains'
+      } else if (pool.account_id === resource.account_id) {
+        score = 20
+        reason = 'same-account'
+      }
+      if (pool.source === 'discovered') score += 5
+      return { pool, reason, score }
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.pool.name.localeCompare(b.pool.name))
+}
+
+function candidateReasonLabel(reason: CandidateReason) {
+  switch (reason) {
+    case 'exact':
+      return 'Exact CIDR match'
+    case 'contains':
+      return 'Contains this discovered CIDR'
+    case 'same-account':
+      return 'Same account'
+    default:
+      return 'Available pool'
+  }
+}
+
+function defaultPoolName(resource: DiscoveredResource) {
+  return (resource.name || resource.resource_id || 'discovered-pool').trim()
+}
+
+function poolTypeForResource(resource: DiscoveredResource): CreatePoolRequest['type'] {
+  if (resource.resource_type === 'vpc') return 'vpc'
+  if (resource.resource_type === 'subnet') return 'subnet'
+  return 'subnet'
+}
+
+function cidrEqual(a: string, b: string) {
+  const pa = parseIPv4CIDR(a)
+  const pb = parseIPv4CIDR(b)
+  return Boolean(pa && pb && pa.base === pb.base && pa.prefix === pb.prefix)
+}
+
+function cidrContains(parent: string, child: string) {
+  const p = parseIPv4CIDR(parent)
+  const c = parseIPv4CIDR(child)
+  if (!p || !c || p.prefix > c.prefix) return false
+  return (c.base & p.mask) === p.base
+}
+
+function prefixLength(cidr: string) {
+  return parseIPv4CIDR(cidr)?.prefix ?? 0
+}
+
+function parseIPv4CIDR(cidr: string): { base: number; prefix: number; mask: number } | null {
+  const [ip, prefixText] = cidr.split('/')
+  const prefix = Number(prefixText)
+  if (!ip || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) return null
+  const octets = ip.split('.').map((part) => Number(part))
+  if (octets.length !== 4 || octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null
+  const raw = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0
+  return { base: raw & mask, prefix, mask }
 }
 
 function SyncTab({
