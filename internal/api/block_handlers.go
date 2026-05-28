@@ -107,19 +107,22 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 		ID                 int64     `json:"id"`
 		Name               string    `json:"name"`
 		CIDR               string    `json:"cidr"`
-		ParentID           int64     `json:"parent_id"`
-		ParentName         string    `json:"parent_name"`
+		ParentID           *int64    `json:"parent_id,omitempty"`
+		ParentName         string    `json:"parent_name,omitempty"`
 		AccountID          *int64    `json:"account_id,omitempty"`
 		AccountName        string    `json:"account_name,omitempty"`
 		AccountPlatform    string    `json:"account_platform,omitempty"`
 		AccountTier        string    `json:"account_tier,omitempty"`
 		AccountEnvironment string    `json:"account_environment,omitempty"`
 		AccountRegions     []string  `json:"account_regions,omitempty"`
+		Type               string    `json:"type"`
+		Status             string    `json:"status"`
+		Source             string    `json:"source"`
 		CreatedAt          time.Time `json:"created_at"`
 	}
 	var items []row
 	for _, p := range ps {
-		if p.ParentID == nil {
+		if p.ParentID == nil && p.Type != "vpc" && p.Type != "subnet" {
 			continue
 		}
 		// Filters
@@ -132,18 +135,26 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(poolFilter) > 0 {
+			if p.ParentID == nil {
+				continue
+			}
 			if _, ok := poolFilter[*p.ParentID]; !ok {
 				continue
 			}
 		}
 		r := row{
-			ID:         p.ID,
-			Name:       p.Name,
-			CIDR:       p.CIDR,
-			ParentID:   *p.ParentID,
-			ParentName: poolName[*p.ParentID],
-			AccountID:  p.AccountID,
-			CreatedAt:  p.CreatedAt,
+			ID:        p.ID,
+			Name:      p.Name,
+			CIDR:      p.CIDR,
+			ParentID:  p.ParentID,
+			AccountID: p.AccountID,
+			Type:      string(p.Type),
+			Status:    string(p.Status),
+			Source:    string(p.Source),
+			CreatedAt: p.CreatedAt,
+		}
+		if p.ParentID != nil {
+			r.ParentName = poolName[*p.ParentID]
 		}
 		if p.AccountID != nil {
 			if n, ok := accName[*p.AccountID]; ok {

@@ -316,6 +316,17 @@ func (s *Server) handlePoolStats(w http.ResponseWriter, r *http.Request, id int6
 func (s *Server) updatePool(w http.ResponseWriter, r *http.Request, id int64) {
 	ctx := r.Context()
 
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
+		return
+	}
+	rawBody, err := json.Marshal(raw)
+	if err != nil {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
+		return
+	}
+
 	var payload struct {
 		AccountID   *int64             `json:"account_id"`
 		Name        *string            `json:"name"`
@@ -324,9 +335,22 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request, id int64) {
 		Description *string            `json:"description"`
 		Tags        *map[string]string `json:"tags"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
 		s.writeErr(ctx, w, http.StatusBadRequest, "invalid json", "")
 		return
+	}
+	accountID := payload.AccountID
+	if _, ok := raw["account_id"]; !ok {
+		current, found, err := s.store.GetPool(ctx, id)
+		if err != nil {
+			s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+			return
+		}
+		if !found {
+			s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+			return
+		}
+		accountID = current.AccountID
 	}
 
 	// Validate name if provided
@@ -353,7 +377,7 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request, id int64) {
 
 	update := domain.UpdatePool{
 		Name:        payload.Name,
-		AccountID:   payload.AccountID,
+		AccountID:   accountID,
 		Type:        payload.Type,
 		Status:      payload.Status,
 		Description: payload.Description,

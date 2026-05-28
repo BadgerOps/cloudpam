@@ -1,4 +1,4 @@
-import { X } from 'lucide-react'
+import { Pencil, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { PoolWithStats } from '../api/types'
 import { formatHostCount, getUtilizationColor } from '../utils/format'
@@ -7,9 +7,10 @@ import StatusBadge from './StatusBadge'
 interface PoolDetailPanelProps {
   pool: PoolWithStats
   onClose: () => void
+  onEdit?: () => void
 }
 
-export default function PoolDetailPanel({ pool, onClose }: PoolDetailPanelProps) {
+export default function PoolDetailPanel({ pool, onClose, onEdit }: PoolDetailPanelProps) {
   const navigate = useNavigate()
   const stats = pool.stats
 
@@ -85,12 +86,22 @@ export default function PoolDetailPanel({ pool, onClose }: PoolDetailPanelProps)
 
         {/* Actions */}
         <div className="flex gap-2">
-          <button
-            onClick={() => navigate('/pools')}
-            className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
-          >
-            Manage Pool
-          </button>
+          {onEdit ? (
+            <button
+              onClick={onEdit}
+              className="inline-flex flex-1 items-center justify-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+            >
+              <Pencil className="h-4 w-4" />
+              Edit Pool
+            </button>
+          ) : (
+            <button
+              onClick={() => navigate('/pools')}
+              className="flex-1 px-3 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+            >
+              Manage Pool
+            </button>
+          )}
           <button
             onClick={() => navigate('/audit')}
             className="flex-1 px-3 py-2 border dark:border-gray-600 text-sm dark:text-gray-300 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
