@@ -28,6 +28,7 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
     provider: 'aws',
     regions: [],
   })
+  const [createdAccount, setCreatedAccount] = useState<Account | null>(null)
   const [regionsInput, setRegionsInput] = useState('')
   const [agentName, setAgentName] = useState('')
   const [provisionResult, setProvisionResult] = useState<AgentProvisionResponse | null>(null)
@@ -50,7 +51,7 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const { agents, fetch: fetchAgents } = useDiscoveryAgents()
   const { showToast } = useToast()
 
-  const selectedAccount = accounts.find(a => a.id === selectedAccountId) ?? null
+  const selectedAccount = accounts.find(a => a.id === selectedAccountId) ?? createdAccount
 
   // Poll for agent connection when on step 3 with a provisioned agent
   useEffect(() => {
@@ -117,6 +118,7 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
     try {
       const regions = regionsInput.split(',').map(r => r.trim()).filter(Boolean)
       const account = await createAccount({ ...newAccount, regions })
+      setCreatedAccount(account)
       setSelectedAccountId(account.id)
       setShowNewAccount(false)
       onAccountCreated()
@@ -258,7 +260,7 @@ resource "null_resource" "cloudpam_agent" {
   -e CLOUDPAM_BOOTSTRAP_TOKEN="${token}" \\
   -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
   -e CLOUDPAM_AWS_REGIONS="${accountRegions.join(',')}" \\
-  cloudpam/agent:latest`
+  ghcr.io/badgerops/cloudpam/agent:latest`
 
   const dockerConfigOrg = `docker run -d \\
   --name cloudpam-agent \\
@@ -271,7 +273,7 @@ resource "null_resource" "cloudpam_agent" {
   -e CLOUDPAM_AWS_ORG_EXTERNAL_ID="${orgExternalId}" \\` : ''}
   -e CLOUDPAM_AWS_ORG_REGIONS="${orgRegions.join(',')}" \\${orgExclude.length > 0 ? `
   -e CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS="${orgExclude.join(',')}" \\` : ''}
-  cloudpam/agent:latest`
+  ghcr.io/badgerops/cloudpam/agent:latest`
 
   const iamSetupContent = `# IAM Setup for AWS Organizations Discovery
 #
@@ -353,7 +355,7 @@ resource "aws_iam_policy" "cloudpam_org" {
     iam: { content: iamSetupContent, filename: `${agentNameFinal}-iam.tf`, label: 'IAM Setup' },
   }
 
-  const canGoNext = (step === 1 && (discoveryMode === 'organization' || selectedAccountId !== null)) ||
+  const canGoNext = (step === 1 && selectedAccountId !== null) ||
     (step === 2 && provisionResult !== null)
 
   return (
@@ -362,7 +364,7 @@ resource "aws_iam_policy" "cloudpam_org" {
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b dark:border-gray-700">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Plan Discovery</h2>
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Set Up Discovery</h2>
             <div className="flex items-center gap-2 mt-1">
               {[1, 2, 3].map(s => (
                 <div key={s} className="flex items-center gap-1">
@@ -430,10 +432,12 @@ resource "aws_iam_policy" "cloudpam_org" {
                 </label>
               </div>
 
-              {/* Single account mode */}
-              {discoveryMode === 'single' && (
+              {/* Account selection */}
+              {(discoveryMode === 'single' || discoveryMode === 'organization') && (
                 <div className="space-y-3">
-                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Select Cloud Account</h4>
+                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {discoveryMode === 'organization' ? 'Select Management Account' : 'Select Cloud Account'}
+                  </h4>
                   {!showNewAccount ? (
                     <>
                       <select

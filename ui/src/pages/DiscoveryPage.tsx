@@ -10,6 +10,8 @@ import {
   ChevronRight,
   Activity,
   Wand2,
+  Loader2,
+  UploadCloud,
 } from 'lucide-react'
 import {
   useDiscoveryResources,
@@ -30,6 +32,14 @@ import type {
 } from '../api/types'
 
 type Tab = 'resources' | 'sync' | 'agents'
+
+function mergeJobs(current: SyncJob[], updates: SyncJob[]) {
+  const byID = new Map(current.map((job) => [job.id, job]))
+  updates.forEach((job) => byID.set(job.id, job))
+  return Array.from(byID.values()).sort((a, b) =>
+    new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  )
+}
 
 export default function DiscoveryPage() {
   const [tab, setTab] = useState<Tab>('resources')
@@ -56,6 +66,8 @@ export default function DiscoveryPage() {
     error: jobsError,
     fetch: fetchJobs,
     triggerSync,
+    getJob,
+    importDiscoveredSchema,
   } = useSyncJobs()
   const {
     agents,
@@ -65,10 +77,19 @@ export default function DiscoveryPage() {
   } = useDiscoveryAgents()
   const { showToast } = useToast()
   const agentsRefreshInterval = useRef<ReturnType<typeof setInterval> | null>(null)
+  const scanPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [selectedScanAgentId, setSelectedScanAgentId] = useState('all')
+  const [scanLoading, setScanLoading] = useState(false)
+  const [importLoading, setImportLoading] = useState(false)
+  const [trackedScanJobs, setTrackedScanJobs] = useState<SyncJob[]>([])
 
   useEffect(() => {
     fetchAccounts()
   }, [fetchAccounts])
+
+  useEffect(() => {
+    fetchAgents()
+  }, [fetchAgents])
 
   // Auto-select first account
   useEffect(() => {
@@ -93,6 +114,14 @@ export default function DiscoveryPage() {
   }, [loadResources])
 
   useEffect(() => {
+    return () => {
+      if (scanPollRef.current) {
+        clearInterval(scanPollRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     if (selectedAccountId && tab === 'sync') {
       fetchJobs(selectedAccountId)
     }
@@ -101,9 +130,9 @@ export default function DiscoveryPage() {
   // Auto-refresh agents every 30 seconds when on agents tab
   useEffect(() => {
     if (tab === 'agents') {
-      fetchAgents(selectedAccountId ?? undefined)
+      fetchAgents()
       agentsRefreshInterval.current = setInterval(() => {
-        fetchAgents(selectedAccountId ?? undefined)
+        fetchAgents()
       }, 30000)
     } else {
       if (agentsRefreshInterval.current) {
@@ -116,22 +145,107 @@ export default function DiscoveryPage() {
         clearInterval(agentsRefreshInterval.current)
       }
     }
-  }, [tab, selectedAccountId, fetchAgents])
+  }, [tab, fetchAgents])
 
-  async function handleSync() {
+  const healthyAgents = agents.filter((agent) => agent.status === 'healthy')
+
+  function pollScanJobs(jobIds: string[]) {
+    if (scanPollRef.current) {
+      clearInterval(scanPollRef.current)
+    }
+    const pending = new Set(jobIds)
+    let attempts = 0
+    scanPollRef.current = setInterval(async () => {
+      attempts += 1
+      const results = await Promise.allSettled(Array.from(pending).map((id) => getJob(id)))
+      const updatedJobs: SyncJob[] = []
+      results.forEach((result) => {
+        if (result.status === 'fulfilled') {
+          const job = result.value
+          updatedJobs.push(job)
+          if (job.status === 'completed' || job.status === 'failed') {
+            pending.delete(job.id)
+          }
+        }
+      })
+      if (updatedJobs.length > 0) {
+        setTrackedScanJobs((current) => mergeJobs(current, updatedJobs))
+      }
+      if (selectedAccountId) {
+        fetchJobs(selectedAccountId)
+      }
+      if (pending.size === 0 || attempts >= 40) {
+        if (scanPollRef.current) {
+          clearInterval(scanPollRef.current)
+          scanPollRef.current = null
+        }
+        fetchAccounts()
+        loadResources()
+        if (selectedAccountId) {
+          fetchJobs(selectedAccountId)
+        }
+      }
+    }, 3000)
+  }
+
+  async function handleSync(agentIdOverride?: string) {
     if (!selectedAccountId) return
+    setScanLoading(true)
     try {
-      const job = await triggerSync(selectedAccountId)
-      showToast(
-        job.status === 'completed'
-          ? `Sync complete: ${job.resources_found} resources found`
-          : `Sync ${job.status}${job.error_message ? ': ' + job.error_message : ''}`,
-        job.status === 'completed' ? 'success' : 'error',
-      )
+      const targetAgentId = agentIdOverride ?? selectedScanAgentId
+      const response =
+        targetAgentId === 'all' && healthyAgents.length > 0
+          ? await triggerSync({ allAgents: true })
+          : targetAgentId !== 'all'
+            ? await triggerSync({ agentId: targetAgentId })
+            : await triggerSync({ accountId: selectedAccountId })
+
+      const queuedJobs = 'items' in response ? response.items : [response]
+      setTrackedScanJobs((current) => mergeJobs(current, queuedJobs))
+      const activeJobs = queuedJobs.filter((job) => job.status === 'pending' || job.status === 'running')
+      if (activeJobs.length > 0) {
+        showToast(
+          activeJobs.length === 1
+            ? 'Scan queued for connected agent'
+            : `Scans queued for ${activeJobs.length} connected agents`,
+          'success',
+        )
+        setTab('sync')
+        pollScanJobs(activeJobs.map((job) => job.id))
+      } else {
+        const job = queuedJobs[0]
+        showToast(
+          job?.status === 'completed'
+            ? `Scan complete: ${job.resources_found} resources found`
+            : `Scan ${job?.status ?? 'requested'}${job?.error_message ? ': ' + job.error_message : ''}`,
+          job?.status === 'failed' ? 'error' : 'success',
+        )
+      }
+      fetchAccounts()
       loadResources()
       fetchJobs(selectedAccountId)
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Sync failed', 'error')
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
+  async function handleImportSchema() {
+    if (!selectedAccountId) return
+    setImportLoading(true)
+    try {
+      const result = await importDiscoveredSchema(selectedAccountId)
+      const detail = result.errors.length > 0 ? ` (${result.errors.length} warning${result.errors.length === 1 ? '' : 's'})` : ''
+      showToast(
+        `Imported ${result.pools_created} pools and linked ${result.resources_linked} resources${detail}`,
+        result.errors.length > 0 ? 'info' : 'success',
+      )
+      loadResources()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Import failed', 'error')
+    } finally {
+      setImportLoading(false)
     }
   }
 
@@ -189,7 +303,7 @@ export default function DiscoveryPage() {
               className="inline-flex items-center gap-2 rounded bg-green-600 hover:bg-green-700 text-white px-4 py-2 text-sm"
             >
               <Wand2 className="w-4 h-4" />
-              Plan Discovery
+              Set Up Discovery
             </button>
           </div>
           <SetupGuide defaultOpen />
@@ -242,14 +356,37 @@ export default function DiscoveryPage() {
             className="flex items-center gap-2 rounded bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 text-sm"
           >
             <Wand2 className="w-4 h-4" />
-            Plan Discovery
+            Add Agent
           </button>
           <button
-            onClick={handleSync}
-            className="flex items-center gap-2 rounded bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 text-sm"
+            onClick={handleImportSchema}
+            disabled={importLoading}
+            className="flex items-center gap-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 px-4 py-1.5 text-sm disabled:opacity-50"
           >
-            <RefreshCw className="w-4 h-4" />
-            Sync Now
+            {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
+            Import Schema
+          </button>
+          <select
+            value={selectedScanAgentId}
+            onChange={(e) => setSelectedScanAgentId(e.target.value)}
+            className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 px-3 py-1.5 text-sm"
+          >
+            <option value="all">
+              {healthyAgents.length > 0 ? `All connected agents (${healthyAgents.length})` : 'Selected account'}
+            </option>
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id} disabled={agent.status !== 'healthy'}>
+                {agent.name} ({agent.status})
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => void handleSync()}
+            disabled={scanLoading}
+            className="flex items-center gap-2 rounded bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 text-sm disabled:opacity-50"
+          >
+            {scanLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            Scan Now
           </button>
         </div>
       </div>
@@ -323,7 +460,7 @@ export default function DiscoveryPage() {
       )}
 
       {tab === 'sync' && (
-        <SyncTab jobs={jobs} loading={jobsLoading} error={jobsError} />
+        <SyncTab jobs={mergeJobs(jobs, trackedScanJobs)} agents={agents} loading={jobsLoading} error={jobsError} />
       )}
 
       {tab === 'agents' && (
@@ -331,6 +468,10 @@ export default function DiscoveryPage() {
           agents={agents}
           loading={agentsLoading}
           error={agentsError}
+          onScan={(agentId) => {
+            setSelectedScanAgentId(agentId)
+            void handleSync(agentId)
+          }}
         />
       )}
 
@@ -339,6 +480,10 @@ export default function DiscoveryPage() {
           accounts={accounts}
           onAccountCreated={fetchAccounts}
           onClose={() => setShowWizard(false)}
+          onComplete={() => {
+            setTab('agents')
+            fetchAgents()
+          }}
         />
       )}
     </div>
@@ -542,10 +687,12 @@ function ResourcesTab({
 
 function SyncTab({
   jobs,
+  agents,
   loading,
   error,
 }: {
   jobs: SyncJob[]
+  agents: DiscoveryAgent[]
   loading: boolean
   error: string | null
 }) {
@@ -585,6 +732,9 @@ function SyncTab({
               Started
             </th>
             <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+              Source
+            </th>
+            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Found
             </th>
             <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
@@ -612,6 +762,13 @@ function SyncTab({
               </td>
               <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
                 {j.started_at ? formatTimeAgo(j.started_at) : '-'}
+              </td>
+              <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+                {j.source === 'agent' ? (
+                  agents.find((agent) => agent.id === j.agent_id)?.name || 'agent'
+                ) : (
+                  'server'
+                )}
               </td>
               <td className="px-4 py-2 text-gray-900 dark:text-gray-100">
                 {j.resources_found}
@@ -665,10 +822,12 @@ function AgentsTab({
   agents,
   loading,
   error,
+  onScan,
 }: {
   agents: DiscoveryAgent[]
   loading: boolean
   error: string | null
+  onScan: (agentId: string) => void
 }) {
   if (error) {
     return (
@@ -752,6 +911,9 @@ CLOUDPAM_ACCOUNT_ID=1 \\
             <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Last Seen
             </th>
+            <th className="px-4 py-2 text-right text-gray-600 dark:text-gray-400 font-medium">
+              Actions
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -774,6 +936,16 @@ CLOUDPAM_ACCOUNT_ID=1 \\
               </td>
               <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
                 {formatTimeAgo(agent.last_seen_at)}
+              </td>
+              <td className="px-4 py-2 text-right">
+                <button
+                  onClick={() => onScan(agent.id)}
+                  disabled={agent.status !== 'healthy'}
+                  className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300 dark:disabled:bg-blue-900"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Scan
+                </button>
               </td>
             </tr>
           ))}

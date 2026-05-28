@@ -5,10 +5,28 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.0] - 2026-05-28
+
+### Added
+- Discovery now supports importing scanned VPC and subnet resources directly into the managed IP schema, creating discovered-source pools and linking the originating discovered resources back to the new or matching pools.
+- Added a discovery import API at `POST /api/v1/discovery/import` for turning active discovered resources into CloudPAM pools without going through CSV/block import workflows.
+- Discovery scans can now be requested for every healthy connected agent in one action, with each agent receiving its own tracked sync job.
+- Discovery scans can also target a single selected agent for account-specific or cloud-specific troubleshooting.
+- The Agents tab now exposes a per-agent scan action so operators can start discovery from the agent inventory view.
+- Added API coverage for all-agent scan queueing and discovered schema import/link behavior.
 
 ### Changed
 - Container image releases now cross-compile Linux binaries on the Actions runner and package them with thin runtime Dockerfiles, avoiding slow arm64 builds under QEMU emulation.
+- The Cloud Discovery primary action is now `Scan Now`; it defaults to all healthy connected agents and falls back to the selected-account server scan when no healthy agent is available.
+- Sync History now shows locally tracked queued agent jobs immediately, polls queued/running agent scans until completion, and displays whether each scan came from the server or a specific agent.
+- The discovery setup wizard is now labeled `Set Up Discovery`/`Add Agent` instead of `Plan Discovery`, requires a management account for AWS Organization agents, and sends users back to the Agents view when setup completes.
+- Generated Docker examples for discovery agents now use the published `ghcr.io/badgerops/cloudpam/agent:latest` image.
+- Organization-mode agent configuration now requires a positive `CLOUDPAM_ACCOUNT_ID` so bootstrap registration and heartbeat status work consistently while org ingest continues to auto-create member accounts from scan data.
+
+### Fixed
+- Clicking the scan button no longer appears to do nothing when a connected agent is selected: agent scans are queued, surfaced in Sync History, and polled until the agent completes ingest.
+- Scan job responses with `pending` or `running` status are now treated as successful queued work instead of error toasts.
+- Discovery UI now refreshes accounts after scans so accounts imported from AWS Organization ingest become visible without a manual page refresh.
 
 ## [0.13.5] - 2026-05-27
 
