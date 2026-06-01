@@ -25,7 +25,7 @@ export function useApplySchema() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const apply = useCallback(async (schema: SchemaNode, skipConflicts = false) => {
+  const apply = useCallback(async (schema: SchemaNode, skipConflicts = false): Promise<boolean> => {
     setLoading(true)
     setError(null)
     setResult(null)
@@ -40,8 +40,10 @@ export function useApplySchema() {
       }
       const res = await post<SchemaApplyResponse>('/api/v1/schema/apply', req)
       setResult(res)
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to apply schema')
+      return false
     } finally {
       setLoading(false)
     }

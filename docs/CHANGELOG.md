@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.14.7] - 2026-06-01
+
+### Fixed
+- Schema Planner now preserves saved drafts when applying a schema fails, so users can recover and retry complex plans after API or validation errors.
+- In-memory utilization history now returns a copy of the latest snapshot instead of exposing store-owned slice memory to callers.
+
 ## [0.14.6] - 2026-06-01
 
 ### Changed
