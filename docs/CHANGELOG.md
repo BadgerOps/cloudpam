@@ -11,7 +11,7 @@ patch or minor version entry for every user-facing change.
 ## [0.14.8] - 2026-06-01
 
 ### Fixed
-- Completed in-app upgrades now clear upgrade-specific frontend state and reload through a cache-busting URL so the new frontend bundle is loaded without requiring a manual hard refresh.
+- Completed in-app upgrades now clear upgrade-specific frontend state, reload through a cache-busting URL, and remember the handled completion so a persisted backend `completed` status cannot trigger a frontend reload loop.
 
 ## [0.14.7] - 2026-06-01
 

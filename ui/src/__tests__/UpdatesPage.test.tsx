@@ -31,6 +31,7 @@ describe('UpdatesPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    window.sessionStorage.clear()
 
     mockUseAuth.mockReturnValue({ role: 'admin' })
     mockUseToast.mockReturnValue({ showToast })
@@ -92,7 +93,7 @@ describe('UpdatesPage', () => {
         update_available: false,
         release_notes: 'Release notes for v0.9.0',
       },
-      status: { status: 'completed', target_version: '0.9.0' },
+      status: { status: 'completed', target_version: '0.9.0', finished_at: '2026-06-01T20:00:00Z' },
       loadingSummary: false,
       loadingStatus: false,
       actionLoading: false,
@@ -110,7 +111,40 @@ describe('UpdatesPage', () => {
     await waitFor(() => {
       expect(showToast).toHaveBeenCalledWith('Upgrade completed. Refreshing the frontend...', 'success')
       expect(scheduleFrontendResetAfterUpgrade).toHaveBeenCalledTimes(1)
+      expect(window.sessionStorage.getItem('cloudpam_handled_completed_upgrade')).toBe(
+        '0.9.0:2026-06-01T20:00:00Z',
+      )
     })
+  })
+
+  it('does not reload again for an already handled completed upgrade', async () => {
+    window.sessionStorage.setItem('cloudpam_handled_completed_upgrade', '0.9.0:2026-06-01T20:00:00Z')
+    mockUseUpdates.mockReturnValue({
+      summary: {
+        current_version: '0.9.0',
+        latest_version: '0.9.0',
+        update_available: false,
+        release_notes: 'Release notes for v0.9.0',
+      },
+      status: { status: 'completed', target_version: '0.9.0', finished_at: '2026-06-01T20:00:00Z' },
+      loadingSummary: false,
+      loadingStatus: false,
+      actionLoading: false,
+      summaryError: null,
+      statusError: null,
+      actionError: null,
+      refreshSummary,
+      refreshStatus,
+      triggerUpgrade,
+    })
+
+    render(<UpdatesPage />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Updates' })).toBeTruthy()
+    })
+    expect(showToast).not.toHaveBeenCalledWith('Upgrade completed. Refreshing the frontend...', 'success')
+    expect(scheduleFrontendResetAfterUpgrade).not.toHaveBeenCalled()
   })
 
   it('blocks non-admin users from the updater controls', () => {
