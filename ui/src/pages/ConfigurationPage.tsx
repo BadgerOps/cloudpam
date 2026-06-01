@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { CheckCircle2, ExternalLink, FileText, Key, Loader2, Radio, RefreshCw, Shield } from 'lucide-react'
 import { checkForUpdates, getSystemInfo, getUpgradeStatus, triggerUpgrade } from '../api/client'
 import type { SystemInfoResponse, UpdateCheckResponse } from '../api/types'
+import { scheduleFrontendResetAfterUpgrade } from '../utils/upgradeReload'
 
 function formatVersion(version: string | null | undefined) {
   if (!version) return 'unknown'
@@ -23,6 +24,7 @@ export default function ConfigurationPage() {
   const [upgradeMessage, setUpgradeMessage] = useState<string | null>(null)
   const [upgradeRunning, setUpgradeRunning] = useState(false)
   const pollRef = useRef<number | null>(null)
+  const reloadTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -44,6 +46,7 @@ export default function ConfigurationPage() {
     load()
     return () => {
       if (pollRef.current) window.clearInterval(pollRef.current)
+      if (reloadTimeoutRef.current) window.clearTimeout(reloadTimeoutRef.current)
     }
   }, [])
 
@@ -71,7 +74,7 @@ export default function ConfigurationPage() {
         } else if (status.status === 'completed') {
           if (pollRef.current) window.clearInterval(pollRef.current)
           setUpgradeMessage(status.message || 'Upgrade complete. Refreshing...')
-          window.setTimeout(() => window.location.reload(), 3000)
+          reloadTimeoutRef.current = scheduleFrontendResetAfterUpgrade()
         } else if (status.status === 'failed') {
           if (pollRef.current) window.clearInterval(pollRef.current)
           setUpgradeRunning(false)

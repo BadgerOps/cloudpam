@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { checkForUpdates, getUpgradeStatus, triggerUpgrade } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
+import { scheduleFrontendResetAfterUpgrade } from '../utils/upgradeReload'
 
 const POLL_INTERVAL_MS = 60 * 60 * 1000
 const STATUS_POLL_INTERVAL_MS = 5000
@@ -78,7 +79,7 @@ export default function UpdateBanner() {
             if (statusPollRef.current) window.clearInterval(statusPollRef.current)
             setUpgradeStep('completed')
             setUpgradeMessage(status.message || 'Upgrade complete. Reloading...')
-            reloadTimeoutRef.current = window.setTimeout(() => window.location.reload(), 3000)
+            reloadTimeoutRef.current = scheduleFrontendResetAfterUpgrade()
           } else if (status.status === 'failed') {
             if (statusPollRef.current) window.clearInterval(statusPollRef.current)
             setUpgradeStep('failed')

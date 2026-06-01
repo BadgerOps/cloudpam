@@ -5,6 +5,7 @@ import UpdatesPage from '../pages/UpdatesPage'
 const mockUseAuth = vi.fn()
 const mockUseToast = vi.fn()
 const mockUseUpdates = vi.fn()
+const scheduleFrontendResetAfterUpgrade = vi.fn()
 
 vi.mock('../hooks/useAuth', () => ({
   useAuth: () => mockUseAuth(),
@@ -16,6 +17,10 @@ vi.mock('../hooks/useToast', () => ({
 
 vi.mock('../hooks/useUpdates', () => ({
   useUpdates: () => mockUseUpdates(),
+}))
+
+vi.mock('../utils/upgradeReload', () => ({
+  scheduleFrontendResetAfterUpgrade: () => scheduleFrontendResetAfterUpgrade(),
 }))
 
 describe('UpdatesPage', () => {
@@ -76,6 +81,35 @@ describe('UpdatesPage', () => {
     await waitFor(() => {
       expect(triggerUpgrade).toHaveBeenCalledTimes(1)
       expect(showToast).toHaveBeenCalledWith('Upgrade request for v0.9.0 submitted', 'success')
+    })
+  })
+
+  it('reloads frontend state after an upgrade completes', async () => {
+    mockUseUpdates.mockReturnValue({
+      summary: {
+        current_version: '0.8.0',
+        latest_version: '0.9.0',
+        update_available: false,
+        release_notes: 'Release notes for v0.9.0',
+      },
+      status: { status: 'completed', target_version: '0.9.0' },
+      loadingSummary: false,
+      loadingStatus: false,
+      actionLoading: false,
+      summaryError: null,
+      statusError: null,
+      actionError: null,
+      refreshSummary,
+      refreshStatus,
+      triggerUpgrade,
+    })
+    scheduleFrontendResetAfterUpgrade.mockReturnValue(123)
+
+    render(<UpdatesPage />)
+
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith('Upgrade completed. Refreshing the frontend...', 'success')
+      expect(scheduleFrontendResetAfterUpgrade).toHaveBeenCalledTimes(1)
     })
   })
 

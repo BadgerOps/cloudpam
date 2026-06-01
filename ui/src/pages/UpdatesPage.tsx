@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowUpCircle,
   CheckCircle2,
@@ -14,6 +14,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import { useUpdates } from '../hooks/useUpdates'
 import type { UpdateStatusResponse } from '../api/types'
+import { scheduleFrontendResetAfterUpgrade } from '../utils/upgradeReload'
 
 const ACTIVE_UPGRADE_STATUSES = new Set([
   'upgrade_requested',
@@ -157,6 +158,8 @@ export default function UpdatesPage() {
     triggerUpgrade,
   } = useUpdates()
   const [pendingTargetVersion, setPendingTargetVersion] = useState<string | null>(null)
+  const reloadTimeoutRef = useRef<number | null>(null)
+  const reloadScheduledRef = useRef(false)
 
   useEffect(() => {
     if (pendingTargetVersion && normalizeStatus(status?.status) !== 'idle') {
@@ -175,6 +178,20 @@ export default function UpdatesPage() {
 
     return () => window.clearInterval(interval)
   }, [pendingTargetVersion, refreshStatus, refreshSummary, status?.status])
+
+  useEffect(() => {
+    return () => {
+      if (reloadTimeoutRef.current) window.clearTimeout(reloadTimeoutRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (normalizeStatus(status?.status) !== 'completed' || reloadScheduledRef.current) return
+
+    reloadScheduledRef.current = true
+    showToast('Upgrade completed. Refreshing the frontend...', 'success')
+    reloadTimeoutRef.current = scheduleFrontendResetAfterUpgrade()
+  }, [showToast, status?.status])
 
   async function handleRefresh() {
     const results = await Promise.allSettled([refreshSummary(true), refreshStatus()])
