@@ -54,6 +54,8 @@ coverage*
 
 # Planning documents and mockups (local only, not committed)
 .planning/
+.clawpatch/
+ui/design-mockups/
 
 # Nix
 result
