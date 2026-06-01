@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+const specURLTimeout = 15 * time.Second
 
 func main() {
 	source := "-"
@@ -35,7 +38,8 @@ func readSpec(source string) ([]byte, error) {
 	case source == "-":
 		return io.ReadAll(os.Stdin)
 	case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
-		resp, err := http.Get(source)
+		client := http.Client{Timeout: specURLTimeout}
+		resp, err := client.Get(source)
 		if err != nil {
 			return nil, err
 		}
@@ -77,7 +81,7 @@ func validateSpec(data []byte) (int, int, error) {
 		}
 		for method, rawOperation := range pathItem {
 			switch method {
-			case "get", "post", "put", "patch", "delete":
+			case "get", "post", "put", "patch", "delete", "options", "head", "trace":
 			default:
 				continue
 			}
@@ -85,7 +89,8 @@ func validateSpec(data []byte) (int, int, error) {
 			if !ok {
 				return 0, 0, fmt.Errorf("%s %s must be a mapping", method, path)
 			}
-			if operation["summary"] == "" {
+			summary, ok := operation["summary"].(string)
+			if !ok || strings.TrimSpace(summary) == "" {
 				return 0, 0, fmt.Errorf("%s %s missing summary", method, path)
 			}
 			if _, ok := operation["responses"].(map[string]any); !ok {

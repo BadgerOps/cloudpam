@@ -47,12 +47,13 @@ func TestOpenAPISpecValidation(t *testing.T) {
 		}
 		for method, rawOperation := range pathItem {
 			switch method {
-			case "get", "post", "patch", "delete", "put":
+			case "get", "post", "patch", "delete", "put", "options", "head", "trace":
 			default:
 				continue
 			}
 			operation := asMap(t, rawOperation, path+"."+method)
-			if operation["summary"] == "" {
+			summary, ok := operation["summary"].(string)
+			if !ok || strings.TrimSpace(summary) == "" {
 				t.Fatalf("%s %s missing summary", method, path)
 			}
 			if _, ok := operation["responses"]; !ok {

@@ -308,7 +308,7 @@ func (s *Server) openAPISpecYAML() []byte {
 	b.WriteString("openapi: 3.1.0\n")
 	b.WriteString("info:\n")
 	b.WriteString("  title: CloudPAM API\n")
-	b.WriteString("  version: \"0.8.0\"\n")
+	fmt.Fprintf(&b, "  version: %s\n", yamlQuote(cleanVersion(s.appVersion)))
 	b.WriteString("  description: |\n")
 	b.WriteString("    Runtime-generated REST API contract for the routes registered by this CloudPAM server.\n")
 	b.WriteString("    /openapi.yaml is the machine-readable contract and /openapi is the interactive API reference.\n")
