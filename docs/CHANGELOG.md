@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.15.1] - 2026-06-01
+
+### Fixed
+- Completed in-app upgrades now remember the handled completion so a persisted backend `completed` status cannot trigger a frontend reload loop after the frontend reset.
+
 ## [0.15.0] - 2026-06-01
 
 ### Added
