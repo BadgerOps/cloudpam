@@ -27,6 +27,7 @@ const ACTIVE_UPGRADE_STATUSES = new Set([
   'verifying',
   'starting',
 ])
+const HANDLED_COMPLETED_UPGRADE_KEY = 'cloudpam_handled_completed_upgrade'
 
 function normalizeStatus(status?: string): string {
   return (status || 'idle').trim().toLowerCase()
@@ -34,6 +35,32 @@ function normalizeStatus(status?: string): string {
 
 function isActiveUpgradeStatus(status?: string): boolean {
   return ACTIVE_UPGRADE_STATUSES.has(normalizeStatus(status))
+}
+
+function buildCompletedUpgradeKey(status?: UpdateStatusResponse | null): string | null {
+  if (normalizeStatus(status?.status) !== 'completed') return null
+
+  const target = typeof status?.target_version === 'string' && status.target_version ? status.target_version : 'unknown-target'
+  const finished = typeof status?.finished_at === 'string' && status.finished_at ? status.finished_at : null
+  const started = typeof status?.started_at === 'string' && status.started_at ? status.started_at : null
+  const requested = typeof status?.requested_at === 'string' && status.requested_at ? status.requested_at : null
+  return [target, finished ?? started ?? requested ?? 'unknown-time'].join(':')
+}
+
+function getHandledCompletedUpgradeKey(): string | null {
+  try {
+    return window.sessionStorage.getItem(HANDLED_COMPLETED_UPGRADE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function markCompletedUpgradeHandled(key: string) {
+  try {
+    window.sessionStorage.setItem(HANDLED_COMPLETED_UPGRADE_KEY, key)
+  } catch {
+    // Reload dedupe is best-effort; storage can be unavailable in locked-down contexts.
+  }
 }
 
 function formatVersion(version?: string): string {
@@ -186,12 +213,14 @@ export default function UpdatesPage() {
   }, [])
 
   useEffect(() => {
-    if (normalizeStatus(status?.status) !== 'completed' || reloadScheduledRef.current) return
+    const completedUpgradeKey = buildCompletedUpgradeKey(status)
+    if (!completedUpgradeKey || reloadScheduledRef.current || getHandledCompletedUpgradeKey() === completedUpgradeKey) return
 
     reloadScheduledRef.current = true
+    markCompletedUpgradeHandled(completedUpgradeKey)
     showToast('Upgrade completed. Refreshing the frontend...', 'success')
     reloadTimeoutRef.current = scheduleFrontendResetAfterUpgrade()
-  }, [showToast, status?.status])
+  }, [showToast, status])
 
   async function handleRefresh() {
     const results = await Promise.allSettled([refreshSummary(true), refreshStatus()])
