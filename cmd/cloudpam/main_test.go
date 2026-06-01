@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
+	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
+	"cloudpam/internal/observability"
 )
 
 func TestResetUserPassword(t *testing.T) {
@@ -77,5 +81,32 @@ func TestResetUserPasswordNotFound(t *testing.T) {
 	err := resetUserPassword(context.Background(), auth.NewMemoryUserStore(), auth.NewMemorySessionStore(), "missing", "NewPassword123!")
 	if err == nil {
 		t.Fatal("expected missing user error")
+	}
+}
+
+func TestConfigureAuditSyslogForwardingDisabledWithoutAddress(t *testing.T) {
+	t.Setenv("CLOUDPAM_AUDIT_SYSLOG_ADDR", "")
+	base := audit.NewMemoryAuditLogger()
+	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: &bytes.Buffer{}})
+
+	got := configureAuditSyslogForwarding(logger, base, "0.15.0")
+	if got != base {
+		t.Fatal("expected base audit logger when syslog address is not set")
+	}
+}
+
+func TestConfigureAuditSyslogForwardingRejectsInvalidNetwork(t *testing.T) {
+	t.Setenv("CLOUDPAM_AUDIT_SYSLOG_ADDR", "127.0.0.1:514")
+	t.Setenv("CLOUDPAM_AUDIT_SYSLOG_NETWORK", "http")
+	base := audit.NewMemoryAuditLogger()
+	var logs bytes.Buffer
+	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: &logs})
+
+	got := configureAuditSyslogForwarding(logger, base, "0.15.0")
+	if got != base {
+		t.Fatal("expected base audit logger when syslog network is invalid")
+	}
+	if !strings.Contains(logs.String(), "audit syslog forwarding disabled") {
+		t.Fatalf("expected disabled warning, got %s", logs.String())
 	}
 }

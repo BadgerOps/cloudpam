@@ -644,7 +644,8 @@ For CloudPAM AI, the roadmap should follow those patterns instead of keeping AI 
 - [ ] Compliance report templates — not yet implemented
 - [x] Audit dashboard with analytics (frontend AuditPage)
 - [ ] Vector sidecar deployment for log shipping — config exists in deploy/vector/
-- [ ] SIEM integration (Splunk, CloudWatch, Cloud Logging) — not yet implemented
+- [x] Generic SIEM audit forwarding via CEF-over-syslog
+- [ ] Vendor-specific SIEM connectors (Splunk HEC, CloudWatch, Cloud Logging) — not yet implemented
 
 **Success Criteria**:
 - Every mutation logged with before/after state

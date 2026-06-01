@@ -80,7 +80,7 @@ This summary reflects what is implemented in the current repository. The deeper 
 - AI planning currently targets a single OpenAI-compatible backend configured via `CLOUDPAM_LLM_*`; there is no separate Anthropic-native integration or backend fallback selection.
 - The update flow is host-managed and file-triggered; CloudPAM can request and report upgrades, but it does not perform a universal self-update on its own.
 - Multi-tenancy exists only as PostgreSQL schema/default-org scaffolding; the running application remains single-tenant.
-- Some UI surfaces are intentionally unfinished: the Log Destinations page is a placeholder and the schema planner's Terraform export is still a stub.
+- Some UI surfaces are intentionally unfinished: the schema planner's Terraform export is still a stub, and Log Destinations currently documents env-based CEF/syslog audit forwarding rather than offering persisted destination management.
 
 ### Not Yet Implemented
 
@@ -89,7 +89,7 @@ This summary reflects what is implemented in the current repository. The deeper 
 - IPv6 support
 - Distributed tracing
 - Rich drift reconciliation suggestions or automatic remediation
-- External log destination delivery / SIEM forwarding
+- Persisted external log destination management beyond env-based CEF/syslog audit forwarding
 - VLAN/VRF tracking
 - Host/Address tracking (deferred to M7+)
 
