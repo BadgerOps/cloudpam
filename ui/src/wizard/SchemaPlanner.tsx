@@ -82,8 +82,10 @@ export default function SchemaPlanner() {
   }, [selectedBlueprint, customCidr, strategy, dimensions])
 
   const handleApply = useCallback(async () => {
-    await apply(generatedSchema)
-    clearDraft()
+    const applied = await apply(generatedSchema)
+    if (applied) {
+      clearDraft()
+    }
   }, [apply, generatedSchema])
 
   const handleExport = useCallback(

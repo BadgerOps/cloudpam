@@ -53,10 +53,11 @@ func (s *MemoryUtilizationStore) LatestSnapshot(_ context.Context, poolID int64)
 	defer s.mu.RUnlock()
 	var latest *domain.UtilizationSnapshot
 	for i := range s.snapshots {
-		snap := &s.snapshots[i]
+		snap := s.snapshots[i]
 		if snap.PoolID == poolID {
 			if latest == nil || snap.CapturedAt.After(latest.CapturedAt) {
-				latest = snap
+				latestCopy := snap
+				latest = &latestCopy
 			}
 		}
 	}
