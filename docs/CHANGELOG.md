@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.14.8] - 2026-06-01
+
+### Fixed
+- Completed in-app upgrades now clear upgrade-specific frontend state and reload through a cache-busting URL so the new frontend bundle is loaded without requiring a manual hard refresh.
+
 ## [0.14.7] - 2026-06-01
 
 ### Fixed
