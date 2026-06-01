@@ -29,9 +29,9 @@ func NewAIPlanningServer(srv *Server, aiSvc *planning.AIPlanningService, convSto
 
 // RegisterAIPlanningRoutes registers routes without RBAC.
 func (a *AIPlanningServer) RegisterAIPlanningRoutes() {
-	a.srv.mux.HandleFunc("/api/v1/ai/chat", a.handleChat)
-	a.srv.mux.HandleFunc("/api/v1/ai/sessions", a.handleSessions)
-	a.srv.mux.HandleFunc("/api/v1/ai/sessions/", a.handleSessionByID)
+	a.srv.handleOpenAPIRouteFunc("/api/v1/ai/chat", a.handleChat)
+	a.srv.handleOpenAPIRouteFunc("/api/v1/ai/sessions", a.handleSessions)
+	a.srv.handleOpenAPIRouteFunc("/api/v1/ai/sessions/", a.handleSessionByID)
 }
 
 // RegisterProtectedAIPlanningRoutes registers routes with RBAC.
@@ -40,11 +40,11 @@ func (a *AIPlanningServer) RegisterProtectedAIPlanningRoutes(dualMW Middleware, 
 	createMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, logger)
 	updateMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionUpdate, logger)
 
-	a.srv.mux.Handle("/api/v1/ai/chat", dualMW(readMW(http.HandlerFunc(a.handleChat))))
-	a.srv.mux.Handle("/api/v1/ai/sessions", dualMW(readMW(http.HandlerFunc(a.handleSessions))))
-	a.srv.mux.Handle("POST /api/v1/ai/sessions/{id}/apply-plan", dualMW(createMW(http.HandlerFunc(a.handleSessionByID))))
+	a.srv.handleOpenAPIRoute("/api/v1/ai/chat", dualMW(readMW(http.HandlerFunc(a.handleChat))))
+	a.srv.handleOpenAPIRoute("/api/v1/ai/sessions", dualMW(readMW(http.HandlerFunc(a.handleSessions))))
+	a.srv.handleOpenAPIRoute("POST /api/v1/ai/sessions/{id}/apply-plan", dualMW(createMW(http.HandlerFunc(a.handleSessionByID))))
 	// sessions/ handles GET and DELETE for individual planning sessions.
-	a.srv.mux.Handle("/api/v1/ai/sessions/", dualMW(updateMW(http.HandlerFunc(a.handleSessionByID))))
+	a.srv.handleOpenAPIRoute("/api/v1/ai/sessions/", dualMW(updateMW(http.HandlerFunc(a.handleSessionByID))))
 }
 
 // handleChat streams an SSE response for a chat message.

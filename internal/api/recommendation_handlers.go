@@ -27,9 +27,9 @@ func NewRecommendationServer(srv *Server, recSvc *planning.RecommendationService
 
 // RegisterRecommendationRoutes registers routes without RBAC.
 func (rs *RecommendationServer) RegisterRecommendationRoutes() {
-	rs.srv.mux.HandleFunc("/api/v1/recommendations/generate", rs.handleGenerate)
-	rs.srv.mux.HandleFunc("/api/v1/recommendations", rs.handleList)
-	rs.srv.mux.HandleFunc("/api/v1/recommendations/", rs.handleByID)
+	rs.srv.handleOpenAPIRouteFunc("/api/v1/recommendations/generate", rs.handleGenerate)
+	rs.srv.handleOpenAPIRouteFunc("/api/v1/recommendations", rs.handleList)
+	rs.srv.handleOpenAPIRouteFunc("/api/v1/recommendations/", rs.handleByID)
 }
 
 // RegisterProtectedRecommendationRoutes registers routes with RBAC.
@@ -38,9 +38,9 @@ func (rs *RecommendationServer) RegisterProtectedRecommendationRoutes(dualMW Mid
 	createMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, logger)
 	updateMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionUpdate, logger)
 
-	rs.srv.mux.Handle("/api/v1/recommendations/generate", dualMW(createMW(http.HandlerFunc(rs.handleGenerate))))
-	rs.srv.mux.Handle("/api/v1/recommendations", dualMW(readMW(http.HandlerFunc(rs.handleList))))
-	rs.srv.mux.Handle("/api/v1/recommendations/", dualMW(updateMW(http.HandlerFunc(rs.handleByID))))
+	rs.srv.handleOpenAPIRoute("/api/v1/recommendations/generate", dualMW(createMW(http.HandlerFunc(rs.handleGenerate))))
+	rs.srv.handleOpenAPIRoute("/api/v1/recommendations", dualMW(readMW(http.HandlerFunc(rs.handleList))))
+	rs.srv.handleOpenAPIRoute("/api/v1/recommendations/", dualMW(updateMW(http.HandlerFunc(rs.handleByID))))
 }
 
 // handleGenerate generates recommendations for the given pools.

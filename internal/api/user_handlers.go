@@ -66,11 +66,11 @@ func WithLoginRateLimit(mw func(http.Handler) http.Handler) UserRouteOption {
 
 // RegisterUserRoutes registers user auth routes without RBAC (development mode).
 func (us *UserServer) RegisterUserRoutes() {
-	us.mux.HandleFunc("/api/v1/auth/login", us.handleLogin)
-	us.mux.HandleFunc("/api/v1/auth/logout", us.handleLogout)
-	us.mux.HandleFunc("/api/v1/auth/me", us.handleMe)
-	us.mux.HandleFunc("/api/v1/auth/users", us.handleUsers)
-	us.mux.HandleFunc("/api/v1/auth/users/", us.handleUserByID)
+	us.handleOpenAPIRouteFunc("/api/v1/auth/login", us.handleLogin)
+	us.handleOpenAPIRouteFunc("/api/v1/auth/logout", us.handleLogout)
+	us.handleOpenAPIRouteFunc("/api/v1/auth/me", us.handleMe)
+	us.handleOpenAPIRouteFunc("/api/v1/auth/users", us.handleUsers)
+	us.handleOpenAPIRouteFunc("/api/v1/auth/users/", us.handleUserByID)
 }
 
 // RegisterProtectedUserRoutes registers user auth routes with RBAC.
@@ -89,14 +89,14 @@ func (us *UserServer) RegisterProtectedUserRoutes(logger *slog.Logger, opts ...U
 	if cfg.loginRateLimit != nil {
 		loginHandler = cfg.loginRateLimit(loginHandler)
 	}
-	us.mux.Handle("/api/v1/auth/login", loginHandler)
+	us.handleOpenAPIRoute("/api/v1/auth/login", loginHandler)
 
 	// Dual auth middleware (session or API key).
 	dualMW := DualAuthMiddleware(us.keyStore, us.sessionStore, us.userStore, true, logger)
 
 	// Logout and me require authentication.
-	us.mux.Handle("/api/v1/auth/logout", dualMW(http.HandlerFunc(us.handleLogout)))
-	us.mux.Handle("/api/v1/auth/me", dualMW(http.HandlerFunc(us.handleMe)))
+	us.handleOpenAPIRoute("/api/v1/auth/logout", dualMW(http.HandlerFunc(us.handleLogout)))
+	us.handleOpenAPIRoute("/api/v1/auth/me", dualMW(http.HandlerFunc(us.handleMe)))
 
 	// User CRUD — admin only.
 	usersCreateMW := RequirePermissionMiddleware(auth.ResourceUsers, auth.ActionCreate, logger)
@@ -105,7 +105,7 @@ func (us *UserServer) RegisterProtectedUserRoutes(logger *slog.Logger, opts ...U
 	usersUpdateMW := RequirePermissionMiddleware(auth.ResourceUsers, auth.ActionUpdate, logger)
 	usersDeleteMW := RequirePermissionMiddleware(auth.ResourceUsers, auth.ActionDelete, logger)
 
-	us.mux.Handle("/api/v1/auth/users", dualMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	us.handleOpenAPIRoute("/api/v1/auth/users", dualMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			usersListMW(http.HandlerFunc(us.listUsers)).ServeHTTP(w, r)
@@ -117,7 +117,7 @@ func (us *UserServer) RegisterProtectedUserRoutes(logger *slog.Logger, opts ...U
 		}
 	})))
 
-	us.mux.Handle("/api/v1/auth/users/", dualMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	us.handleOpenAPIRoute("/api/v1/auth/users/", dualMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/auth/users/")
 		parts := strings.SplitN(path, "/", 2)
 		id := strings.Trim(parts[0], "/")

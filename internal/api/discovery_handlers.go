@@ -36,15 +36,15 @@ func NewDiscoveryServer(srv *Server, store storage.DiscoveryStore, syncService *
 
 // RegisterDiscoveryRoutes registers discovery routes without RBAC.
 func (d *DiscoveryServer) RegisterDiscoveryRoutes() {
-	d.srv.mux.HandleFunc("/api/v1/discovery/resources", d.handleResources)
-	d.srv.mux.HandleFunc("/api/v1/discovery/resources/", d.handleResourcesSubroutes)
-	d.srv.mux.HandleFunc("/api/v1/discovery/import", d.handleImportDiscoveredSchema)
-	d.srv.mux.HandleFunc("/api/v1/discovery/sync", d.handleSync)
-	d.srv.mux.HandleFunc("/api/v1/discovery/sync/", d.handleSyncSubroutes)
-	d.srv.mux.HandleFunc("/api/v1/discovery/ingest", d.handleIngest)
-	d.srv.mux.HandleFunc("/api/v1/discovery/ingest/org", d.handleOrgIngest)
-	d.srv.mux.HandleFunc("/api/v1/discovery/agents", d.handleListAgents)
-	d.srv.mux.HandleFunc("/api/v1/discovery/agents/", d.handleAgentsSubroutes)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/resources", d.handleResources)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/resources/", d.handleResourcesSubroutes)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/import", d.handleImportDiscoveredSchema)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/sync", d.handleSync)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/sync/", d.handleSyncSubroutes)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/ingest", d.handleIngest)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/ingest/org", d.handleOrgIngest)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/agents", d.handleListAgents)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/agents/", d.handleAgentsSubroutes)
 }
 
 // RegisterProtectedDiscoveryRoutes registers discovery routes with RBAC.
@@ -52,17 +52,17 @@ func (d *DiscoveryServer) RegisterProtectedDiscoveryRoutes(dualMW Middleware, lo
 	readMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionRead, logger)
 	createMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionCreate, logger)
 
-	d.srv.mux.Handle("/api/v1/discovery/resources", dualMW(readMW(http.HandlerFunc(d.handleResources))))
-	d.srv.mux.Handle("/api/v1/discovery/resources/", dualMW(d.protectedResourcesSubroutes(logger)))
-	d.srv.mux.Handle("/api/v1/discovery/import", dualMW(createMW(http.HandlerFunc(d.handleImportDiscoveredSchema))))
-	d.srv.mux.Handle("/api/v1/discovery/sync", dualMW(d.protectedSyncHandler(logger)))
-	d.srv.mux.Handle("/api/v1/discovery/sync/", dualMW(readMW(http.HandlerFunc(d.handleSyncSubroutes))))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/resources", dualMW(readMW(http.HandlerFunc(d.handleResources))))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/resources/", dualMW(d.protectedResourcesSubroutes(logger)))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/import", dualMW(createMW(http.HandlerFunc(d.handleImportDiscoveredSchema))))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/sync", dualMW(d.protectedSyncHandler(logger)))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/sync/", dualMW(readMW(http.HandlerFunc(d.handleSyncSubroutes))))
 
 	// Agent endpoints — all go through dualMW (API key or session auth)
-	d.srv.mux.Handle("/api/v1/discovery/ingest", dualMW(createMW(http.HandlerFunc(d.handleIngest))))
-	d.srv.mux.Handle("/api/v1/discovery/ingest/org", dualMW(createMW(http.HandlerFunc(d.handleOrgIngest))))
-	d.srv.mux.Handle("/api/v1/discovery/agents", dualMW(readMW(http.HandlerFunc(d.handleListAgents))))
-	d.srv.mux.Handle("/api/v1/discovery/agents/", dualMW(d.protectedAgentsSubroutes(logger)))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/ingest", dualMW(createMW(http.HandlerFunc(d.handleIngest))))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/ingest/org", dualMW(createMW(http.HandlerFunc(d.handleOrgIngest))))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/agents", dualMW(readMW(http.HandlerFunc(d.handleListAgents))))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/agents/", dualMW(d.protectedAgentsSubroutes(logger)))
 }
 
 // protectedAgentsSubroutes returns a handler for /api/v1/discovery/agents/ with RBAC.

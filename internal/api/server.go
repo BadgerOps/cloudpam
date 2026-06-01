@@ -40,6 +40,8 @@ type Server struct {
 	roleStore        auth.RoleStore
 	settingsStore    storage.SettingsStore
 	appVersion       string
+	openAPIRoutes    []openAPIRoute
+	openAPIRouteKeys map[string]bool
 }
 
 // NewServer creates a new HTTP server with the given dependencies.
@@ -178,52 +180,53 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, sessionStore au
 	}
 
 	// Public endpoints (no auth required)
-	s.mux.HandleFunc("/openapi.yaml", s.handleOpenAPISpec)
-	s.mux.HandleFunc("/healthz", s.handleHealth)
-	s.mux.HandleFunc("/readyz", s.handleReady)
-	s.mux.HandleFunc("/api/v1/auth/setup", s.handleSetup)
+	s.handleOpenAPIRouteFunc("/openapi", s.handleOpenAPIPage)
+	s.handleOpenAPIRouteFunc("/openapi.yaml", s.handleOpenAPISpec)
+	s.handleOpenAPIRouteFunc("/healthz", s.handleHealth)
+	s.handleOpenAPIRouteFunc("/readyz", s.handleReady)
+	s.handleOpenAPIRouteFunc("/api/v1/auth/setup", s.handleSetup)
 	if s.metrics != nil {
-		s.mux.Handle("/metrics", s.metrics.Handler())
+		s.handleOpenAPIRoute("/metrics", s.metrics.Handler())
 	}
-	s.mux.HandleFunc("/api/v1/test-sentry", s.handleTestSentry)
+	s.handleOpenAPIRouteFunc("/api/v1/test-sentry", s.handleTestSentry)
 	// Unified React SPA (catch-all)
-	s.mux.Handle("/", s.handleSPA())
+	s.handleOpenAPIRoute("/", s.handleSPA())
 
 	// Dual auth middleware: accepts both session cookies and API key Bearer tokens.
 	dualMW := DualAuthMiddleware(keyStore, sessionStore, userStore, true, slogger)
 
 	// Authenticated system metadata endpoints.
-	s.mux.Handle("/api/v1/system/info", dualMW(http.HandlerFunc(s.handleSystemInfo)))
-	s.mux.Handle("/api/v1/system/changelog", dualMW(http.HandlerFunc(s.handleChangelog)))
+	s.handleOpenAPIRoute("/api/v1/system/info", dualMW(http.HandlerFunc(s.handleSystemInfo)))
+	s.handleOpenAPIRoute("/api/v1/system/changelog", dualMW(http.HandlerFunc(s.handleChangelog)))
 
 	// Pool endpoints - require pools permissions
-	s.mux.Handle("/api/v1/pools", dualMW(s.protectedPoolsHandler(slogger)))
-	s.mux.Handle("/api/v1/pools/", dualMW(s.protectedPoolsSubroutesHandler(slogger)))
+	s.handleOpenAPIRoute("/api/v1/pools", dualMW(s.protectedPoolsHandler(slogger)))
+	s.handleOpenAPIRoute("/api/v1/pools/", dualMW(s.protectedPoolsSubroutesHandler(slogger)))
 
 	// Account endpoints - require accounts permissions
-	s.mux.Handle("/api/v1/accounts", dualMW(s.protectedAccountsHandler(slogger)))
-	s.mux.Handle("/api/v1/accounts/", dualMW(s.protectedAccountsSubroutesHandler(slogger)))
+	s.handleOpenAPIRoute("/api/v1/accounts", dualMW(s.protectedAccountsHandler(slogger)))
+	s.handleOpenAPIRoute("/api/v1/accounts/", dualMW(s.protectedAccountsSubroutesHandler(slogger)))
 
 	// Blocks list - requires pools:read (read-only view of pool allocations)
 	poolsReadMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, slogger)
-	s.mux.Handle("/api/v1/blocks", dualMW(poolsReadMW(http.HandlerFunc(s.handleBlocksList))))
+	s.handleOpenAPIRoute("/api/v1/blocks", dualMW(poolsReadMW(http.HandlerFunc(s.handleBlocksList))))
 
 	// Export endpoint - requires pools:read and accounts:read
 	exportPermMW := RequireAnyPermissionMiddleware([]auth.Permission{
 		{Resource: auth.ResourcePools, Action: auth.ActionRead},
 	}, slogger)
-	s.mux.Handle("/api/v1/export", dualMW(exportPermMW(http.HandlerFunc(s.handleExport))))
+	s.handleOpenAPIRoute("/api/v1/export", dualMW(exportPermMW(http.HandlerFunc(s.handleExport))))
 
 	// Schema planner endpoints - require pools:create
 	poolsCreateMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, slogger)
-	s.mux.Handle("/api/v1/schema/check", dualMW(poolsReadMW(http.HandlerFunc(s.handleSchemaCheck))))
-	s.mux.Handle("/api/v1/schema/apply", dualMW(poolsCreateMW(http.HandlerFunc(s.handleSchemaApply))))
+	s.handleOpenAPIRoute("/api/v1/schema/check", dualMW(poolsReadMW(http.HandlerFunc(s.handleSchemaCheck))))
+	s.handleOpenAPIRoute("/api/v1/schema/apply", dualMW(poolsCreateMW(http.HandlerFunc(s.handleSchemaApply))))
 
 	// Import endpoints - require create permissions
 	accountsCreateMW := RequirePermissionMiddleware(auth.ResourceAccounts, auth.ActionCreate, slogger)
-	s.mux.Handle("POST /api/v1/import/accounts", dualMW(accountsCreateMW(http.HandlerFunc(s.handleImportAccounts))))
-	s.mux.Handle("POST /api/v1/import/pools", dualMW(poolsCreateMW(http.HandlerFunc(s.handleImportPools))))
+	s.handleOpenAPIRoute("POST /api/v1/import/accounts", dualMW(accountsCreateMW(http.HandlerFunc(s.handleImportAccounts))))
+	s.handleOpenAPIRoute("POST /api/v1/import/pools", dualMW(poolsCreateMW(http.HandlerFunc(s.handleImportPools))))
 
 	// Search endpoint - requires pools:read
-	s.mux.Handle("/api/v1/search", dualMW(poolsReadMW(http.HandlerFunc(s.handleSearch))))
+	s.handleOpenAPIRoute("/api/v1/search", dualMW(poolsReadMW(http.HandlerFunc(s.handleSearch))))
 }

@@ -5,6 +5,17 @@ All notable changes to CloudPAM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+This repository does not use an `Unreleased` changelog section. Add a concrete
+patch or minor version entry for every user-facing change.
+
+## [0.14.6] - 2026-06-01
+
+### Changed
+- `/openapi.yaml` is now generated at runtime from the routes registered by the running server instead of serving an embedded static file.
+- `/openapi` now serves an interactive Scalar API reference backed by the live runtime-generated spec.
+- `docs/openapi.yaml` was removed so the in-app generated spec remains the source of truth.
+- OpenAPI validation now runs through Go/Nix tooling instead of the previous Ruby helper.
+
 ## [0.14.5] - 2026-05-28
 
 ### Added
@@ -907,7 +918,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IPv4 only (IPv6 planned)
 - Block detection marks exact CIDR matches as used
 
-[Unreleased]: https://github.com/BadgerOps/cloudpam/compare/v0.13.4...HEAD
+[0.14.6]: https://github.com/BadgerOps/cloudpam/compare/v0.14.5...v0.14.6
 [0.13.4]: https://github.com/BadgerOps/cloudpam/compare/v0.13.3...v0.13.4
 [0.13.3]: https://github.com/BadgerOps/cloudpam/compare/v0.13.2...v0.13.3
 [0.13.2]: https://github.com/BadgerOps/cloudpam/compare/v0.13.1...v0.13.2

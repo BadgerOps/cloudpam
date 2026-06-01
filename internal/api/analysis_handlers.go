@@ -22,20 +22,20 @@ func NewAnalysisServer(srv *Server, analysis *planning.AnalysisService) *Analysi
 
 // RegisterAnalysisRoutes registers analysis routes without RBAC.
 func (a *AnalysisServer) RegisterAnalysisRoutes() {
-	a.srv.mux.HandleFunc("/api/v1/analysis", a.handleAnalysis)
-	a.srv.mux.HandleFunc("/api/v1/analysis/gaps", a.handleGaps)
-	a.srv.mux.HandleFunc("/api/v1/analysis/fragmentation", a.handleFragmentation)
-	a.srv.mux.HandleFunc("/api/v1/analysis/compliance", a.handleCompliance)
+	a.srv.handleOpenAPIRouteFunc("/api/v1/analysis", a.handleAnalysis)
+	a.srv.handleOpenAPIRouteFunc("/api/v1/analysis/gaps", a.handleGaps)
+	a.srv.handleOpenAPIRouteFunc("/api/v1/analysis/fragmentation", a.handleFragmentation)
+	a.srv.handleOpenAPIRouteFunc("/api/v1/analysis/compliance", a.handleCompliance)
 }
 
 // RegisterProtectedAnalysisRoutes registers analysis routes with RBAC.
 func (a *AnalysisServer) RegisterProtectedAnalysisRoutes(dualMW Middleware, logger *slog.Logger) {
 	readMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, logger)
 
-	a.srv.mux.Handle("/api/v1/analysis", dualMW(readMW(http.HandlerFunc(a.handleAnalysis))))
-	a.srv.mux.Handle("/api/v1/analysis/gaps", dualMW(readMW(http.HandlerFunc(a.handleGaps))))
-	a.srv.mux.Handle("/api/v1/analysis/fragmentation", dualMW(readMW(http.HandlerFunc(a.handleFragmentation))))
-	a.srv.mux.Handle("/api/v1/analysis/compliance", dualMW(readMW(http.HandlerFunc(a.handleCompliance))))
+	a.srv.handleOpenAPIRoute("/api/v1/analysis", dualMW(readMW(http.HandlerFunc(a.handleAnalysis))))
+	a.srv.handleOpenAPIRoute("/api/v1/analysis/gaps", dualMW(readMW(http.HandlerFunc(a.handleGaps))))
+	a.srv.handleOpenAPIRoute("/api/v1/analysis/fragmentation", dualMW(readMW(http.HandlerFunc(a.handleFragmentation))))
+	a.srv.handleOpenAPIRoute("/api/v1/analysis/compliance", dualMW(readMW(http.HandlerFunc(a.handleCompliance))))
 }
 
 // handleAnalysis runs a full analysis report.

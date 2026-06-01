@@ -27,8 +27,8 @@ func (rs *RoleServer) RegisterProtectedRoleRoutes(authMW Middleware, logger *slo
 	readMW := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionRead, logger)
 	writeMW := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionWrite, logger)
 
-	rs.mux.Handle("/api/v1/auth/permissions", authMW(readMW(http.HandlerFunc(rs.listPermissions))))
-	rs.mux.Handle("/api/v1/auth/roles", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rs.handleOpenAPIRoute("/api/v1/auth/permissions", authMW(readMW(http.HandlerFunc(rs.listPermissions))))
+	rs.handleOpenAPIRoute("/api/v1/auth/roles", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			readMW(http.HandlerFunc(rs.listRoles)).ServeHTTP(w, r)
@@ -39,7 +39,7 @@ func (rs *RoleServer) RegisterProtectedRoleRoutes(authMW Middleware, logger *slo
 			rs.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 		}
 	})))
-	rs.mux.Handle("/api/v1/auth/roles/", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rs.handleOpenAPIRoute("/api/v1/auth/roles/", authMW(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := auth.NormalizeRoleName(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/auth/roles/"), "/"))
 		if name == auth.RoleNone {
 			rs.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")

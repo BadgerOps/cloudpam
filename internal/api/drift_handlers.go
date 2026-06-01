@@ -31,9 +31,9 @@ func (ds *DriftServer) RegisterProtectedDriftRoutes(dualMW Middleware, logger *s
 	createMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionCreate, logger)
 	updateMW := RequirePermissionMiddleware(auth.ResourceDiscovery, auth.ActionUpdate, logger)
 
-	ds.srv.mux.Handle("/api/v1/drift/detect", dualMW(createMW(http.HandlerFunc(ds.handleDetect))))
-	ds.srv.mux.Handle("/api/v1/drift", dualMW(readMW(http.HandlerFunc(ds.handleList))))
-	ds.srv.mux.Handle("/api/v1/drift/", dualMW(updateMW(http.HandlerFunc(ds.handleByID))))
+	ds.srv.handleOpenAPIRoute("/api/v1/drift/detect", dualMW(createMW(http.HandlerFunc(ds.handleDetect))))
+	ds.srv.handleOpenAPIRoute("/api/v1/drift", dualMW(readMW(http.HandlerFunc(ds.handleList))))
+	ds.srv.handleOpenAPIRoute("/api/v1/drift/", dualMW(updateMW(http.HandlerFunc(ds.handleByID))))
 }
 
 // handleDetect runs drift detection.

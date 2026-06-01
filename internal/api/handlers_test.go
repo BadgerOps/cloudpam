@@ -637,12 +637,77 @@ func TestOpenAPISpecEndpoint(t *testing.T) {
 		}
 		t.Fatalf("spec body missing openapi version, got: %q", body)
 	}
+	for _, want := range []string{
+		`"/api/v1/auth/setup":`,
+		`"/api/v1/pools/{poolId}/stats":`,
+		`$ref: '#/components/schemas/CreatePool'`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("generated spec missing %s", want)
+		}
+	}
+	if strings.Contains(body, `"/metrics":`) {
+		t.Fatalf("generated spec included metrics even though metrics are disabled")
+	}
 
 	req = httptest.NewRequest(stdhttp.MethodPost, "/openapi.yaml", nil)
 	rr = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
 	if rr.Code != stdhttp.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 for non-GET, got %d", rr.Code)
+	}
+}
+
+func TestOpenAPIPageEndpoint(t *testing.T) {
+	srv, _ := setupTestServer()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/openapi", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if got := rr.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("unexpected content-type: %q", got)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{"CloudPAM API Reference", "@scalar/api-reference", "url: '/openapi.yaml'", "agent: { disabled: true }"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("openapi page missing %q", want)
+		}
+	}
+
+	req = httptest.NewRequest(stdhttp.MethodPost, "/openapi", nil)
+	rr = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusMethodNotAllowed {
+		t.Fatalf("expected 405 for non-GET, got %d", rr.Code)
+	}
+}
+
+func TestOpenAPISpecEndpointReflectsRegisteredMetrics(t *testing.T) {
+	st := storage.NewMemoryStore()
+	mux := stdhttp.NewServeMux()
+	logger := observability.NewLogger(observability.Config{
+		Level:  "info",
+		Format: "json",
+		Output: io.Discard,
+	})
+	metrics := observability.NewMetrics(observability.MetricsConfig{
+		Namespace: "cloudpam",
+		Version:   "test",
+	})
+	srv := NewServer(mux, st, logger, metrics, nil)
+	srv.registerUnprotectedTestRoutes()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/openapi.yaml", nil)
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), `"/metrics":`) {
+		t.Fatalf("generated spec did not include registered metrics endpoint")
 	}
 }
 

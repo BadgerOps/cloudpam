@@ -27,16 +27,16 @@ func (ss *SettingsServer) RegisterProtectedSettingsRoutes(dualMW func(http.Handl
 	adminRead := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionRead, slogger)
 	adminWrite := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionWrite, slogger)
 
-	ss.mux.Handle("GET /api/v1/settings/security",
+	ss.handleOpenAPIRoute("GET /api/v1/settings/security",
 		dualMW(adminRead(http.HandlerFunc(ss.handleGetSecuritySettings))))
-	ss.mux.Handle("PATCH /api/v1/settings/security",
+	ss.handleOpenAPIRoute("PATCH /api/v1/settings/security",
 		dualMW(adminWrite(http.HandlerFunc(ss.handleUpdateSecuritySettings))))
 }
 
 // RegisterSettingsRoutes registers settings endpoints without RBAC (for tests).
 func (ss *SettingsServer) RegisterSettingsRoutes() {
-	ss.mux.HandleFunc("GET /api/v1/settings/security", ss.handleGetSecuritySettings)
-	ss.mux.HandleFunc("PATCH /api/v1/settings/security", ss.handleUpdateSecuritySettings)
+	ss.handleOpenAPIRouteFunc("GET /api/v1/settings/security", ss.handleGetSecuritySettings)
+	ss.handleOpenAPIRouteFunc("PATCH /api/v1/settings/security", ss.handleUpdateSecuritySettings)
 }
 
 func (ss *SettingsServer) handleGetSecuritySettings(w http.ResponseWriter, r *http.Request) {

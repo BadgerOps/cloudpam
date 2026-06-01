@@ -46,7 +46,38 @@ func (s *Server) handleOpenAPISpec(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/yaml")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(apidocs.OpenAPISpec)
+	_, _ = w.Write(s.openAPISpecYAML())
+}
+
+func (s *Server) handleOpenAPIPage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CloudPAM API Reference</title>
+    <style>
+      body { margin: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.35.3"></script>
+    <script>
+      Scalar.createApiReference('#app', {
+        url: '/openapi.yaml',
+        hideDownloadButton: false,
+        agent: { disabled: true }
+      })
+    </script>
+  </body>
+</html>`))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -73,12 +104,12 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":               version,
-		"auth_enabled":          true,
-		"local_auth_enabled":    s.currentLocalAuthEnabled(r.Context()),
-		"needs_setup":           s.needsSetup,
-		"release_url":           releaseURL,
-		"changelog_path":        "/changelog",
+		"version":                version,
+		"auth_enabled":           true,
+		"local_auth_enabled":     s.currentLocalAuthEnabled(r.Context()),
+		"needs_setup":            s.needsSetup,
+		"release_url":            releaseURL,
+		"changelog_path":         "/changelog",
 		"in_app_upgrade_enabled": upgradeConfigured,
 		"upgrade_mode": func() string {
 			if upgradeConfigured {
