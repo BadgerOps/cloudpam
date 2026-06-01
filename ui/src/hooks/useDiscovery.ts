@@ -9,6 +9,8 @@ import type {
   SyncTriggerResponse,
   AgentProvisionResponse,
   DiscoveryImportResponse,
+  DiscoveryImportPreviewResponse,
+  DiscoveryImportApplyResponse,
 } from '../api/types'
 
 export function useDiscoveryResources() {
@@ -115,7 +117,43 @@ export function useSyncJobs() {
     })
   }, [])
 
-  return { jobs, loading, error, fetch, triggerSync, getJob, importDiscoveredSchema }
+  const previewDiscoveryImport = useCallback(
+    async (accountId: number, resourceIds: string[]) => {
+      return post<DiscoveryImportPreviewResponse>(
+        '/api/v1/discovery/import/preview',
+        {
+          account_id: accountId,
+          resource_ids: resourceIds,
+        },
+      )
+    },
+    [],
+  )
+
+  const applyDiscoveryImport = useCallback(
+    async (accountId: number, resourceIds: string[]) => {
+      return post<DiscoveryImportApplyResponse>(
+        '/api/v1/discovery/import/apply',
+        {
+          account_id: accountId,
+          resource_ids: resourceIds,
+        },
+      )
+    },
+    [],
+  )
+
+  return {
+    jobs,
+    loading,
+    error,
+    fetch,
+    triggerSync,
+    getJob,
+    importDiscoveredSchema,
+    previewDiscoveryImport,
+    applyDiscoveryImport,
+  }
 }
 
 export function useAgentProvisioning() {

@@ -39,6 +39,7 @@ func (d *DiscoveryServer) RegisterDiscoveryRoutes() {
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/resources", d.handleResources)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/resources/", d.handleResourcesSubroutes)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/import", d.handleImportDiscoveredSchema)
+	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/import/", d.handleImportSubroutes)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/sync", d.handleSync)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/sync/", d.handleSyncSubroutes)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/ingest", d.handleIngest)
@@ -55,6 +56,7 @@ func (d *DiscoveryServer) RegisterProtectedDiscoveryRoutes(dualMW Middleware, lo
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/resources", dualMW(readMW(http.HandlerFunc(d.handleResources))))
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/resources/", dualMW(d.protectedResourcesSubroutes(logger)))
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/import", dualMW(createMW(http.HandlerFunc(d.handleImportDiscoveredSchema))))
+	d.srv.handleOpenAPIRoute("/api/v1/discovery/import/", dualMW(createMW(http.HandlerFunc(d.handleImportSubroutes))))
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/sync", dualMW(d.protectedSyncHandler(logger)))
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/sync/", dualMW(readMW(http.HandlerFunc(d.handleSyncSubroutes))))
 
@@ -248,6 +250,476 @@ type discoveryImportResponse struct {
 	ResourcesLinked  int      `json:"resources_linked"`
 	Skipped          int      `json:"skipped"`
 	Errors           []string `json:"errors"`
+}
+
+// handleImportSubroutes handles preview/apply endpoints for selected discovery imports.
+func (d *DiscoveryServer) handleImportSubroutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/discovery/import/"), "/")
+	switch path {
+	case "preview":
+		d.handleImportPreview(w, r)
+	case "apply":
+		d.handleImportApply(w, r)
+	default:
+		d.srv.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
+	}
+}
+
+func (d *DiscoveryServer) handleImportPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	var req domain.DiscoveryImportPreviewRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	if err := validateDiscoveryImportSelection(req.AccountID, req.ResourceIDs); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+
+	resp, err := d.previewDiscoveryImport(r.Context(), req)
+	if err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "preview import failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		d.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+
+	var req domain.DiscoveryImportApplyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	if err := validateDiscoveryImportSelection(req.AccountID, req.ResourceIDs); err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+
+	previewReq := domain.DiscoveryImportPreviewRequest{
+		AccountID:   req.AccountID,
+		ResourceIDs: req.ResourceIDs,
+		PoolID:      req.PoolID,
+	}
+	preview, err := d.previewDiscoveryImport(r.Context(), previewReq)
+	if err != nil {
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "preview import failed", err.Error())
+		return
+	}
+
+	resp := domain.DiscoveryImportApplyResponse{Preview: preview, Errors: []string{}}
+	items := append([]domain.DiscoveryImportPreviewItem{}, preview.Items...)
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].ResourceType == items[j].ResourceType {
+			return items[i].ProviderResourceID < items[j].ProviderResourceID
+		}
+		if items[i].ResourceType == domain.ResourceTypeVPC {
+			return true
+		}
+		if items[j].ResourceType == domain.ResourceTypeVPC {
+			return false
+		}
+		return items[i].ResourceType < items[j].ResourceType
+	})
+
+	createdPoolByProviderID := make(map[string]int64)
+	for _, item := range items {
+		if item.Status != "importable" {
+			resp.Skipped++
+			continue
+		}
+		res, err := d.store.GetDiscoveredResource(r.Context(), item.ResourceID)
+		if err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: load resource: %v", item.ResourceID, err))
+			resp.Skipped++
+			continue
+		}
+
+		if item.ProposedAction == "link_pool" && item.ProposedPoolID != nil {
+			if err := d.store.LinkResourceToPool(r.Context(), item.ResourceID, *item.ProposedPoolID); err != nil {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link pool: %v", res.ResourceID, err))
+				resp.Skipped++
+				continue
+			}
+			createdPoolByProviderID[res.ResourceID] = *item.ProposedPoolID
+			resp.ResourcesLinked++
+			continue
+		}
+
+		parentID := item.ProposedParentPoolID
+		if parentID == nil && res.ParentResourceID != nil {
+			if id, ok := createdPoolByProviderID[*res.ParentResourceID]; ok {
+				parentID = &id
+			}
+		}
+		if res.ResourceType == domain.ResourceTypeSubnet && res.ParentResourceID != nil && parentID == nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: parent %s was not imported or linked", res.ResourceID, *res.ParentResourceID))
+			resp.Skipped++
+			continue
+		}
+		pool, err := d.createDiscoveredPool(r.Context(), req.AccountID, *res, parentID)
+		if err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: create pool: %v", res.ResourceID, err))
+			resp.Skipped++
+			continue
+		}
+		if err := d.store.LinkResourceToPool(r.Context(), item.ResourceID, pool.ID); err != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
+			resp.Skipped++
+			continue
+		}
+		createdPoolByProviderID[res.ResourceID] = pool.ID
+		resp.PoolsCreated++
+		resp.ResourcesLinked++
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func validateDiscoveryImportSelection(accountID int64, resourceIDs []uuid.UUID) error {
+	if accountID < 1 {
+		return fmt.Errorf("account_id is required and must be a positive integer")
+	}
+	if len(resourceIDs) == 0 {
+		return fmt.Errorf("resource_ids must include at least one discovered resource")
+	}
+	return nil
+}
+
+func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain.DiscoveryImportPreviewRequest) (domain.DiscoveryImportPreviewResponse, error) {
+	if _, found, err := d.srv.store.GetAccount(ctx, req.AccountID); err != nil {
+		return domain.DiscoveryImportPreviewResponse{}, err
+	} else if !found {
+		return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("account not found")
+	}
+
+	pools, err := d.srv.store.ListPools(ctx)
+	if err != nil {
+		return domain.DiscoveryImportPreviewResponse{}, err
+	}
+	poolsByID := make(map[int64]domain.Pool, len(pools))
+	for _, pool := range pools {
+		poolsByID[pool.ID] = pool
+	}
+	var selectedPool *domain.Pool
+	if req.PoolID != nil {
+		pool, ok := poolsByID[*req.PoolID]
+		if !ok {
+			return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("selected pool not found")
+		}
+		selectedPool = &pool
+	}
+
+	accountResources, _, err := d.store.ListDiscoveredResources(ctx, req.AccountID, domain.DiscoveryFilters{Page: 1, PageSize: 10000})
+	if err != nil {
+		return domain.DiscoveryImportPreviewResponse{}, err
+	}
+	resourceByProviderID := make(map[string]domain.DiscoveredResource, len(accountResources))
+	for _, res := range accountResources {
+		resourceByProviderID[res.ResourceID] = res
+	}
+
+	selectedProviderIDs := make(map[string]bool, len(req.ResourceIDs))
+	selectedResources := make([]domain.DiscoveredResource, 0, len(req.ResourceIDs))
+	for _, id := range req.ResourceIDs {
+		res, err := d.store.GetDiscoveredResource(ctx, id)
+		if err != nil {
+			continue
+		}
+		if res.AccountID == req.AccountID {
+			selectedProviderIDs[res.ResourceID] = true
+			selectedResources = append(selectedResources, *res)
+		}
+	}
+	duplicates, err := d.duplicateCIDRsByAccount(ctx, req.AccountID, selectedResources)
+	if err != nil {
+		return domain.DiscoveryImportPreviewResponse{}, err
+	}
+
+	resp := domain.DiscoveryImportPreviewResponse{Items: []domain.DiscoveryImportPreviewItem{}, SelectedPoolID: req.PoolID}
+	for _, id := range req.ResourceIDs {
+		item := domain.DiscoveryImportPreviewItem{
+			ResourceID:      id,
+			Status:          "blocked",
+			ProposedAction:  "none",
+			Issues:          []string{},
+			Evidence:        []string{},
+			ConflictPoolIDs: []int64{},
+		}
+
+		res, err := d.store.GetDiscoveredResource(ctx, id)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				item.Status = "not_found"
+				item.Issues = append(item.Issues, "not_found")
+				addDiscoveryPreviewItem(&resp, item)
+				continue
+			}
+			return domain.DiscoveryImportPreviewResponse{}, err
+		}
+
+		item.ProviderResourceID = res.ResourceID
+		item.Name = res.Name
+		item.Provider = res.Provider
+		item.Region = res.Region
+		item.ResourceType = res.ResourceType
+		item.CIDR = res.CIDR
+		item.LinkedPoolID = res.PoolID
+
+		if res.AccountID != req.AccountID {
+			item.Issues = append(item.Issues, "account_mismatch")
+			item.Evidence = append(item.Evidence, fmt.Sprintf("resource belongs to account %d", res.AccountID))
+			addDiscoveryPreviewItem(&resp, item)
+			continue
+		}
+		if res.PoolID != nil {
+			item.Status = "already_linked"
+			item.ProposedAction = "none"
+			item.Issues = append(item.Issues, "already_linked")
+			addDiscoveryPreviewItem(&resp, item)
+			continue
+		}
+		if res.Status != domain.DiscoveryStatusActive {
+			item.Issues = append(item.Issues, "stale_resource")
+		}
+		if res.ResourceType != domain.ResourceTypeVPC && res.ResourceType != domain.ResourceTypeSubnet {
+			item.Status = "linked_only"
+			item.ProposedAction = "link_only"
+			item.ProposedManagedType = "network_object"
+			item.Issues = append(item.Issues, "network_object_only")
+			addDiscoveryPreviewItem(&resp, item)
+			continue
+		}
+
+		if _, err := netip.ParsePrefix(res.CIDR); res.CIDR == "" || err != nil {
+			item.Issues = append(item.Issues, "invalid_cidr")
+		}
+		if selectedPool != nil && res.CIDR != "" {
+			if !cidrContains(selectedPool.CIDR, res.CIDR) {
+				item.Issues = append(item.Issues, "outside_pool")
+				item.Evidence = append(item.Evidence, fmt.Sprintf("%s is not inside selected pool %s", res.CIDR, selectedPool.CIDR))
+			} else if res.ResourceType == domain.ResourceTypeVPC {
+				item.ProposedParentPoolID = &selectedPool.ID
+			}
+		}
+
+		if res.ResourceType == domain.ResourceTypeSubnet {
+			if res.ParentResourceID != nil {
+				parent, ok := resourceByProviderID[*res.ParentResourceID]
+				switch {
+				case !ok:
+					item.Issues = append(item.Issues, "missing_parent")
+					item.Evidence = append(item.Evidence, "provider parent "+*res.ParentResourceID+" was not discovered")
+				case parent.PoolID != nil:
+					item.ProposedParentPoolID = parent.PoolID
+				case selectedProviderIDs[parent.ResourceID]:
+					item.Evidence = append(item.Evidence, "parent "+parent.ResourceID+" is selected for import")
+				default:
+					item.Issues = append(item.Issues, "missing_parent")
+					item.Evidence = append(item.Evidence, "provider parent "+parent.ResourceID+" is discovered but not linked or selected")
+				}
+			}
+			if item.ProposedParentPoolID == nil && selectedPool != nil && cidrContains(selectedPool.CIDR, res.CIDR) {
+				item.ProposedParentPoolID = &selectedPool.ID
+			}
+		}
+
+		d.classifyPoolRelationships(&item, res, pools)
+		if ids := duplicates[res.CIDR]; len(ids) > 0 {
+			item.Issues = append(item.Issues, "duplicate_cidr")
+			item.DuplicateResourceIDs = ids
+			item.Evidence = append(item.Evidence, fmt.Sprintf("%s is also discovered in another account", res.CIDR))
+		}
+
+		if len(item.Issues) > 0 || len(item.ConflictPoolIDs) > 0 {
+			if hasAnyIssue(item.Issues, "duplicate_cidr") || len(item.ConflictPoolIDs) > 0 {
+				item.Status = "conflict"
+			} else {
+				item.Status = "blocked"
+			}
+			addDiscoveryPreviewItem(&resp, item)
+			continue
+		}
+
+		item.Status = "importable"
+		item.ProposedManagedType = "discovered_pool"
+		if item.ProposedPoolID != nil {
+			item.ProposedAction = "link_pool"
+		} else {
+			item.ProposedAction = "create_pool"
+		}
+		addDiscoveryPreviewItem(&resp, item)
+	}
+
+	return resp, nil
+}
+
+func addDiscoveryPreviewItem(resp *domain.DiscoveryImportPreviewResponse, item domain.DiscoveryImportPreviewItem) {
+	resp.Items = append(resp.Items, item)
+	switch item.Status {
+	case "importable":
+		resp.Importable++
+	case "linked_only":
+		resp.LinkedOnly++
+	case "already_linked":
+		resp.AlreadyLinked++
+	case "conflict":
+		resp.ConflictCount++
+		resp.Blocked++
+	default:
+		resp.Blocked++
+	}
+}
+
+func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImportPreviewItem, res *domain.DiscoveredResource, pools []domain.Pool) {
+	bestParentBits := -1
+	for _, pool := range pools {
+		if pool.CIDR == "" || res.CIDR == "" {
+			continue
+		}
+		if cidrEqual(pool.CIDR, res.CIDR) {
+			if pool.AccountID != nil && *pool.AccountID != res.AccountID {
+				item.ConflictPoolIDs = append(item.ConflictPoolIDs, pool.ID)
+				item.Evidence = append(item.Evidence, fmt.Sprintf("exact CIDR exists in pool %d assigned to another account", pool.ID))
+				continue
+			}
+			item.ProposedPoolID = &pool.ID
+			item.Evidence = append(item.Evidence, fmt.Sprintf("exact pool match %d", pool.ID))
+			continue
+		}
+		if cidrContains(pool.CIDR, res.CIDR) {
+			if bits := prefixLength(pool.CIDR); bits > bestParentBits {
+				bestParentBits = bits
+				parentID := pool.ID
+				if item.ProposedParentPoolID == nil {
+					item.ProposedParentPoolID = &parentID
+				}
+			}
+			continue
+		}
+		if cidrOverlaps(pool.CIDR, res.CIDR) {
+			item.ConflictPoolIDs = append(item.ConflictPoolIDs, pool.ID)
+			item.Evidence = append(item.Evidence, fmt.Sprintf("%s overlaps existing pool %d (%s)", res.CIDR, pool.ID, pool.CIDR))
+		}
+	}
+}
+
+func (d *DiscoveryServer) duplicateCIDRsByAccount(ctx context.Context, accountID int64, selected []domain.DiscoveredResource) (map[string][]uuid.UUID, error) {
+	cidrs := make(map[string]bool)
+	for _, res := range selected {
+		if res.CIDR != "" {
+			cidrs[res.CIDR] = true
+		}
+	}
+	out := make(map[string][]uuid.UUID, len(cidrs))
+	if len(cidrs) == 0 {
+		return out, nil
+	}
+	accounts, err := d.srv.store.ListAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, account := range accounts {
+		if account.ID == accountID {
+			continue
+		}
+		resources, _, err := d.store.ListDiscoveredResources(ctx, account.ID, domain.DiscoveryFilters{
+			Status:   string(domain.DiscoveryStatusActive),
+			Page:     1,
+			PageSize: 10000,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, res := range resources {
+			if cidrs[res.CIDR] {
+				out[res.CIDR] = append(out[res.CIDR], res.ID)
+			}
+		}
+	}
+	return out, nil
+}
+
+func (d *DiscoveryServer) createDiscoveredPool(ctx context.Context, accountID int64, res domain.DiscoveredResource, parentID *int64) (domain.Pool, error) {
+	poolType := domain.PoolTypeSubnet
+	if res.ResourceType == domain.ResourceTypeVPC {
+		poolType = domain.PoolTypeVPC
+	}
+	name := strings.TrimSpace(res.Name)
+	if name == "" {
+		name = res.ResourceID
+	}
+	return d.srv.store.CreatePool(ctx, domain.CreatePool{
+		Name:      name,
+		CIDR:      res.CIDR,
+		ParentID:  parentID,
+		AccountID: &accountID,
+		Type:      poolType,
+		Status:    domain.PoolStatusActive,
+		Source:    domain.PoolSourceDiscovered,
+		Description: fmt.Sprintf("Imported from %s discovery resource %s in %s",
+			res.Provider, res.ResourceID, res.Region),
+		Tags: map[string]string{
+			"discovery_resource_id": res.ResourceID,
+			"discovery_provider":    res.Provider,
+			"discovery_region":      res.Region,
+			"discovery_type":        string(res.ResourceType),
+		},
+	})
+}
+
+func hasAnyIssue(issues []string, targets ...string) bool {
+	for _, issue := range issues {
+		for _, target := range targets {
+			if issue == target {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func cidrEqual(a string, b string) bool {
+	pa, errA := netip.ParsePrefix(a)
+	pb, errB := netip.ParsePrefix(b)
+	return errA == nil && errB == nil && pa.Masked() == pb.Masked()
+}
+
+func cidrContains(parent string, child string) bool {
+	p, errP := netip.ParsePrefix(parent)
+	c, errC := netip.ParsePrefix(child)
+	if errP != nil || errC != nil || p.Addr().BitLen() != c.Addr().BitLen() {
+		return false
+	}
+	return p.Bits() <= c.Bits() && p.Masked().Contains(c.Masked().Addr())
+}
+
+func cidrOverlaps(a string, b string) bool {
+	pa, errA := netip.ParsePrefix(a)
+	pb, errB := netip.ParsePrefix(b)
+	if errA != nil || errB != nil || pa.Addr().BitLen() != pb.Addr().BitLen() {
+		return false
+	}
+	return pa.Masked().Contains(pb.Masked().Addr()) || pb.Masked().Contains(pa.Masked().Addr())
+}
+
+func prefixLength(cidr string) int {
+	p, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return -1
+	}
+	return p.Bits()
 }
 
 // handleImportDiscoveredSchema imports active discovered VPC/subnet resources as pools.

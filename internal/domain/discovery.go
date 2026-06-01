@@ -124,6 +124,66 @@ type DiscoveryResourcesResponse struct {
 	PageSize int                  `json:"page_size"`
 }
 
+// DiscoveryImportPreviewRequest asks the API to classify selected discovered
+// resources before any managed IPAM records are created or linked.
+type DiscoveryImportPreviewRequest struct {
+	AccountID   int64       `json:"account_id"`
+	ResourceIDs []uuid.UUID `json:"resource_ids"`
+	PoolID      *int64      `json:"pool_id,omitempty"`
+}
+
+// DiscoveryImportApplyRequest applies the same selected-resource import plan
+// returned by preview. Only importable rows are created or linked.
+type DiscoveryImportApplyRequest struct {
+	AccountID   int64       `json:"account_id"`
+	ResourceIDs []uuid.UUID `json:"resource_ids"`
+	PoolID      *int64      `json:"pool_id,omitempty"`
+}
+
+// DiscoveryImportPreviewItem describes the proposed conversion, soft link, or
+// blocking issue for one selected discovered resource.
+type DiscoveryImportPreviewItem struct {
+	ResourceID           uuid.UUID         `json:"resource_id"`
+	ProviderResourceID   string            `json:"provider_resource_id,omitempty"`
+	Name                 string            `json:"name,omitempty"`
+	Provider             string            `json:"provider,omitempty"`
+	Region               string            `json:"region,omitempty"`
+	ResourceType         CloudResourceType `json:"resource_type,omitempty"`
+	CIDR                 string            `json:"cidr,omitempty"`
+	Status               string            `json:"status"`
+	ProposedAction       string            `json:"proposed_action"`
+	ProposedManagedType  string            `json:"proposed_managed_type,omitempty"`
+	LinkedPoolID         *int64            `json:"linked_pool_id,omitempty"`
+	ProposedPoolID       *int64            `json:"proposed_pool_id,omitempty"`
+	ProposedParentPoolID *int64            `json:"proposed_parent_pool_id,omitempty"`
+	Issues               []string          `json:"issues"`
+	Evidence             []string          `json:"evidence,omitempty"`
+	ConflictPoolIDs      []int64           `json:"conflict_pool_ids,omitempty"`
+	DuplicateResourceIDs []uuid.UUID       `json:"duplicate_resource_ids,omitempty"`
+}
+
+// DiscoveryImportPreviewResponse is returned by import preview and by apply as
+// the authoritative per-row classification used for the operation.
+type DiscoveryImportPreviewResponse struct {
+	Items          []DiscoveryImportPreviewItem `json:"items"`
+	Importable     int                          `json:"importable"`
+	Blocked        int                          `json:"blocked"`
+	LinkedOnly     int                          `json:"linked_only"`
+	AlreadyLinked  int                          `json:"already_linked"`
+	ConflictCount  int                          `json:"conflict_count"`
+	SelectedPoolID *int64                       `json:"selected_pool_id,omitempty"`
+}
+
+// DiscoveryImportApplyResponse reports the result of applying selected,
+// importable discovery preview rows.
+type DiscoveryImportApplyResponse struct {
+	Preview         DiscoveryImportPreviewResponse `json:"preview"`
+	PoolsCreated    int                            `json:"pools_created"`
+	ResourcesLinked int                            `json:"resources_linked"`
+	Skipped         int                            `json:"skipped"`
+	Errors          []string                       `json:"errors"`
+}
+
 // SyncJobsResponse is the response for listing sync jobs.
 type SyncJobsResponse struct {
 	Items []SyncJob `json:"items"`

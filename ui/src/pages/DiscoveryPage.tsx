@@ -15,6 +15,8 @@ import {
   Trash2,
   X,
   Plus,
+  Network,
+  Table2,
 } from 'lucide-react'
 import {
   useDiscoveryResources,
@@ -23,6 +25,7 @@ import {
 } from '../hooks/useDiscovery'
 import { useAccounts } from '../hooks/useAccounts'
 import { usePools } from '../hooks/usePools'
+import { useNetworkView } from '../hooks/useNetwork'
 import { useToast } from '../hooks/useToast'
 import StatusBadge from '../components/StatusBadge'
 import DiscoveryWizard from '../components/DiscoveryWizard'
@@ -35,9 +38,14 @@ import type {
   SyncJob,
   DiscoveryAgent,
   AgentStatus,
+  DiscoveryImportPreviewResponse,
+  DiscoveryImportPreviewItem,
+  NetworkNode,
+  NetworkConflict,
+  NetworkIssue,
 } from '../api/types'
 
-type Tab = 'resources' | 'sync' | 'agents'
+type Tab = 'resources' | 'network' | 'sync' | 'agents'
 
 function mergeJobs(current: SyncJob[], updates: SyncJob[]) {
   const byID = new Map(current.map((job) => [job.id, job]))
@@ -73,7 +81,8 @@ export default function DiscoveryPage() {
     fetch: fetchJobs,
     triggerSync,
     getJob,
-    importDiscoveredSchema,
+    previewDiscoveryImport,
+    applyDiscoveryImport,
   } = useSyncJobs()
   const {
     agents,
@@ -89,6 +98,9 @@ export default function DiscoveryPage() {
   const [selectedScanAgentId, setSelectedScanAgentId] = useState('all')
   const [scanLoading, setScanLoading] = useState(false)
   const [importLoading, setImportLoading] = useState(false)
+  const [applyImportLoading, setApplyImportLoading] = useState(false)
+  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([])
+  const [importPreview, setImportPreview] = useState<DiscoveryImportPreviewResponse | null>(null)
   const [trackedScanJobs, setTrackedScanJobs] = useState<SyncJob[]>([])
   const [linkingResource, setLinkingResource] = useState<DiscoveredResource | null>(null)
   const [linkingLoading, setLinkingLoading] = useState(false)
@@ -126,6 +138,11 @@ export default function DiscoveryPage() {
   useEffect(() => {
     loadResources()
   }, [loadResources])
+
+  useEffect(() => {
+    setSelectedResourceIds([])
+    setImportPreview(null)
+  }, [selectedAccountId])
 
   useEffect(() => {
     return () => {
@@ -245,22 +262,64 @@ export default function DiscoveryPage() {
     }
   }
 
-  async function handleImportSchema() {
+  async function handlePreviewImport() {
     if (!selectedAccountId) return
+    if (selectedResourceIds.length === 0) {
+      showToast('Select discovered resources to preview import', 'error')
+      return
+    }
     setImportLoading(true)
     try {
-      const result = await importDiscoveredSchema(selectedAccountId)
+      const preview = await previewDiscoveryImport(selectedAccountId, selectedResourceIds)
+      setImportPreview(preview)
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Import preview failed', 'error')
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  async function handleApplyImport() {
+    if (!selectedAccountId || !importPreview) return
+    const importableIds = importPreview.items
+      .filter((item) => item.status === 'importable')
+      .map((item) => item.resource_id)
+    if (importableIds.length === 0) {
+      showToast('No importable resources in this preview', 'error')
+      return
+    }
+    setApplyImportLoading(true)
+    try {
+      const result = await applyDiscoveryImport(selectedAccountId, importableIds)
       const detail = result.errors.length > 0 ? ` (${result.errors.length} warning${result.errors.length === 1 ? '' : 's'})` : ''
       showToast(
         `Imported ${result.pools_created} pools and linked ${result.resources_linked} resources${detail}`,
         result.errors.length > 0 ? 'info' : 'success',
       )
+      setImportPreview(null)
+      setSelectedResourceIds([])
+      fetchPools()
       loadResources()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Import failed', 'error')
+      showToast(err instanceof Error ? err.message : 'Import apply failed', 'error')
     } finally {
-      setImportLoading(false)
+      setApplyImportLoading(false)
     }
+  }
+
+  function toggleResourceSelection(resource: DiscoveredResource) {
+    setSelectedResourceIds((current) =>
+      current.includes(resource.id)
+        ? current.filter((id) => id !== resource.id)
+        : [...current, resource.id],
+    )
+  }
+
+  function selectVisibleImportableResources(resources: DiscoveredResource[]) {
+    const ids = resources
+      .filter((resource) => isSelectableDiscoveryResource(resource))
+      .map((resource) => resource.id)
+    setSelectedResourceIds((current) => Array.from(new Set([...current, ...ids])))
   }
 
   async function handleDeleteAgent(agent: DiscoveryAgent) {
@@ -403,12 +462,12 @@ export default function DiscoveryPage() {
             Add Agent
           </button>
           <button
-            onClick={handleImportSchema}
-            disabled={importLoading}
+            onClick={() => void handlePreviewImport()}
+            disabled={importLoading || selectedResourceIds.length === 0}
             className="inline-flex items-center gap-2 rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 px-3 py-1.5 text-sm disabled:opacity-50"
           >
             {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
-            Import Schema
+            Preview Import
           </button>
           <select
             value={selectedScanAgentId}
@@ -459,6 +518,16 @@ export default function DiscoveryPage() {
           )}
         </button>
         <button
+          onClick={() => setTab('network')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
+            tab === 'network'
+              ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          }`}
+        >
+          Merged Network
+        </button>
+        <button
           onClick={() => setTab('sync')}
           className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
             tab === 'sync'
@@ -501,7 +570,15 @@ export default function DiscoveryPage() {
           onLink={handleLink}
           onUnlink={handleUnlink}
           pools={pools}
+          selectedResourceIds={selectedResourceIds}
+          onToggleSelection={toggleResourceSelection}
+          onSelectVisible={selectVisibleImportableResources}
+          onClearSelection={() => setSelectedResourceIds([])}
         />
+      )}
+
+      {tab === 'network' && (
+        <NetworkTab selectedAccountId={selectedAccountId} accounts={accounts} />
       )}
 
       {tab === 'sync' && (
@@ -543,6 +620,376 @@ export default function DiscoveryPage() {
           onCreateAndLink={(data) => void handleCreateAndLink(linkingResource, data)}
         />
       )}
+
+      {importPreview && (
+        <ImportPreviewModal
+          preview={importPreview}
+          pools={pools}
+          loading={applyImportLoading}
+          onClose={() => setImportPreview(null)}
+          onApply={() => void handleApplyImport()}
+        />
+      )}
+    </div>
+  )
+}
+
+function isSelectableDiscoveryResource(resource: DiscoveredResource) {
+  return resource.status === 'active' && !resource.pool_id
+}
+
+type NetworkMode = 'hierarchy' | 'flat' | 'conflicts'
+
+function NetworkTab({
+  selectedAccountId,
+  accounts,
+}: {
+  selectedAccountId: number | null
+  accounts: Account[]
+}) {
+  const [mode, setMode] = useState<NetworkMode>('hierarchy')
+  const [query, setQuery] = useState('')
+  const [objectType, setObjectType] = useState('')
+  const [conflictType, setConflictType] = useState('')
+  const [selectedConflict, setSelectedConflict] = useState<NetworkConflict | null>(null)
+  const {
+    flat,
+    hierarchy,
+    conflicts,
+    loading,
+    error,
+    fetchFlat,
+    fetchHierarchy,
+    fetchConflicts,
+    resolveConflict,
+  } = useNetworkView()
+  const { showToast } = useToast()
+
+  const filters = useMemo(() => ({
+    account_id: selectedAccountId ?? undefined,
+    object_type: objectType || undefined,
+    conflict_type: conflictType || undefined,
+    q: query || undefined,
+  }), [selectedAccountId, objectType, conflictType, query])
+
+  const load = useCallback(() => {
+    if (mode === 'hierarchy') {
+      void fetchHierarchy(filters)
+    } else if (mode === 'flat') {
+      void fetchFlat(filters)
+    } else {
+      void fetchConflicts(filters)
+    }
+  }, [fetchConflicts, fetchFlat, fetchHierarchy, filters, mode])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  async function handleResolve(conflict: NetworkConflict, decision: string) {
+    try {
+      const resolved = await resolveConflict(conflict.id, decision)
+      showToast(`Resolution requested: ${resolved.resolution_requested || decision}`, 'success')
+      setSelectedConflict(resolved)
+      load()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Resolve failed', 'error')
+    }
+  }
+
+  const activeItems = mode === 'hierarchy' ? hierarchy?.items : flat?.items
+  const activeTotal = mode === 'hierarchy' ? hierarchy?.total : flat?.total
+  const activeConflictCount = mode === 'hierarchy' ? hierarchy?.conflict_count : flat?.conflict_count
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="inline-flex rounded border border-gray-200 bg-gray-50 p-1 text-sm dark:border-gray-700 dark:bg-gray-800">
+          <NetworkModeButton active={mode === 'hierarchy'} onClick={() => setMode('hierarchy')} label="Hierarchy" />
+          <NetworkModeButton active={mode === 'flat'} onClick={() => setMode('flat')} label="Flat" />
+          <NetworkModeButton active={mode === 'conflicts'} onClick={() => setMode('conflicts')} label="Conflicts" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search network"
+              className="w-full rounded border border-gray-300 bg-white py-1.5 pl-10 pr-3 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            />
+          </div>
+          <select
+            value={objectType}
+            onChange={(e) => setObjectType(e.target.value)}
+            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+          >
+            <option value="">All objects</option>
+            <option value="supernet">Pool</option>
+            <option value="vpc">VPC</option>
+            <option value="subnet">Subnet</option>
+            <option value="elastic_ip">EIP</option>
+            <option value="network_interface">NIC</option>
+          </select>
+          <select
+            value={conflictType}
+            onChange={(e) => setConflictType(e.target.value)}
+            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+          >
+            <option value="">All issues</option>
+            <option value="missing_parent">Missing parent</option>
+            <option value="invalid_nesting">Invalid nesting</option>
+            <option value="outside_pool">Outside pool</option>
+            <option value="duplicate_cidr">Duplicate CIDR</option>
+            <option value="managed_overlap">Managed overlap</option>
+            <option value="linked_pool_mismatch">Linked mismatch</option>
+          </select>
+          <button
+            type="button"
+            onClick={load}
+            className="inline-flex items-center gap-1.5 rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+        <span>{mode === 'conflicts' ? conflicts?.total ?? 0 : activeTotal ?? 0} rows</span>
+        {mode !== 'conflicts' && <span>{activeConflictCount ?? 0} issues</span>}
+        {selectedAccountId && <span>{accounts.find((a) => a.id === selectedAccountId)?.name || `Account ${selectedAccountId}`}</span>}
+      </div>
+
+      {error && (
+        <div className="rounded bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
+          {error}
+        </div>
+      )}
+
+      {mode === 'conflicts' ? (
+        <NetworkConflictList
+          conflicts={conflicts?.items ?? []}
+          loading={loading}
+          selected={selectedConflict}
+          onSelect={setSelectedConflict}
+          onResolve={handleResolve}
+        />
+      ) : mode === 'flat' ? (
+        <NetworkFlatTable nodes={activeItems ?? []} loading={loading} />
+      ) : (
+        <NetworkHierarchy nodes={activeItems ?? []} loading={loading} />
+      )}
+    </div>
+  )
+}
+
+function NetworkModeButton({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded px-3 py-1.5 ${active ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300'}`}
+    >
+      {label}
+    </button>
+  )
+}
+
+function NetworkHierarchy({ nodes, loading }: { nodes: NetworkNode[]; loading: boolean }) {
+  if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
+  if (nodes.length === 0) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">No merged network records found.</div>
+  return (
+    <div className="rounded border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-800">
+      {nodes.map((node) => (
+        <NetworkTreeNode key={node.id} node={node} depth={0} />
+      ))}
+    </div>
+  )
+}
+
+function NetworkTreeNode({ node, depth }: { node: NetworkNode; depth: number }) {
+  const [expanded, setExpanded] = useState(depth < 2)
+  const hasChildren = (node.children?.length ?? 0) > 0
+  return (
+    <div>
+      <div
+        className="flex min-h-10 items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50"
+        style={{ paddingLeft: `${depth * 18 + 8}px` }}
+      >
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="rounded p-0.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600"
+          >
+            {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+        ) : (
+          <span className="w-4" />
+        )}
+        <NetworkObjectIcon node={node} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-gray-900 dark:text-gray-100">{node.name}</span>
+            <span className="font-mono text-xs text-gray-500 dark:text-gray-400">{node.cidr || node.ip_address || '-'}</span>
+            <StatusBadge label={node.state} />
+          </div>
+          <NetworkIssueBadges issues={node.issues ?? []} />
+        </div>
+      </div>
+      {expanded && hasChildren && (
+        <div>
+          {node.children!.map((child) => (
+            <NetworkTreeNode key={child.id} node={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function NetworkFlatTable({ nodes, loading }: { nodes: NetworkNode[]; loading: boolean }) {
+  if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
+  return (
+    <div className="overflow-x-auto rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-700 dark:bg-gray-900">
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Object</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">CIDR/IP</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Provider</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Account</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Region</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">State</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Issues</th>
+          </tr>
+        </thead>
+        <tbody>
+          {nodes.length === 0 && (
+            <tr>
+              <td colSpan={7} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No merged network records found.</td>
+            </tr>
+          )}
+          {nodes.map((node) => (
+            <tr key={node.id} className="border-b border-gray-100 last:border-b-0 dark:border-gray-700/50">
+              <td className="px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <NetworkObjectIcon node={node} />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-gray-100">{node.name}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">{node.object_type}</div>
+                  </div>
+                </div>
+              </td>
+              <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{node.cidr || node.ip_address || '-'}</td>
+              <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{node.provider || '-'}</td>
+              <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{node.account_name || '-'}</td>
+              <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{node.region || '-'}</td>
+              <td className="px-3 py-2"><StatusBadge label={node.state} /></td>
+              <td className="px-3 py-2"><NetworkIssueBadges issues={node.issues ?? []} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function NetworkConflictList({
+  conflicts,
+  loading,
+  selected,
+  onSelect,
+  onResolve,
+}: {
+  conflicts: NetworkConflict[]
+  loading: boolean
+  selected: NetworkConflict | null
+  onSelect: (conflict: NetworkConflict | null) => void
+  onResolve: (conflict: NetworkConflict, decision: string) => void
+}) {
+  if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="overflow-hidden rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+        {conflicts.length === 0 ? (
+          <div className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">No network conflicts found.</div>
+        ) : conflicts.map((conflict) => (
+          <button
+            key={conflict.id}
+            type="button"
+            onClick={() => onSelect(conflict)}
+            className={`block w-full border-b border-gray-100 px-4 py-3 text-left last:border-b-0 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700/50 ${selected?.id === conflict.id ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge label={conflict.severity} />
+              <span className="font-medium text-gray-900 dark:text-gray-100">{conflict.title}</span>
+            </div>
+            <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{conflict.description}</div>
+          </button>
+        ))}
+      </div>
+      <div className="rounded border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+        {selected ? (
+          <div className="space-y-3">
+            <div>
+              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{selected.title}</div>
+              <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{selected.description}</div>
+            </div>
+            {selected.recommended_action && (
+              <div className="rounded bg-blue-50 p-2 text-sm text-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+                {selected.recommended_action}
+              </div>
+            )}
+            <div className="space-y-1 text-xs text-gray-500 dark:text-gray-400">
+              {(selected.evidence ?? []).map((line) => (
+                <div key={line}>{line}</div>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(selected.available_decisions ?? ['skip', 'ignore', 'defer']).map((decision) => (
+                <button
+                  key={decision}
+                  type="button"
+                  onClick={() => onResolve(selected, decision)}
+                  className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  {decision}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-gray-500 dark:text-gray-400">Select a conflict to review evidence.</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function NetworkObjectIcon({ node }: { node: NetworkNode }) {
+  const color = node.kind === 'pool' ? 'text-emerald-600' : node.object_type === 'elastic_ip' ? 'text-orange-500' : 'text-blue-600'
+  return node.kind === 'pool' ? <Table2 className={`h-4 w-4 ${color}`} /> : <Network className={`h-4 w-4 ${color}`} />
+}
+
+function NetworkIssueBadges({ issues }: { issues: NetworkIssue[] }) {
+  if (issues.length === 0) return null
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {issues.map((issue) => (
+        <span key={issue.id} className="rounded bg-yellow-50 px-1.5 py-0.5 text-[11px] text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+          {issue.type.replace(/_/g, ' ')}
+        </span>
+      ))}
     </div>
   )
 }
@@ -562,6 +1009,10 @@ function ResourcesTab({
   onLink,
   onUnlink,
   pools,
+  selectedResourceIds,
+  onToggleSelection,
+  onSelectVisible,
+  onClearSelection,
 }: {
   resources: DiscoveredResource[]
   loading: boolean
@@ -577,7 +1028,13 @@ function ResourcesTab({
   onLink: (r: DiscoveredResource) => void
   onUnlink: (r: DiscoveredResource) => void
   pools: Pool[]
+  selectedResourceIds: string[]
+  onToggleSelection: (r: DiscoveredResource) => void
+  onSelectVisible: (resources: DiscoveredResource[]) => void
+  onClearSelection: () => void
 }) {
+  const selectableCount = resources.filter(isSelectableDiscoveryResource).length
+
   return (
     <>
       {/* Filters */}
@@ -622,6 +1079,27 @@ function ResourcesTab({
           <option value="true">Linked to pool</option>
           <option value="false">Unlinked</option>
         </select>
+        <div className="flex items-center gap-2 text-sm">
+          <button
+            type="button"
+            onClick={() => onSelectVisible(resources)}
+            disabled={selectableCount === 0}
+            className="rounded border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            Select visible
+          </button>
+          <button
+            type="button"
+            onClick={onClearSelection}
+            disabled={selectedResourceIds.length === 0}
+            className="rounded border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            Clear
+          </button>
+          <span className="text-gray-500 dark:text-gray-400">
+            {selectedResourceIds.length} selected
+          </span>
+        </div>
       </div>
 
       {error && (
@@ -648,6 +1126,9 @@ function ResourcesTab({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                <th className="w-10 px-4 py-2 text-left">
+                  <span className="sr-only">Select</span>
+                </th>
                 <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
                   Type
                 </th>
@@ -680,6 +1161,16 @@ function ResourcesTab({
                   key={r.id}
                   className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/50"
                 >
+                  <td className="px-4 py-2">
+                    <input
+                      type="checkbox"
+                      checked={selectedResourceIds.includes(r.id)}
+                      disabled={!isSelectableDiscoveryResource(r)}
+                      onChange={() => onToggleSelection(r)}
+                      aria-label={`Select ${r.name || r.resource_id}`}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
+                    />
+                  </td>
                   <td className="px-4 py-2">
                     <ResourceTypeBadge type={r.resource_type} />
                   </td>
@@ -746,6 +1237,9 @@ function ResourcesTab({
               pools={pools}
               onLink={onLink}
               onUnlink={onUnlink}
+              selected={selectedResourceIds.includes(r.id)}
+              selectable={isSelectableDiscoveryResource(r)}
+              onToggleSelection={onToggleSelection}
             />
           ))}
         </div>
@@ -767,21 +1261,194 @@ function PoolLabel({ poolId, pools }: { poolId: number; pools: Pool[] }) {
   )
 }
 
+function ImportPreviewModal({
+  preview,
+  pools,
+  loading,
+  onClose,
+  onApply,
+}: {
+  preview: DiscoveryImportPreviewResponse
+  pools: Pool[]
+  loading: boolean
+  onClose: () => void
+  onApply: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/35 p-0 sm:items-center sm:justify-center sm:p-4">
+      <div className="max-h-[92vh] w-full overflow-auto rounded-t-lg bg-white shadow-xl dark:bg-gray-900 sm:max-w-5xl sm:rounded-lg">
+        <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Import preview</h2>
+            <div className="mt-1 flex flex-wrap gap-2 text-xs text-gray-500 dark:text-gray-400">
+              <span>{preview.importable} importable</span>
+              <span>{preview.conflict_count} conflicts</span>
+              <span>{preview.blocked} blocked</span>
+              <span>{preview.linked_only} link-only</span>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            title="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-4">
+          <div className="hidden overflow-hidden rounded border border-gray-200 dark:border-gray-700 md:block">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-400">Resource</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-400">CIDR</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-400">Action</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-400">Status</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 dark:text-gray-400">Evidence</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.items.map((item) => (
+                  <ImportPreviewRow key={item.resource_id} item={item} pools={pools} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid gap-3 md:hidden">
+            {preview.items.map((item) => (
+              <ImportPreviewCard key={item.resource_id} item={item} pools={pools} />
+            ))}
+          </div>
+        </div>
+
+        <div className="sticky bottom-0 flex justify-end gap-2 border-t border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onApply}
+            disabled={loading || preview.importable === 0}
+            className="inline-flex items-center gap-2 rounded bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />}
+            Apply import
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ImportPreviewRow({ item, pools }: { item: DiscoveryImportPreviewItem; pools: Pool[] }) {
+  return (
+    <tr className="border-b border-gray-100 last:border-b-0 dark:border-gray-800">
+      <td className="px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {item.resource_type && <ResourceTypeBadge type={item.resource_type} />}
+          <span className="font-medium text-gray-900 dark:text-gray-100">{item.name || item.provider_resource_id || item.resource_id}</span>
+        </div>
+        {item.provider_resource_id && item.name && (
+          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{item.provider_resource_id}</div>
+        )}
+      </td>
+      <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{item.cidr || '-'}</td>
+      <td className="px-3 py-2 text-gray-700 dark:text-gray-300">
+        {importActionLabel(item)}
+        {item.proposed_pool_id ? (
+          <div className="mt-1 text-xs"><PoolLabel poolId={item.proposed_pool_id} pools={pools} /></div>
+        ) : null}
+      </td>
+      <td className="px-3 py-2">
+        <StatusBadge label={item.status} />
+        <IssueBadges issues={item.issues} />
+      </td>
+      <td className="max-w-sm px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+        {(item.evidence ?? []).slice(0, 3).join('; ') || '-'}
+      </td>
+    </tr>
+  )
+}
+
+function ImportPreviewCard({ item, pools }: { item: DiscoveryImportPreviewItem; pools: Pool[] }) {
+  return (
+    <div className="rounded border border-gray-200 p-3 text-sm dark:border-gray-700">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        {item.resource_type && <ResourceTypeBadge type={item.resource_type} />}
+        <StatusBadge label={item.status} />
+      </div>
+      <div className="font-medium text-gray-900 dark:text-gray-100">{item.name || item.provider_resource_id || item.resource_id}</div>
+      <div className="mt-1 font-mono text-xs text-gray-500 dark:text-gray-400">{item.cidr || '-'}</div>
+      <div className="mt-2 text-gray-700 dark:text-gray-300">{importActionLabel(item)}</div>
+      {item.proposed_pool_id ? <div className="mt-1 text-xs"><PoolLabel poolId={item.proposed_pool_id} pools={pools} /></div> : null}
+      <IssueBadges issues={item.issues} />
+      {(item.evidence ?? []).length > 0 && (
+        <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">{item.evidence?.slice(0, 3).join('; ')}</div>
+      )}
+    </div>
+  )
+}
+
+function IssueBadges({ issues }: { issues: string[] }) {
+  if (issues.length === 0) return null
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {issues.map((issue) => (
+        <span key={issue} className="rounded bg-yellow-50 px-1.5 py-0.5 text-[11px] text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+          {issueLabel(issue)}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function importActionLabel(item: DiscoveryImportPreviewItem) {
+  if (item.proposed_action === 'create_pool') return 'Create discovered pool'
+  if (item.proposed_action === 'link_pool') return 'Link existing pool'
+  if (item.proposed_action === 'link_only') return 'Keep as network object'
+  return 'No change'
+}
+
+function issueLabel(issue: string) {
+  return issue.replace(/_/g, ' ')
+}
+
 function ResourceCard({
   resource,
   pools,
   onLink,
   onUnlink,
+  selected,
+  selectable,
+  onToggleSelection,
 }: {
   resource: DiscoveredResource
   pools: Pool[]
   onLink: (r: DiscoveredResource) => void
   onUnlink: (r: DiscoveredResource) => void
+  selected: boolean
+  selectable: boolean
+  onToggleSelection: (r: DiscoveredResource) => void
 }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm dark:border-gray-700 dark:bg-gray-800">
       <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="flex min-w-0 gap-3">
+          <input
+            type="checkbox"
+            checked={selected}
+            disabled={!selectable}
+            onChange={() => onToggleSelection(resource)}
+            aria-label={`Select ${resource.name || resource.resource_id}`}
+            className="mt-1 h-4 w-4 shrink-0 rounded border-gray-300 text-blue-600 disabled:opacity-40"
+          />
+          <div className="min-w-0">
           <div className="flex items-center gap-2">
             <ResourceTypeBadge type={resource.resource_type} />
             <StatusBadge label={resource.status} />
@@ -794,6 +1461,7 @@ function ResourceCard({
               {resource.resource_id}
             </div>
           )}
+          </div>
         </div>
         {resource.pool_id ? (
           <button

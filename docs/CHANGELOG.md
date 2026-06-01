@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.16.0] - 2026-06-01
+
+### Added
+- Discovery import now supports checkbox-selected preview/apply flows that show per-resource actions, conflicts, missing parents, outside-pool placement, duplicate CIDRs across accounts, and link-only network-object candidates before creating discovered-source pools.
+- Added merged network APIs at `/api/v1/network/flat`, `/api/v1/network/hierarchy`, `/api/v1/network/merged`, and `/api/v1/network/conflicts` so operators can inspect pools, linked discovered resources, discovered-only network objects, and conflict evidence in both table and hierarchy form.
+- Cloud Discovery now includes a Merged Network tab with hierarchy, flat, and conflict views plus filters for object type and issue type.
+
+### Changed
+- Discovery documentation now clarifies the distinction between allocated blocks, discovered resources, network objects, and soft links.
+- EIPs and other non-pool cloud resources are now surfaced as network objects in merged views instead of being pushed through the allocated-block model.
+
 ## [0.15.0] - 2026-06-01
 
 ### Added
