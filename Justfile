@@ -4,7 +4,6 @@ cache := justfile_directory() + "/tmp/go-cache"
 go-env := "GOCACHE=" + cache
 
 openapi_generator := "openapi-generator-cli"
-openapi_spec := justfile_directory() + "/docs/openapi.yaml"
 openapi_html_dir := justfile_directory() + "/docs/openapi-html"
 
 default:
@@ -131,13 +130,16 @@ docker-build-all tag="latest":
     docker build -t cloudpam:{{tag}} .
     docker build -t cloudpam-agent:{{tag}} -f deploy/docker/Dockerfile.agent .
 
-openapi-validate:
-    ruby "{{justfile_directory()}}/scripts/openapi_validate.rb" "{{openapi_spec}}"
+openapi-validate: ensure-cache
+    {{go-env}} go test ./internal/api -run TestOpenAPISpecValidation
 
-openapi-html:
+openapi-validate-url url="http://localhost:8080/openapi.yaml": ensure-cache
+    {{go-env}} go run ./cmd/openapi-validate "{{url}}"
+
+openapi-html url="http://localhost:8080/openapi.yaml":
     if ! command -v {{openapi_generator}} >/dev/null 2>&1; then \
       echo "openapi-generator-cli not found. Install: https://openapi-generator.tech/docs/installation/"; \
       exit 1; \
     fi
     rm -rf "{{openapi_html_dir}}"
-    {{openapi_generator}} generate -g html2 -i "{{openapi_spec}}" -o "{{openapi_html_dir}}"
+    {{openapi_generator}} generate -g html2 -i "{{url}}" -o "{{openapi_html_dir}}"

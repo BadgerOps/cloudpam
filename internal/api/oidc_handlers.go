@@ -60,10 +60,10 @@ func NewOIDCServer(
 
 // RegisterOIDCRoutes registers the OIDC public routes (no auth required).
 func (os *OIDCServer) RegisterOIDCRoutes(_ *slog.Logger) {
-	os.mux.HandleFunc("/api/v1/auth/oidc/login", os.handleOIDCLogin)
-	os.mux.HandleFunc("/api/v1/auth/oidc/callback", os.handleOIDCCallback)
-	os.mux.HandleFunc("/api/v1/auth/oidc/refresh", os.handleOIDCRefresh)
-	os.mux.HandleFunc("/api/v1/auth/oidc/providers", os.handleListPublicProviders)
+	os.handleOpenAPIRouteFunc("/api/v1/auth/oidc/login", os.handleOIDCLogin)
+	os.handleOpenAPIRouteFunc("/api/v1/auth/oidc/callback", os.handleOIDCCallback)
+	os.handleOpenAPIRouteFunc("/api/v1/auth/oidc/refresh", os.handleOIDCRefresh)
+	os.handleOpenAPIRouteFunc("/api/v1/auth/oidc/providers", os.handleListPublicProviders)
 }
 
 // RegisterOIDCAdminRoutes registers admin OIDC management routes with RBAC.
@@ -71,28 +71,28 @@ func (os *OIDCServer) RegisterOIDCAdminRoutes(dualMW func(http.Handler) http.Han
 	adminRead := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionRead, slogger)
 	adminWrite := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionWrite, slogger)
 
-	os.mux.Handle("GET /api/v1/settings/oidc/providers",
+	os.handleOpenAPIRoute("GET /api/v1/settings/oidc/providers",
 		dualMW(adminRead(http.HandlerFunc(os.handleAdminListProviders))))
-	os.mux.Handle("POST /api/v1/settings/oidc/providers",
+	os.handleOpenAPIRoute("POST /api/v1/settings/oidc/providers",
 		dualMW(adminWrite(http.HandlerFunc(os.handleAdminCreateProvider))))
-	os.mux.Handle("GET /api/v1/settings/oidc/providers/{id}",
+	os.handleOpenAPIRoute("GET /api/v1/settings/oidc/providers/{id}",
 		dualMW(adminRead(http.HandlerFunc(os.handleAdminGetProvider))))
-	os.mux.Handle("PATCH /api/v1/settings/oidc/providers/{id}",
+	os.handleOpenAPIRoute("PATCH /api/v1/settings/oidc/providers/{id}",
 		dualMW(adminWrite(http.HandlerFunc(os.handleAdminUpdateProvider))))
-	os.mux.Handle("DELETE /api/v1/settings/oidc/providers/{id}",
+	os.handleOpenAPIRoute("DELETE /api/v1/settings/oidc/providers/{id}",
 		dualMW(adminWrite(http.HandlerFunc(os.handleAdminDeleteProvider))))
-	os.mux.Handle("POST /api/v1/settings/oidc/providers/{id}/test",
+	os.handleOpenAPIRoute("POST /api/v1/settings/oidc/providers/{id}/test",
 		dualMW(adminWrite(http.HandlerFunc(os.handleAdminTestProvider))))
 }
 
 // RegisterOIDCAdminRoutesNoAuth registers admin OIDC routes without auth middleware (for tests).
 func (os *OIDCServer) RegisterOIDCAdminRoutesNoAuth() {
-	os.mux.HandleFunc("GET /api/v1/settings/oidc/providers", os.handleAdminListProviders)
-	os.mux.HandleFunc("POST /api/v1/settings/oidc/providers", os.handleAdminCreateProvider)
-	os.mux.HandleFunc("GET /api/v1/settings/oidc/providers/{id}", os.handleAdminGetProvider)
-	os.mux.HandleFunc("PATCH /api/v1/settings/oidc/providers/{id}", os.handleAdminUpdateProvider)
-	os.mux.HandleFunc("DELETE /api/v1/settings/oidc/providers/{id}", os.handleAdminDeleteProvider)
-	os.mux.HandleFunc("POST /api/v1/settings/oidc/providers/{id}/test", os.handleAdminTestProvider)
+	os.handleOpenAPIRouteFunc("GET /api/v1/settings/oidc/providers", os.handleAdminListProviders)
+	os.handleOpenAPIRouteFunc("POST /api/v1/settings/oidc/providers", os.handleAdminCreateProvider)
+	os.handleOpenAPIRouteFunc("GET /api/v1/settings/oidc/providers/{id}", os.handleAdminGetProvider)
+	os.handleOpenAPIRouteFunc("PATCH /api/v1/settings/oidc/providers/{id}", os.handleAdminUpdateProvider)
+	os.handleOpenAPIRouteFunc("DELETE /api/v1/settings/oidc/providers/{id}", os.handleAdminDeleteProvider)
+	os.handleOpenAPIRouteFunc("POST /api/v1/settings/oidc/providers/{id}/test", os.handleAdminTestProvider)
 }
 
 // handleAdminListProviders returns all OIDC providers with secrets masked.

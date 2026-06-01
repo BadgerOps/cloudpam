@@ -64,10 +64,10 @@ Recent planning session produced these design documents:
 | `docs/DISCOVERY.md` | Cloud discovery setup, AWS config, API reference |
 | `docs/DISCOVERY_AGENT_PLAN.md` | Standalone discovery agent architecture plan |
 
-**OpenAPI Specifications**:
-- `docs/openapi.yaml` - Core IPAM API (current)
-- `docs/openapi-smart-planning.yaml` - Smart Planning API (planned)
-- `docs/openapi-observability.yaml` - Audit/observability API (planned)
+**OpenAPI**:
+- `/openapi` - interactive runtime API reference
+- `/openapi.yaml` - raw OpenAPI 3.1 spec generated from registered server routes
+- `docs/openapi-smart-planning.yaml` and `docs/openapi-observability.yaml` - historical/design references
 
 ## Build System & Commands
 
@@ -121,8 +121,8 @@ just install-hooks    # Install pre-commit hook (runs golangci-lint on staged Go
 
 ### OpenAPI Tooling
 ```bash
-just openapi-validate           # Validate spec with Ruby/Psych
-just openapi-html               # Generate HTML docs to docs/openapi-html/
+just openapi-validate           # Validate generated spec with Go tests
+just openapi-validate-url       # Validate a running server spec URL
 ```
 
 ### Screenshot Automation
@@ -292,7 +292,8 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/test-sentry` - Sentry integration test endpoint (use `?type=message|error|panic`)
   - `/readyz` - readiness check with database health
   - `/metrics` - Prometheus metrics endpoint
-  - `/openapi.yaml` - OpenAPI spec served from embedded `docs/spec_embed.go`
+  - `/openapi` - interactive Scalar API reference
+  - `/openapi.yaml` - raw OpenAPI spec generated from registered routes
   - `/` - serves unified React SPA via `handleSPA()` with client-side routing fallback
 - **Middleware**: `LoggingMiddleware`, `CSRFMiddleware`, `RateLimitMiddleware`, `RequestIDMiddleware`, `DualAuthMiddleware` (session + API key), `LoginRateLimitMiddleware`
 - **Error handling**: uses `apiError` struct with `error` and `detail` fields; 5xx errors are reported to Sentry
@@ -376,8 +377,8 @@ When adding endpoints:
 - Register routes in `RegisterRoutes()`
 - Use `writeJSON()` and `writeErr()` helpers for responses
 - Follow RESTful conventions (use proper HTTP methods and status codes)
-- Update `docs/openapi.yaml` to reflect API changes
-- Validate spec with `just openapi-validate` after changes
+- Update the route metadata in `internal/api/openapi.go` when API behavior changes
+- Validate the generated spec with `just openapi-validate` after changes
 
 ### Frontend Development
 
@@ -445,7 +446,7 @@ When adding endpoints:
 
 ## API Contract
 
-The REST API contract is captured in `docs/openapi.yaml` (OpenAPI 3.1). The spec is also served at `/openapi.yaml` when the server is running.
+The REST API contract is generated at runtime from registered server routes. Use `/openapi` for the interactive reference and `/openapi.yaml` for the raw OpenAPI 3.1 document.
 
 Common workflows:
 - Health check: `GET /healthz`
@@ -718,7 +719,6 @@ cloudpam/
 │   ├── embed.go              # go:embed for dist/ directory
 │   └── dist/                 # Built frontend output (from ui/)
 ├── docs/                   # Documentation
-│   ├── openapi.yaml        # Core API spec
 │   ├── openapi-smart-planning.yaml  # Smart Planning API spec (planned)
 │   ├── openapi-observability.yaml   # Observability API spec (planned)
 │   ├── spec_embed.go

@@ -71,18 +71,18 @@ func (us *UpdateServer) RegisterProtectedUpdateRoutes(dualMW func(http.Handler) 
 	adminRead := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionRead, slogger)
 	adminWrite := RequirePermissionMiddleware(auth.ResourceSettings, auth.ActionWrite, slogger)
 
-	us.mux.Handle("GET /api/v1/updates",
+	us.handleOpenAPIRoute("GET /api/v1/updates",
 		dualMW(adminRead(http.HandlerFunc(us.handleCheckUpdates))))
-	us.mux.Handle("POST /api/v1/updates/upgrade",
+	us.handleOpenAPIRoute("POST /api/v1/updates/upgrade",
 		dualMW(adminWrite(http.HandlerFunc(us.handleTriggerUpgrade))))
-	us.mux.Handle("GET /api/v1/updates/status",
+	us.handleOpenAPIRoute("GET /api/v1/updates/status",
 		dualMW(adminRead(http.HandlerFunc(us.handleGetUpgradeStatus))))
 }
 
 func (us *UpdateServer) RegisterUpdateRoutesNoAuth() {
-	us.mux.HandleFunc("GET /api/v1/updates", us.handleCheckUpdates)
-	us.mux.HandleFunc("POST /api/v1/updates/upgrade", us.handleTriggerUpgrade)
-	us.mux.HandleFunc("GET /api/v1/updates/status", us.handleGetUpgradeStatus)
+	us.handleOpenAPIRouteFunc("GET /api/v1/updates", us.handleCheckUpdates)
+	us.handleOpenAPIRouteFunc("POST /api/v1/updates/upgrade", us.handleTriggerUpgrade)
+	us.handleOpenAPIRouteFunc("GET /api/v1/updates/status", us.handleGetUpgradeStatus)
 }
 
 func (us *UpdateServer) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {

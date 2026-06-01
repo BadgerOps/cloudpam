@@ -55,8 +55,8 @@ func (as *AuthServer) SetSettingsStore(store storage.SettingsStore) {
 // Note: Audit endpoint is registered by Server.RegisterRoutes() for unprotected access.
 func (as *AuthServer) RegisterAuthRoutes() {
 	// API key management
-	as.mux.HandleFunc("/api/v1/auth/keys", as.handleAPIKeys)
-	as.mux.HandleFunc("/api/v1/auth/keys/", as.handleAPIKeyByID)
+	as.handleOpenAPIRouteFunc("/api/v1/auth/keys", as.handleAPIKeys)
+	as.handleOpenAPIRouteFunc("/api/v1/auth/keys/", as.handleAPIKeyByID)
 }
 
 // RegisterProtectedAuthRoutes registers the auth and audit API endpoints with RBAC.
@@ -78,12 +78,12 @@ func (as *AuthServer) RegisterProtectedAuthRoutes(logger *slog.Logger) {
 	}
 
 	// API key management - requires apikeys permissions
-	as.mux.Handle("/api/v1/auth/keys", authMW(as.protectedAPIKeysHandler(logger)))
-	as.mux.Handle("/api/v1/auth/keys/", authMW(as.protectedAPIKeyByIDHandler(logger)))
+	as.handleOpenAPIRoute("/api/v1/auth/keys", authMW(as.protectedAPIKeysHandler(logger)))
+	as.handleOpenAPIRoute("/api/v1/auth/keys/", authMW(as.protectedAPIKeyByIDHandler(logger)))
 
 	// Audit endpoints - requires audit:read permission
 	auditReadMW := RequirePermissionMiddleware(auth.ResourceAudit, auth.ActionRead, logger)
-	as.mux.Handle("/api/v1/audit", authMW(auditReadMW(http.HandlerFunc(as.handleAuditList))))
+	as.handleOpenAPIRoute("/api/v1/audit", authMW(auditReadMW(http.HandlerFunc(as.handleAuditList))))
 }
 
 // protectedAPIKeysHandler returns a handler for /api/v1/auth/keys with RBAC.
