@@ -107,6 +107,29 @@ Client Request
 
 ## 2. Log Shipping with Vector
 
+### 2.0 Generic SIEM Forwarding
+
+CloudPAM supports a common SIEM path without vendor-specific application
+connectors: audit events can be forwarded as Common Event Format (CEF) payloads
+over syslog.
+
+Enable it with:
+
+```bash
+CLOUDPAM_AUDIT_SYSLOG_ADDR=siem.example.com:514
+CLOUDPAM_AUDIT_SYSLOG_NETWORK=udp # udp or tcp, default udp
+CLOUDPAM_AUDIT_SYSLOG_APP_NAME=cloudpam
+```
+
+This is the preferred baseline for Splunk syslog inputs, Security Onion syslog
+pipelines, Datadog Agent syslog listeners, and traditional syslog collectors.
+The application still persists every audit event locally; syslog forwarding is
+best-effort and failures are logged as warnings.
+
+Use Vector or another collector when a deployment needs vendor APIs such as
+Splunk HEC or Datadog HTTP intake. That keeps credentials, buffering, and
+backpressure handling outside the CloudPAM process.
+
 ### 2.1 Why Vector?
 
 | Aspect | Vector | Fluentd |

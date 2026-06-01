@@ -18,6 +18,7 @@ import (
 	"github.com/getsentry/sentry-go"
 
 	"cloudpam/internal/api"
+	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/discovery"
 	awscollector "cloudpam/internal/discovery/aws"
@@ -151,7 +152,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	auditLogger := selectAuditLogger(logger)
+	auditLogger := configureAuditSyslogForwarding(logger, selectAuditLogger(logger), version)
 	keyStore := selectKeyStore(logger)
 	userStore := selectUserStore(logger)
 	roleStore := selectRoleStore(logger, userStore)
@@ -355,6 +356,44 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+func configureAuditSyslogForwarding(logger observability.Logger, auditLogger audit.AuditLogger, appVersion string) audit.AuditLogger {
+	addr := strings.TrimSpace(os.Getenv("CLOUDPAM_AUDIT_SYSLOG_ADDR"))
+	if addr == "" {
+		return auditLogger
+	}
+	network := envOr("CLOUDPAM_AUDIT_SYSLOG_NETWORK", "udp")
+	appName := envOr("CLOUDPAM_AUDIT_SYSLOG_APP_NAME", "cloudpam")
+	sink, err := audit.NewSyslogSink(audit.SyslogSinkConfig{
+		Network: network,
+		Address: addr,
+		AppName: appName,
+		Formatter: audit.CEFFormatter{
+			DeviceVersion: cleanAppVersion(appVersion),
+		},
+	})
+	if err != nil {
+		logger.Warn("audit syslog forwarding disabled", "error", err, "address", addr, "network", network)
+		return auditLogger
+	}
+	logger.Info("audit syslog forwarding enabled", "address", addr, "network", strings.ToLower(strings.TrimSpace(network)), "format", "cef")
+	return audit.NewForwardingAuditLogger(auditLogger, []audit.Sink{sink}, func(ctx context.Context, event *audit.AuditEvent, err error) {
+		fields := []any{"error", err}
+		if event != nil {
+			fields = append(fields, "audit_event_id", event.ID, "action", event.Action, "resource_type", event.ResourceType)
+		}
+		logger.WarnContext(ctx, "audit syslog forwarding failed", fields...)
+	})
+}
+
+func cleanAppVersion(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "v")
+	if v == "" {
+		return "dev"
+	}
+	return v
 }
 
 func resetPasswordInput() (string, error) {

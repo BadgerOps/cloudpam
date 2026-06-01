@@ -171,7 +171,7 @@ cloudpam/
 | Smart Planning | Complete | Analysis, recommendations, and schema planner are implemented |
 | AI Planning | Complete, optional | OpenAI-compatible backend, SSE chat, stored sessions, plan extraction, and apply-plan flow |
 | Auth & SSO | Complete | Local auth, sessions, API keys, OIDC provider management, JIT provisioning, local-auth toggle |
-| Operations | Partial | Metrics, Sentry, release notes, and host-managed upgrades are implemented; tracing and log destinations are not |
+| Operations | Partial | Metrics, Sentry, release notes, host-managed upgrades, and generic CEF/syslog audit forwarding are implemented; tracing is not |
 | Multi-tenancy | Planned | PostgreSQL schema has default-org scaffolding, but the app still runs as single-tenant |
 
 See [Implementation Roadmap](docs/IMPLEMENTATION_ROADMAP.md) for the full development timeline.

@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.15.0] - 2026-06-01
+
+### Added
+- Generic SIEM audit forwarding via CEF-over-syslog with `CLOUDPAM_AUDIT_SYSLOG_ADDR`, `CLOUDPAM_AUDIT_SYSLOG_NETWORK`, and `CLOUDPAM_AUDIT_SYSLOG_APP_NAME`, avoiding vendor-specific Splunk, Security Onion, or Datadog connectors.
+- Log Destinations now documents the common syslog/CEF path and the runtime settings for external SIEM receivers.
+
 ## [0.14.8] - 2026-06-01
 
 ### Fixed
