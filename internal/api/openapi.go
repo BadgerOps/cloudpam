@@ -51,10 +51,6 @@ type openAPISchema struct {
 	Required             []string
 }
 
-type openAPIRequestBody struct {
-	Content []domain.DiscoveredResource `json:"content"`
-}
-
 type openAPISetupRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
