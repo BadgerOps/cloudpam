@@ -20,6 +20,9 @@ type DriftStore interface {
 	// UpdateDriftStatus updates a drift item's status and optional ignore reason.
 	UpdateDriftStatus(ctx context.Context, id string, status domain.DriftStatus, ignoreReason string) error
 
+	// UpdateDriftDetails merges structured detail metadata into a drift item.
+	UpdateDriftDetails(ctx context.Context, id string, details map[string]string) error
+
 	// DeleteOpenForAccount removes all open drift items for an account (before re-detection).
 	DeleteOpenForAccount(ctx context.Context, accountID int64) error
 }

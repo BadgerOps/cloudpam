@@ -284,6 +284,10 @@ func (d *DiscoveryServer) handleImportPreview(w http.ResponseWriter, r *http.Req
 
 	resp, err := d.previewDiscoveryImport(r.Context(), req)
 	if err != nil {
+		if isDiscoveryImportClientError(err) {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
 		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "preview import failed", err.Error())
 		return
 	}
@@ -307,11 +311,45 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	previewReq := domain.DiscoveryImportPreviewRequest(req)
-	preview, err := d.previewDiscoveryImport(r.Context(), previewReq)
+	resp, err := d.applyDiscoveryImport(r.Context(), req, discoveryImportApplyOptions{})
 	if err != nil {
-		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "preview import failed", err.Error())
+		if isDiscoveryImportClientError(err) {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "apply import failed", err.Error())
 		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type discoveryImportApplyOptions struct {
+	AllowBlocked bool
+}
+
+type discoveryImportClientError struct {
+	message string
+}
+
+func (e discoveryImportClientError) Error() string {
+	return e.message
+}
+
+func newDiscoveryImportClientError(message string) error {
+	return discoveryImportClientError{message: message}
+}
+
+func isDiscoveryImportClientError(err error) bool {
+	var target discoveryImportClientError
+	return errors.As(err, &target)
+}
+
+func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.DiscoveryImportApplyRequest, opts discoveryImportApplyOptions) (domain.DiscoveryImportApplyResponse, error) {
+	previewReq := domain.DiscoveryImportPreviewRequest(req)
+	preview, err := d.previewDiscoveryImport(ctx, previewReq)
+	if err != nil {
+		return domain.DiscoveryImportApplyResponse{}, err
 	}
 
 	resp := domain.DiscoveryImportApplyResponse{Preview: preview, Errors: []string{}}
@@ -331,25 +369,26 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 
 	createdPoolByProviderID := make(map[string]int64)
 	for _, item := range items {
-		if item.Status != "importable" {
+		if item.Status != "importable" && !canForceDiscoveryImport(item, opts) {
 			resp.Skipped++
 			continue
 		}
-		res, err := d.store.GetDiscoveredResource(r.Context(), item.ResourceID)
+		res, err := d.store.GetDiscoveredResource(ctx, item.ResourceID)
 		if err != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: load resource: %v", item.ResourceID, err))
 			resp.Skipped++
 			continue
 		}
 
-		if item.ProposedAction == "link_pool" && item.ProposedPoolID != nil {
-			if err := d.store.LinkResourceToPool(r.Context(), item.ResourceID, *item.ProposedPoolID); err != nil {
+		if item.ProposedPoolID != nil && (item.ProposedAction == "link_pool" || opts.AllowBlocked) {
+			if err := d.store.LinkResourceToPool(ctx, item.ResourceID, *item.ProposedPoolID); err != nil {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link pool: %v", res.ResourceID, err))
 				resp.Skipped++
 				continue
 			}
 			createdPoolByProviderID[res.ResourceID] = *item.ProposedPoolID
 			resp.ResourcesLinked++
+			resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
 			continue
 		}
 
@@ -364,13 +403,28 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 			resp.Skipped++
 			continue
 		}
-		pool, err := d.createDiscoveredPool(r.Context(), req.AccountID, *res, parentID)
+		if parentID != nil {
+			if err := d.validateImportParentPool(ctx, req.AccountID, *parentID); err != nil {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: %v", res.ResourceID, err))
+				resp.Skipped++
+				continue
+			}
+		}
+		pool, err := d.createDiscoveredPool(ctx, req.AccountID, *res, parentID)
 		if err != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: create pool: %v", res.ResourceID, err))
 			resp.Skipped++
 			continue
 		}
-		if err := d.store.LinkResourceToPool(r.Context(), item.ResourceID, pool.ID); err != nil {
+		resp.CreatedPoolIDs = append(resp.CreatedPoolIDs, pool.ID)
+		if err := d.store.LinkResourceToPool(ctx, item.ResourceID, pool.ID); err != nil {
+			if ok, cleanupErr := d.srv.store.DeletePool(ctx, pool.ID); cleanupErr != nil {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: %v", res.ResourceID, pool.ID, cleanupErr))
+			} else if !ok {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: not found", res.ResourceID, pool.ID))
+			} else {
+				resp.CreatedPoolIDs = resp.CreatedPoolIDs[:len(resp.CreatedPoolIDs)-1]
+			}
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
 			resp.Skipped++
 			continue
@@ -378,9 +432,27 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 		createdPoolByProviderID[res.ResourceID] = pool.ID
 		resp.PoolsCreated++
 		resp.ResourcesLinked++
+		resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	return resp, nil
+}
+
+func canForceDiscoveryImport(item domain.DiscoveryImportPreviewItem, opts discoveryImportApplyOptions) bool {
+	if !opts.AllowBlocked {
+		return false
+	}
+	if item.Status == "not_found" || item.Status == "already_linked" || item.Status == "linked_only" {
+		return false
+	}
+	if item.ResourceType != domain.ResourceTypeVPC && item.ResourceType != domain.ResourceTypeSubnet {
+		return false
+	}
+	if item.CIDR == "" {
+		return false
+	}
+	_, err := netip.ParsePrefix(item.CIDR)
+	return err == nil
 }
 
 func validateDiscoveryImportSelection(accountID int64, resourceIDs []uuid.UUID) error {
@@ -397,7 +469,7 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 	if _, found, err := d.srv.store.GetAccount(ctx, req.AccountID); err != nil {
 		return domain.DiscoveryImportPreviewResponse{}, err
 	} else if !found {
-		return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("account not found")
+		return domain.DiscoveryImportPreviewResponse{}, newDiscoveryImportClientError("account not found")
 	}
 
 	pools, err := d.srv.store.ListPools(ctx)
@@ -412,7 +484,10 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 	if req.PoolID != nil {
 		pool, ok := poolsByID[*req.PoolID]
 		if !ok {
-			return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("selected pool not found")
+			return domain.DiscoveryImportPreviewResponse{}, newDiscoveryImportClientError("selected pool not found")
+		}
+		if pool.AccountID != nil && *pool.AccountID != req.AccountID {
+			return domain.DiscoveryImportPreviewResponse{}, newDiscoveryImportClientError("selected pool account does not match import account")
 		}
 		selectedPool = &pool
 	}
@@ -595,6 +670,9 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 			continue
 		}
 		if cidrContains(pool.CIDR, res.CIDR) {
+			if pool.AccountID != nil && *pool.AccountID != res.AccountID {
+				continue
+			}
 			if bits := prefixLength(pool.CIDR); bits > bestParentBits {
 				bestParentBits = bits
 				parentID := pool.ID
@@ -609,6 +687,20 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 			item.Evidence = append(item.Evidence, fmt.Sprintf("%s overlaps existing pool %d (%s)", res.CIDR, pool.ID, pool.CIDR))
 		}
 	}
+}
+
+func (d *DiscoveryServer) validateImportParentPool(ctx context.Context, accountID int64, parentID int64) error {
+	parent, found, err := d.srv.store.GetPool(ctx, parentID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("parent pool %d not found", parentID)
+	}
+	if parent.AccountID != nil && *parent.AccountID != accountID {
+		return fmt.Errorf("parent pool account does not match import account")
+	}
+	return nil
 }
 
 func (d *DiscoveryServer) duplicateCIDRsByAccount(ctx context.Context, accountID int64, selected []domain.DiscoveredResource) (map[string][]uuid.UUID, error) {

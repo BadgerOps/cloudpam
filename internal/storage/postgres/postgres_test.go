@@ -60,6 +60,10 @@ func resetDB(t *testing.T) {
 	// Truncate in dependency order (children before parents)
 	tables := []string{
 		"pool_utilization_cache",
+		"drift_items",
+		"sync_jobs",
+		"discovered_resources",
+		"discovery_agents",
 		"oidc_providers",
 		"settings",
 		"sessions",
@@ -645,6 +649,49 @@ func TestDeletePoolCascade(t *testing.T) {
 		if found {
 			t.Errorf("pool %d should have been cascade deleted", id)
 		}
+	}
+}
+
+func TestDriftStorePersistsAndMergesDetails(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	store := testDB.store
+
+	account, err := store.CreateAccount(ctx, domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	now := time.Now().UTC()
+	item := domain.DriftItem{
+		ID:          "network-conflict:test",
+		AccountID:   account.ID,
+		Type:        domain.DriftTypeAccountDrift,
+		Severity:    domain.DriftSeverityWarning,
+		Status:      domain.DriftStatusOpen,
+		Title:       "Network conflict",
+		Description: "computed conflict",
+		Details:     map[string]string{"existing": "true"},
+		DetectedAt:  now,
+		UpdatedAt:   now,
+	}
+	if err := store.CreateDriftItem(ctx, item); err != nil {
+		t.Fatalf("create drift item: %v", err)
+	}
+	if err := store.UpdateDriftDetails(ctx, item.ID, map[string]string{"network_conflict_action": "link"}); err != nil {
+		t.Fatalf("update details: %v", err)
+	}
+	if err := store.UpdateDriftStatus(ctx, item.ID, domain.DriftStatusResolved, "decision=link"); err != nil {
+		t.Fatalf("update status: %v", err)
+	}
+	got, err := store.GetDriftItem(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("get drift item: %v", err)
+	}
+	if got.Status != domain.DriftStatusResolved || got.IgnoreReason != "decision=link" || got.ResolvedAt == nil {
+		t.Fatalf("unexpected status fields: %+v", got)
+	}
+	if got.Details["existing"] != "true" || got.Details["network_conflict_action"] != "link" {
+		t.Fatalf("details were not merged: %+v", got.Details)
 	}
 }
 

@@ -503,6 +503,12 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"AgentRegisterResponse", reflect.TypeOf(domain.AgentRegisterResponse{})},
 		{"AgentHeartbeatRequest", reflect.TypeOf(domain.AgentHeartbeatRequest{})},
 		{"AgentHeartbeatResponse", reflect.TypeOf(domain.AgentHeartbeatResponse{})},
+		{"NetworkConflict", reflect.TypeOf(domain.NetworkConflict{})},
+		{"NetworkConflictListResponse", reflect.TypeOf(domain.NetworkConflictListResponse{})},
+		{"ResolveNetworkConflictRequest", reflect.TypeOf(domain.ResolveNetworkConflictRequest{})},
+		{"NetworkConflictLinkActionRequest", reflect.TypeOf(domain.NetworkConflictLinkActionRequest{})},
+		{"NetworkConflictImportActionRequest", reflect.TypeOf(domain.NetworkConflictImportActionRequest{})},
+		{"NetworkConflictActionResponse", reflect.TypeOf(domain.NetworkConflictActionResponse{})},
 		{"AnalysisRequest", reflect.TypeOf(planning.AnalysisRequest{})},
 		{"GapAnalysisRequest", reflect.TypeOf(planning.GapAnalysisRequest{})},
 		{"GenerateRecommendationsRequest", reflect.TypeOf(domain.GenerateRecommendationsRequest{})},
@@ -774,6 +780,20 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 			{http.MethodPost, "/api/v1/discovery/agents/{agentId}/approve"},
 			{http.MethodPost, "/api/v1/discovery/agents/{agentId}/reject"},
 		})
+	case "/api/v1/network/flat":
+		return routesForMethodPath(http.MethodGet, "/api/v1/network/flat")
+	case "/api/v1/network/hierarchy":
+		return routesForMethodPath(http.MethodGet, "/api/v1/network/hierarchy")
+	case "/api/v1/network/merged":
+		return routesForMethodPath(http.MethodGet, "/api/v1/network/merged")
+	case "/api/v1/network/conflicts":
+		return routesForMethodPath(http.MethodGet, "/api/v1/network/conflicts")
+	case "/api/v1/network/conflicts/":
+		return routesForKnown([][2]string{
+			{http.MethodPost, "/api/v1/network/conflicts/{conflictId}/resolve"},
+			{http.MethodPost, "/api/v1/network/conflicts/{conflictId}/actions/link"},
+			{http.MethodPost, "/api/v1/network/conflicts/{conflictId}/actions/import"},
+		})
 	case "/api/v1/analysis":
 		return routesForMethodPath(http.MethodPost, "/api/v1/analysis")
 	case "/api/v1/analysis/gaps":
@@ -890,6 +910,12 @@ func splitMethodPattern(pattern string) (string, string, bool) {
 	switch path {
 	case "/api/v1/ai/sessions/{id}/apply-plan":
 		path = "/api/v1/ai/sessions/{sessionId}/apply-plan"
+	case "/api/v1/network/conflicts/{id}/resolve":
+		path = "/api/v1/network/conflicts/{conflictId}/resolve"
+	case "/api/v1/network/conflicts/{id}/actions/link":
+		path = "/api/v1/network/conflicts/{conflictId}/actions/link"
+	case "/api/v1/network/conflicts/{id}/actions/import":
+		path = "/api/v1/network/conflicts/{conflictId}/actions/import"
 	case "/api/v1/settings/oidc/providers/{id}":
 		path = "/api/v1/settings/oidc/providers/{providerId}"
 	case "/api/v1/settings/oidc/providers/{id}/test":
@@ -994,6 +1020,13 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "POST", Path: "/api/v1/discovery/agents/heartbeat", Summary: "Record discovery agent heartbeat", Tag: "Discovery", RequestSchema: "AgentHeartbeatRequest", ResponseSchema: "AgentHeartbeatResponse"},
 		{Method: "POST", Path: "/api/v1/discovery/agents/{agentId}/approve", Summary: "Approve discovery agent", Tag: "Discovery", ResponseSchema: "AgentRegisterResponse"},
 		{Method: "POST", Path: "/api/v1/discovery/agents/{agentId}/reject", Summary: "Reject discovery agent", Tag: "Discovery", ResponseSchema: "AgentRegisterResponse"},
+		{Method: "GET", Path: "/api/v1/network/flat", Summary: "Get flat network view", Tag: "Network", ResponseSchema: "Object", Parameters: networkViewQueryParams()},
+		{Method: "GET", Path: "/api/v1/network/hierarchy", Summary: "Get hierarchical network view", Tag: "Network", ResponseSchema: "Object", Parameters: networkViewQueryParams()},
+		{Method: "GET", Path: "/api/v1/network/merged", Summary: "Get merged network view", Tag: "Network", ResponseSchema: "Object", Parameters: networkViewQueryParams()},
+		{Method: "GET", Path: "/api/v1/network/conflicts", Summary: "List network conflicts", Tag: "Network", ResponseSchema: "NetworkConflictListResponse", Parameters: networkViewQueryParams()},
+		{Method: "POST", Path: "/api/v1/network/conflicts/{conflictId}/resolve", Summary: "Record passive network conflict decision", Tag: "Network", RequestSchema: "ResolveNetworkConflictRequest", ResponseSchema: "NetworkConflict"},
+		{Method: "POST", Path: "/api/v1/network/conflicts/{conflictId}/actions/link", Summary: "Link network conflict resource to pool", Tag: "Network", RequestSchema: "NetworkConflictLinkActionRequest", ResponseSchema: "NetworkConflictActionResponse"},
+		{Method: "POST", Path: "/api/v1/network/conflicts/{conflictId}/actions/import", Summary: "Import network conflict resources as pools", Tag: "Network", RequestSchema: "NetworkConflictImportActionRequest", ResponseSchema: "NetworkConflictActionResponse"},
 		{Method: "POST", Path: "/api/v1/analysis", Summary: "Run full network analysis", Tag: "Analysis", RequestSchema: "AnalysisRequest", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/analysis/gaps", Summary: "Run gap analysis", Tag: "Analysis", RequestSchema: "GapAnalysisRequest", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/analysis/fragmentation", Summary: "Run fragmentation analysis", Tag: "Analysis", RequestSchema: "AnalysisRequest", ResponseSchema: "Object"},
@@ -1095,6 +1128,18 @@ func discoveryResourceQueryParams() []openAPIParameter {
 		queryParam("linked", "Filter linked/unlinked resources", "boolean"),
 		queryParam("page", "Page number", "integer"),
 		queryParam("page_size", "Page size", "integer"),
+	}
+}
+
+func networkViewQueryParams() []openAPIParameter {
+	return []openAPIParameter{
+		queryParam("account_id", "Account ID", "integer"),
+		queryParam("provider", "Cloud provider", "string"),
+		queryParam("region", "Cloud region", "string"),
+		queryParam("object_type", "Network object type", "string"),
+		queryParam("status", "Network object status", "string"),
+		queryParam("conflict_type", "Network conflict type", "string"),
+		queryParam("q", "Search query", "string"),
 	}
 }
 

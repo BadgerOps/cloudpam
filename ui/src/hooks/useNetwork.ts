@@ -2,6 +2,9 @@ import { useCallback, useState } from 'react'
 import { get, post } from '../api/client'
 import type {
   NetworkConflict,
+  NetworkConflictActionResponse,
+  NetworkConflictImportActionRequest,
+  NetworkConflictLinkActionRequest,
   NetworkConflictListResponse,
   NetworkViewResponse,
 } from '../api/types'
@@ -94,6 +97,26 @@ export function useNetworkView() {
     [],
   )
 
+  const linkConflict = useCallback(
+    async (id: string, req: NetworkConflictLinkActionRequest) => {
+      return post<NetworkConflictActionResponse>(
+        `/api/v1/network/conflicts/${encodeURIComponent(id)}/actions/link`,
+        req,
+      )
+    },
+    [],
+  )
+
+  const importConflict = useCallback(
+    async (id: string, req: NetworkConflictImportActionRequest) => {
+      return post<NetworkConflictActionResponse>(
+        `/api/v1/network/conflicts/${encodeURIComponent(id)}/actions/import`,
+        req,
+      )
+    },
+    [],
+  )
+
   return {
     flat,
     hierarchy,
@@ -104,5 +127,7 @@ export function useNetworkView() {
     fetchHierarchy,
     fetchConflicts,
     resolveConflict,
+    linkConflict,
+    importConflict,
   }
 }

@@ -141,6 +141,38 @@ func (s *Store) UpdateDriftStatus(ctx context.Context, id string, status domain.
 	return nil
 }
 
+// UpdateDriftDetails merges structured detail metadata into a drift item.
+func (s *Store) UpdateDriftDetails(ctx context.Context, id string, details map[string]string) error {
+	item, err := s.GetDriftItem(ctx, id)
+	if err != nil {
+		return err
+	}
+	merged := map[string]string{}
+	for key, value := range item.Details {
+		merged[key] = value
+	}
+	for key, value := range details {
+		merged[key] = value
+	}
+	detailsJSON := "{}"
+	if b, err := json.Marshal(merged); err == nil {
+		detailsJSON = string(b)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE drift_items SET details = ?, updated_at = ? WHERE id = ?`,
+		detailsJSON, now, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return storage.ErrNotFound
+	}
+	return nil
+}
+
 // DeleteOpenForAccount removes all open drift items for an account.
 func (s *Store) DeleteOpenForAccount(ctx context.Context, accountID int64) error {
 	_, err := s.db.ExecContext(ctx,

@@ -106,6 +106,25 @@ func (m *MemoryDriftStore) UpdateDriftStatus(_ context.Context, id string, statu
 	return nil
 }
 
+func (m *MemoryDriftStore) UpdateDriftDetails(_ context.Context, id string, details map[string]string) error {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+
+	d, ok := m.drifts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if d.Details == nil {
+		d.Details = map[string]string{}
+	}
+	for key, value := range details {
+		d.Details[key] = value
+	}
+	d.UpdatedAt = time.Now().UTC()
+	m.drifts[id] = d
+	return nil
+}
+
 func (m *MemoryDriftStore) DeleteOpenForAccount(_ context.Context, accountID int64) error {
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()

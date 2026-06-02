@@ -80,3 +80,32 @@ type ResolveNetworkConflictRequest struct {
 	Decision string `json:"decision"`
 	Reason   string `json:"reason,omitempty"`
 }
+
+// NetworkConflictLinkActionRequest links an affected discovered resource to a
+// managed pool as a real conflict remediation.
+type NetworkConflictLinkActionRequest struct {
+	DiscoveredID uuid.UUID `json:"discovered_id"`
+	PoolID       int64     `json:"pool_id"`
+	Reason       string    `json:"reason,omitempty"`
+	Override     bool      `json:"override,omitempty"`
+}
+
+// NetworkConflictImportActionRequest imports affected discovered resources as
+// managed pools or links them through the discovery import apply workflow.
+type NetworkConflictImportActionRequest struct {
+	ResourceIDs []uuid.UUID `json:"resource_ids"`
+	PoolID      *int64      `json:"pool_id,omitempty"`
+	Reason      string      `json:"reason,omitempty"`
+	Override    bool        `json:"override,omitempty"`
+}
+
+// NetworkConflictActionResponse reports the mutation performed for a conflict
+// action and the conflict state after persistence.
+type NetworkConflictActionResponse struct {
+	Conflict       NetworkConflict               `json:"conflict"`
+	Action         string                        `json:"action"`
+	ResourceLinked bool                          `json:"resource_linked,omitempty"`
+	DiscoveredID   *uuid.UUID                    `json:"discovered_id,omitempty"`
+	PoolID         *int64                        `json:"pool_id,omitempty"`
+	Import         *DiscoveryImportApplyResponse `json:"import,omitempty"`
+}
