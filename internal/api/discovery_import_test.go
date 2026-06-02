@@ -400,6 +400,93 @@ func TestDiscoveryImportPreviewAndApplyRejectInvalidSelectedPool(t *testing.T) {
 	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", accountMismatchBody, http.StatusBadRequest)
 }
 
+func TestDiscoveryResourceLinkRejectsCrossAccountPool(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	otherAccount, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:222222222222", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	otherPool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "dev", CIDR: "10.40.0.0/16", Type: domain.PoolTypeVPC, AccountID: &otherAccount.ID})
+	if err != nil {
+		t.Fatalf("create other pool: %v", err)
+	}
+
+	resourceID := uuid.New()
+	now := time.Now().UTC()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           resourceID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-prod",
+		Name:         "prod-vpc",
+		CIDR:         "10.40.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+
+	body := fmt.Sprintf("{\"pool_id\":%d}", otherPool.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/resources/"+resourceID.String()+"/link", body, http.StatusBadRequest)
+
+	resource, err := ds.GetDiscoveredResource(t.Context(), resourceID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if resource.PoolID != nil {
+		t.Fatalf("resource linked to cross-account pool: %v", *resource.PoolID)
+	}
+}
+
+func TestDiscoveryResourcesSearchAcrossPages(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	now := time.Now().UTC()
+	for i := 0; i < 30; i++ {
+		name := fmt.Sprintf("ordinary-%02d", i)
+		resourceID := fmt.Sprintf("subnet-%02d", i)
+		cidr := fmt.Sprintf("10.41.%d.0/24", i)
+		if i == 29 {
+			name = "needle-subnet"
+			resourceID = "subnet-needle"
+			cidr = "10.42.99.0/24"
+		}
+		upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+			ID:           uuid.New(),
+			AccountID:    account.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeSubnet,
+			ResourceID:   resourceID,
+			Name:         name,
+			CIDR:         cidr,
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now.Add(time.Duration(i) * time.Minute),
+			LastSeenAt:   now.Add(time.Duration(i) * time.Minute),
+		})
+	}
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/discovery/resources?account_id=1&page=1&page_size=10&q=needle", "", http.StatusOK)
+	var resp domain.DiscoveryResourcesResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Items) != 1 {
+		t.Fatalf("search response = total %d len %d, want one result: %+v", resp.Total, len(resp.Items), resp.Items)
+	}
+	if resp.Items[0].ResourceID != "subnet-needle" {
+		t.Fatalf("resource_id = %s, want subnet-needle", resp.Items[0].ResourceID)
+	}
+}
+
 func TestDiscoveryImportApplyDeletesCreatedPoolWhenLinkFails(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})

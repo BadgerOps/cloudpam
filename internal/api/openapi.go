@@ -1125,6 +1125,7 @@ func discoveryResourceQueryParams() []openAPIParameter {
 		queryParam("region", "Cloud region", "string"),
 		queryParam("resource_type", "Resource type", "string"),
 		queryParam("status", "Discovery status", "string"),
+		queryParam("q", "Search by name, resource ID, or CIDR", "string"),
 		queryParam("linked", "Filter linked/unlinked resources", "boolean"),
 		queryParam("page", "Page number", "integer"),
 		queryParam("page_size", "Page size", "integer"),

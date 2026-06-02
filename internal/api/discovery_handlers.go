@@ -120,6 +120,7 @@ func (d *DiscoveryServer) handleResources(w http.ResponseWriter, r *http.Request
 		Region:       q.Get("region"),
 		ResourceType: q.Get("resource_type"),
 		Status:       q.Get("status"),
+		Query:        q.Get("q"),
 		Page:         page,
 		PageSize:     pageSize,
 	}
@@ -206,14 +207,28 @@ func (d *DiscoveryServer) handleLink(w http.ResponseWriter, r *http.Request, id 
 			return
 		}
 
-		// Verify pool exists
-		_, found, err := d.srv.store.GetPool(r.Context(), body.PoolID)
+		// Verify resource and pool exist, and do not cross account boundaries.
+		resource, err := d.store.GetDiscoveredResource(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				d.srv.writeErr(r.Context(), w, http.StatusNotFound, "resource not found", "")
+				return
+			}
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "resource lookup failed", err.Error())
+			return
+		}
+
+		pool, found, err := d.srv.store.GetPool(r.Context(), body.PoolID)
 		if err != nil {
 			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "pool lookup failed", err.Error())
 			return
 		}
 		if !found {
 			d.srv.writeErr(r.Context(), w, http.StatusNotFound, "pool not found", "")
+			return
+		}
+		if pool.AccountID != nil && *pool.AccountID != resource.AccountID {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "pool account does not match discovered resource account", "")
 			return
 		}
 

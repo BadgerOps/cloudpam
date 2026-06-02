@@ -134,11 +134,12 @@ export default function DiscoveryPage() {
         status: statusFilter || undefined,
         resource_type: typeFilter || undefined,
         linked: linkedFilter || undefined,
+        q: searchQuery || undefined,
         page: resourcePage,
         page_size: resourcePageSize,
       })
     }
-  }, [selectedAccountId, statusFilter, typeFilter, linkedFilter, resourcePage, resourcePageSize, fetchResources])
+  }, [selectedAccountId, statusFilter, typeFilter, linkedFilter, searchQuery, resourcePage, resourcePageSize, fetchResources])
 
   useEffect(() => {
     loadResources()
@@ -423,15 +424,7 @@ export default function DiscoveryPage() {
     }
   }
 
-  const filteredResources = (resourcesData?.items ?? []).filter((r) => {
-    if (!searchQuery) return true
-    const q = searchQuery.toLowerCase()
-    return (
-      r.name.toLowerCase().includes(q) ||
-      r.resource_id.toLowerCase().includes(q) ||
-      (r.cidr || '').toLowerCase().includes(q)
-    )
-  })
+  const filteredResources = resourcesData?.items ?? []
 
   if (accounts.length === 0) {
     return (
@@ -604,7 +597,10 @@ export default function DiscoveryPage() {
           loading={resLoading}
           error={resError}
           searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
+          onSearchChange={(query) => {
+            setSearchQuery(query)
+            setResourcePage(1)
+          }}
           statusFilter={statusFilter}
           onStatusChange={setStatusFilter}
           typeFilter={typeFilter}
@@ -614,6 +610,7 @@ export default function DiscoveryPage() {
           onLink={handleLink}
           onUnlink={handleUnlink}
           accounts={accounts}
+          selectedAccountId={selectedAccountId}
           pools={pools}
           selectedResourceIds={selectedResourceIds}
           onToggleSelection={toggleResourceSelection}
@@ -1324,6 +1321,7 @@ export function ResourcesTab({
   onLink,
   onUnlink,
   accounts,
+  selectedAccountId,
   pools,
   selectedResourceIds,
   onToggleSelection,
@@ -1351,6 +1349,7 @@ export function ResourcesTab({
   onLink: (r: DiscoveredResource) => void
   onUnlink: (r: DiscoveredResource) => void
   accounts: Account[]
+  selectedAccountId: number | null
   pools: Pool[]
   selectedResourceIds: string[]
   onToggleSelection: (r: DiscoveredResource) => void
@@ -1369,6 +1368,10 @@ export function ResourcesTab({
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<ResourceColumnKey[]>(DEFAULT_RESOURCE_COLUMNS)
   const bulkLinkPool = Number(bulkLinkPoolId)
   const visibleColumnSet = useMemo(() => new Set(visibleColumnKeys), [visibleColumnKeys])
+  const bulkLinkPools = useMemo(
+    () => pools.filter((pool) => pool.account_id == null || pool.account_id === selectedAccountId),
+    [pools, selectedAccountId],
+  )
   const selectableResources = resources.filter(isSelectableDiscoveryResource)
   const selectableVisibleIds = selectableResources.map((resource) => resource.id)
   const selectedVisibleCount = selectableVisibleIds.filter((id) => selectedResourceIds.includes(id)).length
@@ -1495,12 +1498,12 @@ export function ResourcesTab({
           <select
             value={bulkLinkPoolId}
             onChange={(e) => setBulkLinkPoolId(e.target.value)}
-            disabled={pools.length === 0}
+            disabled={bulkLinkPools.length === 0}
             aria-label="Pool for selected resources"
             className="min-w-[190px] rounded border border-gray-300 bg-white px-3 py-1.5 text-gray-900 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="">Select pool</option>
-            {pools.map((pool) => (
+            {bulkLinkPools.map((pool) => (
               <option key={pool.id} value={pool.id}>
                 {pool.name} ({pool.cidr})
               </option>

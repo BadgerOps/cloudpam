@@ -111,6 +111,7 @@ type DiscoveryFilters struct {
 	Region       string
 	ResourceType string
 	Status       string
+	Query        string
 	HasPool      *bool // nil = any, true = linked, false = unlinked
 	Page         int
 	PageSize     int

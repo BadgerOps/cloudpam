@@ -39,6 +39,10 @@ func (s *Store) ListDiscoveredResources(ctx context.Context, accountID int64, fi
 	if filters.Status != "" {
 		where = append(where, "status = "+addArg(filters.Status))
 	}
+	if filters.Query != "" {
+		q := "%" + strings.ToLower(filters.Query) + "%"
+		where = append(where, fmt.Sprintf("(LOWER(name) LIKE %s OR LOWER(resource_id) LIKE %s OR LOWER(cidr) LIKE %s)", addArg(q), addArg(q), addArg(q)))
+	}
 	if filters.HasPool != nil {
 		if *filters.HasPool {
 			where = append(where, "pool_id IS NOT NULL")

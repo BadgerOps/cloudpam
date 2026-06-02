@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,6 +50,14 @@ func (m *MemoryDiscoveryStore) ListDiscoveredResources(_ context.Context, accoun
 		}
 		if filters.Status != "" && string(r.Status) != filters.Status {
 			continue
+		}
+		if filters.Query != "" {
+			q := strings.ToLower(filters.Query)
+			if !strings.Contains(strings.ToLower(r.Name), q) &&
+				!strings.Contains(strings.ToLower(r.ResourceID), q) &&
+				!strings.Contains(strings.ToLower(r.CIDR), q) {
+				continue
+			}
 		}
 		if filters.HasPool != nil {
 			linked := r.PoolID != nil

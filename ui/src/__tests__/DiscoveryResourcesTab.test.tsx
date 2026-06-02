@@ -54,6 +54,7 @@ const pools: Pool[] = [
     id: 42,
     name: 'prod pool',
     cidr: '10.0.0.0/8',
+    account_id: 1,
     type: 'supernet',
     status: 'active',
     source: 'manual',
@@ -64,6 +65,18 @@ const pools: Pool[] = [
     id: 7,
     name: 'linked pool',
     cidr: '10.1.0.0/16',
+    account_id: 1,
+    type: 'vpc',
+    status: 'active',
+    source: 'manual',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  },
+  {
+    id: 99,
+    name: 'dev pool',
+    cidr: '10.99.0.0/16',
+    account_id: 2,
     type: 'vpc',
     status: 'active',
     source: 'manual',
@@ -114,6 +127,7 @@ function renderResourcesTab(overrides: Partial<ComponentProps<typeof ResourcesTa
       onLink: vi.fn(),
       onUnlink: vi.fn(),
       accounts,
+      selectedAccountId: 1,
       pools,
       selectedResourceIds,
       onToggleSelection: toggleSelection,
@@ -166,6 +180,15 @@ describe('ResourcesTab', () => {
     fireEvent.click(screen.getByRole('button', { name: /Link selected/i }))
 
     expect(onBulkLink).toHaveBeenCalledWith(['resource-active-vpc', 'resource-stale-subnet'], 42)
+  })
+
+  it('filters bulk link pools to the selected account', () => {
+    renderResourcesTab()
+
+    const poolSelect = screen.getByLabelText('Pool for selected resources') as HTMLSelectElement
+
+    expect(Array.from(poolSelect.options).map((option) => option.textContent)).toContain('prod pool (10.0.0.0/8)')
+    expect(Array.from(poolSelect.options).map((option) => option.textContent)).not.toContain('dev pool (10.99.0.0/16)')
   })
 
   it('selects and clears all visible unlinked resources from the header checkbox', () => {

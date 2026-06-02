@@ -26,6 +26,7 @@ export function useDiscoveryResources() {
         region?: string
         resource_type?: string
         status?: string
+        q?: string
         linked?: string
         page?: number
         page_size?: number
@@ -40,6 +41,7 @@ export function useDiscoveryResources() {
         if (filters?.resource_type)
           params.set('resource_type', filters.resource_type)
         if (filters?.status) params.set('status', filters.status)
+        if (filters?.q) params.set('q', filters.q)
         if (filters?.linked) params.set('linked', filters.linked)
         if (filters?.page) params.set('page', String(filters.page))
         if (filters?.page_size)
