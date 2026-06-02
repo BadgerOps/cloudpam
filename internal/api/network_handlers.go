@@ -331,8 +331,17 @@ func (ns *NetworkServer) handleNetworkConflictImportAction(w http.ResponseWriter
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "apply import failed", err.Error())
 		return
 	}
-	if importResp.PoolsCreated+importResp.ResourcesLinked == 0 {
-		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "import did not create or link any resources", strings.Join(importResp.Errors, "; "))
+	if importResp.PoolsCreated+importResp.ResourcesLinked == 0 || importResp.Skipped > 0 || len(importResp.Errors) > 0 {
+		rollbackErr := ns.rollbackNetworkConflictImport(r.Context(), importResp)
+		detail := strings.Join(importResp.Errors, "; ")
+		if detail == "" && importResp.Skipped > 0 {
+			detail = fmt.Sprintf("%d selected resources were skipped", importResp.Skipped)
+		}
+		if rollbackErr != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "import was incomplete and rollback failed", detail+"; rollback: "+rollbackErr.Error())
+			return
+		}
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "import did not complete for all selected resources", detail)
 		return
 	}
 	actionDetails["pools_created"] = fmt.Sprintf("%d", importResp.PoolsCreated)

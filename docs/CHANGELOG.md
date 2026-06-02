@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.16.1] - 2026-06-02
+
+### Fixed
+- Network conflict import actions now fail and roll back when any selected resource is skipped or errors, preventing partial imports from marking the whole conflict resolved.
+- PostgreSQL-backed deployments now persist drift and network conflict resolution metadata instead of falling back to in-memory drift storage.
+
 ## [0.16.0] - 2026-06-01
 
 ### Added
