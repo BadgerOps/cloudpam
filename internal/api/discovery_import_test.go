@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 func TestTriggerSyncAllHealthyAgents(t *testing.T) {
@@ -398,6 +400,58 @@ func TestDiscoveryImportPreviewAndApplyRejectInvalidSelectedPool(t *testing.T) {
 	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", accountMismatchBody, http.StatusBadRequest)
 }
 
+func TestDiscoveryImportApplyDeletesCreatedPoolWhenLinkFails(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	vpcID := uuid.New()
+	now := time.Now().UTC()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-link-fails",
+		Name:         "vpc-link-fails",
+		CIDR:         "10.33.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+	discSrv.store = &failLinkDiscoveryStore{DiscoveryStore: ds, failID: vpcID}
+
+	body := fmt.Sprintf("{\"account_id\":%d,\"resource_ids\":[\"%s\"]}", account.ID, vpcID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("unmarshal apply: %v", err)
+	}
+	if applied.PoolsCreated != 0 || applied.ResourcesLinked != 0 || applied.Skipped != 1 {
+		t.Fatalf("failed link should skip without completed imports: %+v", applied)
+	}
+	if len(applied.CreatedPoolIDs) != 0 {
+		t.Fatalf("created pool id should be removed after cleanup succeeds: %+v", applied.CreatedPoolIDs)
+	}
+	pools, err := st.ListPools(t.Context())
+	if err != nil {
+		t.Fatalf("list pools: %v", err)
+	}
+	if len(pools) != 0 {
+		t.Fatalf("link failure should clean up created pool, got %+v", pools)
+	}
+	res, err := ds.GetDiscoveredResource(t.Context(), vpcID)
+	if err != nil {
+		t.Fatalf("get discovered resource: %v", err)
+	}
+	if res.PoolID != nil {
+		t.Fatalf("link failure should leave resource unlinked, got pool %d", *res.PoolID)
+	}
+}
+
 func TestDiscoveryImportPreviewFlagsDuplicateAcrossAccounts(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	a1, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:111111111111", Name: "prod", Provider: "aws"})
@@ -558,4 +612,16 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+type failLinkDiscoveryStore struct {
+	storage.DiscoveryStore
+	failID uuid.UUID
+}
+
+func (s *failLinkDiscoveryStore) LinkResourceToPool(ctx context.Context, resourceID uuid.UUID, poolID int64) error {
+	if resourceID == s.failID {
+		return errors.New("forced link failure")
+	}
+	return s.DiscoveryStore.LinkResourceToPool(ctx, resourceID, poolID)
 }

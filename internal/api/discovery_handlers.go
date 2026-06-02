@@ -416,7 +416,15 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 			resp.Skipped++
 			continue
 		}
+		resp.CreatedPoolIDs = append(resp.CreatedPoolIDs, pool.ID)
 		if err := d.store.LinkResourceToPool(ctx, item.ResourceID, pool.ID); err != nil {
+			if ok, cleanupErr := d.srv.store.DeletePool(ctx, pool.ID); cleanupErr != nil {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: %v", res.ResourceID, pool.ID, cleanupErr))
+			} else if !ok {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: not found", res.ResourceID, pool.ID))
+			} else {
+				resp.CreatedPoolIDs = resp.CreatedPoolIDs[:len(resp.CreatedPoolIDs)-1]
+			}
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
 			resp.Skipped++
 			continue
@@ -424,7 +432,6 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 		createdPoolByProviderID[res.ResourceID] = pool.ID
 		resp.PoolsCreated++
 		resp.ResourcesLinked++
-		resp.CreatedPoolIDs = append(resp.CreatedPoolIDs, pool.ID)
 		resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
 	}
 
