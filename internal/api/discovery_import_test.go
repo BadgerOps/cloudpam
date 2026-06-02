@@ -474,7 +474,8 @@ func TestDiscoveryResourcesSearchAcrossPages(t *testing.T) {
 		})
 	}
 
-	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/discovery/resources?account_id=1&page=1&page_size=10&q=needle", "", http.StatusOK)
+	path := fmt.Sprintf("/api/v1/discovery/resources?account_id=%d&page=1&page_size=10&q=needle", account.ID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, path, "", http.StatusOK)
 	var resp domain.DiscoveryResourcesResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
