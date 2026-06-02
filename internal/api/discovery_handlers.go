@@ -447,6 +447,9 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 		if !ok {
 			return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("selected pool not found")
 		}
+		if pool.AccountID != nil && *pool.AccountID != req.AccountID {
+			return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("selected pool account does not match import account")
+		}
 		selectedPool = &pool
 	}
 

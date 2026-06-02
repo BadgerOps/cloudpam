@@ -783,6 +783,7 @@ function NetworkTab({
           >
             <option value="">All issues</option>
             <option value="missing_parent">Missing parent</option>
+            <option value="unlinked_exact_pool">Exact pool match</option>
             <option value="invalid_nesting">Invalid nesting</option>
             <option value="outside_pool">Outside pool</option>
             <option value="duplicate_cidr">Duplicate CIDR</option>

@@ -298,6 +298,21 @@ func (ns *NetworkServer) handleNetworkConflictImportAction(w http.ResponseWriter
 		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
+	if req.PoolID != nil {
+		pool, found, err := ns.store.GetPool(r.Context(), *req.PoolID)
+		if err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "pool lookup failed", err.Error())
+			return
+		}
+		if !found {
+			ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "selected pool not found", "")
+			return
+		}
+		if pool.AccountID != nil && *pool.AccountID != accountID {
+			ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "selected pool account does not match import account", "")
+			return
+		}
+	}
 	importReq := domain.DiscoveryImportApplyRequest{
 		AccountID:   accountID,
 		ResourceIDs: req.ResourceIDs,

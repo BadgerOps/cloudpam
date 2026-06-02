@@ -331,6 +331,66 @@ func TestNetworkConflictImportActionImportsMissingParentWithOverride(t *testing.
 	}
 }
 
+func TestNetworkConflictImportActionRejectsCrossAccountParentPoolWithOverride(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	otherAccount, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:222222222222", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	otherParentPool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "dev-space", CIDR: "10.125.0.0/16", Type: domain.PoolTypeVPC, AccountID: &otherAccount.ID})
+	if err != nil {
+		t.Fatalf("create other parent pool: %v", err)
+	}
+
+	now := time.Now().UTC()
+	subnetID := uuid.New()
+	parent := "vpc-missing"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:               subnetID,
+		AccountID:        account.ID,
+		Provider:         "aws",
+		Region:           "us-east-1",
+		ResourceType:     domain.ResourceTypeSubnet,
+		ResourceID:       "subnet-1",
+		Name:             "subnet-1",
+		CIDR:             "10.125.1.0/24",
+		ParentResourceID: &parent,
+		Status:           domain.DiscoveryStatusActive,
+		DiscoveredAt:     now,
+		LastSeenAt:       now,
+	})
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=missing_parent", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 {
+		t.Fatalf("expected missing-parent conflict, got %+v", conflicts)
+	}
+
+	body := fmt.Sprintf(`{"resource_ids":["%s"],"pool_id":%d,"override":true}`, subnetID, otherParentPool.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/import", conflicts.Items[0].ID), body, http.StatusBadRequest)
+	linked, err := ds.GetDiscoveredResource(t.Context(), subnetID)
+	if err != nil {
+		t.Fatalf("load subnet after rejected import: %v", err)
+	}
+	if linked.PoolID != nil {
+		t.Fatalf("cross-account import should not link resource, got pool %d", *linked.PoolID)
+	}
+	pools, err := st.ListPools(t.Context())
+	if err != nil {
+		t.Fatalf("list pools after rejected import: %v", err)
+	}
+	if len(pools) != 1 {
+		t.Fatalf("cross-account import should not create pools, got %d pools: %+v", len(pools), pools)
+	}
+}
+
 func TestNetworkConflictImportActionRejectsUnrelatedResource(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
