@@ -19,6 +19,10 @@ patch or minor version entry for every user-facing change.
 - Discovery documentation now clarifies the distinction between allocated blocks, discovered resources, network objects, and soft links.
 - EIPs and other non-pool cloud resources are now surfaced as network objects in merged views instead of being pushed through the allocated-block model.
 
+### Fixed
+- Network conflict resolution now only offers durable review decisions and rejects unsupported decisions instead of marking no-op import/link requests as resolved.
+- Discovery import preview and apply now scan all discovered resource pages when checking parents and duplicate CIDRs.
+
 ## [0.15.0] - 2026-06-01
 
 ### Added

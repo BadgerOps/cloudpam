@@ -122,6 +122,11 @@ func TestNetworkConflictsExposeMissingParentAndResolveRequest(t *testing.T) {
 	if resp.Total != 1 || resp.Items[0].Type != "missing_parent" {
 		t.Fatalf("unexpected conflicts: %+v", resp)
 	}
+	if strings.Join(resp.Items[0].AvailableDecisions, ",") != "skip,ignore,defer" {
+		t.Fatalf("available decisions = %v, want skip/ignore/defer", resp.Items[0].AvailableDecisions)
+	}
+
+	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/resolve", resp.Items[0].ID), `{"decision":"link"}`, http.StatusBadRequest)
 
 	body := `{"decision":"skip","reason":"parent intentionally absent"}`
 	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/resolve", resp.Items[0].ID), body, http.StatusOK)

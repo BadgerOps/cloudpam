@@ -130,6 +130,10 @@ func (ns *NetworkServer) handleConflictSubroutes(w http.ResponseWriter, r *http.
 		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "decision is required", "")
 		return
 	}
+	if !isValidNetworkDecision(req.Decision) {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "decision must be one of skip, ignore, or defer", "")
+		return
+	}
 	view, err := ns.buildNetworkView(r.Context(), networkViewFilters{})
 	if err != nil {
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "network conflicts failed", err.Error())
@@ -357,7 +361,7 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 	issuesByNode := map[string][]domain.NetworkIssue{}
 	var conflicts []domain.NetworkConflict
 	add := func(conflict domain.NetworkConflict) {
-		conflict.AvailableDecisions = []string{"import", "link", "skip", "ignore", "defer"}
+		conflict.AvailableDecisions = networkConflictDecisions()
 		conflicts = append(conflicts, conflict)
 		issue := domain.NetworkIssue{ID: conflict.ID, Type: conflict.Type, Severity: conflict.Severity, Message: conflict.Title}
 		for _, nodeID := range conflict.NodeIDs {
@@ -720,9 +724,25 @@ func networkDecisionStatus(decision string) domain.DriftStatus {
 		return domain.DriftStatusIgnored
 	case "defer":
 		return domain.DriftStatusOpen
-	default:
+	case "skip":
 		return domain.DriftStatusResolved
+	default:
+		return domain.DriftStatusOpen
 	}
+}
+
+func networkConflictDecisions() []string {
+	return []string{"skip", "ignore", "defer"}
+}
+
+func isValidNetworkDecision(decision string) bool {
+	decision = strings.ToLower(strings.TrimSpace(decision))
+	for _, valid := range networkConflictDecisions() {
+		if decision == valid {
+			return true
+		}
+	}
+	return false
 }
 
 func networkResolutionReason(decision string, reason string) string {

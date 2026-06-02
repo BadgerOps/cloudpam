@@ -417,7 +417,7 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 		selectedPool = &pool
 	}
 
-	accountResources, _, err := d.store.ListDiscoveredResources(ctx, req.AccountID, domain.DiscoveryFilters{Page: 1, PageSize: 10000})
+	accountResources, err := d.listAllDiscoveredResources(ctx, req.AccountID, domain.DiscoveryFilters{})
 	if err != nil {
 		return domain.DiscoveryImportPreviewResponse{}, err
 	}
@@ -630,10 +630,8 @@ func (d *DiscoveryServer) duplicateCIDRsByAccount(ctx context.Context, accountID
 		if account.ID == accountID {
 			continue
 		}
-		resources, _, err := d.store.ListDiscoveredResources(ctx, account.ID, domain.DiscoveryFilters{
-			Status:   string(domain.DiscoveryStatusActive),
-			Page:     1,
-			PageSize: 10000,
+		resources, err := d.listAllDiscoveredResources(ctx, account.ID, domain.DiscoveryFilters{
+			Status: string(domain.DiscoveryStatusActive),
 		})
 		if err != nil {
 			return nil, err
@@ -643,6 +641,29 @@ func (d *DiscoveryServer) duplicateCIDRsByAccount(ctx context.Context, accountID
 				out[res.CIDR] = append(out[res.CIDR], res.ID)
 			}
 		}
+	}
+	return out, nil
+}
+
+func (d *DiscoveryServer) listAllDiscoveredResources(ctx context.Context, accountID int64, filters domain.DiscoveryFilters) ([]domain.DiscoveredResource, error) {
+	const pageSize = 1000
+	var out []domain.DiscoveredResource
+	count := 0
+	filters.PageSize = pageSize
+	for page := 1; ; page++ {
+		filters.Page = page
+		resources, total, err := d.store.ListDiscoveredResources(ctx, accountID, filters)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, resources...)
+		count += len(resources)
+		if len(resources) == 0 || count >= total {
+			break
+		}
+	}
+	if out == nil {
+		out = []domain.DiscoveredResource{}
 	}
 	return out, nil
 }
@@ -742,10 +763,8 @@ func (d *DiscoveryServer) handleImportDiscoveredSchema(w http.ResponseWriter, r 
 		return
 	}
 
-	resources, _, err := d.store.ListDiscoveredResources(r.Context(), body.AccountID, domain.DiscoveryFilters{
-		Status:   string(domain.DiscoveryStatusActive),
-		Page:     1,
-		PageSize: 10000,
+	resources, err := d.listAllDiscoveredResources(r.Context(), body.AccountID, domain.DiscoveryFilters{
+		Status: string(domain.DiscoveryStatusActive),
 	})
 	if err != nil {
 		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list resources failed", err.Error())

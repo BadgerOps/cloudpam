@@ -118,7 +118,7 @@ curl http://localhost:8080/api/v1/network/flat?object_type=vpc
 curl http://localhost:8080/api/v1/network/conflicts?conflict_type=duplicate_cidr
 ```
 
-Conflict responses include stable IDs, severity, affected discovered resource IDs, affected pool IDs, account/region metadata, evidence lines, and available decisions such as `import`, `link`, `skip`, `ignore`, and `defer`.
+Conflict responses include stable IDs, severity, affected discovered resource IDs, affected pool IDs, account/region metadata, evidence lines, and available review decisions: `skip`, `ignore`, and `defer`.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/network/conflicts/duplicate-cidr:10.0.0.0_16/resolve \

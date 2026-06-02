@@ -257,6 +257,72 @@ func TestDiscoveryImportPreviewBlocksMissingParent(t *testing.T) {
 	}
 }
 
+func TestDiscoveryImportPreviewFindsParentBeyondFirstPage(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	now := time.Now().UTC()
+	for i := 0; i < 1001; i++ {
+		upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+			ID:           uuid.New(),
+			AccountID:    account.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeElasticIP,
+			ResourceID:   fmt.Sprintf("eipalloc-page-%04d", i),
+			Name:         fmt.Sprintf("page filler %04d", i),
+			CIDR:         fmt.Sprintf("198.51.%d.%d/32", i/255, i%255),
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now.Add(time.Duration(i) * time.Second),
+			LastSeenAt:   now.Add(time.Duration(i) * time.Second),
+		})
+	}
+
+	vpcID := uuid.New()
+	subnetID := uuid.New()
+	parent := "vpc-paged"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   parent,
+		Name:         "paged-vpc",
+		CIDR:         "10.50.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now.Add(-2 * time.Hour),
+		LastSeenAt:   now,
+	})
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:               subnetID,
+		AccountID:        account.ID,
+		Provider:         "aws",
+		Region:           "us-east-1",
+		ResourceType:     domain.ResourceTypeSubnet,
+		ResourceID:       "subnet-paged",
+		Name:             "paged-subnet",
+		CIDR:             "10.50.1.0/24",
+		ParentResourceID: &parent,
+		Status:           domain.DiscoveryStatusActive,
+		DiscoveredAt:     now.Add(-1 * time.Hour),
+		LastSeenAt:       now,
+	})
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s","%s"]}`, account.ID, vpcID, subnetID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	var preview domain.DiscoveryImportPreviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("unmarshal preview: %v", err)
+	}
+	if preview.Importable != 2 || preview.Blocked != 0 {
+		t.Fatalf("expected paged parent lookup to make both resources importable: %+v", preview)
+	}
+}
+
 func TestDiscoveryImportPreviewBlocksOutsideSelectedPool(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
@@ -318,6 +384,70 @@ func TestDiscoveryImportPreviewFlagsDuplicateAcrossAccounts(t *testing.T) {
 	item := singleDiscoveryPreviewItem(t, rr)
 	if item.Status != "conflict" || !containsString(item.Issues, "duplicate_cidr") || len(item.DuplicateResourceIDs) != 1 {
 		t.Fatalf("unexpected preview item: %+v", item)
+	}
+}
+
+func TestDiscoveryImportPreviewFindsDuplicateBeyondFirstPage(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	a1, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:111111111111", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account 1: %v", err)
+	}
+	a2, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:222222222222", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account 2: %v", err)
+	}
+
+	now := time.Now().UTC()
+	vpc1ID := uuid.New()
+	vpc2ID := uuid.New()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpc1ID,
+		AccountID:    a1.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-prod",
+		Name:         "prod",
+		CIDR:         "10.60.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+	for i := 0; i < 1001; i++ {
+		upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+			ID:           uuid.New(),
+			AccountID:    a2.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeElasticIP,
+			ResourceID:   fmt.Sprintf("eipalloc-dup-page-%04d", i),
+			Name:         fmt.Sprintf("duplicate filler %04d", i),
+			CIDR:         fmt.Sprintf("203.0.%d.%d/32", i/255, i%255),
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now.Add(time.Duration(i) * time.Second),
+			LastSeenAt:   now.Add(time.Duration(i) * time.Second),
+		})
+	}
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpc2ID,
+		AccountID:    a2.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-dev",
+		Name:         "dev",
+		CIDR:         "10.60.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now.Add(-time.Hour),
+		LastSeenAt:   now,
+	})
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s"]}`, a1.ID, vpc1ID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	item := singleDiscoveryPreviewItem(t, rr)
+	if item.Status != "conflict" || !containsString(item.Issues, "duplicate_cidr") || len(item.DuplicateResourceIDs) != 1 {
+		t.Fatalf("expected paged duplicate lookup to find conflict: %+v", item)
 	}
 }
 
