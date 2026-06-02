@@ -957,16 +957,16 @@ func (ns *NetworkServer) conflictAfterAction(ctx context.Context, fallback domai
 }
 
 func validateNetworkConflictLinkAction(conflict domain.NetworkConflict, res domain.DiscoveredResource, pool domain.Pool, req domain.NetworkConflictLinkActionRequest) error {
+	if !containsUUID(conflict.DiscoveredIDs, req.DiscoveredID) {
+		return fmt.Errorf("discovered resource is not part of this conflict")
+	}
+	if !containsInt64(conflict.PoolIDs, req.PoolID) {
+		return fmt.Errorf("pool is not part of this conflict")
+	}
+	if res.PoolID != nil {
+		return fmt.Errorf("discovered resource is already linked")
+	}
 	if !req.Override {
-		if !containsUUID(conflict.DiscoveredIDs, req.DiscoveredID) {
-			return fmt.Errorf("discovered resource is not part of this conflict")
-		}
-		if !containsInt64(conflict.PoolIDs, req.PoolID) {
-			return fmt.Errorf("pool is not part of this conflict")
-		}
-		if res.PoolID != nil {
-			return fmt.Errorf("discovered resource is already linked")
-		}
 		if pool.AccountID != nil && *pool.AccountID != res.AccountID {
 			return fmt.Errorf("pool account does not match discovered resource account; set override to force")
 		}
@@ -983,9 +983,6 @@ func validateNetworkConflictLinkAction(conflict domain.NetworkConflict, res doma
 func validateNetworkConflictImportSelection(conflict domain.NetworkConflict, req domain.NetworkConflictImportActionRequest) error {
 	if req.PoolID != nil && *req.PoolID < 1 {
 		return fmt.Errorf("pool_id must be a positive integer")
-	}
-	if req.Override {
-		return nil
 	}
 	for _, id := range req.ResourceIDs {
 		if !containsUUID(conflict.DiscoveredIDs, id) {

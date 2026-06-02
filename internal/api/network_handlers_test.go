@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -150,6 +151,32 @@ func TestNetworkConflictsExposeMissingParentAndResolveRequest(t *testing.T) {
 	}
 }
 
+func TestNetworkConflictRoutesAppearInOpenAPISpec(t *testing.T) {
+	discSrv, _, _, _ := setupDiscoveryTestServer()
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	rr := httptest.NewRecorder()
+	discSrv.srv.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`"/api/v1/network/conflicts":`,
+		`"/api/v1/network/conflicts/{conflictId}/resolve":`,
+		`"/api/v1/network/conflicts/{conflictId}/actions/link":`,
+		`"/api/v1/network/conflicts/{conflictId}/actions/import":`,
+		`$ref: '#/components/schemas/ResolveNetworkConflictRequest'`,
+		`$ref: '#/components/schemas/NetworkConflictLinkActionRequest'`,
+		`$ref: '#/components/schemas/NetworkConflictImportActionRequest'`,
+		`$ref: '#/components/schemas/NetworkConflictActionResponse'`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("generated OpenAPI spec missing %s", want)
+		}
+	}
+}
+
 func TestNetworkConflictLinkActionLinksExactPoolAndResolves(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
@@ -204,7 +231,7 @@ func TestNetworkConflictLinkActionLinksExactPoolAndResolves(t *testing.T) {
 	}
 }
 
-func TestNetworkConflictLinkActionRejectsUnrelatedAndUnsafeWithoutOverride(t *testing.T) {
+func TestNetworkConflictLinkActionRejectsUnrelatedAndUnsafePayloads(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
 	if err != nil {
@@ -241,6 +268,8 @@ func TestNetworkConflictLinkActionRejectsUnrelatedAndUnsafeWithoutOverride(t *te
 	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/link", conflicts.Items[0].ID), fmt.Sprintf(`{"discovered_id":"%s","pool_id":%d}`, otherID, mismatchPool.ID), http.StatusBadRequest)
 	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/link", conflicts.Items[0].ID), fmt.Sprintf(`{"discovered_id":"%s","pool_id":%d}`, vpcID, unrelatedPool.ID), http.StatusBadRequest)
 	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/link", conflicts.Items[0].ID), fmt.Sprintf(`{"discovered_id":"%s","pool_id":%d}`, vpcID, mismatchPool.ID), http.StatusBadRequest)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/link", conflicts.Items[0].ID), fmt.Sprintf(`{"discovered_id":"%s","pool_id":%d,"override":true}`, otherID, mismatchPool.ID), http.StatusBadRequest)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/link", conflicts.Items[0].ID), fmt.Sprintf(`{"discovered_id":"%s","pool_id":%d,"override":true}`, vpcID, unrelatedPool.ID), http.StatusBadRequest)
 }
 
 func TestNetworkConflictImportActionImportsMissingParentWithOverride(t *testing.T) {
@@ -325,6 +354,7 @@ func TestNetworkConflictImportActionRejectsUnrelatedResource(t *testing.T) {
 		t.Fatalf("expected missing-parent conflict, got %+v", conflicts)
 	}
 	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/import", conflicts.Items[0].ID), fmt.Sprintf(`{"resource_ids":["%s"]}`, otherID), http.StatusBadRequest)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/import", conflicts.Items[0].ID), fmt.Sprintf(`{"resource_ids":["%s"],"override":true}`, otherID), http.StatusBadRequest)
 }
 
 func TestNetworkConflictImportActionRejectsPartialApplyAndRollsBack(t *testing.T) {
