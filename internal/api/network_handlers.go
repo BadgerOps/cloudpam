@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -135,7 +137,12 @@ func (ns *NetworkServer) handleConflictSubroutes(w http.ResponseWriter, r *http.
 	}
 	for _, conflict := range view.conflicts {
 		if conflict.ID == parts[0] {
-			conflict.ResolutionState = "requested"
+			if err := ns.persistNetworkConflictResolution(r.Context(), conflict, req); err != nil {
+				ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "resolve conflict failed", err.Error())
+				return
+			}
+			conflict.Status = string(networkDecisionStatus(req.Decision))
+			conflict.ResolutionState = conflict.Status
 			conflict.ResolutionRequested = req.Decision
 			writeJSON(w, http.StatusOK, conflict)
 			return
@@ -207,6 +214,7 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 	}
 
 	issuesByNode, conflicts := ns.computeNetworkConflicts(resources, pools, accountByID, poolByID, resourceByProvider)
+	conflicts = ns.applyStoredConflictResolutions(ctx, conflicts)
 	nodes := make([]domain.NetworkNode, 0, len(pools)+len(resources)+len(accounts))
 	for _, pool := range pools {
 		node := networkNodeFromPool(pool, accountByID)
@@ -534,6 +542,66 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 	return issuesByNode, conflicts
 }
 
+func (ns *NetworkServer) applyStoredConflictResolutions(ctx context.Context, conflicts []domain.NetworkConflict) []domain.NetworkConflict {
+	if ns.driftStore == nil {
+		return conflicts
+	}
+	for i := range conflicts {
+		item, err := ns.driftStore.GetDriftItem(ctx, conflicts[i].ID)
+		if err != nil {
+			continue
+		}
+		conflicts[i].Status = string(item.Status)
+		conflicts[i].ResolutionState = string(item.Status)
+		if item.IgnoreReason != "" {
+			conflicts[i].ResolutionRequested = parseNetworkDecision(item.IgnoreReason)
+			conflicts[i].Evidence = append(conflicts[i].Evidence, "resolution="+item.IgnoreReason)
+		}
+	}
+	return conflicts
+}
+
+func (ns *NetworkServer) persistNetworkConflictResolution(ctx context.Context, conflict domain.NetworkConflict, req domain.ResolveNetworkConflictRequest) error {
+	if ns.driftStore == nil {
+		return fmt.Errorf("drift store is not available")
+	}
+	status := networkDecisionStatus(req.Decision)
+	reason := networkResolutionReason(req.Decision, req.Reason)
+	if err := ns.driftStore.UpdateDriftStatus(ctx, conflict.ID, status, reason); err == nil {
+		return nil
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		return err
+	}
+
+	now := time.Now().UTC()
+	item := domain.DriftItem{
+		ID:           conflict.ID,
+		AccountID:    firstConflictAccountID(conflict),
+		Type:         domain.DriftTypeAccountDrift,
+		Severity:     driftSeverityFromNetwork(conflict.Severity),
+		Status:       domain.DriftStatusOpen,
+		Title:        conflict.Title,
+		Description:  conflict.Description,
+		ResourceCIDR: conflict.CIDR,
+		Details: map[string]string{
+			"network_conflict_type": conflict.Type,
+			"recommended_action":    conflict.RecommendedAction,
+		},
+		DetectedAt: now,
+		UpdatedAt:  now,
+	}
+	if len(conflict.DiscoveredIDs) > 0 {
+		item.ResourceID = &conflict.DiscoveredIDs[0]
+	}
+	if len(conflict.PoolIDs) > 0 {
+		item.PoolID = &conflict.PoolIDs[0]
+	}
+	if err := ns.driftStore.CreateDriftItem(ctx, item); err != nil {
+		return err
+	}
+	return ns.driftStore.UpdateDriftStatus(ctx, conflict.ID, status, reason)
+}
+
 func buildNetworkHierarchy(flat []domain.NetworkNode) []domain.NetworkNode {
 	nodes := make(map[string]domain.NetworkNode, len(flat))
 	childrenByParent := make(map[string][]string, len(flat))
@@ -644,6 +712,53 @@ func filterNetworkConflicts(conflicts []domain.NetworkConflict, filters networkV
 		out = append(out, conflict)
 	}
 	return out
+}
+
+func networkDecisionStatus(decision string) domain.DriftStatus {
+	switch strings.ToLower(strings.TrimSpace(decision)) {
+	case "ignore":
+		return domain.DriftStatusIgnored
+	case "defer":
+		return domain.DriftStatusOpen
+	default:
+		return domain.DriftStatusResolved
+	}
+}
+
+func networkResolutionReason(decision string, reason string) string {
+	decision = strings.TrimSpace(decision)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "decision=" + decision
+	}
+	return "decision=" + decision + " reason=" + reason
+}
+
+func parseNetworkDecision(reason string) string {
+	for _, part := range strings.Fields(reason) {
+		if strings.HasPrefix(part, "decision=") {
+			return strings.TrimPrefix(part, "decision=")
+		}
+	}
+	return ""
+}
+
+func firstConflictAccountID(conflict domain.NetworkConflict) int64 {
+	if len(conflict.AccountIDs) > 0 {
+		return conflict.AccountIDs[0]
+	}
+	return 0
+}
+
+func driftSeverityFromNetwork(severity string) domain.DriftSeverity {
+	switch severity {
+	case "critical":
+		return domain.DriftSeverityCritical
+	case "info":
+		return domain.DriftSeverityInfo
+	default:
+		return domain.DriftSeverityWarning
+	}
 }
 
 func poolNodeID(id int64) string { return fmt.Sprintf("pool:%d", id) }

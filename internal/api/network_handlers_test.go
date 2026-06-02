@@ -129,8 +129,16 @@ func TestNetworkConflictsExposeMissingParentAndResolveRequest(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resolved); err != nil {
 		t.Fatalf("unmarshal resolve: %v", err)
 	}
-	if resolved.ResolutionState != "requested" || resolved.ResolutionRequested != "skip" {
+	if resolved.Status != "resolved" || resolved.ResolutionState != "resolved" || resolved.ResolutionRequested != "skip" {
 		t.Fatalf("unexpected resolve response: %+v", resolved)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=missing_parent", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal conflicts after resolve: %v", err)
+	}
+	if resp.Items[0].Status != "resolved" || resp.Items[0].ResolutionRequested != "skip" {
+		t.Fatalf("resolution was not durable in computed conflict view: %+v", resp.Items[0])
 	}
 }
 

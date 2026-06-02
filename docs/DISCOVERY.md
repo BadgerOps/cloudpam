@@ -126,7 +126,7 @@ curl -X POST http://localhost:8080/api/v1/network/conflicts/duplicate-cidr:10.0.
   -d '{"decision":"skip","reason":"reviewed duplicate lab account"}'
 ```
 
-Conflict resolution requests are returned as response metadata for computed conflicts. Durable conflict lifecycle tracking remains tied to drift records and future managed network-object persistence.
+Conflict resolution requests for computed conflicts are persisted as drift records keyed by the stable conflict ID where the configured drift store is durable, such as SQLite. The merged views rehydrate the stored decision when conflicts are recomputed. Durable managed network-object persistence remains future work.
 
 ## AWS Setup
 

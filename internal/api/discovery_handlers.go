@@ -307,11 +307,7 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	previewReq := domain.DiscoveryImportPreviewRequest{
-		AccountID:   req.AccountID,
-		ResourceIDs: req.ResourceIDs,
-		PoolID:      req.PoolID,
-	}
+	previewReq := domain.DiscoveryImportPreviewRequest(req)
 	preview, err := d.previewDiscoveryImport(r.Context(), previewReq)
 	if err != nil {
 		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "preview import failed", err.Error())
