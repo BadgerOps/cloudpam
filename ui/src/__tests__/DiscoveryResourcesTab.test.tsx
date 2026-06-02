@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import type { DiscoveredResource, Pool } from '../api/types'
+import type { Account, DiscoveredResource, Pool } from '../api/types'
 import { ResourcesTab } from '../pages/DiscoveryPage'
 
 const resources: DiscoveredResource[] = [
@@ -72,8 +72,21 @@ const pools: Pool[] = [
   },
 ]
 
+const accounts: Account[] = [
+  {
+    id: 1,
+    key: 'aws:123456789012',
+    name: 'Production AWS',
+    provider: 'aws',
+    external_id: '123456789012',
+    created_at: '2026-01-01T00:00:00Z',
+  },
+]
+
 function renderResourcesTab(overrides: Partial<ComponentProps<typeof ResourcesTab>> = {}) {
   const onBulkLink = vi.fn()
+  const onPageChange = vi.fn()
+  const onPageSizeChange = vi.fn()
 
   function Wrapper() {
     const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([])
@@ -100,18 +113,28 @@ function renderResourcesTab(overrides: Partial<ComponentProps<typeof ResourcesTa
       onLinkedChange: vi.fn(),
       onLink: vi.fn(),
       onUnlink: vi.fn(),
+      accounts,
       pools,
       selectedResourceIds,
       onToggleSelection: toggleSelection,
-      onSelectVisible: (visibleResources) => {
-        setSelectedResourceIds(
-          visibleResources
-            .filter((resource) => !resource.pool_id)
-            .map((resource) => resource.id),
-        )
+      onSetVisibleSelection: (visibleResources, selected) => {
+        const visibleIDs = visibleResources
+          .filter((resource) => !resource.pool_id)
+          .map((resource) => resource.id)
+        setSelectedResourceIds((current) => {
+          if (selected) {
+            return Array.from(new Set([...current, ...visibleIDs]))
+          }
+          return current.filter((id) => !visibleIDs.includes(id))
+        })
       },
       onClearSelection: () => setSelectedResourceIds([]),
       onBulkLink,
+      total: resources.length,
+      page: 1,
+      pageSize: 25,
+      onPageChange,
+      onPageSizeChange,
       ...overrides,
     }
 
@@ -119,7 +142,7 @@ function renderResourcesTab(overrides: Partial<ComponentProps<typeof ResourcesTa
   }
 
   render(<Wrapper />)
-  return { onBulkLink }
+  return { onBulkLink, onPageChange, onPageSizeChange }
 }
 
 describe('ResourcesTab', () => {
@@ -143,5 +166,50 @@ describe('ResourcesTab', () => {
     fireEvent.click(screen.getByRole('button', { name: /Link selected/i }))
 
     expect(onBulkLink).toHaveBeenCalledWith(['resource-active-vpc', 'resource-stale-subnet'], 42)
+  })
+
+  it('selects and clears all visible unlinked resources from the header checkbox', () => {
+    renderResourcesTab()
+
+    fireEvent.click(screen.getByLabelText('Select all visible resources'))
+
+    expect(screen.getByText('2 selected')).toBeTruthy()
+
+    fireEvent.click(screen.getByLabelText('Select all visible resources'))
+
+    expect(screen.getByText('0 selected')).toBeTruthy()
+  })
+
+  it('shows account context and toggles configurable columns', () => {
+    renderResourcesTab()
+
+    expect(screen.getAllByText('Production AWS').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('123456789012').length).toBeGreaterThan(0)
+    expect(screen.queryAllByRole('columnheader', { name: 'Account / Project' }).length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: /Columns/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Account / Project' }))
+
+    expect(screen.queryAllByRole('columnheader', { name: 'Account / Project' })).toHaveLength(0)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Account / Project' }))
+
+    expect(screen.queryAllByRole('columnheader', { name: 'Account / Project' }).length).toBeGreaterThan(0)
+  })
+
+  it('calls pagination handlers for page and page-size changes', () => {
+    const { onPageChange, onPageSizeChange } = renderResourcesTab({
+      total: 80,
+      page: 2,
+      pageSize: 25,
+    })
+
+    expect(screen.getByText('Showing 26-50 of 80')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    fireEvent.change(screen.getByLabelText('Rows per page'), { target: { value: '100' } })
+
+    expect(onPageChange).toHaveBeenCalledWith(3)
+    expect(onPageSizeChange).toHaveBeenCalledWith(100)
   })
 })

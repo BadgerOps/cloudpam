@@ -62,6 +62,8 @@ export default function DiscoveryPage() {
   const [typeFilter, setTypeFilter] = useState('')
   const [linkedFilter, setLinkedFilter] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [resourcePage, setResourcePage] = useState(1)
+  const [resourcePageSize, setResourcePageSize] = useState(25)
   const [showGuide, setShowGuide] = useState(false)
   const [showWizard, setShowWizard] = useState(false)
 
@@ -132,13 +134,19 @@ export default function DiscoveryPage() {
         status: statusFilter || undefined,
         resource_type: typeFilter || undefined,
         linked: linkedFilter || undefined,
+        page: resourcePage,
+        page_size: resourcePageSize,
       })
     }
-  }, [selectedAccountId, statusFilter, typeFilter, linkedFilter, fetchResources])
+  }, [selectedAccountId, statusFilter, typeFilter, linkedFilter, resourcePage, resourcePageSize, fetchResources])
 
   useEffect(() => {
     loadResources()
   }, [loadResources])
+
+  useEffect(() => {
+    setResourcePage(1)
+  }, [selectedAccountId, statusFilter, typeFilter, linkedFilter, searchQuery, resourcePageSize])
 
   useEffect(() => {
     setSelectedResourceIds([])
@@ -316,11 +324,15 @@ export default function DiscoveryPage() {
     )
   }
 
-  function selectVisibleImportableResources(resources: DiscoveredResource[]) {
+  function setVisibleImportableResources(resources: DiscoveredResource[], selected: boolean) {
     const ids = resources
       .filter((resource) => isSelectableDiscoveryResource(resource))
       .map((resource) => resource.id)
-    setSelectedResourceIds((current) => Array.from(new Set([...current, ...ids])))
+    if (selected) {
+      setSelectedResourceIds((current) => Array.from(new Set([...current, ...ids])))
+      return
+    }
+    setSelectedResourceIds((current) => current.filter((id) => !ids.includes(id)))
   }
 
   async function handleDeleteAgent(agent: DiscoveryAgent) {
@@ -355,9 +367,10 @@ export default function DiscoveryPage() {
   }
 
   async function handleBulkLink(resourceIds: string[], poolId: number) {
+    const currentResourcesByID = new Map((resourcesData?.items ?? []).map((resource) => [resource.id, resource]))
     const linkableResourceIds = resourceIds.filter((id) => {
-      const resource = resourcesData?.items.find((item) => item.id === id)
-      return resource && isSelectableDiscoveryResource(resource)
+      const resource = currentResourcesByID.get(id)
+      return !resource || isSelectableDiscoveryResource(resource)
     })
     if (linkableResourceIds.length === 0) {
       showToast('Select discovered resources to link', 'error')
@@ -600,13 +613,22 @@ export default function DiscoveryPage() {
           onLinkedChange={setLinkedFilter}
           onLink={handleLink}
           onUnlink={handleUnlink}
+          accounts={accounts}
           pools={pools}
           selectedResourceIds={selectedResourceIds}
           onToggleSelection={toggleResourceSelection}
-          onSelectVisible={selectVisibleImportableResources}
+          onSetVisibleSelection={setVisibleImportableResources}
           onClearSelection={() => setSelectedResourceIds([])}
           onBulkLink={handleBulkLink}
           bulkLinking={bulkLinkingLoading}
+          total={resourcesData?.total ?? filteredResources.length}
+          page={resourcesData?.page ?? resourcePage}
+          pageSize={resourcesData?.page_size ?? resourcePageSize}
+          onPageChange={setResourcePage}
+          onPageSizeChange={(pageSize) => {
+            setResourcePageSize(pageSize)
+            setResourcePage(1)
+          }}
         />
       )}
 
@@ -670,6 +692,38 @@ export default function DiscoveryPage() {
 function isSelectableDiscoveryResource(resource: DiscoveredResource) {
   return !resource.pool_id
 }
+
+type ResourceColumnKey =
+  | 'type'
+  | 'name'
+  | 'account'
+  | 'cidr'
+  | 'region'
+  | 'status'
+  | 'pool'
+  | 'last_seen'
+
+const RESOURCE_COLUMNS: Array<{ key: ResourceColumnKey; label: string }> = [
+  { key: 'type', label: 'Type' },
+  { key: 'name', label: 'Name / ID' },
+  { key: 'account', label: 'Account / Project' },
+  { key: 'cidr', label: 'CIDR' },
+  { key: 'region', label: 'Region' },
+  { key: 'status', label: 'Status' },
+  { key: 'pool', label: 'Pool' },
+  { key: 'last_seen', label: 'Last Seen' },
+]
+
+const DEFAULT_RESOURCE_COLUMNS: ResourceColumnKey[] = [
+  'type',
+  'name',
+  'account',
+  'cidr',
+  'region',
+  'status',
+  'pool',
+  'last_seen',
+]
 
 type NetworkMode = 'hierarchy' | 'flat' | 'conflicts'
 
@@ -1269,13 +1323,19 @@ export function ResourcesTab({
   onLinkedChange,
   onLink,
   onUnlink,
+  accounts,
   pools,
   selectedResourceIds,
   onToggleSelection,
-  onSelectVisible,
+  onSetVisibleSelection,
   onClearSelection,
   onBulkLink,
   bulkLinking = false,
+  total,
+  page,
+  pageSize,
+  onPageChange,
+  onPageSizeChange,
 }: {
   resources: DiscoveredResource[]
   loading: boolean
@@ -1290,17 +1350,50 @@ export function ResourcesTab({
   onLinkedChange: (l: string) => void
   onLink: (r: DiscoveredResource) => void
   onUnlink: (r: DiscoveredResource) => void
+  accounts: Account[]
   pools: Pool[]
   selectedResourceIds: string[]
   onToggleSelection: (r: DiscoveredResource) => void
-  onSelectVisible: (resources: DiscoveredResource[]) => void
+  onSetVisibleSelection: (resources: DiscoveredResource[], selected: boolean) => void
   onClearSelection: () => void
   onBulkLink: (resourceIds: string[], poolId: number) => void
   bulkLinking?: boolean
+  total: number
+  page: number
+  pageSize: number
+  onPageChange: (page: number) => void
+  onPageSizeChange: (pageSize: number) => void
 }) {
-  const selectableCount = resources.filter(isSelectableDiscoveryResource).length
   const [bulkLinkPoolId, setBulkLinkPoolId] = useState('')
+  const [showColumns, setShowColumns] = useState(false)
+  const [visibleColumnKeys, setVisibleColumnKeys] = useState<ResourceColumnKey[]>(DEFAULT_RESOURCE_COLUMNS)
   const bulkLinkPool = Number(bulkLinkPoolId)
+  const visibleColumnSet = useMemo(() => new Set(visibleColumnKeys), [visibleColumnKeys])
+  const selectableResources = resources.filter(isSelectableDiscoveryResource)
+  const selectableVisibleIds = selectableResources.map((resource) => resource.id)
+  const selectedVisibleCount = selectableVisibleIds.filter((id) => selectedResourceIds.includes(id)).length
+  const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleCount === selectableVisibleIds.length
+  const someVisibleSelected = selectedVisibleCount > 0 && selectedVisibleCount < selectableVisibleIds.length
+  const pageCount = Math.max(1, Math.ceil(total / pageSize))
+  const boundedPage = Math.min(Math.max(page, 1), pageCount)
+  const pageStart = total === 0 ? 0 : (boundedPage - 1) * pageSize + 1
+  const pageEnd = Math.min(total, boundedPage * pageSize)
+
+  function toggleColumn(key: ResourceColumnKey) {
+    setVisibleColumnKeys((current) => {
+      if (current.includes(key)) {
+        return current.length === 1 ? current : current.filter((columnKey) => columnKey !== key)
+      }
+      const next = new Set([...current, key])
+      return RESOURCE_COLUMNS
+        .map((column) => column.key)
+        .filter((columnKey) => next.has(columnKey))
+    })
+  }
+
+  function toggleVisibleSelection() {
+    onSetVisibleSelection(resources, !allVisibleSelected)
+  }
 
   return (
     <>
@@ -1347,14 +1440,16 @@ export function ResourcesTab({
           <option value="false">Unlinked</option>
         </select>
         <div className="flex items-center gap-2 text-sm">
-          <button
-            type="button"
-            onClick={() => onSelectVisible(resources)}
-            disabled={selectableCount === 0}
-            className="rounded border border-gray-300 px-3 py-1.5 text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
-          >
+          <label className="flex items-center gap-2 rounded border border-gray-300 px-3 py-1.5 text-gray-700 dark:border-gray-600 dark:text-gray-200 md:hidden">
+            <SelectAllCheckbox
+              checked={allVisibleSelected}
+              indeterminate={someVisibleSelected}
+              disabled={selectableVisibleIds.length === 0}
+              onChange={toggleVisibleSelection}
+              label="Select all visible resources on this page"
+            />
             Select visible
-          </button>
+          </label>
           <button
             type="button"
             onClick={onClearSelection}
@@ -1366,6 +1461,35 @@ export function ResourcesTab({
           <span className="text-gray-500 dark:text-gray-400">
             {selectedResourceIds.length} selected
           </span>
+        </div>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowColumns((open) => !open)}
+            className="inline-flex items-center gap-2 rounded border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+            aria-expanded={showColumns}
+          >
+            <Table2 className="h-4 w-4" />
+            Columns
+          </button>
+          {showColumns && (
+            <div className="absolute right-0 z-20 mt-2 w-56 rounded border border-gray-200 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+              {RESOURCE_COLUMNS.map((column) => (
+                <label
+                  key={column.key}
+                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                  <input
+                    type="checkbox"
+                    checked={visibleColumnSet.has(column.key)}
+                    onChange={() => toggleColumn(column.key)}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                  />
+                  {column.label}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex min-w-[280px] flex-wrap items-center gap-2 text-sm">
           <select
@@ -1419,29 +1543,18 @@ export function ResourcesTab({
             <thead>
               <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
                 <th className="w-10 px-4 py-2 text-left">
-                  <span className="sr-only">Select</span>
+                  <SelectAllCheckbox
+                    checked={allVisibleSelected}
+                    indeterminate={someVisibleSelected}
+                    disabled={selectableVisibleIds.length === 0}
+                    onChange={toggleVisibleSelection}
+                  />
                 </th>
-                <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
-                  Type
-                </th>
-                <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
-                  Name / ID
-                </th>
-                <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
-                  CIDR
-                </th>
-                <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
-                  Region
-                </th>
-                <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
-                  Status
-                </th>
-                <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
-                  Pool
-                </th>
-                <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
-                  Last Seen
-                </th>
+                {RESOURCE_COLUMNS.filter((column) => visibleColumnSet.has(column.key)).map((column) => (
+                  <th key={column.key} className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+                    {column.label}
+                  </th>
+                ))}
                 <th className="px-4 py-2 text-right text-gray-600 dark:text-gray-400 font-medium">
                   Actions
                 </th>
@@ -1463,40 +1576,15 @@ export function ResourcesTab({
                       className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
                     />
                   </td>
-                  <td className="px-4 py-2">
-                    <ResourceTypeBadge type={r.resource_type} />
-                  </td>
-                  <td className="px-4 py-2">
-                    <div className="text-gray-900 dark:text-gray-100 font-medium">
-                      {r.name || r.resource_id}
-                    </div>
-                    {r.name && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        {r.resource_id}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 font-mono text-gray-700 dark:text-gray-300">
-                    {r.cidr || '-'}
-                  </td>
-                  <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
-                    {r.region || '-'}
-                  </td>
-                  <td className="px-4 py-2">
-                    <StatusBadge label={r.status} />
-                  </td>
-                  <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
-                    {r.pool_id ? (
-                      <PoolLabel poolId={r.pool_id} pools={pools} />
-                    ) : (
-                      <span className="text-gray-400 dark:text-gray-500">
-                        unlinked
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
-                    {formatTimeAgo(r.last_seen_at)}
-                  </td>
+                  {RESOURCE_COLUMNS.filter((column) => visibleColumnSet.has(column.key)).map((column) => (
+                    <ResourceTableCell
+                      key={column.key}
+                      column={column.key}
+                      resource={r}
+                      accounts={accounts}
+                      pools={pools}
+                    />
+                  ))}
                   <td className="px-4 py-2 text-right">
                     {r.pool_id ? (
                       <button
@@ -1532,12 +1620,217 @@ export function ResourcesTab({
               selected={selectedResourceIds.includes(r.id)}
               selectable={isSelectableDiscoveryResource(r)}
               onToggleSelection={onToggleSelection}
+              accountLabel={resourceAccountLabel(r, accounts)}
             />
           ))}
         </div>
+        <ResourcePagination
+          total={total}
+          pageSize={pageSize}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          pageCount={pageCount}
+          boundedPage={boundedPage}
+          onPageChange={onPageChange}
+          onPageSizeChange={onPageSizeChange}
+        />
         </>
       )}
     </>
+  )
+}
+
+function SelectAllCheckbox({
+  checked,
+  indeterminate,
+  disabled,
+  onChange,
+  label = 'Select all visible resources',
+}: {
+  checked: boolean
+  indeterminate: boolean
+  disabled: boolean
+  onChange: () => void
+  label?: string
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.indeterminate = indeterminate
+    }
+  }, [indeterminate])
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      aria-label={label}
+      className="h-4 w-4 rounded border-gray-300 text-blue-600 disabled:opacity-40"
+    />
+  )
+}
+
+function ResourceTableCell({
+  column,
+  resource,
+  accounts,
+  pools,
+}: {
+  column: ResourceColumnKey
+  resource: DiscoveredResource
+  accounts: Account[]
+  pools: Pool[]
+}) {
+  switch (column) {
+    case 'type':
+      return (
+        <td className="px-4 py-2">
+          <ResourceTypeBadge type={resource.resource_type} />
+        </td>
+      )
+    case 'name':
+      return (
+        <td className="px-4 py-2">
+          <div className="text-gray-900 dark:text-gray-100 font-medium">
+            {resource.name || resource.resource_id}
+          </div>
+          {resource.name && (
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              {resource.resource_id}
+            </div>
+          )}
+        </td>
+      )
+    case 'account':
+      return (
+        <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+          <ResourceAccountLabel resource={resource} accounts={accounts} />
+        </td>
+      )
+    case 'cidr':
+      return (
+        <td className="px-4 py-2 font-mono text-gray-700 dark:text-gray-300">
+          {resource.cidr || '-'}
+        </td>
+      )
+    case 'region':
+      return (
+        <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+          {resource.region || '-'}
+        </td>
+      )
+    case 'status':
+      return (
+        <td className="px-4 py-2">
+          <StatusBadge label={resource.status} />
+        </td>
+      )
+    case 'pool':
+      return (
+        <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+          {resource.pool_id ? (
+            <PoolLabel poolId={resource.pool_id} pools={pools} />
+          ) : (
+            <span className="text-gray-400 dark:text-gray-500">
+              unlinked
+            </span>
+          )}
+        </td>
+      )
+    case 'last_seen':
+      return (
+        <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+          {formatTimeAgo(resource.last_seen_at)}
+        </td>
+      )
+  }
+}
+
+function ResourceAccountLabel({ resource, accounts }: { resource: DiscoveredResource; accounts: Account[] }) {
+  const account = accounts.find((candidate) => candidate.id === resource.account_id)
+  const label = resourceAccountLabel(resource, accounts)
+  const detail = account?.external_id || account?.key || account?.provider || resource.provider
+
+  return (
+    <div>
+      <div className="font-medium text-gray-800 dark:text-gray-200">{label}</div>
+      {detail && detail !== label && (
+        <div className="text-xs text-gray-500 dark:text-gray-400">{detail}</div>
+      )}
+    </div>
+  )
+}
+
+function resourceAccountLabel(resource: DiscoveredResource, accounts: Account[]) {
+  const account = accounts.find((candidate) => candidate.id === resource.account_id)
+  if (account?.name) return account.name
+  if (account?.key) return account.key
+  return `Account #${resource.account_id}`
+}
+
+function ResourcePagination({
+  total,
+  pageSize,
+  pageStart,
+  pageEnd,
+  pageCount,
+  boundedPage,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  total: number
+  pageSize: number
+  pageStart: number
+  pageEnd: number
+  pageCount: number
+  boundedPage: number
+  onPageChange: (page: number) => void
+  onPageSizeChange: (pageSize: number) => void
+}) {
+  return (
+    <div className="mt-3 flex flex-col gap-3 text-sm text-gray-600 dark:text-gray-400 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        Showing {pageStart}-{pageEnd} of {total}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-2">
+          <span>Rows</span>
+          <select
+            value={pageSize}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+            aria-label="Rows per page"
+            className="rounded border border-gray-300 bg-white px-2 py-1 text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+          >
+            {[10, 25, 50, 100].map((size) => (
+              <option key={size} value={size}>{size}</option>
+            ))}
+          </select>
+        </label>
+        <span>
+          Page {boundedPage} of {pageCount}
+        </span>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.max(1, boundedPage - 1))}
+          disabled={boundedPage <= 1}
+          className="rounded border border-gray-300 px-3 py-1 text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          onClick={() => onPageChange(Math.min(pageCount, boundedPage + 1))}
+          disabled={boundedPage >= pageCount}
+          className="rounded border border-gray-300 px-3 py-1 text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+        >
+          Next
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -1719,6 +2012,7 @@ function ResourceCard({
   selected,
   selectable,
   onToggleSelection,
+  accountLabel,
 }: {
   resource: DiscoveredResource
   pools: Pool[]
@@ -1727,6 +2021,7 @@ function ResourceCard({
   selected: boolean
   selectable: boolean
   onToggleSelection: (r: DiscoveredResource) => void
+  accountLabel: string
 }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-3 text-sm dark:border-gray-700 dark:bg-gray-800">
@@ -1781,6 +2076,10 @@ function ResourceCard({
         <div>
           <div className="text-gray-500 dark:text-gray-400">Region</div>
           <div className="text-gray-800 dark:text-gray-200">{resource.region || '-'}</div>
+        </div>
+        <div className="col-span-2">
+          <div className="text-gray-500 dark:text-gray-400">Account / Project</div>
+          <div className="text-gray-800 dark:text-gray-200">{accountLabel}</div>
         </div>
         <div className="col-span-2">
           <div className="text-gray-500 dark:text-gray-400">Pool</div>
