@@ -104,6 +104,7 @@ export default function DiscoveryPage() {
   const [trackedScanJobs, setTrackedScanJobs] = useState<SyncJob[]>([])
   const [linkingResource, setLinkingResource] = useState<DiscoveredResource | null>(null)
   const [linkingLoading, setLinkingLoading] = useState(false)
+  const [bulkLinkingLoading, setBulkLinkingLoading] = useState(false)
 
   useEffect(() => {
     fetchAccounts()
@@ -353,6 +354,36 @@ export default function DiscoveryPage() {
     }
   }
 
+  async function handleBulkLink(resourceIds: string[], poolId: number) {
+    const linkableResourceIds = resourceIds.filter((id) => {
+      const resource = resourcesData?.items.find((item) => item.id === id)
+      return resource && isSelectableDiscoveryResource(resource)
+    })
+    if (linkableResourceIds.length === 0) {
+      showToast('Select discovered resources to link', 'error')
+      return
+    }
+    setBulkLinkingLoading(true)
+    try {
+      const results = await Promise.allSettled(linkableResourceIds.map((id) => linkToPool(id, poolId)))
+      const linkedIDs = linkableResourceIds.filter((_, index) => results[index].status === 'fulfilled')
+      const failed = results.length - linkedIDs.length
+      if (linkedIDs.length > 0) {
+        showToast(
+          `Linked ${linkedIDs.length} resource${linkedIDs.length === 1 ? '' : 's'} to pool`,
+          failed > 0 ? 'info' : 'success',
+        )
+        setSelectedResourceIds((current) => current.filter((id) => !linkedIDs.includes(id)))
+        loadResources()
+      }
+      if (failed > 0) {
+        showToast(`${failed} resource${failed === 1 ? '' : 's'} failed to link`, 'error')
+      }
+    } finally {
+      setBulkLinkingLoading(false)
+    }
+  }
+
   async function handleCreateAndLink(resource: DiscoveredResource, data: CreatePoolRequest) {
     setLinkingLoading(true)
     try {
@@ -574,6 +605,8 @@ export default function DiscoveryPage() {
           onToggleSelection={toggleResourceSelection}
           onSelectVisible={selectVisibleImportableResources}
           onClearSelection={() => setSelectedResourceIds([])}
+          onBulkLink={handleBulkLink}
+          bulkLinking={bulkLinkingLoading}
         />
       )}
 
@@ -635,7 +668,7 @@ export default function DiscoveryPage() {
 }
 
 function isSelectableDiscoveryResource(resource: DiscoveredResource) {
-  return resource.status === 'active' && !resource.pool_id
+  return !resource.pool_id
 }
 
 type NetworkMode = 'hierarchy' | 'flat' | 'conflicts'
@@ -1222,7 +1255,7 @@ function NetworkIssueBadges({ issues }: { issues: NetworkIssue[] }) {
   )
 }
 
-function ResourcesTab({
+export function ResourcesTab({
   resources,
   loading,
   error,
@@ -1241,6 +1274,8 @@ function ResourcesTab({
   onToggleSelection,
   onSelectVisible,
   onClearSelection,
+  onBulkLink,
+  bulkLinking = false,
 }: {
   resources: DiscoveredResource[]
   loading: boolean
@@ -1260,8 +1295,12 @@ function ResourcesTab({
   onToggleSelection: (r: DiscoveredResource) => void
   onSelectVisible: (resources: DiscoveredResource[]) => void
   onClearSelection: () => void
+  onBulkLink: (resourceIds: string[], poolId: number) => void
+  bulkLinking?: boolean
 }) {
   const selectableCount = resources.filter(isSelectableDiscoveryResource).length
+  const [bulkLinkPoolId, setBulkLinkPoolId] = useState('')
+  const bulkLinkPool = Number(bulkLinkPoolId)
 
   return (
     <>
@@ -1327,6 +1366,31 @@ function ResourcesTab({
           <span className="text-gray-500 dark:text-gray-400">
             {selectedResourceIds.length} selected
           </span>
+        </div>
+        <div className="flex min-w-[280px] flex-wrap items-center gap-2 text-sm">
+          <select
+            value={bulkLinkPoolId}
+            onChange={(e) => setBulkLinkPoolId(e.target.value)}
+            disabled={pools.length === 0}
+            aria-label="Pool for selected resources"
+            className="min-w-[190px] rounded border border-gray-300 bg-white px-3 py-1.5 text-gray-900 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+          >
+            <option value="">Select pool</option>
+            {pools.map((pool) => (
+              <option key={pool.id} value={pool.id}>
+                {pool.name} ({pool.cidr})
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => bulkLinkPool > 0 && onBulkLink(selectedResourceIds, bulkLinkPool)}
+            disabled={bulkLinking || selectedResourceIds.length === 0 || bulkLinkPool <= 0}
+            className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {bulkLinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+            Link selected
+          </button>
         </div>
       </div>
 
