@@ -177,11 +177,13 @@ type DiscoveryImportPreviewResponse struct {
 // DiscoveryImportApplyResponse reports the result of applying selected,
 // importable discovery preview rows.
 type DiscoveryImportApplyResponse struct {
-	Preview         DiscoveryImportPreviewResponse `json:"preview"`
-	PoolsCreated    int                            `json:"pools_created"`
-	ResourcesLinked int                            `json:"resources_linked"`
-	Skipped         int                            `json:"skipped"`
-	Errors          []string                       `json:"errors"`
+	Preview           DiscoveryImportPreviewResponse `json:"preview"`
+	PoolsCreated      int                            `json:"pools_created"`
+	ResourcesLinked   int                            `json:"resources_linked"`
+	Skipped           int                            `json:"skipped"`
+	Errors            []string                       `json:"errors"`
+	CreatedPoolIDs    []int64                        `json:"created_pool_ids,omitempty"`
+	LinkedResourceIDs []uuid.UUID                    `json:"linked_resource_ids,omitempty"`
 }
 
 // SyncJobsResponse is the response for listing sync jobs.

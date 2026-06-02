@@ -588,6 +588,29 @@ export interface NetworkConflictListResponse {
   total: number
 }
 
+export interface NetworkConflictLinkActionRequest {
+  discovered_id: string
+  pool_id: number
+  reason?: string
+  override?: boolean
+}
+
+export interface NetworkConflictImportActionRequest {
+  resource_ids: string[]
+  pool_id?: number
+  reason?: string
+  override?: boolean
+}
+
+export interface NetworkConflictActionResponse {
+  conflict: NetworkConflict
+  action: 'link' | 'import'
+  resource_linked?: boolean
+  discovered_id?: string
+  pool_id?: number
+  import?: DiscoveryImportApplyResponse
+}
+
 // --- Recommendation types ---
 
 export type RecommendationType = 'allocation' | 'compliance'

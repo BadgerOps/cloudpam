@@ -578,7 +578,7 @@ export default function DiscoveryPage() {
       )}
 
       {tab === 'network' && (
-        <NetworkTab selectedAccountId={selectedAccountId} accounts={accounts} />
+        <NetworkTab selectedAccountId={selectedAccountId} accounts={accounts} pools={pools} />
       )}
 
       {tab === 'sync' && (
@@ -643,9 +643,11 @@ type NetworkMode = 'hierarchy' | 'flat' | 'conflicts'
 function NetworkTab({
   selectedAccountId,
   accounts,
+  pools,
 }: {
   selectedAccountId: number | null
   accounts: Account[]
+  pools: Pool[]
 }) {
   const [mode, setMode] = useState<NetworkMode>('hierarchy')
   const [query, setQuery] = useState('')
@@ -662,7 +664,10 @@ function NetworkTab({
     fetchHierarchy,
     fetchConflicts,
     resolveConflict,
+    linkConflict,
+    importConflict,
   } = useNetworkView()
+  const { previewDiscoveryImport: previewNetworkImport } = useSyncJobs()
   const { showToast } = useToast()
 
   const filters = useMemo(() => ({
@@ -695,6 +700,46 @@ function NetworkTab({
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Resolve failed', 'error')
     }
+  }
+
+  async function handleLinkAction(conflict: NetworkConflict, discoveredId: string, poolId: number, reason: string, override: boolean) {
+    try {
+      const resp = await linkConflict(conflict.id, {
+        discovered_id: discoveredId,
+        pool_id: poolId,
+        reason: reason || undefined,
+        override,
+      })
+      showToast('Resource linked to pool', 'success')
+      setSelectedConflict(resp.conflict)
+      load()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Link action failed', 'error')
+    }
+  }
+
+  async function handleImportAction(conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined, reason: string, override: boolean) {
+    try {
+      const resp = await importConflict(conflict.id, {
+        resource_ids: resourceIds,
+        pool_id: poolId,
+        reason: reason || undefined,
+        override,
+      })
+      showToast(`Imported ${resp.import?.pools_created ?? 0} pools and linked ${resp.import?.resources_linked ?? 0} resources`, 'success')
+      setSelectedConflict(resp.conflict)
+      load()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Import action failed', 'error')
+    }
+  }
+
+  async function handlePreviewImportAction(conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined) {
+    const accountId = conflict.account_ids?.[0] ?? selectedAccountId
+    if (!accountId) {
+      throw new Error('Conflict account is required for import preview')
+    }
+    return previewNetworkImport(accountId, resourceIds, poolId)
   }
 
   const activeItems = mode === 'hierarchy' ? hierarchy?.items : flat?.items
@@ -774,6 +819,10 @@ function NetworkTab({
           selected={selectedConflict}
           onSelect={setSelectedConflict}
           onResolve={handleResolve}
+          onLink={handleLinkAction}
+          onImport={handleImportAction}
+          onPreviewImport={handlePreviewImportAction}
+          pools={pools}
         />
       ) : mode === 'flat' ? (
         <NetworkFlatTable nodes={activeItems ?? []} loading={loading} />
@@ -904,20 +953,73 @@ function NetworkFlatTable({ nodes, loading }: { nodes: NetworkNode[]; loading: b
   )
 }
 
-function NetworkConflictList({
+export function NetworkConflictList({
   conflicts,
   loading,
   selected,
   onSelect,
   onResolve,
+  onLink,
+  onImport,
+  onPreviewImport,
+  pools,
 }: {
   conflicts: NetworkConflict[]
   loading: boolean
   selected: NetworkConflict | null
   onSelect: (conflict: NetworkConflict | null) => void
   onResolve: (conflict: NetworkConflict, decision: string) => void
+  onLink: (conflict: NetworkConflict, discoveredId: string, poolId: number, reason: string, override: boolean) => void
+  onImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined, reason: string, override: boolean) => void
+  onPreviewImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined) => Promise<DiscoveryImportPreviewResponse>
+  pools: Pool[]
 }) {
+  const [actionMode, setActionMode] = useState<'link' | 'import' | null>(null)
+  const [linkDiscoveredID, setLinkDiscoveredID] = useState('')
+  const [linkPoolID, setLinkPoolID] = useState('')
+  const [importResourceIDs, setImportResourceIDs] = useState<string[]>([])
+  const [importPoolID, setImportPoolID] = useState('')
+  const [reason, setReason] = useState('')
+  const [override, setOverride] = useState(false)
+  const [preview, setPreview] = useState<DiscoveryImportPreviewResponse | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setActionMode(null)
+    setReason('')
+    setOverride(false)
+    setPreview(null)
+    setActionError(null)
+    setLinkDiscoveredID(selected?.discovered_ids?.[0] ?? '')
+    setLinkPoolID(selected?.pool_ids?.[0] ? String(selected.pool_ids[0]) : '')
+    setImportResourceIDs(selected?.discovered_ids ?? [])
+    setImportPoolID('')
+  }, [selected?.id])
+
   if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
+  const poolOptions = pools.filter((pool) => !selected?.pool_ids?.length || selected.pool_ids.includes(pool.id))
+  const allPoolOptions = poolOptions.length > 0 ? poolOptions : pools
+
+  async function previewImport() {
+    if (!selected) return
+    setPreviewLoading(true)
+    setActionError(null)
+    try {
+      const next = await onPreviewImport(
+        selected,
+        importResourceIDs,
+        importPoolID ? Number(importPoolID) : undefined,
+      )
+      setPreview(next)
+    } catch (err) {
+      setPreview(null)
+      setActionError(err instanceof Error ? err.message : 'Import preview failed')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="overflow-hidden rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
@@ -955,17 +1057,142 @@ function NetworkConflictList({
                 <div key={line}>{line}</div>
               ))}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {(selected.available_decisions ?? ['skip', 'ignore', 'defer']).map((decision) => (
+            <div className="border-t border-gray-100 pt-3 dark:border-gray-700">
+              <div className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Review</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {(selected.available_decisions ?? ['skip', 'ignore', 'defer']).map((decision) => (
+                  <button
+                    key={decision}
+                    type="button"
+                    onClick={() => onResolve(selected, decision)}
+                    className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    {decision}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="border-t border-gray-100 pt-3 dark:border-gray-700">
+              <div className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Actions</div>
+              <div className="mt-2 flex flex-wrap gap-2">
                 <button
-                  key={decision}
                   type="button"
-                  onClick={() => onResolve(selected, decision)}
-                  className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  onClick={() => setActionMode(actionMode === 'link' ? null : 'link')}
+                  className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
                 >
-                  {decision}
+                  <Link2 className="h-3.5 w-3.5" />
+                  Link to pool
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setActionMode(actionMode === 'import' ? null : 'import')}
+                  className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  <UploadCloud className="h-3.5 w-3.5" />
+                  Import as pool
+                </button>
+              </div>
+              {actionError && <div className="mt-2 text-xs text-red-600 dark:text-red-400">{actionError}</div>}
+              {actionMode === 'link' && (
+                <div className="mt-3 space-y-2">
+                  <select
+                    value={linkDiscoveredID}
+                    onChange={(e) => setLinkDiscoveredID(e.target.value)}
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  >
+                    {(selected.discovered_ids ?? []).map((id) => <option key={id} value={id}>{id}</option>)}
+                  </select>
+                  <select
+                    value={linkPoolID}
+                    onChange={(e) => setLinkPoolID(e.target.value)}
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  >
+                    <option value="">Select pool</option>
+                    {allPoolOptions.map((pool) => <option key={pool.id} value={pool.id}>{pool.name} ({pool.cidr})</option>)}
+                  </select>
+                  <input
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Reason"
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  />
+                  <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                    <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} />
+                    Override validation
+                  </label>
+                  <button
+                    type="button"
+                    disabled={!linkDiscoveredID || !linkPoolID}
+                    onClick={() => selected && onLink(selected, linkDiscoveredID, Number(linkPoolID), reason, override)}
+                    className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Confirm link
+                  </button>
+                </div>
+              )}
+              {actionMode === 'import' && (
+                <div className="mt-3 space-y-2">
+                  <div className="space-y-1">
+                    {(selected.discovered_ids ?? []).map((id) => (
+                      <label key={id} className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                        <input
+                          type="checkbox"
+                          checked={importResourceIDs.includes(id)}
+                          onChange={(e) => {
+                            setPreview(null)
+                            setImportResourceIDs((current) => e.target.checked ? [...current, id] : current.filter((value) => value !== id))
+                          }}
+                        />
+                        <span className="font-mono">{id}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <select
+                    value={importPoolID}
+                    onChange={(e) => {
+                      setPreview(null)
+                      setImportPoolID(e.target.value)
+                    }}
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  >
+                    <option value="">No parent pool</option>
+                    {pools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name} ({pool.cidr})</option>)}
+                  </select>
+                  <input
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Reason"
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  />
+                  <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                    <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} />
+                    Override conflict rows
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={importResourceIDs.length === 0 || previewLoading}
+                      onClick={() => void previewImport()}
+                      className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                    >
+                      {previewLoading ? 'Previewing...' : 'Preview'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={importResourceIDs.length === 0 || !preview}
+                      onClick={() => selected && onImport(selected, importResourceIDs, importPoolID ? Number(importPoolID) : undefined, reason, override)}
+                      className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Apply import
+                    </button>
+                  </div>
+                  {preview && (
+                    <div className="rounded bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+                      {preview.importable} importable, {preview.blocked} blocked, {preview.conflict_count} conflicts
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ) : (

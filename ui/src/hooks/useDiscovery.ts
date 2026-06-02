@@ -118,12 +118,13 @@ export function useSyncJobs() {
   }, [])
 
   const previewDiscoveryImport = useCallback(
-    async (accountId: number, resourceIds: string[]) => {
+    async (accountId: number, resourceIds: string[], poolId?: number) => {
       return post<DiscoveryImportPreviewResponse>(
         '/api/v1/discovery/import/preview',
         {
           account_id: accountId,
           resource_ids: resourceIds,
+          pool_id: poolId,
         },
       )
     },
@@ -131,12 +132,13 @@ export function useSyncJobs() {
   )
 
   const applyDiscoveryImport = useCallback(
-    async (accountId: number, resourceIds: string[]) => {
+    async (accountId: number, resourceIds: string[], poolId?: number) => {
       return post<DiscoveryImportApplyResponse>(
         '/api/v1/discovery/import/apply',
         {
           account_id: accountId,
           resource_ids: resourceIds,
+          pool_id: poolId,
         },
       )
     },

@@ -112,10 +112,29 @@ func (ns *NetworkServer) handleConflicts(w http.ResponseWriter, r *http.Request)
 func (ns *NetworkServer) handleConflictSubroutes(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/network/conflicts/"), "/")
 	parts := strings.Split(path, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] != "resolve" {
+	if len(parts) < 2 || parts[0] == "" {
 		ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 		return
 	}
+	if parts[1] == "resolve" && len(parts) == 2 {
+		ns.handleResolveNetworkConflict(w, r, parts[0])
+		return
+	}
+	if parts[1] == "actions" && len(parts) == 3 {
+		switch parts[2] {
+		case "link":
+			ns.handleNetworkConflictLinkAction(w, r, parts[0])
+		case "import":
+			ns.handleNetworkConflictImportAction(w, r, parts[0])
+		default:
+			ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
+		}
+		return
+	}
+	ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
+}
+
+func (ns *NetworkServer) handleResolveNetworkConflict(w http.ResponseWriter, r *http.Request, conflictID string) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -140,7 +159,7 @@ func (ns *NetworkServer) handleConflictSubroutes(w http.ResponseWriter, r *http.
 		return
 	}
 	for _, conflict := range view.conflicts {
-		if conflict.ID == parts[0] {
+		if conflict.ID == conflictID {
 			if err := ns.persistNetworkConflictResolution(r.Context(), conflict, req); err != nil {
 				ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "resolve conflict failed", err.Error())
 				return
@@ -153,6 +172,195 @@ func (ns *NetworkServer) handleConflictSubroutes(w http.ResponseWriter, r *http.
 		}
 	}
 	ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "conflict not found", "")
+}
+
+func (ns *NetworkServer) handleNetworkConflictLinkAction(w http.ResponseWriter, r *http.Request, conflictID string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	var req domain.NetworkConflictLinkActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	if req.DiscoveredID == uuid.Nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "discovered_id is required", "")
+		return
+	}
+	if req.PoolID < 1 {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "pool_id is required", "")
+		return
+	}
+
+	conflict, err := ns.findNetworkConflict(r.Context(), conflictID)
+	if err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "network conflicts failed", err.Error())
+		return
+	}
+	if conflict == nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "conflict not found", "")
+		return
+	}
+	res, err := ns.discStore.GetDiscoveredResource(r.Context(), req.DiscoveredID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, storage.ErrNotFound) {
+			status = http.StatusBadRequest
+		}
+		ns.srv.writeErr(r.Context(), w, status, "discovered resource not found", err.Error())
+		return
+	}
+	pool, found, err := ns.store.GetPool(r.Context(), req.PoolID)
+	if err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "pool lookup failed", err.Error())
+		return
+	}
+	if !found {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "pool not found", "")
+		return
+	}
+	if err := validateNetworkConflictLinkAction(*conflict, *res, pool, req); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+
+	actionDetails := map[string]string{
+		"network_conflict_action": "link",
+		"discovered_id":           req.DiscoveredID.String(),
+		"pool_id":                 fmt.Sprintf("%d", req.PoolID),
+	}
+	resolveReq := domain.ResolveNetworkConflictRequest{
+		Decision: "link",
+		Reason:   networkActionReason("link", req.Reason, actionDetails),
+	}
+	if err := ns.ensureNetworkConflictResolutionRecord(r.Context(), *conflict, networkActionReason("link_pending", req.Reason, actionDetails), actionDetails); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "prepare conflict action failed", err.Error())
+		return
+	}
+	previousPoolID := res.PoolID
+	if err := ns.discStore.LinkResourceToPool(r.Context(), req.DiscoveredID, req.PoolID); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "link resource to pool failed", err.Error())
+		return
+	}
+	if err := ns.persistNetworkConflictActionResolution(r.Context(), *conflict, resolveReq, actionDetails); err != nil {
+		rollbackErr := ns.rollbackNetworkConflictLink(r.Context(), req.DiscoveredID, previousPoolID)
+		if rollbackErr != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "record conflict action failed and rollback failed", err.Error()+"; rollback: "+rollbackErr.Error())
+			return
+		}
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "record conflict action failed", err.Error())
+		return
+	}
+
+	updated := ns.conflictAfterAction(r.Context(), *conflict, "link")
+	writeJSON(w, http.StatusOK, domain.NetworkConflictActionResponse{
+		Conflict:       updated,
+		Action:         "link",
+		ResourceLinked: true,
+		DiscoveredID:   &req.DiscoveredID,
+		PoolID:         &req.PoolID,
+	})
+}
+
+func (ns *NetworkServer) handleNetworkConflictImportAction(w http.ResponseWriter, r *http.Request, conflictID string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	var req domain.NetworkConflictImportActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	if len(req.ResourceIDs) == 0 {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "resource_ids must include at least one discovered resource", "")
+		return
+	}
+
+	conflict, err := ns.findNetworkConflict(r.Context(), conflictID)
+	if err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "network conflicts failed", err.Error())
+		return
+	}
+	if conflict == nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "conflict not found", "")
+		return
+	}
+	if err := validateNetworkConflictImportSelection(*conflict, req); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+	accountID, err := ns.importActionAccountID(r.Context(), *conflict, req.ResourceIDs)
+	if err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		return
+	}
+	importReq := domain.DiscoveryImportApplyRequest{
+		AccountID:   accountID,
+		ResourceIDs: req.ResourceIDs,
+		PoolID:      req.PoolID,
+	}
+	discoveryServer := &DiscoveryServer{srv: ns.srv, store: ns.discStore}
+	if !req.Override {
+		preview, err := discoveryServer.previewDiscoveryImport(r.Context(), domain.DiscoveryImportPreviewRequest(importReq))
+		if err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "preview import failed", err.Error())
+			return
+		}
+		if preview.Importable != len(req.ResourceIDs) {
+			ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "selected resources are not all importable; set override to import conflict rows", "")
+			return
+		}
+	}
+	actionDetails := map[string]string{
+		"network_conflict_action": "import",
+		"resource_ids":            joinUUIDs(req.ResourceIDs),
+	}
+	if req.PoolID != nil {
+		actionDetails["pool_id"] = fmt.Sprintf("%d", *req.PoolID)
+	}
+	if err := ns.ensureNetworkConflictResolutionRecord(r.Context(), *conflict, networkActionReason("import_pending", req.Reason, actionDetails), actionDetails); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "prepare conflict action failed", err.Error())
+		return
+	}
+	importResp, err := discoveryServer.applyDiscoveryImport(r.Context(), importReq, discoveryImportApplyOptions{AllowBlocked: req.Override})
+	if err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "apply import failed", err.Error())
+		return
+	}
+	if importResp.PoolsCreated+importResp.ResourcesLinked == 0 {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "import did not create or link any resources", strings.Join(importResp.Errors, "; "))
+		return
+	}
+	actionDetails["pools_created"] = fmt.Sprintf("%d", importResp.PoolsCreated)
+	actionDetails["resources_linked"] = fmt.Sprintf("%d", importResp.ResourcesLinked)
+	actionDetails["skipped"] = fmt.Sprintf("%d", importResp.Skipped)
+	actionDetails["created_pool_ids"] = joinInt64s(importResp.CreatedPoolIDs)
+	actionDetails["linked_resource_ids"] = joinUUIDs(importResp.LinkedResourceIDs)
+	resolveReq := domain.ResolveNetworkConflictRequest{
+		Decision: "import",
+		Reason:   networkActionReason("import", req.Reason, actionDetails),
+	}
+	if err := ns.persistNetworkConflictActionResolution(r.Context(), *conflict, resolveReq, actionDetails); err != nil {
+		rollbackErr := ns.rollbackNetworkConflictImport(r.Context(), importResp)
+		if rollbackErr != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "record conflict action failed and rollback failed", err.Error()+"; rollback: "+rollbackErr.Error())
+			return
+		}
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "record conflict action failed", err.Error())
+		return
+	}
+
+	updated := ns.conflictAfterAction(r.Context(), *conflict, "import")
+	writeJSON(w, http.StatusOK, domain.NetworkConflictActionResponse{
+		Conflict: updated,
+		Action:   "import",
+		PoolID:   req.PoolID,
+		Import:   &importResp,
+	})
 }
 
 type networkViewFilters struct {
@@ -467,7 +675,32 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 			if res.PoolID != nil && *res.PoolID == pool.ID {
 				continue
 			}
-			if res.CIDR == "" || pool.CIDR == "" || networkCIDREqual(res.CIDR, pool.CIDR) || !networkCIDROverlaps(res.CIDR, pool.CIDR) {
+			if res.CIDR == "" || pool.CIDR == "" {
+				continue
+			}
+			if networkCIDREqual(res.CIDR, pool.CIDR) {
+				if res.PoolID == nil {
+					add(domain.NetworkConflict{
+						ID:                fmt.Sprintf("unlinked-exact-pool:%s:%d", res.ID.String(), pool.ID),
+						Type:              "unlinked_exact_pool",
+						Severity:          "warning",
+						Status:            "open",
+						Title:             "Discovered CIDR matches managed pool",
+						Description:       fmt.Sprintf("%s (%s) exactly matches pool %s", res.ResourceID, res.CIDR, pool.Name),
+						RecommendedAction: "Link the discovered resource to the matching managed pool, import separately, or mark reviewed.",
+						NodeIDs:           []string{nodeID, poolNodeID(pool.ID)},
+						DiscoveredIDs:     []uuid.UUID{res.ID},
+						PoolIDs:           []int64{pool.ID},
+						AccountIDs:        accountIDsForPool(res.AccountID, pool),
+						Regions:           []string{res.Region},
+						ObjectTypes:       []string{string(res.ResourceType), string(pool.Type)},
+						CIDR:              res.CIDR,
+						Evidence:          []string{fmt.Sprintf("pool_id=%d", pool.ID), "pool_cidr=" + pool.CIDR},
+					})
+				}
+				continue
+			}
+			if !networkCIDROverlaps(res.CIDR, pool.CIDR) {
 				continue
 			}
 			if networkCIDRContains(pool.CIDR, res.CIDR) || networkCIDRContains(res.CIDR, pool.CIDR) {
@@ -566,11 +799,20 @@ func (ns *NetworkServer) applyStoredConflictResolutions(ctx context.Context, con
 }
 
 func (ns *NetworkServer) persistNetworkConflictResolution(ctx context.Context, conflict domain.NetworkConflict, req domain.ResolveNetworkConflictRequest) error {
+	return ns.persistNetworkConflictActionResolution(ctx, conflict, req, nil)
+}
+
+func (ns *NetworkServer) persistNetworkConflictActionResolution(ctx context.Context, conflict domain.NetworkConflict, req domain.ResolveNetworkConflictRequest, details map[string]string) error {
 	if ns.driftStore == nil {
 		return fmt.Errorf("drift store is not available")
 	}
 	status := networkDecisionStatus(req.Decision)
 	reason := networkResolutionReason(req.Decision, req.Reason)
+	if len(details) > 0 {
+		if err := ns.driftStore.UpdateDriftDetails(ctx, conflict.ID, details); err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return err
+		}
+	}
 	if err := ns.driftStore.UpdateDriftStatus(ctx, conflict.ID, status, reason); err == nil {
 		return nil
 	} else if !errors.Is(err, storage.ErrNotFound) {
@@ -594,6 +836,9 @@ func (ns *NetworkServer) persistNetworkConflictResolution(ctx context.Context, c
 		DetectedAt: now,
 		UpdatedAt:  now,
 	}
+	for key, value := range details {
+		item.Details[key] = value
+	}
 	if len(conflict.DiscoveredIDs) > 0 {
 		item.ResourceID = &conflict.DiscoveredIDs[0]
 	}
@@ -604,6 +849,166 @@ func (ns *NetworkServer) persistNetworkConflictResolution(ctx context.Context, c
 		return err
 	}
 	return ns.driftStore.UpdateDriftStatus(ctx, conflict.ID, status, reason)
+}
+
+func (ns *NetworkServer) ensureNetworkConflictResolutionRecord(ctx context.Context, conflict domain.NetworkConflict, reason string, details map[string]string) error {
+	if ns.driftStore == nil {
+		return fmt.Errorf("drift store is not available")
+	}
+	if _, err := ns.driftStore.GetDriftItem(ctx, conflict.ID); err == nil {
+		if len(details) > 0 {
+			if err := ns.driftStore.UpdateDriftDetails(ctx, conflict.ID, details); err != nil {
+				return err
+			}
+		}
+		return ns.driftStore.UpdateDriftStatus(ctx, conflict.ID, domain.DriftStatusOpen, reason)
+	} else if !errors.Is(err, storage.ErrNotFound) {
+		return err
+	}
+
+	now := time.Now().UTC()
+	item := domain.DriftItem{
+		ID:           conflict.ID,
+		AccountID:    firstConflictAccountID(conflict),
+		Type:         domain.DriftTypeAccountDrift,
+		Severity:     driftSeverityFromNetwork(conflict.Severity),
+		Status:       domain.DriftStatusOpen,
+		Title:        conflict.Title,
+		Description:  conflict.Description,
+		ResourceCIDR: conflict.CIDR,
+		Details: map[string]string{
+			"network_conflict_type": conflict.Type,
+			"recommended_action":    conflict.RecommendedAction,
+		},
+		IgnoreReason: reason,
+		DetectedAt:   now,
+		UpdatedAt:    now,
+	}
+	for key, value := range details {
+		item.Details[key] = value
+	}
+	if len(conflict.DiscoveredIDs) > 0 {
+		item.ResourceID = &conflict.DiscoveredIDs[0]
+	}
+	if len(conflict.PoolIDs) > 0 {
+		item.PoolID = &conflict.PoolIDs[0]
+	}
+	return ns.driftStore.CreateDriftItem(ctx, item)
+}
+
+func (ns *NetworkServer) rollbackNetworkConflictLink(ctx context.Context, discoveredID uuid.UUID, previousPoolID *int64) error {
+	if previousPoolID == nil {
+		return ns.discStore.UnlinkResource(ctx, discoveredID)
+	}
+	return ns.discStore.LinkResourceToPool(ctx, discoveredID, *previousPoolID)
+}
+
+func (ns *NetworkServer) rollbackNetworkConflictImport(ctx context.Context, resp domain.DiscoveryImportApplyResponse) error {
+	var errs []string
+	for _, resourceID := range resp.LinkedResourceIDs {
+		if err := ns.discStore.UnlinkResource(ctx, resourceID); err != nil {
+			errs = append(errs, fmt.Sprintf("unlink %s: %v", resourceID, err))
+		}
+	}
+	for i := len(resp.CreatedPoolIDs) - 1; i >= 0; i-- {
+		if ok, err := ns.store.DeletePool(ctx, resp.CreatedPoolIDs[i]); err != nil {
+			errs = append(errs, fmt.Sprintf("delete pool %d: %v", resp.CreatedPoolIDs[i], err))
+		} else if !ok {
+			errs = append(errs, fmt.Sprintf("delete pool %d: not found", resp.CreatedPoolIDs[i]))
+		}
+	}
+	if len(errs) > 0 {
+		return errors.New(strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+func (ns *NetworkServer) findNetworkConflict(ctx context.Context, conflictID string) (*domain.NetworkConflict, error) {
+	view, err := ns.buildNetworkView(ctx, networkViewFilters{})
+	if err != nil {
+		return nil, err
+	}
+	for i := range view.conflicts {
+		if view.conflicts[i].ID == conflictID {
+			return &view.conflicts[i], nil
+		}
+	}
+	return nil, nil
+}
+
+func (ns *NetworkServer) conflictAfterAction(ctx context.Context, fallback domain.NetworkConflict, action string) domain.NetworkConflict {
+	conflict, err := ns.findNetworkConflict(ctx, fallback.ID)
+	if err == nil && conflict != nil {
+		return *conflict
+	}
+	fallback.Status = string(domain.DriftStatusResolved)
+	fallback.ResolutionState = fallback.Status
+	fallback.ResolutionRequested = action
+	return fallback
+}
+
+func validateNetworkConflictLinkAction(conflict domain.NetworkConflict, res domain.DiscoveredResource, pool domain.Pool, req domain.NetworkConflictLinkActionRequest) error {
+	if !req.Override {
+		if !containsUUID(conflict.DiscoveredIDs, req.DiscoveredID) {
+			return fmt.Errorf("discovered resource is not part of this conflict")
+		}
+		if !containsInt64(conflict.PoolIDs, req.PoolID) {
+			return fmt.Errorf("pool is not part of this conflict")
+		}
+		if res.PoolID != nil {
+			return fmt.Errorf("discovered resource is already linked")
+		}
+		if pool.AccountID != nil && *pool.AccountID != res.AccountID {
+			return fmt.Errorf("pool account does not match discovered resource account; set override to force")
+		}
+		if res.CIDR == "" || pool.CIDR == "" {
+			return fmt.Errorf("resource and pool must both have CIDR values")
+		}
+		if !networkCIDREqual(pool.CIDR, res.CIDR) && !networkCIDRContains(pool.CIDR, res.CIDR) {
+			return fmt.Errorf("pool CIDR does not contain discovered resource CIDR; set override to force")
+		}
+	}
+	return nil
+}
+
+func validateNetworkConflictImportSelection(conflict domain.NetworkConflict, req domain.NetworkConflictImportActionRequest) error {
+	if req.PoolID != nil && *req.PoolID < 1 {
+		return fmt.Errorf("pool_id must be a positive integer")
+	}
+	if req.Override {
+		return nil
+	}
+	for _, id := range req.ResourceIDs {
+		if !containsUUID(conflict.DiscoveredIDs, id) {
+			return fmt.Errorf("resource %s is not part of this conflict", id)
+		}
+	}
+	return nil
+}
+
+func (ns *NetworkServer) importActionAccountID(ctx context.Context, conflict domain.NetworkConflict, resourceIDs []uuid.UUID) (int64, error) {
+	var accountID int64
+	for _, id := range resourceIDs {
+		res, err := ns.discStore.GetDiscoveredResource(ctx, id)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				return 0, fmt.Errorf("resource %s not found", id)
+			}
+			return 0, err
+		}
+		if accountID == 0 {
+			accountID = res.AccountID
+		} else if accountID != res.AccountID {
+			return 0, fmt.Errorf("selected resources must belong to one account")
+		}
+	}
+	if accountID == 0 {
+		accountID = firstConflictAccountID(conflict)
+	}
+	if accountID < 1 {
+		return 0, fmt.Errorf("could not determine import account")
+	}
+	return accountID, nil
 }
 
 func buildNetworkHierarchy(flat []domain.NetworkNode) []domain.NetworkNode {
@@ -722,10 +1127,10 @@ func networkDecisionStatus(decision string) domain.DriftStatus {
 	switch strings.ToLower(strings.TrimSpace(decision)) {
 	case "ignore":
 		return domain.DriftStatusIgnored
+	case "skip", "link", "import":
+		return domain.DriftStatusResolved
 	case "defer":
 		return domain.DriftStatusOpen
-	case "skip":
-		return domain.DriftStatusResolved
 	default:
 		return domain.DriftStatusOpen
 	}
@@ -754,6 +1159,24 @@ func networkResolutionReason(decision string, reason string) string {
 	return "decision=" + decision + " reason=" + reason
 }
 
+func networkActionReason(action string, reason string, details map[string]string) string {
+	parts := []string{}
+	for key, value := range details {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		parts = append(parts, key+"="+strings.TrimSpace(value))
+	}
+	sort.Strings(parts)
+	if reason = strings.TrimSpace(reason); reason != "" {
+		parts = append(parts, "operator_reason="+reason)
+	}
+	if len(parts) == 0 {
+		return action
+	}
+	return action + " " + strings.Join(parts, " ")
+}
+
 func parseNetworkDecision(reason string) string {
 	for _, part := range strings.Fields(reason) {
 		if strings.HasPrefix(part, "decision=") {
@@ -768,6 +1191,31 @@ func firstConflictAccountID(conflict domain.NetworkConflict) int64 {
 		return conflict.AccountIDs[0]
 	}
 	return 0
+}
+
+func containsUUID(values []uuid.UUID, target uuid.UUID) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func joinUUIDs(values []uuid.UUID) string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, value.String())
+	}
+	return strings.Join(out, ",")
+}
+
+func joinInt64s(values []int64) string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, fmt.Sprintf("%d", value))
+	}
+	return strings.Join(out, ",")
 }
 
 func driftSeverityFromNetwork(severity string) domain.DriftSeverity {

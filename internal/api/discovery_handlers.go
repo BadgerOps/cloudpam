@@ -307,11 +307,24 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	previewReq := domain.DiscoveryImportPreviewRequest(req)
-	preview, err := d.previewDiscoveryImport(r.Context(), previewReq)
+	resp, err := d.applyDiscoveryImport(r.Context(), req, discoveryImportApplyOptions{})
 	if err != nil {
-		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "preview import failed", err.Error())
+		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "apply import failed", err.Error())
 		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type discoveryImportApplyOptions struct {
+	AllowBlocked bool
+}
+
+func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.DiscoveryImportApplyRequest, opts discoveryImportApplyOptions) (domain.DiscoveryImportApplyResponse, error) {
+	previewReq := domain.DiscoveryImportPreviewRequest(req)
+	preview, err := d.previewDiscoveryImport(ctx, previewReq)
+	if err != nil {
+		return domain.DiscoveryImportApplyResponse{}, err
 	}
 
 	resp := domain.DiscoveryImportApplyResponse{Preview: preview, Errors: []string{}}
@@ -331,25 +344,26 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 
 	createdPoolByProviderID := make(map[string]int64)
 	for _, item := range items {
-		if item.Status != "importable" {
+		if item.Status != "importable" && !canForceDiscoveryImport(item, opts) {
 			resp.Skipped++
 			continue
 		}
-		res, err := d.store.GetDiscoveredResource(r.Context(), item.ResourceID)
+		res, err := d.store.GetDiscoveredResource(ctx, item.ResourceID)
 		if err != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: load resource: %v", item.ResourceID, err))
 			resp.Skipped++
 			continue
 		}
 
-		if item.ProposedAction == "link_pool" && item.ProposedPoolID != nil {
-			if err := d.store.LinkResourceToPool(r.Context(), item.ResourceID, *item.ProposedPoolID); err != nil {
+		if item.ProposedPoolID != nil && (item.ProposedAction == "link_pool" || opts.AllowBlocked) {
+			if err := d.store.LinkResourceToPool(ctx, item.ResourceID, *item.ProposedPoolID); err != nil {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link pool: %v", res.ResourceID, err))
 				resp.Skipped++
 				continue
 			}
 			createdPoolByProviderID[res.ResourceID] = *item.ProposedPoolID
 			resp.ResourcesLinked++
+			resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
 			continue
 		}
 
@@ -364,13 +378,13 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 			resp.Skipped++
 			continue
 		}
-		pool, err := d.createDiscoveredPool(r.Context(), req.AccountID, *res, parentID)
+		pool, err := d.createDiscoveredPool(ctx, req.AccountID, *res, parentID)
 		if err != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: create pool: %v", res.ResourceID, err))
 			resp.Skipped++
 			continue
 		}
-		if err := d.store.LinkResourceToPool(r.Context(), item.ResourceID, pool.ID); err != nil {
+		if err := d.store.LinkResourceToPool(ctx, item.ResourceID, pool.ID); err != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
 			resp.Skipped++
 			continue
@@ -378,9 +392,28 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 		createdPoolByProviderID[res.ResourceID] = pool.ID
 		resp.PoolsCreated++
 		resp.ResourcesLinked++
+		resp.CreatedPoolIDs = append(resp.CreatedPoolIDs, pool.ID)
+		resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	return resp, nil
+}
+
+func canForceDiscoveryImport(item domain.DiscoveryImportPreviewItem, opts discoveryImportApplyOptions) bool {
+	if !opts.AllowBlocked {
+		return false
+	}
+	if item.Status == "not_found" || item.Status == "already_linked" || item.Status == "linked_only" {
+		return false
+	}
+	if item.ResourceType != domain.ResourceTypeVPC && item.ResourceType != domain.ResourceTypeSubnet {
+		return false
+	}
+	if item.CIDR == "" {
+		return false
+	}
+	_, err := netip.ParsePrefix(item.CIDR)
+	return err == nil
 }
 
 func validateDiscoveryImportSelection(accountID int64, resourceIDs []uuid.UUID) error {
