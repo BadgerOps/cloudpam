@@ -219,6 +219,8 @@ func main() {
 	driftDetector := discovery.NewDriftDetector(store, discoveryStore, driftStore)
 	driftSrv := api.NewDriftServer(srv, driftDetector, driftStore)
 	logger.Info("drift detection subsystem initialized")
+	networkSrv := api.NewNetworkServer(srv, store, discoveryStore, driftStore)
+	logger.Info("merged network view subsystem initialized")
 
 	// Initialize settings subsystem
 	settingsStore := selectSettingsStore(logger, store)
@@ -253,6 +255,7 @@ func main() {
 	roleSrv := api.NewRoleServer(srv, roleStore)
 	roleSrv.RegisterProtectedRoleRoutes(dualMW, logger.Slog())
 	discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
+	networkSrv.RegisterProtectedNetworkRoutes(dualMW, logger.Slog())
 	analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 	recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
 	driftSrv.RegisterProtectedDriftRoutes(dualMW, logger.Slog())

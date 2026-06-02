@@ -479,6 +479,115 @@ export interface DiscoveryImportResponse {
   errors: string[]
 }
 
+export type DiscoveryImportPreviewStatus =
+  | 'importable'
+  | 'blocked'
+  | 'conflict'
+  | 'linked_only'
+  | 'already_linked'
+  | 'not_found'
+
+export interface DiscoveryImportPreviewItem {
+  resource_id: string
+  provider_resource_id?: string
+  name?: string
+  provider?: string
+  region?: string
+  resource_type?: CloudResourceType
+  cidr?: string
+  status: DiscoveryImportPreviewStatus
+  proposed_action: 'create_pool' | 'link_pool' | 'link_only' | 'none'
+  proposed_managed_type?: string
+  linked_pool_id?: number | null
+  proposed_pool_id?: number | null
+  proposed_parent_pool_id?: number | null
+  issues: string[]
+  evidence?: string[]
+  conflict_pool_ids?: number[]
+  duplicate_resource_ids?: string[]
+}
+
+export interface DiscoveryImportPreviewResponse {
+  items: DiscoveryImportPreviewItem[]
+  importable: number
+  blocked: number
+  linked_only: number
+  already_linked: number
+  conflict_count: number
+  selected_pool_id?: number | null
+}
+
+export interface DiscoveryImportApplyResponse {
+  preview: DiscoveryImportPreviewResponse
+  pools_created: number
+  resources_linked: number
+  skipped: number
+  errors: string[]
+}
+
+export interface NetworkIssue {
+  id: string
+  type: string
+  severity: string
+  message: string
+}
+
+export interface NetworkNode {
+  id: string
+  parent_id?: string | null
+  kind: string
+  object_type: string
+  name: string
+  cidr?: string
+  ip_address?: string
+  provider?: string
+  account_id?: number | null
+  account_name?: string
+  region?: string
+  provider_resource_id?: string
+  discovered_id?: string | null
+  linked_pool_id?: number | null
+  source: string
+  state: string
+  issues?: NetworkIssue[]
+  evidence?: string[]
+  children?: NetworkNode[]
+}
+
+export interface NetworkConflict {
+  id: string
+  type: string
+  severity: string
+  status: string
+  title: string
+  description: string
+  recommended_action?: string
+  node_ids?: string[]
+  discovered_ids?: string[]
+  pool_ids?: number[]
+  provider?: string
+  account_ids?: number[]
+  regions?: string[]
+  object_types?: string[]
+  cidr?: string
+  evidence?: string[]
+  available_decisions?: string[]
+  resolution_state?: string
+  resolution_requested?: string
+}
+
+export interface NetworkViewResponse {
+  items: NetworkNode[]
+  total: number
+  conflict_count: number
+  conflicts?: NetworkConflict[]
+}
+
+export interface NetworkConflictListResponse {
+  items: NetworkConflict[]
+  total: number
+}
+
 // --- Recommendation types ---
 
 export type RecommendationType = 'allocation' | 'compliance'

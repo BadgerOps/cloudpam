@@ -2,6 +2,20 @@
 
 CloudPAM's discovery subsystem automatically finds VPCs, subnets, and Elastic IPs in your cloud accounts, then lets you link them to CloudPAM pools for unified IP address management.
 
+## Vocabulary
+
+CloudPAM keeps designed IPAM state separate from observed cloud state:
+
+| Term | Meaning |
+|------|---------|
+| Address pool | A CloudPAM-managed container for address space. |
+| Allocated block | Approved or designed IPAM intent shown in the Allocated Blocks view. |
+| Discovered resource | Observed cloud state from a provider scan. |
+| Network object | A cloud networking object such as a VPC, subnet, EIP, public IP, or NIC. |
+| Soft link | A non-destructive association between a discovered resource and a managed pool. |
+
+VPCs and subnets can be converted into discovered-source pools when an operator explicitly imports them. EIPs and similar address-bearing resources stay as network-object candidates in the import preview until CloudPAM has a managed network-object store for them.
+
 ## How It Works
 
 Discovery follows an **approval workflow**: resources are discovered and stored separately from your pool hierarchy. You decide which resources to import by explicitly linking them to pools. This means discovery never modifies your existing IPAM data without your action.
@@ -53,6 +67,66 @@ Discovered resources are **unlinked** by default. To track a cloud resource in y
 3. Enter the pool ID you want to associate it with
 
 The pool's CIDR should match (or contain) the resource's CIDR for the association to be meaningful. Linking is an advisory association — it doesn't modify the cloud resource.
+
+### Import Preview and Apply
+
+The Discovery page supports checkbox multi-select before import. Select active, unlinked resources and choose **Preview Import** to review the proposed action for each resource before any pool is created.
+
+Preview can return:
+
+| Status | Meaning |
+|--------|---------|
+| `importable` | CloudPAM can create or link a discovered-source pool for the selected resource. |
+| `conflict` | Import needs operator review because of duplicate CIDR or an overlapping managed pool. |
+| `blocked` | Import cannot proceed, for example because the CIDR is invalid, parent VPC is missing, or the selected pool does not contain the resource. |
+| `linked_only` | The resource is a network-object candidate, such as an EIP or NIC, and is not converted into a pool. |
+| `already_linked` | The discovered resource already has a soft link to a pool. |
+
+API callers can use the same flow:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/discovery/import/preview \
+  -H 'Content-Type: application/json' \
+  -d '{"account_id":1,"resource_ids":["00000000-0000-0000-0000-000000000001"]}'
+```
+
+```bash
+curl -X POST http://localhost:8080/api/v1/discovery/import/apply \
+  -H 'Content-Type: application/json' \
+  -d '{"account_id":1,"resource_ids":["00000000-0000-0000-0000-000000000001"]}'
+```
+
+`POST /api/v1/discovery/import` remains available for compatibility, but new integrations should use preview/apply so conflicts and non-pool network objects are visible before conversion.
+
+## Merged Network Views
+
+CloudPAM exposes merged network views that combine managed pools, linked discovered resources, discovered-only network objects, and computed conflict evidence.
+
+The Discovery page includes a **Merged Network** tab with:
+
+| Mode | Use |
+|------|-----|
+| Hierarchy | Day-to-day review of pools, VPCs, subnets, and child objects. |
+| Flat | Audit/search view with filters for object type and issue type. |
+| Conflicts | Evidence panel for duplicate CIDRs, missing parents, invalid nesting, outside-pool links, and managed overlaps. |
+
+API callers can use:
+
+```bash
+curl http://localhost:8080/api/v1/network/hierarchy
+curl http://localhost:8080/api/v1/network/flat?object_type=vpc
+curl http://localhost:8080/api/v1/network/conflicts?conflict_type=duplicate_cidr
+```
+
+Conflict responses include stable IDs, severity, affected discovered resource IDs, affected pool IDs, account/region metadata, evidence lines, and available review decisions: `skip`, `ignore`, and `defer`.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/network/conflicts/duplicate-cidr:10.0.0.0_16/resolve \
+  -H 'Content-Type: application/json' \
+  -d '{"decision":"skip","reason":"reviewed duplicate lab account"}'
+```
+
+Conflict resolution requests for computed conflicts are persisted as drift records keyed by the stable conflict ID where the configured drift store is durable, such as SQLite. The merged views rehydrate the stored decision when conflicts are recomputed. Durable managed network-object persistence remains future work.
 
 ## AWS Setup
 
