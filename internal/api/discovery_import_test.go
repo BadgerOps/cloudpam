@@ -358,6 +358,46 @@ func TestDiscoveryImportPreviewBlocksOutsideSelectedPool(t *testing.T) {
 	}
 }
 
+func TestDiscoveryImportPreviewAndApplyRejectInvalidSelectedPool(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	otherAccount, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:222222222222", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	otherPool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "dev", CIDR: "10.32.0.0/16", Type: domain.PoolTypeSupernet, AccountID: &otherAccount.ID})
+	if err != nil {
+		t.Fatalf("create other pool: %v", err)
+	}
+
+	vpcID := uuid.New()
+	now := time.Now().UTC()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-1",
+		Name:         "prod-vpc",
+		CIDR:         "10.32.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+
+	missingPoolBody := fmt.Sprintf(`{"account_id":%d,"pool_id":999999,"resource_ids":["%s"]}`, account.ID, vpcID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", missingPoolBody, http.StatusBadRequest)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", missingPoolBody, http.StatusBadRequest)
+
+	accountMismatchBody := fmt.Sprintf(`{"account_id":%d,"pool_id":%d,"resource_ids":["%s"]}`, account.ID, otherPool.ID, vpcID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", accountMismatchBody, http.StatusBadRequest)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", accountMismatchBody, http.StatusBadRequest)
+}
+
 func TestDiscoveryImportPreviewFlagsDuplicateAcrossAccounts(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	a1, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:111111111111", Name: "prod", Provider: "aws"})

@@ -284,6 +284,10 @@ func (d *DiscoveryServer) handleImportPreview(w http.ResponseWriter, r *http.Req
 
 	resp, err := d.previewDiscoveryImport(r.Context(), req)
 	if err != nil {
+		if isDiscoveryImportClientError(err) {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
 		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "preview import failed", err.Error())
 		return
 	}
@@ -309,6 +313,10 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 
 	resp, err := d.applyDiscoveryImport(r.Context(), req, discoveryImportApplyOptions{})
 	if err != nil {
+		if isDiscoveryImportClientError(err) {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
 		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "apply import failed", err.Error())
 		return
 	}
@@ -318,6 +326,23 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 
 type discoveryImportApplyOptions struct {
 	AllowBlocked bool
+}
+
+type discoveryImportClientError struct {
+	message string
+}
+
+func (e discoveryImportClientError) Error() string {
+	return e.message
+}
+
+func newDiscoveryImportClientError(message string) error {
+	return discoveryImportClientError{message: message}
+}
+
+func isDiscoveryImportClientError(err error) bool {
+	var target discoveryImportClientError
+	return errors.As(err, &target)
 }
 
 func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.DiscoveryImportApplyRequest, opts discoveryImportApplyOptions) (domain.DiscoveryImportApplyResponse, error) {
@@ -378,6 +403,13 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 			resp.Skipped++
 			continue
 		}
+		if parentID != nil {
+			if err := d.validateImportParentPool(ctx, req.AccountID, *parentID); err != nil {
+				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: %v", res.ResourceID, err))
+				resp.Skipped++
+				continue
+			}
+		}
 		pool, err := d.createDiscoveredPool(ctx, req.AccountID, *res, parentID)
 		if err != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: create pool: %v", res.ResourceID, err))
@@ -430,7 +462,7 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 	if _, found, err := d.srv.store.GetAccount(ctx, req.AccountID); err != nil {
 		return domain.DiscoveryImportPreviewResponse{}, err
 	} else if !found {
-		return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("account not found")
+		return domain.DiscoveryImportPreviewResponse{}, newDiscoveryImportClientError("account not found")
 	}
 
 	pools, err := d.srv.store.ListPools(ctx)
@@ -445,10 +477,10 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 	if req.PoolID != nil {
 		pool, ok := poolsByID[*req.PoolID]
 		if !ok {
-			return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("selected pool not found")
+			return domain.DiscoveryImportPreviewResponse{}, newDiscoveryImportClientError("selected pool not found")
 		}
 		if pool.AccountID != nil && *pool.AccountID != req.AccountID {
-			return domain.DiscoveryImportPreviewResponse{}, fmt.Errorf("selected pool account does not match import account")
+			return domain.DiscoveryImportPreviewResponse{}, newDiscoveryImportClientError("selected pool account does not match import account")
 		}
 		selectedPool = &pool
 	}
@@ -631,6 +663,9 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 			continue
 		}
 		if cidrContains(pool.CIDR, res.CIDR) {
+			if pool.AccountID != nil && *pool.AccountID != res.AccountID {
+				continue
+			}
 			if bits := prefixLength(pool.CIDR); bits > bestParentBits {
 				bestParentBits = bits
 				parentID := pool.ID
@@ -645,6 +680,20 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 			item.Evidence = append(item.Evidence, fmt.Sprintf("%s overlaps existing pool %d (%s)", res.CIDR, pool.ID, pool.CIDR))
 		}
 	}
+}
+
+func (d *DiscoveryServer) validateImportParentPool(ctx context.Context, accountID int64, parentID int64) error {
+	parent, found, err := d.srv.store.GetPool(ctx, parentID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("parent pool %d not found", parentID)
+	}
+	if parent.AccountID != nil && *parent.AccountID != accountID {
+		return fmt.Errorf("parent pool account does not match import account")
+	}
+	return nil
 }
 
 func (d *DiscoveryServer) duplicateCIDRsByAccount(ctx context.Context, accountID int64, selected []domain.DiscoveredResource) (map[string][]uuid.UUID, error) {
