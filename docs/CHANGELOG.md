@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.17.2] - 2026-06-03
+
+### Added
+- Discovery Merged Network now includes managed network object and relationship browsers, request-scoped schema policy controls, relink-oriented alternate exact-pool actions, placeholder-parent action summaries, and inline network action result details.
+- Network relationship resolution in the UI now uses an explicit per-row Apply action with pending state and inline error handling.
+
 ## [0.17.1] - 2026-06-03
 
 ### Added

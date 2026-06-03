@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { NetworkConflictList } from '../pages/DiscoveryPage'
-import type { DiscoveryImportPreviewResponse, NetworkConflict, Pool } from '../api/types'
+import type { DiscoveryImportPreviewResponse, NetworkConflict, NetworkConflictActionResponse, Pool } from '../api/types'
 
 const conflict: NetworkConflict = {
   id: 'unlinked-exact-pool:00000000-0000-0000-0000-000000000001:42',
@@ -45,6 +45,16 @@ const missingParentConflict: NetworkConflict = {
   evidence: ['parent_resource_id=vpc-missing'],
 }
 
+const relinkConflict: NetworkConflict = {
+  ...conflict,
+  id: 'alternate-exact-pool:00000000-0000-0000-0000-000000000001:42',
+  type: 'alternate_exact_pool',
+  title: 'Discovered CIDR matches an alternate pool',
+  description: 'vpc-prod is linked to one pool and exactly matches prod-vpc',
+  recommended_action: 'Relink the discovered resource to the alternate matching managed pool.',
+  evidence: ['current_pool_id=41', 'alternate_pool_id=42'],
+}
+
 const preview: DiscoveryImportPreviewResponse = {
   items: [],
   importable: 1,
@@ -54,6 +64,15 @@ const preview: DiscoveryImportPreviewResponse = {
   conflict_count: 0,
 }
 
+const actionResponse: NetworkConflictActionResponse = {
+  conflict,
+  action: 'link',
+  resource_linked: true,
+  discovered_id: '00000000-0000-0000-0000-000000000001',
+  pool_id: 42,
+  relationships: [],
+}
+
 function renderList(overrides: Partial<ComponentProps<typeof NetworkConflictList>> = {}) {
   const props: ComponentProps<typeof NetworkConflictList> = {
     conflicts: [conflict],
@@ -61,9 +80,9 @@ function renderList(overrides: Partial<ComponentProps<typeof NetworkConflictList
     selected: conflict,
     onSelect: vi.fn(),
     onResolve: vi.fn(),
-    onLink: vi.fn(),
-    onImport: vi.fn(),
-    onPlaceholderParent: vi.fn(),
+    onLink: vi.fn().mockResolvedValue(actionResponse),
+    onImport: vi.fn().mockResolvedValue({ ...actionResponse, action: 'import' }),
+    onPlaceholderParent: vi.fn().mockResolvedValue({ ...actionResponse, action: 'create_placeholder_parent' }),
     onPreviewImport: vi.fn().mockResolvedValue(preview),
     pools,
     ...overrides,
@@ -84,7 +103,7 @@ describe('NetworkConflictList', () => {
     expect(screen.getByRole('button', { name: /Import as pool/i })).toBeTruthy()
   })
 
-  it('submits a link action with selected resource, pool, reason, and override', () => {
+  it('submits a link action with selected resource, pool, reason, and override', async () => {
     const props = renderList()
 
     fireEvent.click(screen.getByRole('button', { name: /Link to pool/i }))
@@ -92,13 +111,15 @@ describe('NetworkConflictList', () => {
     fireEvent.click(screen.getByLabelText('Override validation'))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm link' }))
 
-    expect(props.onLink).toHaveBeenCalledWith(
-      conflict,
-      '00000000-0000-0000-0000-000000000001',
-      42,
-      'exact match reviewed',
-      true,
-    )
+    await waitFor(() => {
+      expect(props.onLink).toHaveBeenCalledWith(
+        conflict,
+        '00000000-0000-0000-0000-000000000001',
+        42,
+        'exact match reviewed',
+        true,
+      )
+    })
   })
 
   it('requires import preview before apply and submits selected resources', async () => {
@@ -118,16 +139,18 @@ describe('NetworkConflictList', () => {
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply import' }))
-    expect(props.onImport).toHaveBeenCalledWith(
-      conflict,
-      ['00000000-0000-0000-0000-000000000001'],
-      undefined,
-      '',
-      false,
-    )
+    await waitFor(() => {
+      expect(props.onImport).toHaveBeenCalledWith(
+        conflict,
+        ['00000000-0000-0000-0000-000000000001'],
+        undefined,
+        '',
+        false,
+      )
+    })
   })
 
-  it('submits a placeholder-parent action for missing parent conflicts', () => {
+  it('submits a placeholder-parent action for missing parent conflicts', async () => {
     const props = renderList({
       conflicts: [missingParentConflict],
       selected: missingParentConflict,
@@ -138,11 +161,45 @@ describe('NetworkConflictList', () => {
     fireEvent.change(screen.getByPlaceholderText('Reason'), { target: { value: 'parent not scanned yet' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create placeholder' }))
 
-    expect(props.onPlaceholderParent).toHaveBeenCalledWith(
-      missingParentConflict,
-      '00000000-0000-0000-0000-000000000001',
-      'placeholder-vpc',
-      'parent not scanned yet',
-    )
+    await waitFor(() => {
+      expect(props.onPlaceholderParent).toHaveBeenCalledWith(
+        missingParentConflict,
+        '00000000-0000-0000-0000-000000000001',
+        'placeholder-vpc',
+        'parent not scanned yet',
+      )
+    })
+  })
+
+  it('uses relink wording and displays previous pool result details for alternate exact pool conflicts', async () => {
+    const props = renderList({
+      conflicts: [relinkConflict],
+      selected: relinkConflict,
+      onLink: vi.fn().mockResolvedValue({
+        ...actionResponse,
+        conflict: relinkConflict,
+        previous_pool_id: 41,
+        pool_id: 42,
+        relationships: [{ id: 'rel/one', type: 'matches', source_kind: 'discovered', source_id: '00000000-0000-0000-0000-000000000001', target_kind: 'pool', target_id: '42', confidence: 1, resolution_state: 'accepted', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }],
+      }),
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Relink to pool/i }))
+    expect(screen.getByText(/updates the discovered resource pool association/i)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm relink' }))
+
+    await waitFor(() => {
+      expect(props.onLink).toHaveBeenCalledWith(
+        relinkConflict,
+        '00000000-0000-0000-0000-000000000001',
+        42,
+        '',
+        false,
+      )
+      expect(screen.getByText('Resource relinked')).toBeTruthy()
+      expect(screen.getByText('Previous pool: 41')).toBeTruthy()
+      expect(screen.getByText('Target pool: 42')).toBeTruthy()
+      expect(screen.getByText('1 relationship recorded')).toBeTruthy()
+    })
   })
 })

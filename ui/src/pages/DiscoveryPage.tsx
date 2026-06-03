@@ -17,6 +17,7 @@ import {
   Plus,
   Network,
   Table2,
+  GitBranch,
 } from 'lucide-react'
 import {
   useDiscoveryResources,
@@ -43,6 +44,9 @@ import type {
   NetworkNode,
   NetworkConflict,
   NetworkIssue,
+  NetworkObject,
+  NetworkRelationship,
+  NetworkConflictActionResponse,
 } from '../api/types'
 
 type Tab = 'resources' | 'network' | 'sync' | 'agents'
@@ -722,7 +726,7 @@ const DEFAULT_RESOURCE_COLUMNS: ResourceColumnKey[] = [
   'last_seen',
 ]
 
-type NetworkMode = 'hierarchy' | 'flat' | 'conflicts'
+type NetworkMode = 'hierarchy' | 'flat' | 'conflicts' | 'objects' | 'relationships'
 
 function NetworkTab({
   selectedAccountId,
@@ -736,21 +740,34 @@ function NetworkTab({
   const [mode, setMode] = useState<NetworkMode>('hierarchy')
   const [query, setQuery] = useState('')
   const [objectType, setObjectType] = useState('')
+  const [objectState, setObjectState] = useState('')
   const [conflictType, setConflictType] = useState('')
+  const [schemaPolicy, setSchemaPolicy] = useState('account_level')
+  const [relationshipType, setRelationshipType] = useState('')
+  const [relationshipState, setRelationshipState] = useState('')
+  const [relationshipSourceKind, setRelationshipSourceKind] = useState('')
+  const [relationshipSourceID, setRelationshipSourceID] = useState('')
+  const [relationshipTargetKind, setRelationshipTargetKind] = useState('')
+  const [relationshipTargetID, setRelationshipTargetID] = useState('')
   const [selectedConflict, setSelectedConflict] = useState<NetworkConflict | null>(null)
   const {
     flat,
     hierarchy,
     conflicts,
+    objects,
+    relationships,
     loading,
     error,
     fetchFlat,
     fetchHierarchy,
     fetchConflicts,
+    fetchObjects,
+    fetchRelationships,
     resolveConflict,
     linkConflict,
     importConflict,
     createPlaceholderParentConflict,
+    resolveNetworkRelationship,
   } = useNetworkView()
   const { previewDiscoveryImport: previewNetworkImport } = useSyncJobs()
   const { showToast } = useToast()
@@ -758,19 +775,34 @@ function NetworkTab({
   const filters = useMemo(() => ({
     account_id: selectedAccountId ?? undefined,
     object_type: objectType || undefined,
+    status: objectState || undefined,
     conflict_type: conflictType || undefined,
+    schema_policy: schemaPolicy,
     q: query || undefined,
-  }), [selectedAccountId, objectType, conflictType, query])
+  }), [selectedAccountId, objectType, objectState, conflictType, schemaPolicy, query])
+
+  const relationshipFilters = useMemo(() => ({
+    type: relationshipType || undefined,
+    source_kind: relationshipSourceKind || undefined,
+    source_id: relationshipSourceID || undefined,
+    target_kind: relationshipTargetKind || undefined,
+    target_id: relationshipTargetID || undefined,
+    resolution_state: relationshipState || undefined,
+  }), [relationshipType, relationshipSourceKind, relationshipSourceID, relationshipTargetKind, relationshipTargetID, relationshipState])
 
   const load = useCallback(() => {
     if (mode === 'hierarchy') {
       void fetchHierarchy(filters)
     } else if (mode === 'flat') {
       void fetchFlat(filters)
-    } else {
+    } else if (mode === 'conflicts') {
       void fetchConflicts(filters)
+    } else if (mode === 'objects') {
+      void fetchObjects(filters)
+    } else {
+      void fetchRelationships(relationshipFilters)
     }
-  }, [fetchConflicts, fetchFlat, fetchHierarchy, filters, mode])
+  }, [fetchConflicts, fetchFlat, fetchHierarchy, fetchObjects, fetchRelationships, filters, mode, relationshipFilters])
 
   useEffect(() => {
     load()
@@ -795,11 +827,13 @@ function NetworkTab({
         reason: reason || undefined,
         override,
       })
-      showToast('Resource linked to pool', 'success')
+      showToast(conflict.type === 'alternate_exact_pool' ? 'Resource relinked to pool' : 'Resource linked to pool', 'success')
       setSelectedConflict(resp.conflict)
       load()
+      return resp
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Link action failed', 'error')
+      throw err
     }
   }
 
@@ -814,8 +848,10 @@ function NetworkTab({
       showToast(`Imported ${resp.import?.pools_created ?? 0} pools and linked ${resp.import?.resources_linked ?? 0} resources`, 'success')
       setSelectedConflict(resp.conflict)
       load()
+      return resp
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Import action failed', 'error')
+      throw err
     }
   }
 
@@ -829,8 +865,25 @@ function NetworkTab({
       showToast(`Placeholder parent ${resp.network_object?.name || 'created'}`, 'success')
       setSelectedConflict(resp.conflict)
       load()
+      return resp
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Placeholder parent action failed', 'error')
+      throw err
+    }
+  }
+
+  async function handleResolveRelationship(relationship: NetworkRelationship, resolutionState: string, reason: string) {
+    try {
+      await resolveNetworkRelationship({
+        id: relationship.id,
+        resolution_state: resolutionState,
+        reason: reason || undefined,
+      })
+      showToast(`Relationship marked ${resolutionState}`, 'success')
+      load()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Relationship resolution failed', 'error')
+      throw err
     }
   }
 
@@ -845,6 +898,13 @@ function NetworkTab({
   const activeItems = mode === 'hierarchy' ? hierarchy?.items : flat?.items
   const activeTotal = mode === 'hierarchy' ? hierarchy?.total : flat?.total
   const activeConflictCount = mode === 'hierarchy' ? hierarchy?.conflict_count : flat?.conflict_count
+  const rowCount = mode === 'conflicts'
+    ? conflicts?.total ?? 0
+    : mode === 'objects'
+      ? objects?.total ?? 0
+      : mode === 'relationships'
+        ? relationships?.total ?? 0
+        : activeTotal ?? 0
 
   return (
     <div className="space-y-4">
@@ -853,6 +913,8 @@ function NetworkTab({
           <NetworkModeButton active={mode === 'hierarchy'} onClick={() => setMode('hierarchy')} label="Hierarchy" />
           <NetworkModeButton active={mode === 'flat'} onClick={() => setMode('flat')} label="Flat" />
           <NetworkModeButton active={mode === 'conflicts'} onClick={() => setMode('conflicts')} label="Conflicts" />
+          <NetworkModeButton active={mode === 'objects'} onClick={() => setMode('objects')} label="Objects" />
+          <NetworkModeButton active={mode === 'relationships'} onClick={() => setMode('relationships')} label="Relationships" />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
@@ -865,6 +927,16 @@ function NetworkTab({
             />
           </div>
           <select
+            value={schemaPolicy}
+            onChange={(e) => setSchemaPolicy(e.target.value)}
+            className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+          >
+            <option value="account_level">Account policy</option>
+            <option value="region_level">Region policy</option>
+            <option value="global">Global policy</option>
+            <option value="manual">Manual policy</option>
+          </select>
+          <select
             value={objectType}
             onChange={(e) => setObjectType(e.target.value)}
             className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
@@ -873,9 +945,25 @@ function NetworkTab({
             <option value="supernet">Pool</option>
             <option value="vpc">VPC</option>
             <option value="subnet">Subnet</option>
+            <option value="eip">EIP object</option>
+            <option value="public_ip">Public IP object</option>
+            <option value="network">Network object</option>
             <option value="elastic_ip">EIP</option>
             <option value="network_interface">NIC</option>
           </select>
+          {mode === 'objects' && (
+            <select
+              value={objectState}
+              onChange={(e) => setObjectState(e.target.value)}
+              className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            >
+              <option value="">All states</option>
+              <option value="managed">Managed</option>
+              <option value="placeholder">Placeholder</option>
+              <option value="imported">Imported</option>
+              <option value="ignored">Ignored</option>
+            </select>
+          )}
           <select
             value={conflictType}
             onChange={(e) => setConflictType(e.target.value)}
@@ -884,13 +972,66 @@ function NetworkTab({
             <option value="">All issues</option>
             <option value="missing_parent">Missing parent</option>
             <option value="unlinked_exact_pool">Exact pool match</option>
-            <option value="alternate_exact_pool">Alternate exact pool</option>
+            <option value="alternate_exact_pool">Relink candidate</option>
             <option value="invalid_nesting">Invalid nesting</option>
             <option value="outside_pool">Outside pool</option>
             <option value="duplicate_cidr">Duplicate CIDR</option>
             <option value="managed_overlap">Managed overlap</option>
             <option value="linked_pool_mismatch">Linked mismatch</option>
           </select>
+          {mode === 'relationships' && (
+            <>
+              <select
+                value={relationshipType}
+                onChange={(e) => setRelationshipType(e.target.value)}
+                className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              >
+                <option value="">All relationships</option>
+                <option value="contains">Contains</option>
+                <option value="matches">Matches</option>
+                <option value="conflicts">Conflicts</option>
+                <option value="missing_parent">Missing parent</option>
+                <option value="candidate_import">Candidate import</option>
+                <option value="imported_as">Imported as</option>
+                <option value="duplicate_of">Duplicate of</option>
+              </select>
+              <select
+                value={relationshipState}
+                onChange={(e) => setRelationshipState(e.target.value)}
+                className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              >
+                <option value="">All resolutions</option>
+                <option value="open">Open</option>
+                <option value="accepted">Accepted</option>
+                <option value="rejected">Rejected</option>
+                <option value="ignored">Ignored</option>
+              </select>
+              <input
+                value={relationshipSourceKind}
+                onChange={(e) => setRelationshipSourceKind(e.target.value)}
+                placeholder="Source kind"
+                className="w-32 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              />
+              <input
+                value={relationshipSourceID}
+                onChange={(e) => setRelationshipSourceID(e.target.value)}
+                placeholder="Source ID"
+                className="w-36 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              />
+              <input
+                value={relationshipTargetKind}
+                onChange={(e) => setRelationshipTargetKind(e.target.value)}
+                placeholder="Target kind"
+                className="w-32 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              />
+              <input
+                value={relationshipTargetID}
+                onChange={(e) => setRelationshipTargetID(e.target.value)}
+                placeholder="Target ID"
+                className="w-36 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              />
+            </>
+          )}
           <button
             type="button"
             onClick={load}
@@ -903,8 +1044,9 @@ function NetworkTab({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-        <span>{mode === 'conflicts' ? conflicts?.total ?? 0 : activeTotal ?? 0} rows</span>
-        {mode !== 'conflicts' && <span>{activeConflictCount ?? 0} issues</span>}
+        <span>{rowCount} rows</span>
+        {(mode === 'hierarchy' || mode === 'flat') && <span>{activeConflictCount ?? 0} issues</span>}
+        <span>{schemaPolicy.replace(/_/g, ' ')} policy, request-scoped</span>
         {selectedAccountId && <span>{accounts.find((a) => a.id === selectedAccountId)?.name || `Account ${selectedAccountId}`}</span>}
       </div>
 
@@ -926,6 +1068,14 @@ function NetworkTab({
           onPlaceholderParent={handlePlaceholderParentAction}
           onPreviewImport={handlePreviewImportAction}
           pools={pools}
+        />
+      ) : mode === 'objects' ? (
+        <NetworkObjectTable objects={objects?.items ?? []} loading={loading} accounts={accounts} pools={pools} />
+      ) : mode === 'relationships' ? (
+        <NetworkRelationshipTable
+          relationships={relationships?.items ?? []}
+          loading={loading}
+          onResolve={handleResolveRelationship}
         />
       ) : mode === 'flat' ? (
         <NetworkFlatTable nodes={activeItems ?? []} loading={loading} />
@@ -996,6 +1146,7 @@ function NetworkTreeNode({ node, depth }: { node: NetworkNode; depth: number }) 
             <StatusBadge label={node.state} />
           </div>
           <NetworkIssueBadges issues={node.issues ?? []} />
+          <RelationshipBadges relationships={node.relationships ?? []} />
         </div>
       </div>
       {expanded && hasChildren && (
@@ -1023,12 +1174,13 @@ function NetworkFlatTable({ nodes, loading }: { nodes: NetworkNode[]; loading: b
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Region</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">State</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Issues</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Relationships</th>
           </tr>
         </thead>
         <tbody>
           {nodes.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No merged network records found.</td>
+              <td colSpan={8} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No merged network records found.</td>
             </tr>
           )}
           {nodes.map((node) => (
@@ -1048,10 +1200,245 @@ function NetworkFlatTable({ nodes, loading }: { nodes: NetworkNode[]; loading: b
               <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{node.region || '-'}</td>
               <td className="px-3 py-2"><StatusBadge label={node.state} /></td>
               <td className="px-3 py-2"><NetworkIssueBadges issues={node.issues ?? []} /></td>
+              <td className="px-3 py-2"><RelationshipBadges relationships={node.relationships ?? []} /></td>
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function NetworkObjectTable({
+  objects,
+  loading,
+  accounts,
+  pools,
+}: {
+  objects: NetworkObject[]
+  loading: boolean
+  accounts: Account[]
+  pools: Pool[]
+}) {
+  if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
+  return (
+    <div className="overflow-x-auto rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-700 dark:bg-gray-900">
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Object</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">CIDR/IP</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Provider</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Account</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Region</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">State</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Parent</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Pool</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Source</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {objects.length === 0 && (
+            <tr>
+              <td colSpan={10} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No managed network objects found.</td>
+            </tr>
+          )}
+          {objects.map((object) => {
+            const account = accounts.find((item) => item.id === object.account_id)
+            const pool = object.pool_id ? pools.find((item) => item.id === object.pool_id) : undefined
+            return (
+              <tr key={object.id} className="border-b border-gray-100 last:border-b-0 dark:border-gray-700/50">
+                <td className="px-3 py-2">
+                  <div className="font-medium text-gray-900 dark:text-gray-100">{object.name}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">{object.object_type} · {object.provider_resource_id || `object:${object.id}`}</div>
+                </td>
+                <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{object.cidr || object.ip_address || '-'}</td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{object.provider || '-'}</td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{account?.name || object.account_id}</td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{object.region || '-'}</td>
+                <td className="px-3 py-2"><StatusBadge label={object.state} /></td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{object.parent_object_id ?? '-'}</td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{pool ? `${pool.name} (${pool.id})` : object.pool_id ?? '-'}</td>
+                <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">{object.source_discovered_id || '-'}</td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{formatTimeAgo(object.updated_at)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+export function NetworkRelationshipTable({
+  relationships,
+  loading,
+  onResolve,
+}: {
+  relationships: NetworkRelationship[]
+  loading: boolean
+  onResolve: (relationship: NetworkRelationship, resolutionState: string, reason: string) => Promise<void>
+}) {
+  const [resolutionStateByID, setResolutionStateByID] = useState<Record<string, string>>({})
+  const [resolutionReasonByID, setResolutionReasonByID] = useState<Record<string, string>>({})
+  const [resolvingByID, setResolvingByID] = useState<Record<string, boolean>>({})
+  const [resolutionErrorByID, setResolutionErrorByID] = useState<Record<string, string>>({})
+
+  async function applyResolution(relationship: NetworkRelationship) {
+    const nextState = resolutionStateByID[relationship.id] || relationship.resolution_state || 'open'
+    const reason = resolutionReasonByID[relationship.id] || ''
+    setResolvingByID((current) => ({ ...current, [relationship.id]: true }))
+    setResolutionErrorByID((current) => {
+      const next = { ...current }
+      delete next[relationship.id]
+      return next
+    })
+    try {
+      await onResolve(relationship, nextState, reason)
+    } catch (err) {
+      setResolutionErrorByID((current) => ({
+        ...current,
+        [relationship.id]: err instanceof Error ? err.message : 'Relationship resolution failed',
+      }))
+    } finally {
+      setResolvingByID((current) => ({ ...current, [relationship.id]: false }))
+    }
+  }
+
+  if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
+  return (
+    <div className="overflow-x-auto rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-700 dark:bg-gray-900">
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Relationship</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Source</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Target</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Confidence</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Reason / Evidence</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Resolution</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Updated</th>
+          </tr>
+        </thead>
+        <tbody>
+          {relationships.length === 0 && (
+            <tr>
+              <td colSpan={7} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No network relationships found.</td>
+            </tr>
+          )}
+          {relationships.map((relationship) => {
+            const resolving = resolvingByID[relationship.id] || false
+            return (
+              <tr key={relationship.id} className="border-b border-gray-100 align-top last:border-b-0 dark:border-gray-700/50">
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <GitBranch className="h-4 w-4 text-blue-600" />
+                    <div>
+                      <div className="font-medium text-gray-900 dark:text-gray-100">{relationship.type.replace(/_/g, ' ')}</div>
+                      <div className="font-mono text-xs text-gray-500 dark:text-gray-400">{relationship.id}</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-2">
+                  <EntityRef kind={relationship.source_kind} id={relationship.source_id} />
+                </td>
+                <td className="px-3 py-2">
+                  <EntityRef kind={relationship.target_kind} id={relationship.target_id} />
+                </td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{Math.round(relationship.confidence * 100)}%</td>
+                <td className="max-w-md px-3 py-2 text-gray-600 dark:text-gray-400">
+                  <div>{relationship.reason || '-'}</div>
+                  {(relationship.evidence ?? []).length > 0 && (
+                    <div className="mt-1 space-y-0.5 font-mono text-xs text-gray-500 dark:text-gray-500">
+                      {relationship.evidence!.slice(0, 3).map((item) => <div key={item}>{item}</div>)}
+                    </div>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex min-w-[280px] flex-wrap gap-2">
+                    <select
+                      aria-label={`Resolution for ${relationship.id}`}
+                      value={resolutionStateByID[relationship.id] || relationship.resolution_state || 'open'}
+                      onChange={(e) => setResolutionStateByID((current) => ({ ...current, [relationship.id]: e.target.value }))}
+                      disabled={resolving}
+                      className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                    >
+                      <option value="open">Open</option>
+                      <option value="accepted">Accepted</option>
+                      <option value="rejected">Rejected</option>
+                      <option value="ignored">Ignored</option>
+                    </select>
+                    <input
+                      value={resolutionReasonByID[relationship.id] || ''}
+                      onChange={(e) => setResolutionReasonByID((current) => ({ ...current, [relationship.id]: e.target.value }))}
+                      placeholder="Reason"
+                      disabled={resolving}
+                      className="min-w-[120px] flex-1 rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                    />
+                    <button
+                      type="button"
+                      aria-label={`Apply relationship ${relationship.id}`}
+                      disabled={resolving}
+                      onClick={() => void applyResolution(relationship)}
+                      className="inline-flex items-center gap-1 rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {resolving && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Apply
+                    </button>
+                  </div>
+                  {resolutionErrorByID[relationship.id] && (
+                    <div className="mt-1 text-xs text-red-600 dark:text-red-400">{resolutionErrorByID[relationship.id]}</div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{formatTimeAgo(relationship.updated_at)}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function EntityRef({ kind, id }: { kind: string; id: string }) {
+  return (
+    <div>
+      <div className="text-xs uppercase text-gray-500 dark:text-gray-400">{kind}</div>
+      <div className="font-mono text-xs text-gray-700 dark:text-gray-300">{id}</div>
+    </div>
+  )
+}
+
+function NetworkActionResultSummary({ result }: { result: NetworkConflictActionResponse }) {
+  const relationshipCount = result.relationships?.length ?? 0
+  return (
+    <div className="mt-3 rounded bg-green-50 p-2 text-xs text-green-800 dark:bg-green-900/20 dark:text-green-300">
+      <div className="font-semibold">
+        {result.action === 'create_placeholder_parent'
+          ? 'Placeholder parent ready'
+          : result.action === 'import'
+            ? 'Import applied'
+            : result.previous_pool_id
+              ? 'Resource relinked'
+              : 'Resource linked'}
+      </div>
+      <div className="mt-1 space-y-0.5">
+        {result.discovered_id && <div>Discovered resource: <span className="font-mono">{result.discovered_id}</span></div>}
+        {result.previous_pool_id != null && <div>Previous pool: {result.previous_pool_id}</div>}
+        {result.pool_id != null && <div>Target pool: {result.pool_id}</div>}
+        {result.import && (
+          <div>
+            {result.import.pools_created} pools created, {result.import.resources_linked} resources linked, {result.import.skipped} skipped
+          </div>
+        )}
+        {result.network_object && (
+          <div>
+            Object: {result.network_object.name} ({result.network_object.object_type}, {result.network_object.state})
+          </div>
+        )}
+        <div>{relationshipCount} relationship{relationshipCount === 1 ? '' : 's'} recorded</div>
+      </div>
     </div>
   )
 }
@@ -1073,9 +1460,9 @@ export function NetworkConflictList({
   selected: NetworkConflict | null
   onSelect: (conflict: NetworkConflict | null) => void
   onResolve: (conflict: NetworkConflict, decision: string) => void
-  onLink: (conflict: NetworkConflict, discoveredId: string, poolId: number, reason: string, override: boolean) => void
-  onImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined, reason: string, override: boolean) => void
-  onPlaceholderParent: (conflict: NetworkConflict, discoveredId: string, name: string, reason: string) => void
+  onLink: (conflict: NetworkConflict, discoveredId: string, poolId: number, reason: string, override: boolean) => Promise<NetworkConflictActionResponse>
+  onImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined, reason: string, override: boolean) => Promise<NetworkConflictActionResponse>
+  onPlaceholderParent: (conflict: NetworkConflict, discoveredId: string, name: string, reason: string) => Promise<NetworkConflictActionResponse>
   onPreviewImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined) => Promise<DiscoveryImportPreviewResponse>
   pools: Pool[]
 }) {
@@ -1091,6 +1478,7 @@ export function NetworkConflictList({
   const [preview, setPreview] = useState<DiscoveryImportPreviewResponse | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [actionResult, setActionResult] = useState<NetworkConflictActionResponse | null>(null)
 
   useEffect(() => {
     setActionMode(null)
@@ -1098,6 +1486,7 @@ export function NetworkConflictList({
     setOverride(false)
     setPreview(null)
     setActionError(null)
+    setActionResult(null)
     setLinkDiscoveredID(selected?.discovered_ids?.[0] ?? '')
     setLinkPoolID(selected?.pool_ids?.[0] ? String(selected.pool_ids[0]) : '')
     setImportResourceIDs(selected?.discovered_ids ?? [])
@@ -1110,6 +1499,7 @@ export function NetworkConflictList({
   const poolOptions = pools.filter((pool) => !selected?.pool_ids?.length || selected.pool_ids.includes(pool.id))
   const allPoolOptions = poolOptions.length > 0 ? poolOptions : pools
   const canCreatePlaceholderParent = selected?.type === 'missing_parent' && (selected.discovered_ids?.length ?? 0) > 0
+  const isRelinkCandidate = selected?.type === 'alternate_exact_pool'
 
   async function previewImport() {
     if (!selected) return
@@ -1127,6 +1517,16 @@ export function NetworkConflictList({
       setActionError(err instanceof Error ? err.message : 'Import preview failed')
     } finally {
       setPreviewLoading(false)
+    }
+  }
+
+  async function runAction(next: () => Promise<NetworkConflictActionResponse>) {
+    setActionError(null)
+    try {
+      setActionResult(await next())
+    } catch (err) {
+      setActionResult(null)
+      setActionError(err instanceof Error ? err.message : 'Action failed')
     }
   }
 
@@ -1167,6 +1567,7 @@ export function NetworkConflictList({
                 <div key={line}>{line}</div>
               ))}
             </div>
+            <RelationshipBadges relationships={selected.relationships ?? []} />
             <div className="border-t border-gray-100 pt-3 dark:border-gray-700">
               <div className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Review</div>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -1191,7 +1592,7 @@ export function NetworkConflictList({
                   className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   <Link2 className="h-3.5 w-3.5" />
-                  Link to pool
+                  {isRelinkCandidate ? 'Relink to pool' : 'Link to pool'}
                 </button>
                 <button
                   type="button"
@@ -1213,8 +1614,14 @@ export function NetworkConflictList({
                 )}
               </div>
               {actionError && <div className="mt-2 text-xs text-red-600 dark:text-red-400">{actionError}</div>}
+              {actionResult && <NetworkActionResultSummary result={actionResult} />}
               {actionMode === 'link' && (
                 <div className="mt-3 space-y-2">
+                  {isRelinkCandidate && (
+                    <div className="rounded bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                      This updates the discovered resource pool association to the selected alternate match.
+                    </div>
+                  )}
                   <select
                     value={linkDiscoveredID}
                     onChange={(e) => setLinkDiscoveredID(e.target.value)}
@@ -1243,10 +1650,10 @@ export function NetworkConflictList({
                   <button
                     type="button"
                     disabled={!linkDiscoveredID || !linkPoolID}
-                    onClick={() => selected && onLink(selected, linkDiscoveredID, Number(linkPoolID), reason, override)}
+                    onClick={() => selected && void runAction(() => onLink(selected, linkDiscoveredID, Number(linkPoolID), reason, override))}
                     className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Confirm link
+                    {isRelinkCandidate ? 'Confirm relink' : 'Confirm link'}
                   </button>
                 </div>
               )}
@@ -1300,7 +1707,7 @@ export function NetworkConflictList({
                     <button
                       type="button"
                       disabled={importResourceIDs.length === 0 || !preview}
-                      onClick={() => selected && onImport(selected, importResourceIDs, importPoolID ? Number(importPoolID) : undefined, reason, override)}
+                      onClick={() => selected && void runAction(() => onImport(selected, importResourceIDs, importPoolID ? Number(importPoolID) : undefined, reason, override))}
                       className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Apply import
@@ -1337,7 +1744,7 @@ export function NetworkConflictList({
                   <button
                     type="button"
                     disabled={!placeholderDiscoveredID}
-                    onClick={() => selected && onPlaceholderParent(selected, placeholderDiscoveredID, placeholderName, reason)}
+                    onClick={() => selected && void runAction(() => onPlaceholderParent(selected, placeholderDiscoveredID, placeholderName, reason))}
                     className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Create placeholder
@@ -1368,6 +1775,25 @@ function NetworkIssueBadges({ issues }: { issues: NetworkIssue[] }) {
           {issue.type.replace(/_/g, ' ')}
         </span>
       ))}
+    </div>
+  )
+}
+
+function RelationshipBadges({ relationships }: { relationships: NetworkRelationship[] }) {
+  if (relationships.length === 0) return null
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {relationships.slice(0, 4).map((relationship) => (
+        <span key={relationship.id} className="inline-flex items-center gap-1 rounded bg-blue-50 px-1.5 py-0.5 text-[11px] text-blue-800 dark:bg-blue-900/30 dark:text-blue-300">
+          <GitBranch className="h-3 w-3" />
+          {relationship.type.replace(/_/g, ' ')}
+        </span>
+      ))}
+      {relationships.length > 4 && (
+        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+          +{relationships.length - 4}
+        </span>
+      )}
     </div>
   )
 }

@@ -551,6 +551,7 @@ export interface NetworkNode {
   state: string
   issues?: NetworkIssue[]
   evidence?: string[]
+  relationships?: NetworkRelationship[]
   children?: NetworkNode[]
 }
 
@@ -571,6 +572,7 @@ export interface NetworkConflict {
   object_types?: string[]
   cidr?: string
   evidence?: string[]
+  relationships?: NetworkRelationship[]
   available_decisions?: string[]
   resolution_state?: string
   resolution_requested?: string
@@ -616,11 +618,52 @@ export interface NetworkObject {
   region?: string
   name: string
   cidr?: string
+  ip_address?: string
   provider_resource_id?: string
+  parent_object_id?: number | null
+  pool_id?: number | null
+  source_discovered_id?: string | null
   state: string
   metadata?: Record<string, string>
   created_at: string
   updated_at: string
+}
+
+export interface NetworkObjectListResponse {
+  items: NetworkObject[]
+  total: number
+}
+
+export interface CreateNetworkObjectRequest {
+  object_type: string
+  provider?: string
+  account_id: number
+  region?: string
+  name: string
+  cidr?: string
+  ip_address?: string
+  provider_resource_id?: string
+  parent_object_id?: number | null
+  pool_id?: number | null
+  source_discovered_id?: string | null
+  state?: string
+  metadata?: Record<string, string>
+}
+
+export interface UpdateNetworkObjectRequest {
+  object_type?: string
+  provider?: string
+  account_id?: number
+  region?: string
+  name?: string
+  cidr?: string
+  ip_address?: string
+  provider_resource_id?: string
+  parent_object_id?: number | null
+  pool_id?: number | null
+  source_discovered_id?: string | null
+  state?: string
+  metadata?: Record<string, string>
 }
 
 export interface NetworkRelationship {
@@ -636,6 +679,30 @@ export interface NetworkRelationship {
   resolution_state: string
   created_at: string
   updated_at: string
+}
+
+export interface NetworkRelationshipListResponse {
+  items: NetworkRelationship[]
+  total: number
+}
+
+export interface CreateNetworkRelationshipRequest {
+  id?: string
+  type: string
+  source_kind: string
+  source_id: string
+  target_kind: string
+  target_id: string
+  confidence?: number
+  reason?: string
+  evidence?: string[]
+  resolution_state?: string
+}
+
+export interface ResolveNetworkRelationshipRequest {
+  id: string
+  resolution_state: string
+  reason?: string
 }
 
 export interface NetworkConflictActionResponse {
