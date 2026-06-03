@@ -16,6 +16,7 @@ patch or minor version entry for every user-facing change.
 - Added `POST /api/v1/network/relationships/resolve` so relationship IDs that contain URL path separators can be resolved from the request body while server-generated relationship IDs remain URL-safe.
 - Merged network conflict evaluation now supports schema policy query options for account-level, region-level, global, and manual duplicate handling with policy evidence in conflict responses.
 - Network conflict decisions and concrete actions now write audit events, and link actions can update an existing discovered-resource pool association when an alternate exact-pool conflict identifies the target pool.
+- The Merged Network conflict UI now exposes alternate exact-pool filtering, placeholder-parent actions, and the full network conflict action response contract.
 
 ## [0.16.2] - 2026-06-02
 

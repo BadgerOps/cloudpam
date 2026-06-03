@@ -602,12 +602,51 @@ export interface NetworkConflictImportActionRequest {
   override?: boolean
 }
 
+export interface NetworkConflictPlaceholderParentActionRequest {
+  discovered_id: string
+  name?: string
+  reason?: string
+}
+
+export interface NetworkObject {
+  id: number
+  object_type: string
+  provider: string
+  account_id: number
+  region?: string
+  name: string
+  cidr?: string
+  provider_resource_id?: string
+  state: string
+  metadata?: Record<string, string>
+  created_at: string
+  updated_at: string
+}
+
+export interface NetworkRelationship {
+  id: string
+  type: string
+  source_kind: string
+  source_id: string
+  target_kind: string
+  target_id: string
+  confidence: number
+  reason?: string
+  evidence?: string[]
+  resolution_state: string
+  created_at: string
+  updated_at: string
+}
+
 export interface NetworkConflictActionResponse {
   conflict: NetworkConflict
-  action: 'link' | 'import'
+  action: 'link' | 'import' | 'create_placeholder_parent'
   resource_linked?: boolean
   discovered_id?: string
   pool_id?: number
+  previous_pool_id?: number
+  network_object?: NetworkObject
+  relationships?: NetworkRelationship[]
   import?: DiscoveryImportApplyResponse
 }
 

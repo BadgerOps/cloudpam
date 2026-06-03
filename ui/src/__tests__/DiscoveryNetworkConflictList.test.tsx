@@ -34,6 +34,17 @@ const pools: Pool[] = [
   },
 ]
 
+const missingParentConflict: NetworkConflict = {
+  ...conflict,
+  id: 'missing-parent:00000000-0000-0000-0000-000000000001',
+  type: 'missing_parent',
+  title: 'Discovered resource references missing parent',
+  description: 'subnet-1 references vpc-missing',
+  recommended_action: 'Create a placeholder parent, import, or mark reviewed.',
+  pool_ids: [],
+  evidence: ['parent_resource_id=vpc-missing'],
+}
+
 const preview: DiscoveryImportPreviewResponse = {
   items: [],
   importable: 1,
@@ -52,6 +63,7 @@ function renderList(overrides: Partial<ComponentProps<typeof NetworkConflictList
     onResolve: vi.fn(),
     onLink: vi.fn(),
     onImport: vi.fn(),
+    onPlaceholderParent: vi.fn(),
     onPreviewImport: vi.fn().mockResolvedValue(preview),
     pools,
     ...overrides,
@@ -112,6 +124,25 @@ describe('NetworkConflictList', () => {
       undefined,
       '',
       false,
+    )
+  })
+
+  it('submits a placeholder-parent action for missing parent conflicts', () => {
+    const props = renderList({
+      conflicts: [missingParentConflict],
+      selected: missingParentConflict,
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /Placeholder parent/i }))
+    fireEvent.change(screen.getByPlaceholderText('Placeholder name'), { target: { value: 'placeholder-vpc' } })
+    fireEvent.change(screen.getByPlaceholderText('Reason'), { target: { value: 'parent not scanned yet' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create placeholder' }))
+
+    expect(props.onPlaceholderParent).toHaveBeenCalledWith(
+      missingParentConflict,
+      '00000000-0000-0000-0000-000000000001',
+      'placeholder-vpc',
+      'parent not scanned yet',
     )
   })
 })
