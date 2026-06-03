@@ -279,6 +279,7 @@ type NetworkConflictActionResponse struct {
 	ResourceLinked bool                          `json:"resource_linked,omitempty"`
 	DiscoveredID   *uuid.UUID                    `json:"discovered_id,omitempty"`
 	PoolID         *int64                        `json:"pool_id,omitempty"`
+	PreviousPoolID *int64                        `json:"previous_pool_id,omitempty"`
 	NetworkObject  *NetworkObject                `json:"network_object,omitempty"`
 	Relationships  []NetworkRelationship         `json:"relationships,omitempty"`
 	Import         *DiscoveryImportApplyResponse `json:"import,omitempty"`

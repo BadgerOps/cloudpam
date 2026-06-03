@@ -128,6 +128,11 @@ func (s *Server) writeStoreErr(ctx context.Context, w http.ResponseWriter, err e
 
 // logAudit logs an audit event for CRUD operations.
 func (s *Server) logAudit(ctx context.Context, action, resourceType, resourceID, resourceName string, statusCode int) {
+	s.logAuditWithChanges(ctx, action, resourceType, resourceID, resourceName, nil, statusCode)
+}
+
+// logAuditWithChanges logs an audit event with optional before/after details.
+func (s *Server) logAuditWithChanges(ctx context.Context, action, resourceType, resourceID, resourceName string, changes *audit.Changes, statusCode int) {
 	if s.auditLogger == nil {
 		return
 	}
@@ -150,6 +155,7 @@ func (s *Server) logAudit(ctx context.Context, action, resourceType, resourceID,
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
 		ResourceName: resourceName,
+		Changes:      changes,
 		StatusCode:   statusCode,
 	}
 	if reqID := ctx.Value(requestIDContextKey); reqID != nil {
