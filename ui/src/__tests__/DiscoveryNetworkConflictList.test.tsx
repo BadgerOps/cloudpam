@@ -75,6 +75,20 @@ const relinkConflict: NetworkConflict = {
   evidence: ['current_pool_id=41', 'alternate_pool_id=42'],
 }
 
+const duplicateConflict: NetworkConflict = {
+  ...conflict,
+  id: 'duplicate-cidr:account:172.31.0.0_16',
+  type: 'duplicate_cidr',
+  severity: 'critical',
+  title: 'Duplicate CIDR across accounts',
+  description: '172.31.0.0/16 is discovered in multiple accounts',
+  recommended_action: 'Choose the authoritative account or mark the duplicate reviewed.',
+  pool_ids: [],
+  account_ids: [7, 8],
+  cidr: '172.31.0.0/16',
+  evidence: ['policy=account_level', 'duplicate_scope=account'],
+}
+
 const preview: DiscoveryImportPreviewResponse = {
   items: [],
   importable: 1,
@@ -138,6 +152,8 @@ describe('NetworkConflictList', () => {
     expect(screen.getByText(/prod-vpc \(42, 10.0.0.0\/16\)/)).toBeTruthy()
     expect(screen.getByText('CIDR/IP evidence')).toBeTruthy()
     expect(screen.getAllByText('Relationships').length).toBeGreaterThan(0)
+    expect(screen.getByText('Operator note: link candidate')).toBeTruthy()
+    expect(screen.getByText(/Use Link to pool when the managed pool is the authoritative record/i)).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'View in flat' }))
     fireEvent.click(screen.getByRole('button', { name: 'View in hierarchy' }))
@@ -251,5 +267,15 @@ describe('NetworkConflictList', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View relationships' }))
     expect(props.onViewFlat).toHaveBeenCalledWith(relinkConflict)
     expect(props.onShowRelationships).toHaveBeenCalledWith(relinkConflict)
+  })
+
+  it('explains duplicate CIDR conflicts as review or ignore candidates', () => {
+    renderList({
+      conflicts: [duplicateConflict],
+      selected: duplicateConflict,
+    })
+
+    expect(screen.getByText('Operator note: duplicate address space')).toBeTruthy()
+    expect(screen.getByText(/For AWS default VPC space, mark expected reuse ignored or defer it/i)).toBeTruthy()
   })
 })
