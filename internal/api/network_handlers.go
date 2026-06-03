@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
@@ -362,6 +363,11 @@ func (ns *NetworkServer) handleResolveNetworkConflict(w http.ResponseWriter, r *
 			conflict.Status = string(networkDecisionStatus(req.Decision))
 			conflict.ResolutionState = conflict.Status
 			conflict.ResolutionRequested = req.Decision
+			ns.logNetworkConflictAudit(r.Context(), "resolve", conflict, map[string]any{
+				"decision": req.Decision,
+				"status":   conflict.Status,
+				"reason":   req.Reason,
+			})
 			writeJSON(w, http.StatusOK, conflict)
 			return
 		}
@@ -426,6 +432,10 @@ func (ns *NetworkServer) handleNetworkConflictLinkAction(w http.ResponseWriter, 
 		"discovered_id":           req.DiscoveredID.String(),
 		"pool_id":                 fmt.Sprintf("%d", req.PoolID),
 	}
+	previousPoolID := res.PoolID
+	if previousPoolID != nil {
+		actionDetails["previous_pool_id"] = fmt.Sprintf("%d", *previousPoolID)
+	}
 	resolveReq := domain.ResolveNetworkConflictRequest{
 		Decision: "link",
 		Reason:   networkActionReason("link", req.Reason, actionDetails),
@@ -434,7 +444,6 @@ func (ns *NetworkServer) handleNetworkConflictLinkAction(w http.ResponseWriter, 
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "prepare conflict action failed", err.Error())
 		return
 	}
-	previousPoolID := res.PoolID
 	if err := ns.discStore.LinkResourceToPool(r.Context(), req.DiscoveredID, req.PoolID); err != nil {
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "link resource to pool failed", err.Error())
 		return
@@ -462,12 +471,19 @@ func (ns *NetworkServer) handleNetworkConflictLinkAction(w http.ResponseWriter, 
 	}})
 
 	updated := ns.conflictAfterAction(r.Context(), *conflict, "link")
+	ns.logNetworkConflictAudit(r.Context(), "link", *conflict, map[string]any{
+		"discovered_id":    req.DiscoveredID.String(),
+		"pool_id":          req.PoolID,
+		"previous_pool_id": valueOrNil(previousPoolID),
+		"relationships":    len(relationships),
+	})
 	writeJSON(w, http.StatusOK, domain.NetworkConflictActionResponse{
 		Conflict:       updated,
 		Action:         "link",
 		ResourceLinked: true,
 		DiscoveredID:   &req.DiscoveredID,
 		PoolID:         &req.PoolID,
+		PreviousPoolID: previousPoolID,
 		Relationships:  relationships,
 	})
 }
@@ -619,6 +635,15 @@ func (ns *NetworkServer) handleNetworkConflictImportAction(w http.ResponseWriter
 	relationships := ns.persistNetworkConflictActionRelationships(r.Context(), "import", *conflict, relationshipInputs)
 
 	updated := ns.conflictAfterAction(r.Context(), *conflict, "import")
+	ns.logNetworkConflictAudit(r.Context(), "import", *conflict, map[string]any{
+		"pool_id":             valueOrNil(req.PoolID),
+		"pools_created":       importResp.PoolsCreated,
+		"resources_linked":    importResp.ResourcesLinked,
+		"created_pool_ids":    importResp.CreatedPoolIDs,
+		"linked_resource_ids": importResp.LinkedResourceIDs,
+		"relationships":       len(relationships),
+		"selected_resources":  req.ResourceIDs,
+	})
 	writeJSON(w, http.StatusOK, domain.NetworkConflictActionResponse{
 		Conflict:      updated,
 		Action:        "import",
@@ -743,6 +768,11 @@ func (ns *NetworkServer) handleNetworkConflictPlaceholderParentAction(w http.Res
 		},
 	})
 	updated := ns.conflictAfterAction(r.Context(), *conflict, "create_placeholder_parent")
+	ns.logNetworkConflictAudit(r.Context(), "create_placeholder_parent", *conflict, map[string]any{
+		"discovered_id":     req.DiscoveredID.String(),
+		"network_object_id": obj.ID,
+		"relationships":     len(relationships),
+	})
 	writeJSON(w, http.StatusOK, domain.NetworkConflictActionResponse{
 		Conflict:      updated,
 		Action:        "create_placeholder_parent",
@@ -1250,25 +1280,35 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 				continue
 			}
 			if networkCIDREqual(res.CIDR, pool.CIDR) {
-				if res.PoolID == nil {
-					add(domain.NetworkConflict{
-						ID:                fmt.Sprintf("unlinked-exact-pool:%s:%d", res.ID.String(), pool.ID),
-						Type:              "unlinked_exact_pool",
-						Severity:          "warning",
-						Status:            "open",
-						Title:             "Discovered CIDR matches managed pool",
-						Description:       fmt.Sprintf("%s (%s) exactly matches pool %s", res.ResourceID, res.CIDR, pool.Name),
-						RecommendedAction: "Link the discovered resource to the matching managed pool, import separately, or mark reviewed.",
-						NodeIDs:           []string{nodeID, poolNodeID(pool.ID)},
-						DiscoveredIDs:     []uuid.UUID{res.ID},
-						PoolIDs:           []int64{pool.ID},
-						AccountIDs:        accountIDsForPool(res.AccountID, pool),
-						Regions:           []string{res.Region},
-						ObjectTypes:       []string{string(res.ResourceType), string(pool.Type)},
-						CIDR:              res.CIDR,
-						Evidence:          []string{fmt.Sprintf("pool_id=%d", pool.ID), "pool_cidr=" + pool.CIDR},
-					})
+				conflictType := "unlinked_exact_pool"
+				conflictID := fmt.Sprintf("unlinked-exact-pool:%s:%d", res.ID.String(), pool.ID)
+				title := "Discovered CIDR matches managed pool"
+				recommendedAction := "Link the discovered resource to the matching managed pool, import separately, or mark reviewed."
+				evidence := []string{fmt.Sprintf("pool_id=%d", pool.ID), "pool_cidr=" + pool.CIDR}
+				if res.PoolID != nil {
+					conflictType = "alternate_exact_pool"
+					conflictID = fmt.Sprintf("alternate-exact-pool:%s:%d", res.ID.String(), pool.ID)
+					title = "Discovered CIDR matches another managed pool"
+					recommendedAction = "Update the discovered resource link to the matching managed pool, keep the current link, or mark reviewed."
+					evidence = append(evidence, fmt.Sprintf("current_pool_id=%d", *res.PoolID))
 				}
+				add(domain.NetworkConflict{
+					ID:                conflictID,
+					Type:              conflictType,
+					Severity:          "warning",
+					Status:            "open",
+					Title:             title,
+					Description:       fmt.Sprintf("%s (%s) exactly matches pool %s", res.ResourceID, res.CIDR, pool.Name),
+					RecommendedAction: recommendedAction,
+					NodeIDs:           []string{nodeID, poolNodeID(pool.ID)},
+					DiscoveredIDs:     []uuid.UUID{res.ID},
+					PoolIDs:           []int64{pool.ID},
+					AccountIDs:        accountIDsForPool(res.AccountID, pool),
+					Regions:           []string{res.Region},
+					ObjectTypes:       []string{string(res.ResourceType), string(pool.Type)},
+					CIDR:              res.CIDR,
+					Evidence:          evidence,
+				})
 				continue
 			}
 			if !networkCIDROverlaps(res.CIDR, pool.CIDR) {
@@ -1427,6 +1467,15 @@ func (ns *NetworkServer) persistNetworkConflictActionResolution(ctx context.Cont
 	return ns.driftStore.UpdateDriftStatus(ctx, conflict.ID, status, reason)
 }
 
+func (ns *NetworkServer) logNetworkConflictAudit(ctx context.Context, action string, conflict domain.NetworkConflict, after map[string]any) {
+	if after == nil {
+		after = map[string]any{}
+	}
+	after["conflict_id"] = conflict.ID
+	after["conflict_type"] = conflict.Type
+	ns.srv.logAuditWithChanges(ctx, "network_conflict."+action, audit.ResourceNetworkConflict, conflict.ID, conflict.Title, &audit.Changes{After: after}, http.StatusOK)
+}
+
 func (ns *NetworkServer) ensureNetworkConflictResolutionRecord(ctx context.Context, conflict domain.NetworkConflict, reason string, details map[string]string) error {
 	if ns.driftStore == nil {
 		return fmt.Errorf("drift store is not available")
@@ -1541,7 +1590,7 @@ func relationshipsFromConflict(conflict domain.NetworkConflict) []domain.CreateN
 		relationshipType = domain.NetworkRelationshipMissingParent
 	case "duplicate_cidr":
 		relationshipType = domain.NetworkRelationshipDuplicateOf
-	case "unlinked_exact_pool":
+	case "unlinked_exact_pool", "alternate_exact_pool":
 		relationshipType = domain.NetworkRelationshipMatches
 	case "managed_overlap", "linked_pool_mismatch", "outside_pool", "invalid_nesting", "invalid_cidr":
 		relationshipType = domain.NetworkRelationshipConflicts
@@ -1637,8 +1686,8 @@ func validateNetworkConflictLinkAction(conflict domain.NetworkConflict, res doma
 	if !containsInt64(conflict.PoolIDs, req.PoolID) {
 		return fmt.Errorf("pool is not part of this conflict")
 	}
-	if res.PoolID != nil {
-		return fmt.Errorf("discovered resource is already linked")
+	if res.PoolID != nil && *res.PoolID == req.PoolID {
+		return fmt.Errorf("discovered resource is already linked to this pool")
 	}
 	if !req.Override {
 		if pool.AccountID != nil && *pool.AccountID != res.AccountID {

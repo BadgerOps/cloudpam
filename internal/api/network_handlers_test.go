@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"cloudpam/internal/audit"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 )
@@ -399,6 +400,7 @@ func TestNetworkConflictsExposeMissingParentAndResolveRequest(t *testing.T) {
 	if resp.Items[0].Status != "resolved" || resp.Items[0].ResolutionRequested != "skip" {
 		t.Fatalf("resolution was not durable in computed conflict view: %+v", resp.Items[0])
 	}
+	assertNetworkConflictAuditAction(t, discSrv.srv, resolved.ID, "network_conflict.resolve")
 }
 
 func TestNetworkConflictCreatePlaceholderParentAction(t *testing.T) {
@@ -456,6 +458,7 @@ func TestNetworkConflictCreatePlaceholderParentAction(t *testing.T) {
 	if objects.Total != 1 || objects.Items[0].ProviderResourceID != parent {
 		t.Fatalf("placeholder object not durable/listable: %+v", objects)
 	}
+	assertNetworkConflictAuditAction(t, discSrv.srv, conflicts.Items[0].ID, "network_conflict.create_placeholder_parent")
 }
 
 func TestNetworkSchemaPolicyChangesDuplicateDetection(t *testing.T) {
@@ -581,6 +584,67 @@ func TestNetworkConflictLinkActionLinksExactPoolAndResolves(t *testing.T) {
 	if linked.PoolID == nil || *linked.PoolID != pool.ID {
 		t.Fatalf("resource was not linked to pool: %+v", linked)
 	}
+	assertNetworkConflictAuditAction(t, discSrv.srv, conflicts.Items[0].ID, "network_conflict.link")
+}
+
+func TestNetworkConflictLinkActionUpdatesExistingAssociation(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	oldPool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "old-vpc", CIDR: "10.105.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create old pool: %v", err)
+	}
+	newPool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "new-vpc", CIDR: "10.105.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create new pool: %v", err)
+	}
+
+	now := time.Now().UTC()
+	vpcID := uuid.New()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-prod",
+		Name:         "prod-vpc",
+		CIDR:         "10.105.0.0/16",
+		PoolID:       &oldPool.ID,
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=alternate_exact_pool", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 {
+		t.Fatalf("expected one alternate exact-pool conflict, got %+v", conflicts)
+	}
+
+	body := fmt.Sprintf(`{"discovered_id":"%s","pool_id":%d,"reason":"use newer managed pool"}`, vpcID, newPool.ID)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/link", conflicts.Items[0].ID), body, http.StatusOK)
+	var action domain.NetworkConflictActionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &action); err != nil {
+		t.Fatalf("unmarshal link action: %v", err)
+	}
+	if action.Action != "link" || !action.ResourceLinked || action.PreviousPoolID == nil || *action.PreviousPoolID != oldPool.ID {
+		t.Fatalf("unexpected relink action response: %+v", action)
+	}
+	linked, err := ds.GetDiscoveredResource(t.Context(), vpcID)
+	if err != nil {
+		t.Fatalf("load linked resource: %v", err)
+	}
+	if linked.PoolID == nil || *linked.PoolID != newPool.ID {
+		t.Fatalf("resource was not relinked to new pool: %+v", linked)
+	}
+	assertNetworkConflictAuditAction(t, discSrv.srv, conflicts.Items[0].ID, "network_conflict.link")
 }
 
 func TestNetworkConflictLinkActionRejectsUnrelatedAndUnsafePayloads(t *testing.T) {
@@ -681,6 +745,7 @@ func TestNetworkConflictImportActionImportsMissingParentWithOverride(t *testing.
 	if linked.PoolID == nil {
 		t.Fatalf("resource was not linked after import: %+v", linked)
 	}
+	assertNetworkConflictAuditAction(t, discSrv.srv, conflicts.Items[0].ID, "network_conflict.import")
 }
 
 func TestNetworkConflictImportActionRejectsCrossAccountParentPoolWithOverride(t *testing.T) {
@@ -997,6 +1062,24 @@ func (s *failResolvedDriftStore) UpdateDriftDetails(ctx context.Context, id stri
 
 func (s *failResolvedDriftStore) DeleteOpenForAccount(ctx context.Context, accountID int64) error {
 	return s.base.DeleteOpenForAccount(ctx, accountID)
+}
+
+func assertNetworkConflictAuditAction(t *testing.T, srv *Server, conflictID, action string) {
+	t.Helper()
+	events, err := srv.auditLogger.GetByResource(t.Context(), audit.ResourceNetworkConflict, conflictID)
+	if err != nil {
+		t.Fatalf("get conflict audit events: %v", err)
+	}
+	for _, event := range events {
+		if event.Action != action {
+			continue
+		}
+		if event.Changes == nil || event.Changes.After["conflict_id"] != conflictID {
+			t.Fatalf("audit event missing conflict after details: %+v", event)
+		}
+		return
+	}
+	t.Fatalf("audit action %q not found for conflict %s: %+v", action, conflictID, events)
 }
 
 func hierarchyHasParentChild(nodes []domain.NetworkNode, parentPrefix string, childID string) bool {

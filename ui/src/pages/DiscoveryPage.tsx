@@ -750,6 +750,7 @@ function NetworkTab({
     resolveConflict,
     linkConflict,
     importConflict,
+    createPlaceholderParentConflict,
   } = useNetworkView()
   const { previewDiscoveryImport: previewNetworkImport } = useSyncJobs()
   const { showToast } = useToast()
@@ -818,6 +819,21 @@ function NetworkTab({
     }
   }
 
+  async function handlePlaceholderParentAction(conflict: NetworkConflict, discoveredId: string, name: string, reason: string) {
+    try {
+      const resp = await createPlaceholderParentConflict(conflict.id, {
+        discovered_id: discoveredId,
+        name: name || undefined,
+        reason: reason || undefined,
+      })
+      showToast(`Placeholder parent ${resp.network_object?.name || 'created'}`, 'success')
+      setSelectedConflict(resp.conflict)
+      load()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Placeholder parent action failed', 'error')
+    }
+  }
+
   async function handlePreviewImportAction(conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined) {
     const accountId = conflict.account_ids?.[0] ?? selectedAccountId
     if (!accountId) {
@@ -868,6 +884,7 @@ function NetworkTab({
             <option value="">All issues</option>
             <option value="missing_parent">Missing parent</option>
             <option value="unlinked_exact_pool">Exact pool match</option>
+            <option value="alternate_exact_pool">Alternate exact pool</option>
             <option value="invalid_nesting">Invalid nesting</option>
             <option value="outside_pool">Outside pool</option>
             <option value="duplicate_cidr">Duplicate CIDR</option>
@@ -906,6 +923,7 @@ function NetworkTab({
           onResolve={handleResolve}
           onLink={handleLinkAction}
           onImport={handleImportAction}
+          onPlaceholderParent={handlePlaceholderParentAction}
           onPreviewImport={handlePreviewImportAction}
           pools={pools}
         />
@@ -1046,6 +1064,7 @@ export function NetworkConflictList({
   onResolve,
   onLink,
   onImport,
+  onPlaceholderParent,
   onPreviewImport,
   pools,
 }: {
@@ -1056,14 +1075,17 @@ export function NetworkConflictList({
   onResolve: (conflict: NetworkConflict, decision: string) => void
   onLink: (conflict: NetworkConflict, discoveredId: string, poolId: number, reason: string, override: boolean) => void
   onImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined, reason: string, override: boolean) => void
+  onPlaceholderParent: (conflict: NetworkConflict, discoveredId: string, name: string, reason: string) => void
   onPreviewImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined) => Promise<DiscoveryImportPreviewResponse>
   pools: Pool[]
 }) {
-  const [actionMode, setActionMode] = useState<'link' | 'import' | null>(null)
+  const [actionMode, setActionMode] = useState<'link' | 'import' | 'placeholder_parent' | null>(null)
   const [linkDiscoveredID, setLinkDiscoveredID] = useState('')
   const [linkPoolID, setLinkPoolID] = useState('')
   const [importResourceIDs, setImportResourceIDs] = useState<string[]>([])
   const [importPoolID, setImportPoolID] = useState('')
+  const [placeholderDiscoveredID, setPlaceholderDiscoveredID] = useState('')
+  const [placeholderName, setPlaceholderName] = useState('')
   const [reason, setReason] = useState('')
   const [override, setOverride] = useState(false)
   const [preview, setPreview] = useState<DiscoveryImportPreviewResponse | null>(null)
@@ -1080,11 +1102,14 @@ export function NetworkConflictList({
     setLinkPoolID(selected?.pool_ids?.[0] ? String(selected.pool_ids[0]) : '')
     setImportResourceIDs(selected?.discovered_ids ?? [])
     setImportPoolID('')
+    setPlaceholderDiscoveredID(selected?.discovered_ids?.[0] ?? '')
+    setPlaceholderName('')
   }, [selected?.id])
 
   if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
   const poolOptions = pools.filter((pool) => !selected?.pool_ids?.length || selected.pool_ids.includes(pool.id))
   const allPoolOptions = poolOptions.length > 0 ? poolOptions : pools
+  const canCreatePlaceholderParent = selected?.type === 'missing_parent' && (selected.discovered_ids?.length ?? 0) > 0
 
   async function previewImport() {
     if (!selected) return
@@ -1176,6 +1201,16 @@ export function NetworkConflictList({
                   <UploadCloud className="h-3.5 w-3.5" />
                   Import as pool
                 </button>
+                {canCreatePlaceholderParent && (
+                  <button
+                    type="button"
+                    onClick={() => setActionMode(actionMode === 'placeholder_parent' ? null : 'placeholder_parent')}
+                    className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Placeholder parent
+                  </button>
+                )}
               </div>
               {actionError && <div className="mt-2 text-xs text-red-600 dark:text-red-400">{actionError}</div>}
               {actionMode === 'link' && (
@@ -1276,6 +1311,37 @@ export function NetworkConflictList({
                       {preview.importable} importable, {preview.blocked} blocked, {preview.conflict_count} conflicts
                     </div>
                   )}
+                </div>
+              )}
+              {actionMode === 'placeholder_parent' && canCreatePlaceholderParent && (
+                <div className="mt-3 space-y-2">
+                  <select
+                    value={placeholderDiscoveredID}
+                    onChange={(e) => setPlaceholderDiscoveredID(e.target.value)}
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  >
+                    {(selected.discovered_ids ?? []).map((id) => <option key={id} value={id}>{id}</option>)}
+                  </select>
+                  <input
+                    value={placeholderName}
+                    onChange={(e) => setPlaceholderName(e.target.value)}
+                    placeholder="Placeholder name"
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  />
+                  <input
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Reason"
+                    className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                  />
+                  <button
+                    type="button"
+                    disabled={!placeholderDiscoveredID}
+                    onClick={() => selected && onPlaceholderParent(selected, placeholderDiscoveredID, placeholderName, reason)}
+                    className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Create placeholder
+                  </button>
                 </div>
               )}
             </div>

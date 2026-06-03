@@ -6,6 +6,7 @@ import type {
   NetworkConflictImportActionRequest,
   NetworkConflictLinkActionRequest,
   NetworkConflictListResponse,
+  NetworkConflictPlaceholderParentActionRequest,
   NetworkViewResponse,
 } from '../api/types'
 
@@ -117,6 +118,16 @@ export function useNetworkView() {
     [],
   )
 
+  const createPlaceholderParentConflict = useCallback(
+    async (id: string, req: NetworkConflictPlaceholderParentActionRequest) => {
+      return post<NetworkConflictActionResponse>(
+        `/api/v1/network/conflicts/${encodeURIComponent(id)}/actions/create_placeholder_parent`,
+        req,
+      )
+    },
+    [],
+  )
+
   return {
     flat,
     hierarchy,
@@ -129,5 +140,6 @@ export function useNetworkView() {
     resolveConflict,
     linkConflict,
     importConflict,
+    createPlaceholderParentConflict,
   }
 }
