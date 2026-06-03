@@ -247,6 +247,71 @@ func TestComputedNetworkRelationshipResolutionSurvivesRecompute(t *testing.T) {
 	}
 }
 
+func TestNetworkConflictResponseExcludesUnrelatedEntityRelationships(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "prod-vpc", CIDR: "10.62.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	vpcID := uuid.New()
+	now := time.Now().UTC()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-prod",
+		CIDR:         "10.62.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+
+	unrelated := fmt.Sprintf(`{"id":"manual-rel","type":"contains","source_kind":"discovered","source_id":"%s","target_kind":"pool","target_id":"%d","reason":"manual note"}`, vpcID, pool.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", unrelated, http.StatusCreated)
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=unlinked_exact_pool", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 {
+		t.Fatalf("expected conflict, got %+v", conflicts)
+	}
+	if len(conflicts.Items[0].Relationships) == 0 {
+		t.Fatalf("expected computed conflict relationship")
+	}
+	for _, rel := range conflicts.Items[0].Relationships {
+		if rel.ID == "manual-rel" {
+			t.Fatalf("unrelated manual relationship attached to conflict response: %+v", conflicts.Items[0].Relationships)
+		}
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/flat?q=vpc-prod", "", http.StatusOK)
+	var view domain.NetworkViewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &view); err != nil {
+		t.Fatalf("unmarshal flat view: %v", err)
+	}
+	var sawManualOnNode bool
+	for _, item := range view.Items {
+		if item.DiscoveredID != nil && *item.DiscoveredID == vpcID {
+			for _, rel := range item.Relationships {
+				if rel.ID == "manual-rel" {
+					sawManualOnNode = true
+				}
+			}
+		}
+	}
+	if !sawManualOnNode {
+		t.Fatalf("node-level relationship attachment should still include manual relationship: %+v", view.Items)
+	}
+}
+
 func TestNetworkHierarchyPlacesVPCUnderPoolAndSubnetUnderVPC(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})

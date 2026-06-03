@@ -884,8 +884,13 @@ func relationshipsByEntity(relationships []domain.NetworkRelationship) map[strin
 
 func attachRelationshipsToConflicts(conflicts []domain.NetworkConflict, relationships []domain.NetworkRelationship) []domain.NetworkConflict {
 	for i := range conflicts {
+		expectedIDs := relationshipIDsForConflict(conflicts[i])
 		for _, rel := range relationships {
-			if relationshipMatchesConflict(rel, conflicts[i]) {
+			if rel.TargetKind == "conflict" && rel.TargetID == conflicts[i].ID {
+				conflicts[i].Relationships = append(conflicts[i].Relationships, rel)
+				continue
+			}
+			if _, ok := expectedIDs[rel.ID]; ok {
 				conflicts[i].Relationships = append(conflicts[i].Relationships, rel)
 			}
 		}
@@ -893,28 +898,14 @@ func attachRelationshipsToConflicts(conflicts []domain.NetworkConflict, relation
 	return conflicts
 }
 
-func relationshipMatchesConflict(rel domain.NetworkRelationship, conflict domain.NetworkConflict) bool {
-	if rel.TargetKind == "conflict" && rel.TargetID == conflict.ID {
-		return true
-	}
-	matches := func(kind string, id string) bool {
-		switch kind {
-		case "discovered":
-			for _, discoveredID := range conflict.DiscoveredIDs {
-				if id == discoveredID.String() {
-					return true
-				}
-			}
-		case "pool":
-			for _, poolID := range conflict.PoolIDs {
-				if id == fmt.Sprintf("%d", poolID) {
-					return true
-				}
-			}
+func relationshipIDsForConflict(conflict domain.NetworkConflict) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, rel := range relationshipsFromConflict(conflict) {
+		if rel.ID != "" {
+			out[rel.ID] = struct{}{}
 		}
-		return false
 	}
-	return matches(rel.SourceKind, rel.SourceID) || matches(rel.TargetKind, rel.TargetID)
+	return out
 }
 
 func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkViewFilters) (builtNetworkView, error) {
