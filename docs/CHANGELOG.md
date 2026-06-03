@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
-## [0.17.0] - 2026-06-03
+## [0.17.1] - 2026-06-03
 
 ### Added
 - Added durable managed network objects and explicit network relationships so VPCs, subnets, EIPs/public IPs, soft links, conflict evidence, placeholder parents, and imported relationships can be stored separately from allocated blocks.
