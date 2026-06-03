@@ -52,6 +52,29 @@ import type {
 
 type Tab = 'resources' | 'network' | 'sync' | 'agents'
 
+const NETWORK_TRIAGE_GUIDES = [
+  {
+    type: 'unlinked_exact_pool',
+    label: 'Link',
+    summary: 'CIDR already exists as a pool. Link the discovery record instead of importing another pool.',
+  },
+  {
+    type: 'alternate_exact_pool',
+    label: 'Merge / relink',
+    summary: 'Discovery is attached to one pool but exactly matches another. Move the soft link to the authoritative pool.',
+  },
+  {
+    type: 'linked_pool_mismatch',
+    label: 'Repair link',
+    summary: 'The linked pool CIDR differs from cloud state. Relink, import the right pool, or mark intentional drift reviewed.',
+  },
+  {
+    type: 'duplicate_cidr',
+    label: 'Ignore expected reuse',
+    summary: 'Repeated CIDRs across accounts are often normal cloud tenancy. Review once, then ignore or defer expected reuse.',
+  },
+] as const
+
 function mergeJobs(current: SyncJob[], updates: SyncJob[]) {
   const byID = new Map(current.map((job) => [job.id, job]))
   updates.forEach((job) => byID.set(job.id, job))
@@ -1220,6 +1243,20 @@ function NetworkTab({
         {selectedAccountId && <span>{accounts.find((a) => a.id === selectedAccountId)?.name || `Account ${selectedAccountId}`}</span>}
       </div>
 
+      <NetworkTriageGuide
+        schemaPolicy={schemaPolicy}
+        onShowConflicts={(type) => {
+          setMode('conflicts')
+          setConflictType(type)
+          setSelectedConflict(null)
+        }}
+        onShowAllConflicts={() => {
+          setMode('conflicts')
+          setConflictType('')
+          setSelectedConflict(null)
+        }}
+      />
+
       {error && (
         <div className="rounded bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
           {error}
@@ -1283,6 +1320,64 @@ function NetworkModeButton({
     >
       {label}
     </button>
+  )
+}
+
+function NetworkTriageGuide({
+  schemaPolicy,
+  onShowConflicts,
+  onShowAllConflicts,
+}: {
+  schemaPolicy: string
+  onShowConflicts: (type: string) => void
+  onShowAllConflicts: () => void
+}) {
+  return (
+    <div className="rounded border border-blue-100 bg-blue-50/70 p-3 text-sm dark:border-blue-900/50 dark:bg-blue-950/30">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 font-semibold text-blue-950 dark:text-blue-100">
+            <BookOpen className="h-4 w-4" />
+            Discovery triage
+          </div>
+          <div className="mt-1 text-blue-900 dark:text-blue-200">
+            Start with link and relink candidates, import only resources that should become managed pools, and mark expected duplicate address space reviewed.
+          </div>
+          {schemaPolicy === 'account_level' && (
+            <div className="mt-1 text-xs text-blue-800 dark:text-blue-300">
+              Account policy still flags same-CIDR resources across accounts. AWS default VPC ranges are usually review-and-ignore noise unless they share a real managed pool.
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onShowAllConflicts}
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-blue-300 px-2.5 py-1 text-xs font-medium text-blue-900 hover:bg-blue-100 dark:border-blue-800 dark:text-blue-200 dark:hover:bg-blue-900/40"
+        >
+          <ArrowRight className="h-3.5 w-3.5" />
+          Review queue
+        </button>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {NETWORK_TRIAGE_GUIDES.map((item) => (
+          <div key={item.type} className="rounded border border-blue-100 bg-white/80 p-2 dark:border-blue-900/40 dark:bg-gray-900/50">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold uppercase text-blue-700 dark:text-blue-300">{item.label}</div>
+                <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">{item.summary}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onShowConflicts(item.type)}
+                className="rounded border border-gray-300 px-2 py-0.5 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                Show
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -1884,6 +1979,7 @@ export function NetworkConflictList({
                 {selected.recommended_action}
               </div>
             )}
+            <ConflictOperatorNote conflict={selected} />
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
@@ -2148,6 +2244,71 @@ export function NetworkConflictList({
   )
 }
 
+function ConflictOperatorNote({ conflict }: { conflict: NetworkConflict }) {
+  const note = operatorNoteForConflict(conflict)
+  return (
+    <div className="rounded border border-gray-200 bg-gray-50 p-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+      <div className="font-semibold text-gray-800 dark:text-gray-100">{note.title}</div>
+      <div className="mt-1">{note.body}</div>
+    </div>
+  )
+}
+
+function operatorNoteForConflict(conflict: NetworkConflict) {
+  switch (conflict.type) {
+    case 'unlinked_exact_pool':
+      return {
+        title: 'Operator note: link candidate',
+        body: 'Use Link to pool when the managed pool is the authoritative record. Use Import as pool only if this should be tracked as a separate discovered-source pool.',
+      }
+    case 'alternate_exact_pool':
+      return {
+        title: 'Operator note: merge candidate',
+        body: 'Use Relink to pool to move the discovery association to the exact matching pool. This is the normal merge action for a wrong soft link.',
+      }
+    case 'linked_pool_mismatch':
+      return {
+        title: 'Operator note: link mismatch',
+        body: 'Check whether cloud CIDR or IPAM intent is authoritative. Relink to the right pool, import the cloud object as a new pool, or ignore intentional drift.',
+      }
+    case 'outside_pool':
+      return {
+        title: 'Operator note: outside pool',
+        body: 'Treat this as stronger drift than a simple mismatch. Verify the parent pool first, then override only when the placement is intentionally outside the modeled hierarchy.',
+      }
+    case 'duplicate_cidr':
+      return {
+        title: 'Operator note: duplicate address space',
+        body: 'Repeated CIDRs across cloud accounts can be normal. For AWS default VPC space, mark expected reuse ignored or defer it unless two records should point at the same managed pool.',
+      }
+    case 'missing_parent':
+      return {
+        title: 'Operator note: missing parent',
+        body: 'Rediscover first if the parent should exist. Use Placeholder parent when the child must be tracked before the parent VPC/network is available.',
+      }
+    case 'invalid_nesting':
+      return {
+        title: 'Operator note: invalid nesting',
+        body: 'Do not import until the parent-child relationship is corrected or the provider data is verified. This usually indicates a bad parent reference or stale discovery.',
+      }
+    case 'managed_overlap':
+      return {
+        title: 'Operator note: managed overlap',
+        body: 'Decide which pool owns the address space. Import separately only when the overlap is intentional and the operator model allows it.',
+      }
+    case 'invalid_cidr':
+      return {
+        title: 'Operator note: invalid CIDR',
+        body: 'Skip this item until discovery sends a valid CIDR. Import and link actions should wait for corrected provider data.',
+      }
+    default:
+      return {
+        title: 'Operator note: review evidence',
+        body: 'Use the evidence and relationships to decide whether to link, import, ignore expected state, or defer for later investigation.',
+      }
+  }
+}
+
 function NetworkObjectIcon({ node }: { node: NetworkNode }) {
   const color = node.kind === 'pool' ? 'text-emerald-600' : node.object_type === 'elastic_ip' ? 'text-orange-500' : 'text-blue-600'
   return node.kind === 'pool' ? <Table2 className={`h-4 w-4 ${color}`} /> : <Network className={`h-4 w-4 ${color}`} />
@@ -2155,15 +2316,72 @@ function NetworkObjectIcon({ node }: { node: NetworkNode }) {
 
 function NetworkIssueBadges({ issues }: { issues: NetworkIssue[] }) {
   if (issues.length === 0) return null
+  const grouped = groupedIssueBadges(issues)
   return (
     <div className="mt-1 flex flex-wrap gap-1">
-      {issues.map((issue) => (
-        <span key={issue.id} className="rounded bg-yellow-50 px-1.5 py-0.5 text-[11px] text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
-          {issue.type.replace(/_/g, ' ')}
+      {grouped.map((issue) => (
+        <span key={issue.type} className="rounded bg-yellow-50 px-1.5 py-0.5 text-[11px] text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300">
+          {networkIssueLabel(issue.type)}
+          {issue.count > 1 && <span className="ml-1 font-semibold">x{issue.count}</span>}
         </span>
       ))}
     </div>
   )
+}
+
+function groupedIssueBadges(issues: NetworkIssue[]) {
+  const counts = new Map<string, number>()
+  for (const issue of issues) {
+    counts.set(issue.type, (counts.get(issue.type) ?? 0) + 1)
+  }
+  return Array.from(counts.entries())
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => issueSortRank(a.type) - issueSortRank(b.type) || a.type.localeCompare(b.type))
+}
+
+function issueSortRank(type: string) {
+  switch (type) {
+    case 'invalid_cidr':
+    case 'invalid_nesting':
+    case 'outside_pool':
+      return 0
+    case 'linked_pool_mismatch':
+    case 'alternate_exact_pool':
+    case 'unlinked_exact_pool':
+      return 1
+    case 'missing_parent':
+    case 'managed_overlap':
+      return 2
+    case 'duplicate_cidr':
+      return 3
+    default:
+      return 4
+  }
+}
+
+function networkIssueLabel(type: string) {
+  switch (type) {
+    case 'unlinked_exact_pool':
+      return 'link candidate'
+    case 'alternate_exact_pool':
+      return 'relink candidate'
+    case 'linked_pool_mismatch':
+      return 'link mismatch'
+    case 'duplicate_cidr':
+      return 'duplicate CIDR'
+    case 'missing_parent':
+      return 'missing parent'
+    case 'managed_overlap':
+      return 'managed overlap'
+    case 'invalid_nesting':
+      return 'invalid nesting'
+    case 'outside_pool':
+      return 'outside pool'
+    case 'invalid_cidr':
+      return 'invalid CIDR'
+    default:
+      return type.replace(/_/g, ' ')
+  }
 }
 
 function RelationshipBadges({ relationships }: { relationships: NetworkRelationship[] }) {

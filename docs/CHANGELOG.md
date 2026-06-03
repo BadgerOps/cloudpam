@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.17.3] - 2026-06-03
+
+### Added
+- Discovery Merged Network now shows an operator triage guide, selected-conflict notes, and grouped issue badges so link, relink, import, and expected duplicate decisions are easier to distinguish.
+
 ## [0.17.2] - 2026-06-03
 
 ### Added
