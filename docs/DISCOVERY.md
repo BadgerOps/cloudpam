@@ -11,10 +11,10 @@ CloudPAM keeps designed IPAM state separate from observed cloud state:
 | Address pool | A CloudPAM-managed container for address space. |
 | Allocated block | Approved or designed IPAM intent shown in the Allocated Blocks view. |
 | Discovered resource | Observed cloud state from a provider scan. |
-| Network object | A cloud networking object such as a VPC, subnet, EIP, public IP, or NIC. |
+| Network object | A durable managed cloud/networking object such as a VPC, subnet, EIP, public IP, network, or placeholder parent. |
 | Soft link | A non-destructive association between a discovered resource and a managed pool. |
 
-VPCs and subnets can be converted into discovered-source pools when an operator explicitly imports them. EIPs and similar address-bearing resources stay as network-object candidates in the import preview until CloudPAM has a managed network-object store for them.
+VPCs and subnets can be converted into discovered-source pools when an operator explicitly imports them. EIPs, public IPs, placeholder parents, and other provider-neutral resources can be represented as managed network objects without becoming allocated blocks.
 
 ## How It Works
 
@@ -100,7 +100,7 @@ curl -X POST http://localhost:8080/api/v1/discovery/import/apply \
 
 ## Merged Network Views
 
-CloudPAM exposes merged network views that combine managed pools, linked discovered resources, discovered-only network objects, and computed conflict evidence.
+CloudPAM exposes merged network views that combine managed pools, linked discovered resources, durable managed network objects, discovered-only network objects, explicit relationships, and computed conflict evidence.
 
 The Discovery page includes a **Merged Network** tab with:
 
@@ -116,9 +116,11 @@ API callers can use:
 curl http://localhost:8080/api/v1/network/hierarchy
 curl http://localhost:8080/api/v1/network/flat?object_type=vpc
 curl http://localhost:8080/api/v1/network/conflicts?conflict_type=duplicate_cidr
+curl http://localhost:8080/api/v1/network/objects?object_type=eip
+curl http://localhost:8080/api/v1/network/relationships?type=matches
 ```
 
-Conflict responses include stable IDs, severity, affected discovered resource IDs, affected pool IDs, account/region metadata, evidence lines, and available review decisions: `skip`, `ignore`, and `defer`.
+Conflict responses include stable IDs, severity, affected discovered resource IDs, affected pool IDs, account/region metadata, evidence lines, explicit relationship records when present, and available review decisions: `skip`, `ignore`, and `defer`.
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/network/conflicts/duplicate-cidr:10.0.0.0_16/resolve \
@@ -126,7 +128,40 @@ curl -X POST http://localhost:8080/api/v1/network/conflicts/duplicate-cidr:10.0.
   -d '{"decision":"skip","reason":"reviewed duplicate lab account"}'
 ```
 
-Conflict resolution requests for computed conflicts are persisted as drift records keyed by the stable conflict ID where the configured drift store is durable, such as SQLite. The merged views rehydrate the stored decision when conflicts are recomputed. Durable managed network-object persistence remains future work.
+Conflict resolution requests for computed conflicts are persisted as drift records keyed by the stable conflict ID where the configured drift store is durable, such as SQLite or PostgreSQL. Computed conflicts also write explicit relationship records when network relationship storage is available, and merged views rehydrate those relationships when conflicts are recomputed.
+
+### Managed Network Objects
+
+Managed network objects are for cloud/network entities that should be queryable without being treated as approved IPAM allocations. Use them for EIPs/public IPs, imported-but-not-allocated resources, placeholders for missing parents, or provider-neutral objects that do not belong in the pool hierarchy.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/network/objects \
+  -H 'Content-Type: application/json' \
+  -d '{"object_type":"public_ip","provider":"aws","account_id":1,"region":"us-east-1","name":"nat-eip","ip_address":"198.51.100.10","provider_resource_id":"eipalloc-123"}'
+```
+
+Relationships connect pools, discovered resources, managed network objects, and conflict evidence without changing import state. Relationship types include `contains`, `matches`, `conflicts`, `missing_parent`, `candidate_import`, `imported_as`, and `duplicate_of`.
+
+Relationship resolution can be updated by ID in the request body. Use the body form when a caller-supplied relationship ID contains URL path separators such as `/`.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/network/relationships/resolve \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"tenant/a","resolution_state":"resolved","reason":"accepted"}'
+```
+
+### Schema Policy
+
+Duplicate and hierarchy evidence can be evaluated with a schema policy:
+
+```bash
+curl http://localhost:8080/api/v1/network/conflicts?schema_policy=account_level
+curl http://localhost:8080/api/v1/network/conflicts?schema_policy=region_level
+curl http://localhost:8080/api/v1/network/conflicts?schema_policy=global
+curl http://localhost:8080/api/v1/network/conflicts?schema_policy=manual
+```
+
+`account_level` is the default conservative behavior. `region_level` scopes duplicate CIDR checks by region, `global` treats duplicate CIDRs anywhere as conflicts, and `manual` suppresses duplicate conflicts unless callers pass an explicit duplicate override.
 
 ## AWS Setup
 

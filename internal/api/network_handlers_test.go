@@ -62,6 +62,256 @@ func TestNetworkFlatShowsDiscoveredObjectsAndDuplicateConflict(t *testing.T) {
 	}
 }
 
+func TestNetworkObjectsCreateUpdateAndAppearInMergedView(t *testing.T) {
+	discSrv, st, _, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"object_type":"vpc","provider":"aws","account_id":%d,"region":"us-east-1","name":"managed-vpc","cidr":"10.60.0.0/16","provider_resource_id":"vpc-managed"}`, account.ID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/objects", body, http.StatusCreated)
+	var obj domain.NetworkObject
+	if err := json.Unmarshal(rr.Body.Bytes(), &obj); err != nil {
+		t.Fatalf("unmarshal object: %v", err)
+	}
+	if obj.ID == 0 || obj.ObjectType != domain.NetworkObjectTypeVPC || obj.State != domain.NetworkObjectStateManaged {
+		t.Fatalf("unexpected created object: %+v", obj)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPatch, fmt.Sprintf("/api/v1/network/objects/%d", obj.ID), `{"state":"imported","name":"renamed-vpc"}`, http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &obj); err != nil {
+		t.Fatalf("unmarshal updated object: %v", err)
+	}
+	if obj.Name != "renamed-vpc" || obj.State != domain.NetworkObjectStateImported {
+		t.Fatalf("object update did not apply: %+v", obj)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/flat?object_type=vpc", "", http.StatusOK)
+	var view domain.NetworkViewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &view); err != nil {
+		t.Fatalf("unmarshal view: %v", err)
+	}
+	var sawManaged bool
+	for _, item := range view.Items {
+		if item.Kind == "network_object" && item.Name == "renamed-vpc" && item.CIDR == "10.60.0.0/16" {
+			sawManaged = true
+		}
+	}
+	if !sawManaged {
+		t.Fatalf("managed network object missing from merged view: %+v", view.Items)
+	}
+}
+
+func TestNetworkRelationshipsCreateFilterResolveAndAttachToMergedView(t *testing.T) {
+	discSrv, st, _, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	objBody := fmt.Sprintf(`{"object_type":"network","provider":"aws","account_id":%d,"name":"managed-net"}`, account.ID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/objects", objBody, http.StatusCreated)
+	var obj domain.NetworkObject
+	if err := json.Unmarshal(rr.Body.Bytes(), &obj); err != nil {
+		t.Fatalf("unmarshal object: %v", err)
+	}
+
+	relBody := fmt.Sprintf(`{"id":"rel-test","type":"contains","source_kind":"network_object","source_id":"%d","target_kind":"pool","target_id":"42","confidence":0.5,"evidence":["manual"]}`, obj.ID)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", relBody, http.StatusCreated)
+	var rel domain.NetworkRelationship
+	if err := json.Unmarshal(rr.Body.Bytes(), &rel); err != nil {
+		t.Fatalf("unmarshal relationship: %v", err)
+	}
+	if rel.ID != "rel-test" || rel.ResolutionState != "open" {
+		t.Fatalf("unexpected relationship: %+v", rel)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?type=contains&source_kind=network_object", "", http.StatusOK)
+	var rels domain.NetworkRelationshipListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal relationships: %v", err)
+	}
+	if rels.Total != 1 {
+		t.Fatalf("relationship filter returned %+v", rels)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships/rel-test/resolve", `{"resolution_state":"resolved","reason":"accepted"}`, http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rel); err != nil {
+		t.Fatalf("unmarshal resolved relationship: %v", err)
+	}
+	if rel.ResolutionState != "resolved" || rel.Reason != "accepted" {
+		t.Fatalf("relationship resolution did not persist: %+v", rel)
+	}
+
+	slashIDBody := fmt.Sprintf(`{"id":"tenant/a","type":"contains","source_kind":"network_object","source_id":"%d","target_kind":"pool","target_id":"43","confidence":0.5}`, obj.ID)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", slashIDBody, http.StatusCreated)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rel); err != nil {
+		t.Fatalf("unmarshal slash relationship: %v", err)
+	}
+	if rel.ID != "tenant/a" {
+		t.Fatalf("caller relationship ID with slash was not preserved: %+v", rel)
+	}
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships/resolve", `{"id":"tenant/a","resolution_state":"ignored","reason":"body lookup"}`, http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rel); err != nil {
+		t.Fatalf("unmarshal body-resolved relationship: %v", err)
+	}
+	if rel.ResolutionState != "ignored" || rel.Reason != "body lookup" {
+		t.Fatalf("body relationship resolution did not persist: %+v", rel)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/flat?q=managed-net", "", http.StatusOK)
+	var view domain.NetworkViewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &view); err != nil {
+		t.Fatalf("unmarshal view: %v", err)
+	}
+	if len(view.Items) != 1 {
+		t.Fatalf("relationship not attached to merged node: %+v", view.Items)
+	}
+	var sawResolved, sawIgnored bool
+	for _, rel := range view.Items[0].Relationships {
+		if rel.ID == "rel-test" && rel.ResolutionState == "resolved" {
+			sawResolved = true
+		}
+		if rel.ID == "tenant/a" && rel.ResolutionState == "ignored" {
+			sawIgnored = true
+		}
+	}
+	if !sawResolved || !sawIgnored {
+		t.Fatalf("relationships not attached to merged node: %+v", view.Items[0].Relationships)
+	}
+}
+
+func TestComputedNetworkRelationshipResolutionSurvivesRecompute(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	_, err = st.CreatePool(t.Context(), domain.CreatePool{Name: "prod-vpc", CIDR: "10.61.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	vpcID := uuid.New()
+	now := time.Now().UTC()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-prod",
+		CIDR:         "10.61.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=unlinked_exact_pool", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 || len(conflicts.Items[0].Relationships) == 0 {
+		t.Fatalf("computed relationships missing from first conflict response: %+v", conflicts)
+	}
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?source_kind=discovered&source_id="+vpcID.String(), "", http.StatusOK)
+	var rels domain.NetworkRelationshipListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal relationships: %v", err)
+	}
+	if rels.Total == 0 {
+		t.Fatalf("expected computed relationship")
+	}
+	relID := rels.Items[0].ID
+	if strings.ContainsAny(relID, "/?#") {
+		t.Fatalf("server-generated relationship ID is not URL-safe: %q", relID)
+	}
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships/"+relID+"/resolve", `{"resolution_state":"resolved","reason":"accepted"}`, http.StatusOK)
+	doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=unlinked_exact_pool", "", http.StatusOK)
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?source_kind=discovered&source_id="+vpcID.String(), "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal relationships after recompute: %v", err)
+	}
+	var found bool
+	for _, rel := range rels.Items {
+		if rel.ID == relID {
+			found = true
+			if rel.ResolutionState != "resolved" {
+				t.Fatalf("computed relationship state was overwritten: %+v", rel)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("computed relationship not found after recompute: %+v", rels.Items)
+	}
+}
+
+func TestNetworkConflictResponseExcludesUnrelatedEntityRelationships(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "prod-vpc", CIDR: "10.62.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	vpcID := uuid.New()
+	now := time.Now().UTC()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-prod",
+		CIDR:         "10.62.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+
+	unrelated := fmt.Sprintf(`{"id":"manual-rel","type":"contains","source_kind":"discovered","source_id":"%s","target_kind":"pool","target_id":"%d","reason":"manual note"}`, vpcID, pool.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", unrelated, http.StatusCreated)
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=unlinked_exact_pool", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 {
+		t.Fatalf("expected conflict, got %+v", conflicts)
+	}
+	if len(conflicts.Items[0].Relationships) == 0 {
+		t.Fatalf("expected computed conflict relationship")
+	}
+	for _, rel := range conflicts.Items[0].Relationships {
+		if rel.ID == "manual-rel" {
+			t.Fatalf("unrelated manual relationship attached to conflict response: %+v", conflicts.Items[0].Relationships)
+		}
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/flat?q=vpc-prod", "", http.StatusOK)
+	var view domain.NetworkViewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &view); err != nil {
+		t.Fatalf("unmarshal flat view: %v", err)
+	}
+	var sawManualOnNode bool
+	for _, item := range view.Items {
+		if item.DiscoveredID != nil && *item.DiscoveredID == vpcID {
+			for _, rel := range item.Relationships {
+				if rel.ID == "manual-rel" {
+					sawManualOnNode = true
+				}
+			}
+		}
+	}
+	if !sawManualOnNode {
+		t.Fatalf("node-level relationship attachment should still include manual relationship: %+v", view.Items)
+	}
+}
+
 func TestNetworkHierarchyPlacesVPCUnderPoolAndSubnetUnderVPC(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
@@ -151,6 +401,103 @@ func TestNetworkConflictsExposeMissingParentAndResolveRequest(t *testing.T) {
 	}
 }
 
+func TestNetworkConflictCreatePlaceholderParentAction(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	now := time.Now().UTC()
+	subnetID := uuid.New()
+	parent := "vpc-placeholder"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:               subnetID,
+		AccountID:        account.ID,
+		Provider:         "aws",
+		Region:           "us-east-1",
+		ResourceType:     domain.ResourceTypeSubnet,
+		ResourceID:       "subnet-1",
+		Name:             "orphan-subnet",
+		CIDR:             "10.91.1.0/24",
+		ParentResourceID: &parent,
+		Status:           domain.DiscoveryStatusActive,
+		DiscoveredAt:     now,
+		LastSeenAt:       now,
+	})
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=missing_parent", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 {
+		t.Fatalf("expected missing-parent conflict, got %+v", conflicts)
+	}
+
+	body := fmt.Sprintf(`{"discovered_id":"%s","name":"placeholder-vpc","reason":"parent not yet scanned"}`, subnetID)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/create_placeholder_parent", conflicts.Items[0].ID), body, http.StatusOK)
+	var action domain.NetworkConflictActionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &action); err != nil {
+		t.Fatalf("unmarshal action: %v", err)
+	}
+	if action.Action != "create_placeholder_parent" || action.NetworkObject == nil || action.NetworkObject.State != domain.NetworkObjectStatePlaceholder {
+		t.Fatalf("unexpected placeholder action: %+v", action)
+	}
+	if len(action.Relationships) != 2 {
+		t.Fatalf("expected placeholder relationships, got %+v", action.Relationships)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/objects?state=placeholder", "", http.StatusOK)
+	var objects domain.NetworkObjectListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &objects); err != nil {
+		t.Fatalf("unmarshal objects: %v", err)
+	}
+	if objects.Total != 1 || objects.Items[0].ProviderResourceID != parent {
+		t.Fatalf("placeholder object not durable/listable: %+v", objects)
+	}
+}
+
+func TestNetworkSchemaPolicyChangesDuplicateDetection(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	now := time.Now().UTC()
+	for _, res := range []domain.DiscoveredResource{
+		{ID: uuid.New(), AccountID: account.ID, Provider: "aws", Region: "us-east-1", ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-east", CIDR: "10.92.0.0/16", Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now},
+		{ID: uuid.New(), AccountID: account.ID, Provider: "aws", Region: "us-west-2", ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-west", CIDR: "10.92.0.0/16", Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now},
+	} {
+		upsertDiscoveredForImportTest(t, ds, res)
+	}
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal default conflicts: %v", err)
+	}
+	if conflicts.Total != 0 {
+		t.Fatalf("account-level policy should allow same-CIDR reuse inside one account, got %+v", conflicts)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr&schema_policy=global", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal global conflicts: %v", err)
+	}
+	if conflicts.Total != 1 || !strings.Contains(strings.Join(conflicts.Items[0].Evidence, ","), "policy=global") {
+		t.Fatalf("global policy should flag duplicate with evidence, got %+v", conflicts)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr&schema_policy=manual", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal manual conflicts: %v", err)
+	}
+	if conflicts.Total != 0 {
+		t.Fatalf("manual policy should suppress duplicate conflicts, got %+v", conflicts)
+	}
+}
+
 func TestNetworkConflictRoutesAppearInOpenAPISpec(t *testing.T) {
 	discSrv, _, _, _ := setupDiscoveryTestServer()
 
@@ -166,9 +513,14 @@ func TestNetworkConflictRoutesAppearInOpenAPISpec(t *testing.T) {
 		`"/api/v1/network/conflicts/{conflictId}/resolve":`,
 		`"/api/v1/network/conflicts/{conflictId}/actions/link":`,
 		`"/api/v1/network/conflicts/{conflictId}/actions/import":`,
+		`"/api/v1/network/conflicts/{conflictId}/actions/create_placeholder_parent":`,
+		`"/api/v1/network/objects":`,
+		`"/api/v1/network/relationships":`,
+		`"/api/v1/network/relationships/resolve":`,
 		`$ref: '#/components/schemas/ResolveNetworkConflictRequest'`,
 		`$ref: '#/components/schemas/NetworkConflictLinkActionRequest'`,
 		`$ref: '#/components/schemas/NetworkConflictImportActionRequest'`,
+		`$ref: '#/components/schemas/NetworkConflictPlaceholderParentActionRequest'`,
 		`$ref: '#/components/schemas/NetworkConflictActionResponse'`,
 	} {
 		if !strings.Contains(body, want) {

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,15 +24,21 @@ import (
 
 // NetworkServer handles merged network view endpoints.
 type NetworkServer struct {
-	srv        *Server
-	store      storage.Store
-	discStore  storage.DiscoveryStore
-	driftStore storage.DriftStore
+	srv          *Server
+	store        storage.Store
+	discStore    storage.DiscoveryStore
+	driftStore   storage.DriftStore
+	networkStore storage.NetworkStore
 }
 
 // NewNetworkServer creates a merged network view server.
 func NewNetworkServer(srv *Server, store storage.Store, discStore storage.DiscoveryStore, driftStore storage.DriftStore) *NetworkServer {
 	return &NetworkServer{srv: srv, store: store, discStore: discStore, driftStore: driftStore}
+}
+
+// SetNetworkStore attaches durable managed network object and relationship storage.
+func (ns *NetworkServer) SetNetworkStore(networkStore storage.NetworkStore) {
+	ns.networkStore = networkStore
 }
 
 // RegisterNetworkRoutes registers network routes without RBAC.
@@ -40,6 +48,10 @@ func (ns *NetworkServer) RegisterNetworkRoutes() {
 	ns.srv.handleOpenAPIRouteFunc("/api/v1/network/merged", ns.handleMerged)
 	ns.srv.handleOpenAPIRouteFunc("/api/v1/network/conflicts", ns.handleConflicts)
 	ns.srv.handleOpenAPIRouteFunc("/api/v1/network/conflicts/", ns.handleConflictSubroutes)
+	ns.srv.handleOpenAPIRouteFunc("/api/v1/network/objects", ns.handleNetworkObjects)
+	ns.srv.handleOpenAPIRouteFunc("/api/v1/network/objects/", ns.handleNetworkObjectSubroutes)
+	ns.srv.handleOpenAPIRouteFunc("/api/v1/network/relationships", ns.handleNetworkRelationships)
+	ns.srv.handleOpenAPIRouteFunc("/api/v1/network/relationships/", ns.handleNetworkRelationshipSubroutes)
 }
 
 // RegisterProtectedNetworkRoutes registers network routes with RBAC.
@@ -51,6 +63,13 @@ func (ns *NetworkServer) RegisterProtectedNetworkRoutes(dualMW Middleware, logge
 	ns.srv.handleOpenAPIRoute("/api/v1/network/merged", dualMW(readMW(http.HandlerFunc(ns.handleMerged))))
 	ns.srv.handleOpenAPIRoute("/api/v1/network/conflicts", dualMW(readMW(http.HandlerFunc(ns.handleConflicts))))
 	ns.srv.handleOpenAPIRoute("/api/v1/network/conflicts/", dualMW(updateMW(http.HandlerFunc(ns.handleConflictSubroutes))))
+	ns.srv.handleOpenAPIRoute("GET /api/v1/network/objects", dualMW(readMW(http.HandlerFunc(ns.handleNetworkObjects))))
+	ns.srv.handleOpenAPIRoute("POST /api/v1/network/objects", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkObjects))))
+	ns.srv.handleOpenAPIRoute("GET /api/v1/network/objects/", dualMW(readMW(http.HandlerFunc(ns.handleNetworkObjectSubroutes))))
+	ns.srv.handleOpenAPIRoute("PATCH /api/v1/network/objects/", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkObjectSubroutes))))
+	ns.srv.handleOpenAPIRoute("GET /api/v1/network/relationships", dualMW(readMW(http.HandlerFunc(ns.handleNetworkRelationships))))
+	ns.srv.handleOpenAPIRoute("POST /api/v1/network/relationships", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkRelationships))))
+	ns.srv.handleOpenAPIRoute("/api/v1/network/relationships/", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkRelationshipSubroutes))))
 }
 
 func (ns *NetworkServer) handleFlat(w http.ResponseWriter, r *http.Request) {
@@ -126,12 +145,188 @@ func (ns *NetworkServer) handleConflictSubroutes(w http.ResponseWriter, r *http.
 			ns.handleNetworkConflictLinkAction(w, r, parts[0])
 		case "import":
 			ns.handleNetworkConflictImportAction(w, r, parts[0])
+		case "create_placeholder_parent":
+			ns.handleNetworkConflictPlaceholderParentAction(w, r, parts[0])
 		default:
 			ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
 		}
 		return
 	}
 	ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
+}
+
+func (ns *NetworkServer) handleNetworkObjects(w http.ResponseWriter, r *http.Request) {
+	if ns.networkStore == nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotImplemented, "network object storage is not available", "")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		objects, err := ns.networkStore.ListNetworkObjects(r.Context(), networkObjectFiltersFromRequest(r))
+		if err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list network objects failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, domain.NetworkObjectListResponse{Items: objects, Total: len(objects)})
+	case http.MethodPost:
+		var req domain.CreateNetworkObject
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+			return
+		}
+		obj, err := ns.networkStore.CreateNetworkObject(r.Context(), req)
+		if err != nil {
+			ns.srv.writeStoreErr(r.Context(), w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, obj)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
+		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+	}
+}
+
+func (ns *NetworkServer) handleNetworkObjectSubroutes(w http.ResponseWriter, r *http.Request) {
+	if ns.networkStore == nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotImplemented, "network object storage is not available", "")
+		return
+	}
+	idText := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/network/objects/"), "/")
+	id, err := strconv.ParseInt(idText, 10, 64)
+	if err != nil || id < 1 {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		obj, found, err := ns.networkStore.GetNetworkObject(r.Context(), id)
+		if err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "get network object failed", err.Error())
+			return
+		}
+		if !found {
+			ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "network object not found", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, obj)
+	case http.MethodPatch:
+		var req domain.UpdateNetworkObject
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+			return
+		}
+		obj, found, err := ns.networkStore.UpdateNetworkObject(r.Context(), id, req)
+		if err != nil {
+			ns.srv.writeStoreErr(r.Context(), w, err)
+			return
+		}
+		if !found {
+			ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "network object not found", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, obj)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch}, ", "))
+		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+	}
+}
+
+func (ns *NetworkServer) handleNetworkRelationships(w http.ResponseWriter, r *http.Request) {
+	if ns.networkStore == nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotImplemented, "network relationship storage is not available", "")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		relationships, err := ns.networkStore.ListNetworkRelationships(r.Context(), networkRelationshipFiltersFromRequest(r))
+		if err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list network relationships failed", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, domain.NetworkRelationshipListResponse{Items: relationships, Total: len(relationships)})
+	case http.MethodPost:
+		var req domain.CreateNetworkRelationship
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+			return
+		}
+		rel, err := ns.networkStore.UpsertNetworkRelationship(r.Context(), req)
+		if err != nil {
+			ns.srv.writeStoreErr(r.Context(), w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, rel)
+	default:
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPost}, ", "))
+		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+	}
+}
+
+func (ns *NetworkServer) handleNetworkRelationshipSubroutes(w http.ResponseWriter, r *http.Request) {
+	if ns.networkStore == nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotImplemented, "network relationship storage is not available", "")
+		return
+	}
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/network/relationships/"), "/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 1 && parts[0] == "resolve" {
+		ns.handleResolveNetworkRelationshipByBody(w, r)
+		return
+	}
+	if len(parts) != 2 || parts[0] == "" || parts[1] != "resolve" {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "not found", "")
+		return
+	}
+	ns.handleResolveNetworkRelationship(w, r, parts[0])
+}
+
+func (ns *NetworkServer) handleResolveNetworkRelationshipByBody(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	var req domain.ResolveNetworkRelationshipRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	ns.handleResolveNetworkRelationshipRequest(w, r, req)
+}
+
+func (ns *NetworkServer) handleResolveNetworkRelationship(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	var req domain.ResolveNetworkRelationshipRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	if req.ID == "" {
+		req.ID = id
+	}
+	ns.handleResolveNetworkRelationshipRequest(w, r, req)
+}
+
+func (ns *NetworkServer) handleResolveNetworkRelationshipRequest(w http.ResponseWriter, r *http.Request, req domain.ResolveNetworkRelationshipRequest) {
+	id := strings.TrimSpace(req.ID)
+	if id == "" {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "id is required", "")
+		return
+	}
+	rel, found, err := ns.networkStore.UpdateNetworkRelationshipState(r.Context(), id, req.ResolutionState, req.Reason)
+	if err != nil {
+		ns.srv.writeStoreErr(r.Context(), w, err)
+		return
+	}
+	if !found {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "network relationship not found", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, rel)
 }
 
 func (ns *NetworkServer) handleResolveNetworkConflict(w http.ResponseWriter, r *http.Request, conflictID string) {
@@ -253,6 +448,18 @@ func (ns *NetworkServer) handleNetworkConflictLinkAction(w http.ResponseWriter, 
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "record conflict action failed", err.Error())
 		return
 	}
+	relationships := ns.persistNetworkConflictActionRelationships(r.Context(), "link", *conflict, []domain.CreateNetworkRelationship{{
+		ID:              relationshipIDForConflict(conflict.ID, "discovered", req.DiscoveredID.String(), "pool", fmt.Sprintf("%d", req.PoolID)),
+		Type:            domain.NetworkRelationshipMatches,
+		SourceKind:      "discovered",
+		SourceID:        req.DiscoveredID.String(),
+		TargetKind:      "pool",
+		TargetID:        fmt.Sprintf("%d", req.PoolID),
+		Confidence:      1,
+		Reason:          networkActionReason("link", req.Reason, actionDetails),
+		Evidence:        append(conflict.Evidence, "action=link"),
+		ResolutionState: string(domain.DriftStatusResolved),
+	}})
 
 	updated := ns.conflictAfterAction(r.Context(), *conflict, "link")
 	writeJSON(w, http.StatusOK, domain.NetworkConflictActionResponse{
@@ -261,6 +468,7 @@ func (ns *NetworkServer) handleNetworkConflictLinkAction(w http.ResponseWriter, 
 		ResourceLinked: true,
 		DiscoveredID:   &req.DiscoveredID,
 		PoolID:         &req.PoolID,
+		Relationships:  relationships,
 	})
 }
 
@@ -377,13 +585,170 @@ func (ns *NetworkServer) handleNetworkConflictImportAction(w http.ResponseWriter
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "record conflict action failed", err.Error())
 		return
 	}
+	var relationshipInputs []domain.CreateNetworkRelationship
+	for _, resourceID := range importResp.LinkedResourceIDs {
+		for _, poolID := range importResp.CreatedPoolIDs {
+			relationshipInputs = append(relationshipInputs, domain.CreateNetworkRelationship{
+				ID:              relationshipIDForConflict(conflict.ID, "discovered", resourceID.String(), "pool", fmt.Sprintf("%d", poolID)),
+				Type:            domain.NetworkRelationshipImportedAs,
+				SourceKind:      "discovered",
+				SourceID:        resourceID.String(),
+				TargetKind:      "pool",
+				TargetID:        fmt.Sprintf("%d", poolID),
+				Confidence:      1,
+				Reason:          networkActionReason("import", req.Reason, actionDetails),
+				Evidence:        append(conflict.Evidence, "action=import"),
+				ResolutionState: string(domain.DriftStatusResolved),
+			})
+		}
+		if req.PoolID != nil {
+			relationshipInputs = append(relationshipInputs, domain.CreateNetworkRelationship{
+				ID:              relationshipIDForConflict(conflict.ID, "discovered", resourceID.String(), "pool", fmt.Sprintf("%d", *req.PoolID)),
+				Type:            domain.NetworkRelationshipImportedAs,
+				SourceKind:      "discovered",
+				SourceID:        resourceID.String(),
+				TargetKind:      "pool",
+				TargetID:        fmt.Sprintf("%d", *req.PoolID),
+				Confidence:      1,
+				Reason:          networkActionReason("import", req.Reason, actionDetails),
+				Evidence:        append(conflict.Evidence, "action=import"),
+				ResolutionState: string(domain.DriftStatusResolved),
+			})
+		}
+	}
+	relationships := ns.persistNetworkConflictActionRelationships(r.Context(), "import", *conflict, relationshipInputs)
 
 	updated := ns.conflictAfterAction(r.Context(), *conflict, "import")
 	writeJSON(w, http.StatusOK, domain.NetworkConflictActionResponse{
-		Conflict: updated,
-		Action:   "import",
-		PoolID:   req.PoolID,
-		Import:   &importResp,
+		Conflict:      updated,
+		Action:        "import",
+		PoolID:        req.PoolID,
+		Relationships: relationships,
+		Import:        &importResp,
+	})
+}
+
+func (ns *NetworkServer) handleNetworkConflictPlaceholderParentAction(w http.ResponseWriter, r *http.Request, conflictID string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
+		return
+	}
+	if ns.networkStore == nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotImplemented, "network object storage is not available", "")
+		return
+	}
+	var req domain.NetworkConflictPlaceholderParentActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	if req.DiscoveredID == uuid.Nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "discovered_id is required", "")
+		return
+	}
+	conflict, err := ns.findNetworkConflict(r.Context(), conflictID)
+	if err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "network conflicts failed", err.Error())
+		return
+	}
+	if conflict == nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "conflict not found", "")
+		return
+	}
+	if conflict.Type != "missing_parent" || !containsUUID(conflict.DiscoveredIDs, req.DiscoveredID) {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "placeholder parent can only be created for a selected missing_parent conflict resource", "")
+		return
+	}
+	res, err := ns.discStore.GetDiscoveredResource(r.Context(), req.DiscoveredID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, storage.ErrNotFound) {
+			status = http.StatusBadRequest
+		}
+		ns.srv.writeErr(r.Context(), w, status, "discovered resource not found", err.Error())
+		return
+	}
+	if res.ParentResourceID == nil || *res.ParentResourceID == "" {
+		ns.srv.writeErr(r.Context(), w, http.StatusBadRequest, "discovered resource does not reference a missing parent", "")
+		return
+	}
+	parentResourceID := *res.ParentResourceID
+	existing, err := ns.networkStore.ListNetworkObjects(r.Context(), domain.NetworkObjectFilters{AccountID: res.AccountID, Provider: res.Provider, Region: res.Region, ObjectType: string(domain.NetworkObjectTypeVPC)})
+	if err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list network objects failed", err.Error())
+		return
+	}
+	var obj domain.NetworkObject
+	for _, candidate := range existing {
+		if candidate.ProviderResourceID == parentResourceID {
+			obj = candidate
+			break
+		}
+	}
+	if obj.ID == 0 {
+		name := firstNonEmpty(req.Name, parentResourceID)
+		obj, err = ns.networkStore.CreateNetworkObject(r.Context(), domain.CreateNetworkObject{
+			ObjectType:         domain.NetworkObjectTypeVPC,
+			Provider:           res.Provider,
+			AccountID:          res.AccountID,
+			Region:             res.Region,
+			Name:               name,
+			ProviderResourceID: parentResourceID,
+			State:              domain.NetworkObjectStatePlaceholder,
+			Metadata:           map[string]string{"created_from_conflict": conflict.ID},
+		})
+		if err != nil {
+			ns.srv.writeStoreErr(r.Context(), w, err)
+			return
+		}
+	}
+	actionDetails := map[string]string{
+		"network_conflict_action": "create_placeholder_parent",
+		"discovered_id":           req.DiscoveredID.String(),
+		"network_object_id":       fmt.Sprintf("%d", obj.ID),
+	}
+	resolveReq := domain.ResolveNetworkConflictRequest{
+		Decision: "defer",
+		Reason:   networkActionReason("create_placeholder_parent", req.Reason, actionDetails),
+	}
+	if err := ns.persistNetworkConflictActionResolution(r.Context(), *conflict, resolveReq, actionDetails); err != nil {
+		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "record conflict action failed", err.Error())
+		return
+	}
+	relationships := ns.persistNetworkConflictActionRelationships(r.Context(), "create_placeholder_parent", *conflict, []domain.CreateNetworkRelationship{
+		{
+			ID:              relationshipIDForConflict(conflict.ID, "network_object", fmt.Sprintf("%d", obj.ID), "discovered", req.DiscoveredID.String()),
+			Type:            domain.NetworkRelationshipContains,
+			SourceKind:      "network_object",
+			SourceID:        fmt.Sprintf("%d", obj.ID),
+			TargetKind:      "discovered",
+			TargetID:        req.DiscoveredID.String(),
+			Confidence:      0.75,
+			Reason:          networkActionReason("create_placeholder_parent", req.Reason, actionDetails),
+			Evidence:        append(conflict.Evidence, "placeholder_parent="+parentResourceID),
+			ResolutionState: "open",
+		},
+		{
+			ID:              relationshipIDForConflict(conflict.ID, "discovered", req.DiscoveredID.String(), "network_object", fmt.Sprintf("%d", obj.ID)),
+			Type:            domain.NetworkRelationshipMissingParent,
+			SourceKind:      "discovered",
+			SourceID:        req.DiscoveredID.String(),
+			TargetKind:      "network_object",
+			TargetID:        fmt.Sprintf("%d", obj.ID),
+			Confidence:      0.75,
+			Reason:          networkActionReason("create_placeholder_parent", req.Reason, actionDetails),
+			Evidence:        append(conflict.Evidence, "placeholder_parent="+parentResourceID),
+			ResolutionState: "open",
+		},
+	})
+	updated := ns.conflictAfterAction(r.Context(), *conflict, "create_placeholder_parent")
+	writeJSON(w, http.StatusOK, domain.NetworkConflictActionResponse{
+		Conflict:      updated,
+		Action:        "create_placeholder_parent",
+		DiscoveredID:  &req.DiscoveredID,
+		NetworkObject: &obj,
+		Relationships: relationships,
 	})
 }
 
@@ -395,6 +760,8 @@ type networkViewFilters struct {
 	status       string
 	conflictType string
 	query        string
+	schemaPolicy string
+	duplicates   string
 }
 
 type builtNetworkView struct {
@@ -412,6 +779,8 @@ func networkFiltersFromRequest(r *http.Request) networkViewFilters {
 		status:       q.Get("status"),
 		conflictType: q.Get("conflict_type"),
 		query:        strings.ToLower(strings.TrimSpace(q.Get("q"))),
+		schemaPolicy: strings.TrimSpace(q.Get("schema_policy")),
+		duplicates:   strings.TrimSpace(q.Get("duplicates")),
 	}
 	if idText := q.Get("account_id"); idText != "" {
 		if id, err := strconv.ParseInt(idText, 10, 64); err == nil {
@@ -419,6 +788,124 @@ func networkFiltersFromRequest(r *http.Request) networkViewFilters {
 		}
 	}
 	return filters
+}
+
+func networkObjectFiltersFromRequest(r *http.Request) domain.NetworkObjectFilters {
+	q := r.URL.Query()
+	filters := domain.NetworkObjectFilters{
+		Provider:   q.Get("provider"),
+		Region:     q.Get("region"),
+		ObjectType: q.Get("object_type"),
+		State:      q.Get("state"),
+		Query:      strings.ToLower(strings.TrimSpace(q.Get("q"))),
+	}
+	if idText := q.Get("account_id"); idText != "" {
+		if id, err := strconv.ParseInt(idText, 10, 64); err == nil {
+			filters.AccountID = id
+		}
+	}
+	return filters
+}
+
+func networkRelationshipFiltersFromRequest(r *http.Request) domain.NetworkRelationshipFilters {
+	q := r.URL.Query()
+	return domain.NetworkRelationshipFilters{
+		Type:            q.Get("type"),
+		SourceKind:      q.Get("source_kind"),
+		SourceID:        q.Get("source_id"),
+		TargetKind:      q.Get("target_kind"),
+		TargetID:        q.Get("target_id"),
+		ResolutionState: q.Get("resolution_state"),
+	}
+}
+
+func schemaPolicyFromFilters(filters networkViewFilters) domain.NetworkSchemaPolicy {
+	name := filters.schemaPolicy
+	if name == "" {
+		name = "account_level"
+	}
+	switch name {
+	case "region_level":
+		return domain.NetworkSchemaPolicy{Name: name, OwnershipStrategy: "region", DuplicateScope: "region", HierarchyScope: "region"}
+	case "global":
+		return domain.NetworkSchemaPolicy{Name: name, OwnershipStrategy: "global", DuplicateScope: "global", HierarchyScope: "global"}
+	case "custom", "manual":
+		policy := domain.NetworkSchemaPolicy{Name: name, OwnershipStrategy: "manual", DuplicateScope: "manual", HierarchyScope: "manual", ManualRelationships: true}
+		if filters.duplicates == "global" {
+			policy.DuplicateScope = "global"
+		}
+		return policy
+	default:
+		return domain.NetworkSchemaPolicy{Name: "account_level", OwnershipStrategy: "account", DuplicateScope: "account", HierarchyScope: "account"}
+	}
+}
+
+func duplicatePolicyKey(res domain.DiscoveredResource, policy domain.NetworkSchemaPolicy) string {
+	switch policy.DuplicateScope {
+	case "manual":
+		return ""
+	case "region":
+		return strings.Join([]string{res.CIDR, res.Region}, "|")
+	case "global":
+		return res.CIDR
+	default:
+		return res.CIDR
+	}
+}
+
+func duplicatePolicyConflict(matches []domain.DiscoveredResource, policy domain.NetworkSchemaPolicy) bool {
+	if len(matches) < 2 {
+		return false
+	}
+	switch policy.DuplicateScope {
+	case "manual":
+		return false
+	case "global", "region":
+		return true
+	default:
+		accountsSeen := map[int64]bool{}
+		for _, res := range matches {
+			accountsSeen[res.AccountID] = true
+		}
+		return len(accountsSeen) > 1
+	}
+}
+
+func relationshipsByEntity(relationships []domain.NetworkRelationship) map[string][]domain.NetworkRelationship {
+	out := map[string][]domain.NetworkRelationship{}
+	for _, rel := range relationships {
+		sourceKey := rel.SourceKind + ":" + rel.SourceID
+		targetKey := rel.TargetKind + ":" + rel.TargetID
+		out[sourceKey] = append(out[sourceKey], rel)
+		out[targetKey] = append(out[targetKey], rel)
+	}
+	return out
+}
+
+func attachRelationshipsToConflicts(conflicts []domain.NetworkConflict, relationships []domain.NetworkRelationship) []domain.NetworkConflict {
+	for i := range conflicts {
+		expectedIDs := relationshipIDsForConflict(conflicts[i])
+		for _, rel := range relationships {
+			if rel.TargetKind == "conflict" && rel.TargetID == conflicts[i].ID {
+				conflicts[i].Relationships = append(conflicts[i].Relationships, rel)
+				continue
+			}
+			if _, ok := expectedIDs[rel.ID]; ok {
+				conflicts[i].Relationships = append(conflicts[i].Relationships, rel)
+			}
+		}
+	}
+	return conflicts
+}
+
+func relationshipIDsForConflict(conflict domain.NetworkConflict) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, rel := range relationshipsFromConflict(conflict) {
+		if rel.ID != "" {
+			out[rel.ID] = struct{}{}
+		}
+	}
+	return out
 }
 
 func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkViewFilters) (builtNetworkView, error) {
@@ -444,16 +931,34 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 	if err != nil {
 		return builtNetworkView{}, err
 	}
+	var networkObjects []domain.NetworkObject
+	if ns.networkStore != nil {
+		networkObjects, err = ns.networkStore.ListNetworkObjects(ctx, domain.NetworkObjectFilters{})
+		if err != nil {
+			return builtNetworkView{}, err
+		}
+	}
 	resourceByProvider := make(map[string]domain.DiscoveredResource, len(resources))
 	for _, res := range resources {
 		resourceByProvider[resourceKey(res.AccountID, res.ResourceID)] = res
 	}
 
-	issuesByNode, conflicts := ns.computeNetworkConflicts(resources, pools, accountByID, poolByID, resourceByProvider)
+	issuesByNode, conflicts := ns.computeNetworkConflicts(resources, pools, accountByID, poolByID, resourceByProvider, schemaPolicyFromFilters(filters))
+	ns.persistComputedNetworkRelationships(ctx, conflicts)
 	conflicts = ns.applyStoredConflictResolutions(ctx, conflicts)
-	nodes := make([]domain.NetworkNode, 0, len(pools)+len(resources)+len(accounts))
+	var relationships []domain.NetworkRelationship
+	if ns.networkStore != nil {
+		relationships, err = ns.networkStore.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{})
+		if err != nil {
+			return builtNetworkView{}, err
+		}
+	}
+	relsByEntity := relationshipsByEntity(relationships)
+	conflicts = attachRelationshipsToConflicts(conflicts, relationships)
+	nodes := make([]domain.NetworkNode, 0, len(pools)+len(resources)+len(networkObjects)+len(accounts))
 	for _, pool := range pools {
 		node := networkNodeFromPool(pool, accountByID)
+		node.Relationships = relsByEntity["pool:"+fmt.Sprintf("%d", pool.ID)]
 		if nodeIssues := issuesByNode[node.ID]; len(nodeIssues) > 0 {
 			node.Issues = append(node.Issues, nodeIssues...)
 			node.State = "conflict"
@@ -462,10 +967,16 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 	}
 	for _, res := range resources {
 		node := ns.networkNodeFromResource(res, accountByID, poolByID, resourceByProvider)
+		node.Relationships = relsByEntity["discovered:"+res.ID.String()]
 		if nodeIssues := issuesByNode[node.ID]; len(nodeIssues) > 0 {
 			node.Issues = append(node.Issues, nodeIssues...)
 			node.State = worstNodeState(node.State, nodeIssues)
 		}
+		nodes = append(nodes, node)
+	}
+	for _, obj := range networkObjects {
+		node := networkNodeFromNetworkObject(obj, accountByID)
+		node.Relationships = relsByEntity["network_object:"+fmt.Sprintf("%d", obj.ID)]
 		nodes = append(nodes, node)
 	}
 
@@ -589,7 +1100,41 @@ func (ns *NetworkServer) networkNodeFromResource(res domain.DiscoveredResource, 
 	return node
 }
 
-func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredResource, pools []domain.Pool, accounts map[int64]domain.Account, poolByID map[int64]domain.Pool, resourceByProvider map[string]domain.DiscoveredResource) (map[string][]domain.NetworkIssue, []domain.NetworkConflict) {
+func networkNodeFromNetworkObject(obj domain.NetworkObject, accounts map[int64]domain.Account) domain.NetworkNode {
+	nodeID := networkObjectNodeID(obj.ID)
+	node := domain.NetworkNode{
+		ID:                 nodeID,
+		Kind:               "network_object",
+		ObjectType:         string(obj.ObjectType),
+		Name:               obj.Name,
+		CIDR:               obj.CIDR,
+		IPAddress:          obj.IPAddress,
+		Provider:           obj.Provider,
+		AccountID:          &obj.AccountID,
+		Region:             obj.Region,
+		ProviderResourceID: obj.ProviderResourceID,
+		LinkedPoolID:       obj.PoolID,
+		Source:             "managed",
+		State:              string(obj.State),
+		Evidence:           []string{"managed_network_object=true"},
+	}
+	if account, ok := accounts[obj.AccountID]; ok {
+		node.AccountName = account.Name
+		if node.Provider == "" {
+			node.Provider = account.Provider
+		}
+	}
+	if obj.ParentObjectID != nil {
+		parentID := networkObjectNodeID(*obj.ParentObjectID)
+		node.ParentID = &parentID
+	} else if obj.PoolID != nil {
+		parentID := poolNodeID(*obj.PoolID)
+		node.ParentID = &parentID
+	}
+	return node
+}
+
+func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredResource, pools []domain.Pool, accounts map[int64]domain.Account, poolByID map[int64]domain.Pool, resourceByProvider map[string]domain.DiscoveredResource, policy domain.NetworkSchemaPolicy) (map[string][]domain.NetworkIssue, []domain.NetworkConflict) {
 	issuesByNode := map[string][]domain.NetworkIssue{}
 	var conflicts []domain.NetworkConflict
 	add := func(conflict domain.NetworkConflict) {
@@ -601,10 +1146,12 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 		}
 	}
 
-	resourcesByCIDR := map[string][]domain.DiscoveredResource{}
+	resourcesByDuplicateKey := map[string][]domain.DiscoveredResource{}
 	for _, res := range resources {
 		if res.CIDR != "" {
-			resourcesByCIDR[res.CIDR] = append(resourcesByCIDR[res.CIDR], res)
+			if key := duplicatePolicyKey(res, policy); key != "" {
+				resourcesByDuplicateKey[key] = append(resourcesByDuplicateKey[key], res)
+			}
 		}
 	}
 
@@ -647,7 +1194,7 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 					Regions:           []string{res.Region},
 					ObjectTypes:       []string{string(res.ResourceType)},
 					CIDR:              res.CIDR,
-					Evidence:          []string{"parent_provider_resource_id=" + *res.ParentResourceID},
+					Evidence:          []string{"parent_provider_resource_id=" + *res.ParentResourceID, "policy=" + policy.Name},
 				})
 			} else if res.CIDR != "" && parent.CIDR != "" && !networkCIDRContains(parent.CIDR, res.CIDR) {
 				add(domain.NetworkConflict{
@@ -664,7 +1211,7 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 					Regions:           []string{res.Region},
 					ObjectTypes:       []string{string(res.ResourceType), string(parent.ResourceType)},
 					CIDR:              res.CIDR,
-					Evidence:          []string{fmt.Sprintf("parent_cidr=%s", parent.CIDR)},
+					Evidence:          []string{fmt.Sprintf("parent_cidr=%s", parent.CIDR), "policy=" + policy.Name},
 				})
 			}
 		}
@@ -750,12 +1297,16 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 		}
 	}
 
-	for cidr, matches := range resourcesByCIDR {
+	for duplicateKey, matches := range resourcesByDuplicateKey {
+		if !duplicatePolicyConflict(matches, policy) {
+			continue
+		}
+		cidr := matches[0].CIDR
 		accountsSeen := map[int64]bool{}
 		for _, res := range matches {
 			accountsSeen[res.AccountID] = true
 		}
-		if len(accountsSeen) < 2 {
+		if len(matches) < 2 {
 			continue
 		}
 		nodeIDs := make([]string, 0, len(matches))
@@ -776,8 +1327,9 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 			accountName := accounts[res.AccountID].Name
 			evidence = append(evidence, fmt.Sprintf("%s in %s (%s)", res.ResourceID, firstNonEmpty(accountName, fmt.Sprintf("account %d", res.AccountID)), res.Region))
 		}
+		evidence = append(evidence, "policy="+policy.Name, "duplicate_scope="+policy.DuplicateScope)
 		add(domain.NetworkConflict{
-			ID:                "duplicate-cidr:" + strings.ReplaceAll(cidr, "/", "_"),
+			ID:                "duplicate-cidr:" + policy.DuplicateScope + ":" + strings.NewReplacer("/", "_", "|", ":").Replace(duplicateKey),
 			Type:              "duplicate_cidr",
 			Severity:          "critical",
 			Status:            "open",
@@ -969,6 +1521,113 @@ func (ns *NetworkServer) conflictAfterAction(ctx context.Context, fallback domai
 	fallback.ResolutionState = fallback.Status
 	fallback.ResolutionRequested = action
 	return fallback
+}
+
+func (ns *NetworkServer) persistComputedNetworkRelationships(ctx context.Context, conflicts []domain.NetworkConflict) {
+	if ns.networkStore == nil {
+		return
+	}
+	for _, conflict := range conflicts {
+		for _, rel := range relationshipsFromConflict(conflict) {
+			_, _ = ns.networkStore.UpsertNetworkRelationship(ctx, rel)
+		}
+	}
+}
+
+func relationshipsFromConflict(conflict domain.NetworkConflict) []domain.CreateNetworkRelationship {
+	relationshipType := domain.NetworkRelationshipConflicts
+	switch conflict.Type {
+	case "missing_parent":
+		relationshipType = domain.NetworkRelationshipMissingParent
+	case "duplicate_cidr":
+		relationshipType = domain.NetworkRelationshipDuplicateOf
+	case "unlinked_exact_pool":
+		relationshipType = domain.NetworkRelationshipMatches
+	case "managed_overlap", "linked_pool_mismatch", "outside_pool", "invalid_nesting", "invalid_cidr":
+		relationshipType = domain.NetworkRelationshipConflicts
+	}
+	var rels []domain.CreateNetworkRelationship
+	for _, discoveredID := range conflict.DiscoveredIDs {
+		if len(conflict.PoolIDs) == 0 {
+			rels = append(rels, domain.CreateNetworkRelationship{
+				ID:         relationshipIDForConflict(conflict.ID, "discovered", discoveredID.String(), "conflict", conflict.ID),
+				Type:       relationshipType,
+				SourceKind: "discovered",
+				SourceID:   discoveredID.String(),
+				TargetKind: "conflict",
+				TargetID:   conflict.ID,
+				Confidence: 1,
+				Reason:     conflict.Title,
+				Evidence:   conflict.Evidence,
+			})
+			continue
+		}
+		for _, poolID := range conflict.PoolIDs {
+			rels = append(rels, domain.CreateNetworkRelationship{
+				ID:         relationshipIDForConflict(conflict.ID, "discovered", discoveredID.String(), "pool", fmt.Sprintf("%d", poolID)),
+				Type:       relationshipType,
+				SourceKind: "discovered",
+				SourceID:   discoveredID.String(),
+				TargetKind: "pool",
+				TargetID:   fmt.Sprintf("%d", poolID),
+				Confidence: 1,
+				Reason:     conflict.Title,
+				Evidence:   conflict.Evidence,
+			})
+		}
+	}
+	if conflict.Type == "duplicate_cidr" {
+		for i := 0; i < len(conflict.DiscoveredIDs); i++ {
+			for j := i + 1; j < len(conflict.DiscoveredIDs); j++ {
+				rels = append(rels, domain.CreateNetworkRelationship{
+					ID:         relationshipIDForConflict(conflict.ID, "discovered", conflict.DiscoveredIDs[i].String(), "discovered", conflict.DiscoveredIDs[j].String()),
+					Type:       domain.NetworkRelationshipDuplicateOf,
+					SourceKind: "discovered",
+					SourceID:   conflict.DiscoveredIDs[i].String(),
+					TargetKind: "discovered",
+					TargetID:   conflict.DiscoveredIDs[j].String(),
+					Confidence: 1,
+					Reason:     conflict.Title,
+					Evidence:   conflict.Evidence,
+				})
+			}
+		}
+	}
+	return rels
+}
+
+func relationshipIDForConflict(conflictID, sourceKind, sourceID, targetKind, targetID string) string {
+	raw := strings.Join([]string{"conflict", conflictID, sourceKind, sourceID, targetKind, targetID}, "\x00")
+	sum := sha1.Sum([]byte(raw))
+	return "rel-" + base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func (ns *NetworkServer) persistNetworkConflictActionRelationships(ctx context.Context, action string, conflict domain.NetworkConflict, inputs []domain.CreateNetworkRelationship) []domain.NetworkRelationship {
+	if ns.networkStore == nil {
+		return nil
+	}
+	if len(inputs) == 0 {
+		inputs = []domain.CreateNetworkRelationship{{
+			ID:              relationshipIDForConflict(conflict.ID, "conflict", conflict.ID, "action", action),
+			Type:            domain.NetworkRelationshipConflicts,
+			SourceKind:      "conflict",
+			SourceID:        conflict.ID,
+			TargetKind:      "action",
+			TargetID:        action,
+			Confidence:      1,
+			Reason:          "action=" + action,
+			Evidence:        conflict.Evidence,
+			ResolutionState: conflict.Status,
+		}}
+	}
+	out := make([]domain.NetworkRelationship, 0, len(inputs))
+	for _, in := range inputs {
+		rel, err := ns.networkStore.UpsertNetworkRelationship(ctx, in)
+		if err == nil {
+			out = append(out, rel)
+		}
+	}
+	return out
 }
 
 func validateNetworkConflictLinkAction(conflict domain.NetworkConflict, res domain.DiscoveredResource, pool domain.Pool, req domain.NetworkConflictLinkActionRequest) error {
@@ -1253,6 +1912,8 @@ func driftSeverityFromNetwork(severity string) domain.DriftSeverity {
 func poolNodeID(id int64) string { return fmt.Sprintf("pool:%d", id) }
 
 func resourceNodeID(id uuid.UUID) string { return "discovered:" + id.String() }
+
+func networkObjectNodeID(id int64) string { return fmt.Sprintf("network_object:%d", id) }
 
 func resourceKey(accountID int64, providerResourceID string) string {
 	return fmt.Sprintf("%d:%s", accountID, providerResourceID)

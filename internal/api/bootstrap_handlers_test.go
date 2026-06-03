@@ -26,6 +26,7 @@ func setupDiscoveryTestServer() (*DiscoveryServer, *storage.MemoryStore, *storag
 	discSrv := NewDiscoveryServer(srv, ds, syncSvc, ks)
 	discSrv.RegisterDiscoveryRoutes()
 	networkSrv := NewNetworkServer(srv, st, ds, storage.NewMemoryDriftStore(st))
+	networkSrv.SetNetworkStore(storage.NewMemoryNetworkStore(st))
 	networkSrv.RegisterNetworkRoutes()
 	return discSrv, st, ds, ks
 }

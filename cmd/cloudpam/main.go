@@ -220,6 +220,7 @@ func main() {
 	driftSrv := api.NewDriftServer(srv, driftDetector, driftStore)
 	logger.Info("drift detection subsystem initialized")
 	networkSrv := api.NewNetworkServer(srv, store, discoveryStore, driftStore)
+	networkSrv.SetNetworkStore(selectNetworkStore(logger, store))
 	logger.Info("merged network view subsystem initialized")
 
 	// Initialize settings subsystem

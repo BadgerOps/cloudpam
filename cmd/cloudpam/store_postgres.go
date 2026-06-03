@@ -147,6 +147,14 @@ func selectDriftStore(logger observability.Logger, mainStore storage.Store) stor
 	return storage.NewMemoryDriftStore(storage.NewMemoryStore())
 }
 
+func selectNetworkStore(logger observability.Logger, mainStore storage.Store) storage.NetworkStore {
+	if ns, ok := mainStore.(storage.NetworkStore); ok {
+		return ns
+	}
+	logger.Warn("main store does not implement NetworkStore; using in-memory fallback")
+	return storage.NewMemoryNetworkStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus is a no-op for postgres builds.
 func sqliteStatus(_ string) string { return "" }
 
