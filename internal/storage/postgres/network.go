@@ -42,6 +42,12 @@ func (s *Store) ListNetworkObjects(ctx context.Context, filters domain.NetworkOb
 	if filters.State != "" {
 		where = append(where, "state = "+addArg(filters.State))
 	}
+	if filters.PoolID > 0 {
+		where = append(where, "pool_id = "+addArg(filters.PoolID))
+	}
+	if filters.SourceDiscoveredID != "" {
+		where = append(where, "source_discovered_id = "+addArg(filters.SourceDiscoveredID)+"::uuid")
+	}
 	if filters.Query != "" {
 		q := "%" + strings.ToLower(filters.Query) + "%"
 		where = append(where, fmt.Sprintf("(LOWER(name) LIKE %s OR LOWER(cidr) LIKE %s OR LOWER(ip_address) LIKE %s OR LOWER(provider_resource_id) LIKE %s)", addArg(q), addArg(q), addArg(q), addArg(q)))
@@ -191,6 +197,13 @@ func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.Net
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
+	if len(filters.IDs) > 0 {
+		placeholders := make([]string, 0, len(filters.IDs))
+		for _, id := range filters.IDs {
+			placeholders = append(placeholders, addArg(id))
+		}
+		where = append(where, "id IN ("+strings.Join(placeholders, ", ")+")")
+	}
 	if filters.Type != "" {
 		where = append(where, "type = "+addArg(filters.Type))
 	}
@@ -205,6 +218,11 @@ func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.Net
 	}
 	if filters.TargetID != "" {
 		where = append(where, "target_id = "+addArg(filters.TargetID))
+	}
+	if filters.EntityKind != "" && filters.EntityID != "" {
+		kindArg := addArg(filters.EntityKind)
+		idArg := addArg(filters.EntityID)
+		where = append(where, "((source_kind = "+kindArg+" AND source_id = "+idArg+") OR (target_kind = "+kindArg+" AND target_id = "+idArg+"))")
 	}
 	if filters.ResolutionState != "" {
 		where = append(where, "resolution_state = "+addArg(filters.ResolutionState))

@@ -70,7 +70,12 @@ func TestNetworkObjectsCreateUpdateAndAppearInMergedView(t *testing.T) {
 		t.Fatalf("create account: %v", err)
 	}
 
-	body := fmt.Sprintf(`{"object_type":"vpc","provider":"aws","account_id":%d,"region":"us-east-1","name":"managed-vpc","cidr":"10.60.0.0/16","provider_resource_id":"vpc-managed"}`, account.ID)
+	sourceID := uuid.New()
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "managed-root", CIDR: "10.60.0.0/16", Type: domain.PoolTypeVPC, Status: domain.PoolStatusActive})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	body := fmt.Sprintf(`{"object_type":"vpc","provider":"aws","account_id":%d,"region":"us-east-1","name":"managed-vpc","cidr":"10.60.0.0/16","provider_resource_id":"vpc-managed","pool_id":%d,"source_discovered_id":"%s"}`, account.ID, pool.ID, sourceID)
 	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/objects", body, http.StatusCreated)
 	var obj domain.NetworkObject
 	if err := json.Unmarshal(rr.Body.Bytes(), &obj); err != nil {
@@ -101,6 +106,15 @@ func TestNetworkObjectsCreateUpdateAndAppearInMergedView(t *testing.T) {
 	}
 	if !sawManaged {
 		t.Fatalf("managed network object missing from merged view: %+v", view.Items)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/objects?pool_id=%d&source_discovered_id=%s", pool.ID, sourceID), "", http.StatusOK)
+	var objects domain.NetworkObjectListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &objects); err != nil {
+		t.Fatalf("unmarshal objects: %v", err)
+	}
+	if objects.Total != 1 || objects.Items[0].ID != obj.ID {
+		t.Fatalf("object filters did not return created object: %+v", objects)
 	}
 }
 
@@ -136,6 +150,35 @@ func TestNetworkRelationshipsCreateFilterResolveAndAttachToMergedView(t *testing
 		t.Fatalf("relationship filter returned %+v", rels)
 	}
 
+	otherAccount, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:210987654321", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	otherObjBody := fmt.Sprintf(`{"object_type":"network","provider":"aws","account_id":%d,"name":"dev-net"}`, otherAccount.ID)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/objects", otherObjBody, http.StatusCreated)
+	var otherObj domain.NetworkObject
+	if err := json.Unmarshal(rr.Body.Bytes(), &otherObj); err != nil {
+		t.Fatalf("unmarshal other object: %v", err)
+	}
+	otherRelBody := fmt.Sprintf(`{"id":"rel-other-account","type":"contains","source_kind":"network_object","source_id":"%d","target_kind":"pool","target_id":"99","confidence":0.5}`, otherObj.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", otherRelBody, http.StatusCreated)
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/relationships?account_id=%d&type=contains&source_kind=network_object", account.ID), "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal account-scoped relationships: %v", err)
+	}
+	if rels.Total != 1 || rels.Items[0].ID != "rel-test" {
+		t.Fatalf("account relationship filter returned %+v", rels)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?entity_kind=pool&entity_id=42", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal entity relationships: %v", err)
+	}
+	if rels.Total != 1 || rels.Items[0].ID != "rel-test" {
+		t.Fatalf("entity relationship filter returned %+v", rels)
+	}
+
 	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships/rel-test/resolve", `{"resolution_state":"resolved","reason":"accepted"}`, http.StatusOK)
 	if err := json.Unmarshal(rr.Body.Bytes(), &rel); err != nil {
 		t.Fatalf("unmarshal resolved relationship: %v", err)
@@ -158,6 +201,14 @@ func TestNetworkRelationshipsCreateFilterResolveAndAttachToMergedView(t *testing
 	}
 	if rel.ResolutionState != "ignored" || rel.Reason != "body lookup" {
 		t.Fatalf("body relationship resolution did not persist: %+v", rel)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?id=rel-test&id=tenant%2Fa", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal id-filtered relationships: %v", err)
+	}
+	if rels.Total != 2 {
+		t.Fatalf("multi-id relationship filter returned %+v", rels)
 	}
 
 	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/flat?q=managed-net", "", http.StatusOK)

@@ -82,12 +82,14 @@ type UpdateNetworkObject struct {
 }
 
 type NetworkObjectFilters struct {
-	AccountID  int64
-	Provider   string
-	Region     string
-	ObjectType string
-	State      string
-	Query      string
+	AccountID          int64
+	Provider           string
+	Region             string
+	ObjectType         string
+	State              string
+	PoolID             int64
+	SourceDiscoveredID string
+	Query              string
 }
 
 type NetworkObjectListResponse struct {
@@ -137,11 +139,14 @@ type CreateNetworkRelationship struct {
 }
 
 type NetworkRelationshipFilters struct {
+	IDs             []string
 	Type            string
 	SourceKind      string
 	SourceID        string
 	TargetKind      string
 	TargetID        string
+	EntityKind      string
+	EntityID        string
 	ResolutionState string
 }
 

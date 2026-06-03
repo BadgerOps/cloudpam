@@ -244,6 +244,9 @@ func (ns *NetworkServer) handleNetworkRelationships(w http.ResponseWriter, r *ht
 			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list network relationships failed", err.Error())
 			return
 		}
+		if accountID := relationshipAccountIDFromRequest(r); accountID > 0 {
+			relationships = ns.filterNetworkRelationshipsByAccount(r.Context(), relationships, accountID)
+		}
 		writeJSON(w, http.StatusOK, domain.NetworkRelationshipListResponse{Items: relationships, Total: len(relationships)})
 	case http.MethodPost:
 		var req domain.CreateNetworkRelationship
@@ -834,18 +837,78 @@ func networkObjectFiltersFromRequest(r *http.Request) domain.NetworkObjectFilter
 			filters.AccountID = id
 		}
 	}
+	if idText := q.Get("pool_id"); idText != "" {
+		if id, err := strconv.ParseInt(idText, 10, 64); err == nil {
+			filters.PoolID = id
+		}
+	}
+	if idText := q.Get("source_discovered_id"); idText != "" {
+		if id, err := uuid.Parse(idText); err == nil {
+			filters.SourceDiscoveredID = id.String()
+		}
+	}
 	return filters
 }
 
 func networkRelationshipFiltersFromRequest(r *http.Request) domain.NetworkRelationshipFilters {
 	q := r.URL.Query()
 	return domain.NetworkRelationshipFilters{
+		IDs:             q["id"],
 		Type:            q.Get("type"),
 		SourceKind:      q.Get("source_kind"),
 		SourceID:        q.Get("source_id"),
 		TargetKind:      q.Get("target_kind"),
 		TargetID:        q.Get("target_id"),
+		EntityKind:      q.Get("entity_kind"),
+		EntityID:        q.Get("entity_id"),
 		ResolutionState: q.Get("resolution_state"),
+	}
+}
+
+func relationshipAccountIDFromRequest(r *http.Request) int64 {
+	accountID, _ := strconv.ParseInt(r.URL.Query().Get("account_id"), 10, 64)
+	return accountID
+}
+
+func (ns *NetworkServer) filterNetworkRelationshipsByAccount(ctx context.Context, relationships []domain.NetworkRelationship, accountID int64) []domain.NetworkRelationship {
+	filtered := make([]domain.NetworkRelationship, 0, len(relationships))
+	for _, relationship := range relationships {
+		if ns.relationshipEndpointBelongsToAccount(ctx, relationship.SourceKind, relationship.SourceID, accountID) ||
+			ns.relationshipEndpointBelongsToAccount(ctx, relationship.TargetKind, relationship.TargetID, accountID) {
+			filtered = append(filtered, relationship)
+		}
+	}
+	return filtered
+}
+
+func (ns *NetworkServer) relationshipEndpointBelongsToAccount(ctx context.Context, kind string, id string, accountID int64) bool {
+	switch kind {
+	case "discovered":
+		resourceID, err := uuid.Parse(id)
+		if err != nil {
+			return false
+		}
+		resource, err := ns.discStore.GetDiscoveredResource(ctx, resourceID)
+		return err == nil && resource.AccountID == accountID
+	case "pool":
+		poolID, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return false
+		}
+		pool, found, err := ns.store.GetPool(ctx, poolID)
+		return err == nil && found && pool.AccountID != nil && *pool.AccountID == accountID
+	case "network_object":
+		objectID, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || ns.networkStore == nil {
+			return false
+		}
+		object, found, err := ns.networkStore.GetNetworkObject(ctx, objectID)
+		return err == nil && found && object.AccountID == accountID
+	case "conflict":
+		conflict, err := ns.findNetworkConflict(ctx, id)
+		return err == nil && conflict != nil && containsInt64(conflict.AccountIDs, accountID)
+	default:
+		return false
 	}
 }
 
