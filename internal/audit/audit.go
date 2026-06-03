@@ -62,11 +62,12 @@ const (
 
 // Valid resource types for audit events.
 const (
-	ResourcePool    = "pool"
-	ResourceAccount = "account"
-	ResourceAPIKey  = "api_key"
-	ResourceUser    = "user"
-	ResourceSession = "session"
+	ResourcePool            = "pool"
+	ResourceAccount         = "account"
+	ResourceAPIKey          = "api_key"
+	ResourceUser            = "user"
+	ResourceSession         = "session"
+	ResourceNetworkConflict = "network_conflict"
 )
 
 // Valid actor types.
