@@ -70,7 +70,12 @@ func TestNetworkObjectsCreateUpdateAndAppearInMergedView(t *testing.T) {
 		t.Fatalf("create account: %v", err)
 	}
 
-	body := fmt.Sprintf(`{"object_type":"vpc","provider":"aws","account_id":%d,"region":"us-east-1","name":"managed-vpc","cidr":"10.60.0.0/16","provider_resource_id":"vpc-managed"}`, account.ID)
+	sourceID := uuid.New()
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "managed-root", CIDR: "10.60.0.0/16", Type: domain.PoolTypeVPC, Status: domain.PoolStatusActive})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	body := fmt.Sprintf(`{"object_type":"vpc","provider":"aws","account_id":%d,"region":"us-east-1","name":"managed-vpc","cidr":"10.60.0.0/16","provider_resource_id":"vpc-managed","pool_id":%d,"source_discovered_id":"%s"}`, account.ID, pool.ID, sourceID)
 	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/objects", body, http.StatusCreated)
 	var obj domain.NetworkObject
 	if err := json.Unmarshal(rr.Body.Bytes(), &obj); err != nil {
@@ -101,6 +106,15 @@ func TestNetworkObjectsCreateUpdateAndAppearInMergedView(t *testing.T) {
 	}
 	if !sawManaged {
 		t.Fatalf("managed network object missing from merged view: %+v", view.Items)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/objects?pool_id=%d&source_discovered_id=%s", pool.ID, sourceID), "", http.StatusOK)
+	var objects domain.NetworkObjectListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &objects); err != nil {
+		t.Fatalf("unmarshal objects: %v", err)
+	}
+	if objects.Total != 1 || objects.Items[0].ID != obj.ID {
+		t.Fatalf("object filters did not return created object: %+v", objects)
 	}
 }
 

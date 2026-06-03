@@ -53,6 +53,12 @@ func (m *MemoryNetworkStore) ListNetworkObjects(_ context.Context, filters domai
 		if filters.State != "" && string(obj.State) != filters.State {
 			continue
 		}
+		if filters.PoolID > 0 && (obj.PoolID == nil || *obj.PoolID != filters.PoolID) {
+			continue
+		}
+		if filters.SourceDiscoveredID != "" && (obj.SourceDiscoveredID == nil || obj.SourceDiscoveredID.String() != filters.SourceDiscoveredID) {
+			continue
+		}
 		if filters.Query != "" {
 			q := strings.ToLower(filters.Query)
 			haystack := strings.ToLower(strings.Join([]string{obj.Name, obj.CIDR, obj.IPAddress, obj.ProviderResourceID}, " "))

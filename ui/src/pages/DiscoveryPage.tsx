@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react'
 import {
   RefreshCw,
   Link2,
@@ -18,6 +18,7 @@ import {
   Network,
   Table2,
   GitBranch,
+  ArrowRight,
 } from 'lucide-react'
 import {
   useDiscoveryResources,
@@ -739,8 +740,12 @@ function NetworkTab({
 }) {
   const [mode, setMode] = useState<NetworkMode>('hierarchy')
   const [query, setQuery] = useState('')
+  const [networkProvider, setNetworkProvider] = useState('')
+  const [networkRegion, setNetworkRegion] = useState('')
   const [objectType, setObjectType] = useState('')
   const [objectState, setObjectState] = useState('')
+  const [objectPoolID, setObjectPoolID] = useState('')
+  const [objectSourceDiscoveredID, setObjectSourceDiscoveredID] = useState('')
   const [conflictType, setConflictType] = useState('')
   const [schemaPolicy, setSchemaPolicy] = useState('account_level')
   const [relationshipType, setRelationshipType] = useState('')
@@ -750,6 +755,7 @@ function NetworkTab({
   const [relationshipTargetKind, setRelationshipTargetKind] = useState('')
   const [relationshipTargetID, setRelationshipTargetID] = useState('')
   const [selectedConflict, setSelectedConflict] = useState<NetworkConflict | null>(null)
+  const [pendingJumpNodeID, setPendingJumpNodeID] = useState<string | null>(null)
   const {
     flat,
     hierarchy,
@@ -774,12 +780,16 @@ function NetworkTab({
 
   const filters = useMemo(() => ({
     account_id: selectedAccountId ?? undefined,
+    provider: networkProvider || undefined,
+    region: networkRegion || undefined,
     object_type: objectType || undefined,
     status: objectState || undefined,
+    pool_id: objectPoolID ? Number(objectPoolID) : undefined,
+    source_discovered_id: objectSourceDiscoveredID || undefined,
     conflict_type: conflictType || undefined,
     schema_policy: schemaPolicy,
     q: query || undefined,
-  }), [selectedAccountId, objectType, objectState, conflictType, schemaPolicy, query])
+  }), [selectedAccountId, networkProvider, networkRegion, objectType, objectState, objectPoolID, objectSourceDiscoveredID, conflictType, schemaPolicy, query])
 
   const relationshipFilters = useMemo(() => ({
     account_id: selectedAccountId ?? undefined,
@@ -808,6 +818,22 @@ function NetworkTab({
   useEffect(() => {
     load()
   }, [load])
+
+  const activeItems = mode === 'hierarchy' ? hierarchy?.items : flat?.items
+  const activeTotal = mode === 'hierarchy' ? hierarchy?.total : flat?.total
+  const activeConflictCount = mode === 'hierarchy' ? hierarchy?.conflict_count : flat?.conflict_count
+
+  useEffect(() => {
+    if (!pendingJumpNodeID || (mode !== 'flat' && mode !== 'hierarchy')) return
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(networkNodeElementID(pendingJumpNodeID))
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        setPendingJumpNodeID(null)
+      }
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [mode, activeItems, pendingJumpNodeID])
 
   async function handleResolve(conflict: NetworkConflict, decision: string) {
     try {
@@ -896,9 +922,68 @@ function NetworkTab({
     return previewNetworkImport(accountId, resourceIds, poolId)
   }
 
-  const activeItems = mode === 'hierarchy' ? hierarchy?.items : flat?.items
-  const activeTotal = mode === 'hierarchy' ? hierarchy?.total : flat?.total
-  const activeConflictCount = mode === 'hierarchy' ? hierarchy?.conflict_count : flat?.conflict_count
+  function showConflictInMode(conflict: NetworkConflict, nextMode: Extract<NetworkMode, 'flat' | 'hierarchy'>) {
+    const nodeID = conflict.node_ids?.[0]
+    setMode(nextMode)
+    if (nodeID) {
+      setPendingJumpNodeID(nodeID)
+      return
+    }
+    if (conflict.cidr) setQuery(conflict.cidr)
+  }
+
+  function showRelationshipFilter(filter: {
+    type?: string
+    source_kind?: string
+    source_id?: string
+    target_kind?: string
+    target_id?: string
+  }) {
+    setMode('relationships')
+    setRelationshipType(filter.type || '')
+    setRelationshipSourceKind(filter.source_kind || '')
+    setRelationshipSourceID(filter.source_id || '')
+    setRelationshipTargetKind(filter.target_kind || '')
+    setRelationshipTargetID(filter.target_id || '')
+  }
+
+  function showRelationshipsForConflict(conflict: NetworkConflict) {
+    const relationship = conflict.relationships?.[0]
+    if (relationship) {
+      showRelationshipFilter({
+        type: relationship.type,
+        source_kind: relationship.source_kind,
+        source_id: relationship.source_id,
+        target_kind: relationship.target_kind,
+        target_id: relationship.target_id,
+      })
+      return
+    }
+    const discoveredID = conflict.discovered_ids?.[0]
+    const poolID = conflict.pool_ids?.[0]
+    showRelationshipFilter(discoveredID
+      ? { source_kind: 'discovered', source_id: discoveredID }
+      : poolID
+        ? { target_kind: 'pool', target_id: String(poolID) }
+        : { type: conflict.type })
+  }
+
+  function showRelationshipsForNode(node: NetworkNode) {
+    const poolIDMatch = node.id.match(/^pool:(\d+)$/)
+    const objectIDMatch = node.id.match(/^network-object:(\d+)$/)
+    showRelationshipFilter({
+      source_kind: node.kind === 'pool' ? 'pool' : node.kind,
+      source_id: poolIDMatch?.[1] || objectIDMatch?.[1] || node.discovered_id || node.id,
+    })
+  }
+
+  function showRelationshipsForObject(object: NetworkObject) {
+    showRelationshipFilter({
+      source_kind: 'network_object',
+      source_id: String(object.id),
+    })
+  }
+
   const rowCount = mode === 'conflicts'
     ? conflicts?.total ?? 0
     : mode === 'objects'
@@ -937,6 +1022,22 @@ function NetworkTab({
             <option value="global">Global policy</option>
             <option value="manual">Manual policy</option>
           </select>
+          {(mode === 'objects' || mode === 'hierarchy' || mode === 'flat' || mode === 'conflicts') && (
+            <>
+              <input
+                value={networkProvider}
+                onChange={(e) => setNetworkProvider(e.target.value)}
+                placeholder="Provider"
+                className="w-28 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              />
+              <input
+                value={networkRegion}
+                onChange={(e) => setNetworkRegion(e.target.value)}
+                placeholder="Region"
+                className="w-32 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              />
+            </>
+          )}
           <select
             value={objectType}
             onChange={(e) => setObjectType(e.target.value)}
@@ -953,17 +1054,32 @@ function NetworkTab({
             <option value="network_interface">NIC</option>
           </select>
           {mode === 'objects' && (
-            <select
-              value={objectState}
-              onChange={(e) => setObjectState(e.target.value)}
-              className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
-            >
-              <option value="">All states</option>
-              <option value="managed">Managed</option>
-              <option value="placeholder">Placeholder</option>
-              <option value="imported">Imported</option>
-              <option value="ignored">Ignored</option>
-            </select>
+            <>
+              <select
+                value={objectState}
+                onChange={(e) => setObjectState(e.target.value)}
+                className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              >
+                <option value="">All states</option>
+                <option value="managed">Managed</option>
+                <option value="placeholder">Placeholder</option>
+                <option value="imported">Imported</option>
+                <option value="ignored">Ignored</option>
+              </select>
+              <input
+                value={objectPoolID}
+                onChange={(e) => setObjectPoolID(e.target.value)}
+                placeholder="Pool ID"
+                inputMode="numeric"
+                className="w-28 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              />
+              <input
+                value={objectSourceDiscoveredID}
+                onChange={(e) => setObjectSourceDiscoveredID(e.target.value)}
+                placeholder="Source discovered ID"
+                className="w-44 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              />
+            </>
           )}
           <select
             value={conflictType}
@@ -1067,10 +1183,20 @@ function NetworkTab({
           onImport={handleImportAction}
           onPlaceholderParent={handlePlaceholderParentAction}
           onPreviewImport={handlePreviewImportAction}
+          onViewFlat={(conflict) => showConflictInMode(conflict, 'flat')}
+          onViewHierarchy={(conflict) => showConflictInMode(conflict, 'hierarchy')}
+          onShowRelationships={showRelationshipsForConflict}
           pools={pools}
+          accounts={accounts}
         />
       ) : mode === 'objects' ? (
-        <NetworkObjectTable objects={objects?.items ?? []} loading={loading} accounts={accounts} pools={pools} />
+        <NetworkObjectTable
+          objects={objects?.items ?? []}
+          loading={loading}
+          accounts={accounts}
+          pools={pools}
+          onShowRelationships={showRelationshipsForObject}
+        />
       ) : mode === 'relationships' ? (
         <NetworkRelationshipTable
           relationships={relationships?.items ?? []}
@@ -1078,9 +1204,9 @@ function NetworkTab({
           onResolve={handleResolveRelationship}
         />
       ) : mode === 'flat' ? (
-        <NetworkFlatTable nodes={activeItems ?? []} loading={loading} />
+        <NetworkFlatTable nodes={activeItems ?? []} loading={loading} highlightedNodeID={pendingJumpNodeID} onShowRelationships={showRelationshipsForNode} />
       ) : (
-        <NetworkHierarchy nodes={activeItems ?? []} loading={loading} />
+        <NetworkHierarchy nodes={activeItems ?? []} loading={loading} highlightedNodeID={pendingJumpNodeID} onShowRelationships={showRelationshipsForNode} />
       )}
     </div>
   )
@@ -1106,25 +1232,51 @@ function NetworkModeButton({
   )
 }
 
-function NetworkHierarchy({ nodes, loading }: { nodes: NetworkNode[]; loading: boolean }) {
+function networkNodeElementID(id: string) {
+  return `network-node-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+}
+
+function NetworkHierarchy({
+  nodes,
+  loading,
+  highlightedNodeID,
+  onShowRelationships,
+}: {
+  nodes: NetworkNode[]
+  loading: boolean
+  highlightedNodeID: string | null
+  onShowRelationships: (node: NetworkNode) => void
+}) {
   if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
   if (nodes.length === 0) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">No merged network records found.</div>
   return (
     <div className="rounded border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-800">
       {nodes.map((node) => (
-        <NetworkTreeNode key={node.id} node={node} depth={0} />
+        <NetworkTreeNode key={node.id} node={node} depth={0} highlightedNodeID={highlightedNodeID} onShowRelationships={onShowRelationships} />
       ))}
     </div>
   )
 }
 
-function NetworkTreeNode({ node, depth }: { node: NetworkNode; depth: number }) {
+function NetworkTreeNode({
+  node,
+  depth,
+  highlightedNodeID,
+  onShowRelationships,
+}: {
+  node: NetworkNode
+  depth: number
+  highlightedNodeID: string | null
+  onShowRelationships: (node: NetworkNode) => void
+}) {
   const [expanded, setExpanded] = useState(depth < 2)
   const hasChildren = (node.children?.length ?? 0) > 0
+  const highlighted = highlightedNodeID === node.id
   return (
     <div>
       <div
-        className="flex min-h-10 items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50"
+        id={networkNodeElementID(node.id)}
+        className={`flex min-h-10 items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 ${highlighted ? 'ring-2 ring-blue-500 bg-blue-50 dark:bg-blue-900/20' : ''}`}
         style={{ paddingLeft: `${depth * 18 + 8}px` }}
       >
         {hasChildren ? (
@@ -1148,11 +1300,21 @@ function NetworkTreeNode({ node, depth }: { node: NetworkNode; depth: number }) 
           <NetworkIssueBadges issues={node.issues ?? []} />
           <RelationshipBadges relationships={node.relationships ?? []} />
         </div>
+        {(node.relationships?.length ?? 0) > 0 && (
+          <button
+            type="button"
+            onClick={() => onShowRelationships(node)}
+            className="inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            Relationships
+          </button>
+        )}
       </div>
       {expanded && hasChildren && (
         <div>
           {node.children!.map((child) => (
-            <NetworkTreeNode key={child.id} node={child} depth={depth + 1} />
+            <NetworkTreeNode key={child.id} node={child} depth={depth + 1} highlightedNodeID={highlightedNodeID} onShowRelationships={onShowRelationships} />
           ))}
         </div>
       )}
@@ -1160,7 +1322,17 @@ function NetworkTreeNode({ node, depth }: { node: NetworkNode; depth: number }) 
   )
 }
 
-function NetworkFlatTable({ nodes, loading }: { nodes: NetworkNode[]; loading: boolean }) {
+function NetworkFlatTable({
+  nodes,
+  loading,
+  highlightedNodeID,
+  onShowRelationships,
+}: {
+  nodes: NetworkNode[]
+  loading: boolean
+  highlightedNodeID: string | null
+  onShowRelationships: (node: NetworkNode) => void
+}) {
   if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
   return (
     <div className="overflow-x-auto rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
@@ -1175,16 +1347,21 @@ function NetworkFlatTable({ nodes, loading }: { nodes: NetworkNode[]; loading: b
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">State</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Issues</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Relationships</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Actions</th>
           </tr>
         </thead>
         <tbody>
           {nodes.length === 0 && (
             <tr>
-              <td colSpan={8} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No merged network records found.</td>
+              <td colSpan={9} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No merged network records found.</td>
             </tr>
           )}
           {nodes.map((node) => (
-            <tr key={node.id} className="border-b border-gray-100 last:border-b-0 dark:border-gray-700/50">
+            <tr
+              key={node.id}
+              id={networkNodeElementID(node.id)}
+              className={`border-b border-gray-100 last:border-b-0 dark:border-gray-700/50 ${highlightedNodeID === node.id ? 'bg-blue-50 ring-2 ring-inset ring-blue-500 dark:bg-blue-900/20' : ''}`}
+            >
               <td className="px-3 py-2">
                 <div className="flex items-center gap-2">
                   <NetworkObjectIcon node={node} />
@@ -1201,6 +1378,18 @@ function NetworkFlatTable({ nodes, loading }: { nodes: NetworkNode[]; loading: b
               <td className="px-3 py-2"><StatusBadge label={node.state} /></td>
               <td className="px-3 py-2"><NetworkIssueBadges issues={node.issues ?? []} /></td>
               <td className="px-3 py-2"><RelationshipBadges relationships={node.relationships ?? []} /></td>
+              <td className="px-3 py-2">
+                {(node.relationships?.length ?? 0) > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => onShowRelationships(node)}
+                    className="inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    <GitBranch className="h-3.5 w-3.5" />
+                    Relationships
+                  </button>
+                ) : '-'}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -1214,11 +1403,13 @@ function NetworkObjectTable({
   loading,
   accounts,
   pools,
+  onShowRelationships,
 }: {
   objects: NetworkObject[]
   loading: boolean
   accounts: Account[]
   pools: Pool[]
+  onShowRelationships: (object: NetworkObject) => void
 }) {
   if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
   return (
@@ -1236,12 +1427,13 @@ function NetworkObjectTable({
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Pool</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Source</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Updated</th>
+            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Actions</th>
           </tr>
         </thead>
         <tbody>
           {objects.length === 0 && (
             <tr>
-              <td colSpan={10} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No managed network objects found.</td>
+              <td colSpan={11} className="px-3 py-8 text-center text-gray-500 dark:text-gray-400">No managed network objects found.</td>
             </tr>
           )}
           {objects.map((object) => {
@@ -1262,6 +1454,16 @@ function NetworkObjectTable({
                 <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{pool ? `${pool.name} (${pool.id})` : object.pool_id ?? '-'}</td>
                 <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">{object.source_discovered_id || '-'}</td>
                 <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{formatTimeAgo(object.updated_at)}</td>
+                <td className="px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => onShowRelationships(object)}
+                    className="inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    <GitBranch className="h-3.5 w-3.5" />
+                    Relationships
+                  </button>
+                </td>
               </tr>
             )
           })}
@@ -1409,7 +1611,42 @@ function EntityRef({ kind, id }: { kind: string; id: string }) {
   )
 }
 
-function NetworkActionResultSummary({ result }: { result: NetworkConflictActionResponse }) {
+function ConflictDetailSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="border-t border-gray-100 pt-3 dark:border-gray-700">
+      <div className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">{title}</div>
+      <div className="mt-2 space-y-1">{children}</div>
+    </div>
+  )
+}
+
+function DetailList({ label, values }: { label: string; values: Array<string | number> }) {
+  const filtered = values.filter((value) => value !== '' && value != null).map((value) => String(value))
+  return (
+    <div className="text-xs text-gray-500 dark:text-gray-400">
+      <span className="font-medium text-gray-700 dark:text-gray-300">{label}: </span>
+      {filtered.length > 0 ? (
+        <span className="font-mono">{filtered.join(', ')}</span>
+      ) : (
+        <span>-</span>
+      )}
+    </div>
+  )
+}
+
+function evidenceValues(evidence: string[] | undefined, keys: string[]) {
+  return (evidence ?? []).filter((line) => keys.some((key) => line.startsWith(`${key}=`) || line.includes(`${key}=`)))
+}
+
+function NetworkActionResultSummary({
+  result,
+  onViewFlat,
+  onShowRelationships,
+}: {
+  result: NetworkConflictActionResponse
+  onViewFlat: (conflict: NetworkConflict) => void
+  onShowRelationships: (conflict: NetworkConflict) => void
+}) {
   const relationshipCount = result.relationships?.length ?? 0
   return (
     <div className="mt-3 rounded bg-green-50 p-2 text-xs text-green-800 dark:bg-green-900/20 dark:text-green-300">
@@ -1438,6 +1675,24 @@ function NetworkActionResultSummary({ result }: { result: NetworkConflictActionR
         )}
         <div>{relationshipCount} relationship{relationshipCount === 1 ? '' : 's'} recorded</div>
       </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => onViewFlat(result.conflict)}
+          className="inline-flex items-center gap-1 rounded border border-green-300 px-2 py-1 text-xs text-green-800 hover:bg-green-100 dark:border-green-700 dark:text-green-300 dark:hover:bg-green-900/40"
+        >
+          <ArrowRight className="h-3.5 w-3.5" />
+          View affected row
+        </button>
+        <button
+          type="button"
+          onClick={() => onShowRelationships(result.conflict)}
+          className="inline-flex items-center gap-1 rounded border border-green-300 px-2 py-1 text-xs text-green-800 hover:bg-green-100 dark:border-green-700 dark:text-green-300 dark:hover:bg-green-900/40"
+        >
+          <GitBranch className="h-3.5 w-3.5" />
+          View relationships
+        </button>
+      </div>
     </div>
   )
 }
@@ -1452,7 +1707,11 @@ export function NetworkConflictList({
   onImport,
   onPlaceholderParent,
   onPreviewImport,
+  onViewFlat,
+  onViewHierarchy,
+  onShowRelationships,
   pools,
+  accounts,
 }: {
   conflicts: NetworkConflict[]
   loading: boolean
@@ -1463,7 +1722,11 @@ export function NetworkConflictList({
   onImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined, reason: string, override: boolean) => Promise<NetworkConflictActionResponse>
   onPlaceholderParent: (conflict: NetworkConflict, discoveredId: string, name: string, reason: string) => Promise<NetworkConflictActionResponse>
   onPreviewImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined) => Promise<DiscoveryImportPreviewResponse>
+  onViewFlat: (conflict: NetworkConflict) => void
+  onViewHierarchy: (conflict: NetworkConflict) => void
+  onShowRelationships: (conflict: NetworkConflict) => void
   pools: Pool[]
+  accounts: Account[]
 }) {
   const [actionMode, setActionMode] = useState<'link' | 'import' | 'placeholder_parent' | null>(null)
   const [linkDiscoveredID, setLinkDiscoveredID] = useState('')
@@ -1499,6 +1762,8 @@ export function NetworkConflictList({
   const allPoolOptions = poolOptions.length > 0 ? poolOptions : pools
   const canCreatePlaceholderParent = selected?.type === 'missing_parent' && (selected.discovered_ids?.length ?? 0) > 0
   const isRelinkCandidate = selected?.type === 'alternate_exact_pool'
+  const selectedPools = selected?.pool_ids?.map((id) => pools.find((pool) => pool.id === id) ?? null) ?? []
+  const selectedAccounts = selected?.account_ids?.map((id) => accounts.find((account) => account.id === id) ?? null) ?? []
 
   async function previewImport() {
     if (!selected) return
@@ -1553,7 +1818,11 @@ export function NetworkConflictList({
         {selected ? (
           <div className="space-y-3">
             <div>
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{selected.title}</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{selected.title}</div>
+                <StatusBadge label={selected.status || 'open'} />
+                {selected.resolution_state && <StatusBadge label={selected.resolution_state} />}
+              </div>
               <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">{selected.description}</div>
             </div>
             {selected.recommended_action && (
@@ -1561,12 +1830,71 @@ export function NetworkConflictList({
                 {selected.recommended_action}
               </div>
             )}
-            <div className="space-y-1 text-xs text-gray-500 dark:text-gray-400">
-              {(selected.evidence ?? []).map((line) => (
-                <div key={line}>{line}</div>
-              ))}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onViewFlat(selected)}
+                className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <ArrowRight className="h-3.5 w-3.5" />
+                View in flat
+              </button>
+              <button
+                type="button"
+                onClick={() => onViewHierarchy(selected)}
+                className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <ArrowRight className="h-3.5 w-3.5" />
+                View in hierarchy
+              </button>
+              <button
+                type="button"
+                onClick={() => onShowRelationships(selected)}
+                className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                <GitBranch className="h-3.5 w-3.5" />
+                Show relationships
+              </button>
             </div>
-            <RelationshipBadges relationships={selected.relationships ?? []} />
+            <ConflictDetailSection title="Affected resources">
+              <DetailList label="Discovered" values={selected.discovered_ids ?? []} />
+              <DetailList label="Nodes" values={selected.node_ids ?? []} />
+              <DetailList label="Managed objects" values={evidenceValues(selected.evidence, ['network_object_id', 'object_id', 'placeholder_parent'])} />
+            </ConflictDetailSection>
+            <ConflictDetailSection title="Ownership">
+              <DetailList
+                label="Accounts"
+                values={selectedAccounts.map((account, index) => account ? `${account.name} (${account.id})` : String(selected.account_ids?.[index]))}
+              />
+              <DetailList label="Provider" values={selected.provider ? [selected.provider] : []} />
+              <DetailList label="Regions" values={selected.regions ?? []} />
+              <DetailList label="Object types" values={selected.object_types ?? []} />
+            </ConflictDetailSection>
+            <ConflictDetailSection title="Pools and parent chain">
+              <DetailList
+                label="Pools"
+                values={selectedPools.map((pool, index) => pool ? `${pool.name} (${pool.id}, ${pool.cidr})` : String(selected.pool_ids?.[index]))}
+              />
+              <DetailList label="Parent evidence" values={evidenceValues(selected.evidence, ['parent_resource_id', 'parent_id', 'placeholder_parent'])} />
+            </ConflictDetailSection>
+            <ConflictDetailSection title="CIDR/IP evidence">
+              <DetailList label="Conflict CIDR" values={selected.cidr ? [selected.cidr] : []} />
+              <DetailList label="Evidence" values={selected.evidence ?? []} />
+            </ConflictDetailSection>
+            <ConflictDetailSection title="Relationships">
+              {(selected.relationships ?? []).length > 0 ? (
+                <div className="space-y-1">
+                  {selected.relationships!.map((relationship) => (
+                    <div key={relationship.id} className="rounded bg-gray-50 p-2 text-xs text-gray-600 dark:bg-gray-900/40 dark:text-gray-300">
+                      <div className="font-medium text-gray-800 dark:text-gray-200">{relationship.type.replace(/_/g, ' ')} · {relationship.resolution_state}</div>
+                      <div className="font-mono">{relationship.source_kind}:{relationship.source_id} {'->'} {relationship.target_kind}:{relationship.target_id}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500 dark:text-gray-400">No attached relationships returned.</div>
+              )}
+            </ConflictDetailSection>
             <div className="border-t border-gray-100 pt-3 dark:border-gray-700">
               <div className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Review</div>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -1613,7 +1941,13 @@ export function NetworkConflictList({
                 )}
               </div>
               {actionError && <div className="mt-2 text-xs text-red-600 dark:text-red-400">{actionError}</div>}
-              {actionResult && <NetworkActionResultSummary result={actionResult} />}
+              {actionResult && (
+                <NetworkActionResultSummary
+                  result={actionResult}
+                  onViewFlat={onViewFlat}
+                  onShowRelationships={onShowRelationships}
+                />
+              )}
               {actionMode === 'link' && (
                 <div className="mt-3 space-y-2">
                   {isRelinkCandidate && (

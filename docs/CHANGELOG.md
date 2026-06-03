@@ -12,6 +12,8 @@ patch or minor version entry for every user-facing change.
 
 ### Added
 - Discovery Merged Network now includes managed network object and relationship browsers, request-scoped schema policy controls, relink-oriented alternate exact-pool actions, placeholder-parent action summaries, and inline network action result details.
+- Discovery conflict details now show structured affected resources, ownership, pool and parent evidence, CIDR/IP evidence, attached relationships, current resolution state, and navigation back to affected merged rows or relationship filters.
+- Managed network object browsing now supports provider, region, pool ID, and source discovered resource filters in addition to account, type, state, and search.
 - Network relationship resolution in the UI now uses an explicit per-row Apply action with pending state and inline error handling.
 
 ### Fixed

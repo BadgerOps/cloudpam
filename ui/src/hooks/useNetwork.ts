@@ -20,6 +20,8 @@ export interface NetworkFilters {
   region?: string
   object_type?: string
   status?: string
+  pool_id?: number
+  source_discovered_id?: string
   conflict_type?: string
   schema_policy?: string
   q?: string
@@ -69,6 +71,8 @@ function objectQuery(filters?: NetworkFilters) {
   if (filters?.region) params.set('region', filters.region)
   if (filters?.object_type) params.set('object_type', filters.object_type)
   if (filters?.status) params.set('state', filters.status)
+  if (filters?.pool_id) params.set('pool_id', String(filters.pool_id))
+  if (filters?.source_discovered_id) params.set('source_discovered_id', filters.source_discovered_id)
   if (filters?.q) params.set('q', filters.q)
   const query = params.toString()
   return query ? `?${query}` : ''

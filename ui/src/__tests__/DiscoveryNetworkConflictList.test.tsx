@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { NetworkConflictList } from '../pages/DiscoveryPage'
-import type { DiscoveryImportPreviewResponse, NetworkConflict, NetworkConflictActionResponse, Pool } from '../api/types'
+import type { Account, DiscoveryImportPreviewResponse, NetworkConflict, NetworkConflictActionResponse, Pool } from '../api/types'
 
 const conflict: NetworkConflict = {
   id: 'unlinked-exact-pool:00000000-0000-0000-0000-000000000001:42',
@@ -18,7 +18,27 @@ const conflict: NetworkConflict = {
   cidr: '10.0.0.0/16',
   evidence: ['pool_id=42', 'pool_cidr=10.0.0.0/16'],
   available_decisions: ['skip', 'ignore', 'defer'],
+  relationships: [{
+    id: 'matches/discovered/00000000-0000-0000-0000-000000000001/pool/42',
+    type: 'matches',
+    source_kind: 'discovered',
+    source_id: '00000000-0000-0000-0000-000000000001',
+    target_kind: 'pool',
+    target_id: '42',
+    confidence: 1,
+    resolution_state: 'open',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+  }],
 }
+
+const accounts: Account[] = [{
+  id: 7,
+  key: 'aws:123456789012',
+  name: 'Production AWS',
+  provider: 'aws',
+  created_at: '2026-01-01T00:00:00Z',
+}]
 
 const pools: Pool[] = [
   {
@@ -84,7 +104,11 @@ function renderList(overrides: Partial<ComponentProps<typeof NetworkConflictList
     onImport: vi.fn().mockResolvedValue({ ...actionResponse, action: 'import' }),
     onPlaceholderParent: vi.fn().mockResolvedValue({ ...actionResponse, action: 'create_placeholder_parent' }),
     onPreviewImport: vi.fn().mockResolvedValue(preview),
+    onViewFlat: vi.fn(),
+    onViewHierarchy: vi.fn(),
+    onShowRelationships: vi.fn(),
     pools,
+    accounts,
     ...overrides,
   }
   render(<NetworkConflictList {...props} />)
@@ -101,6 +125,27 @@ describe('NetworkConflictList', () => {
     expect(screen.getByText('Actions')).toBeTruthy()
     expect(screen.getByRole('button', { name: /Link to pool/i })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Import as pool/i })).toBeTruthy()
+  })
+
+  it('renders structured conflict detail sections and context navigation actions', () => {
+    const props = renderList()
+
+    expect(screen.getByText('Affected resources')).toBeTruthy()
+    expect(screen.getAllByText(/00000000-0000-0000-0000-000000000001/).length).toBeGreaterThan(0)
+    expect(screen.getByText('Ownership')).toBeTruthy()
+    expect(screen.getByText(/Production AWS \(7\)/)).toBeTruthy()
+    expect(screen.getByText('Pools and parent chain')).toBeTruthy()
+    expect(screen.getByText(/prod-vpc \(42, 10.0.0.0\/16\)/)).toBeTruthy()
+    expect(screen.getByText('CIDR/IP evidence')).toBeTruthy()
+    expect(screen.getAllByText('Relationships').length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'View in flat' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View in hierarchy' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show relationships' }))
+
+    expect(props.onViewFlat).toHaveBeenCalledWith(conflict)
+    expect(props.onViewHierarchy).toHaveBeenCalledWith(conflict)
+    expect(props.onShowRelationships).toHaveBeenCalledWith(conflict)
   })
 
   it('submits a link action with selected resource, pool, reason, and override', async () => {
@@ -201,5 +246,10 @@ describe('NetworkConflictList', () => {
       expect(screen.getByText('Target pool: 42')).toBeTruthy()
       expect(screen.getByText('1 relationship recorded')).toBeTruthy()
     })
+
+    fireEvent.click(screen.getByRole('button', { name: 'View affected row' }))
+    fireEvent.click(screen.getByRole('button', { name: 'View relationships' }))
+    expect(props.onViewFlat).toHaveBeenCalledWith(relinkConflict)
+    expect(props.onShowRelationships).toHaveBeenCalledWith(relinkConflict)
   })
 })

@@ -43,6 +43,14 @@ func (s *Store) ListNetworkObjects(ctx context.Context, filters domain.NetworkOb
 		where = append(where, "state = ?")
 		args = append(args, filters.State)
 	}
+	if filters.PoolID > 0 {
+		where = append(where, "pool_id = ?")
+		args = append(args, filters.PoolID)
+	}
+	if filters.SourceDiscoveredID != "" {
+		where = append(where, "source_discovered_id = ?")
+		args = append(args, filters.SourceDiscoveredID)
+	}
 	if filters.Query != "" {
 		q := "%" + strings.ToLower(filters.Query) + "%"
 		where = append(where, "(LOWER(name) LIKE ? OR LOWER(cidr) LIKE ? OR LOWER(ip_address) LIKE ? OR LOWER(provider_resource_id) LIKE ?)")

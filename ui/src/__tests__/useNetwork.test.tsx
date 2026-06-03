@@ -42,14 +42,18 @@ describe('useNetworkView', () => {
     await act(async () => {
       await result.current.fetchObjects({
         account_id: 7,
+        provider: 'aws',
+        region: 'us-west-2',
         object_type: 'vpc',
         status: 'placeholder',
+        pool_id: 42,
+        source_discovered_id: '00000000-0000-0000-0000-000000000001',
         q: 'missing',
       })
     })
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/network/objects?account_id=7&object_type=vpc&state=placeholder&q=missing',
+      '/api/v1/network/objects?account_id=7&provider=aws&region=us-west-2&object_type=vpc&state=placeholder&pool_id=42&source_discovered_id=00000000-0000-0000-0000-000000000001&q=missing',
       expect.objectContaining({ credentials: 'same-origin' }),
     )
     await waitFor(() => expect(result.current.objects?.total).toBe(0))

@@ -837,6 +837,16 @@ func networkObjectFiltersFromRequest(r *http.Request) domain.NetworkObjectFilter
 			filters.AccountID = id
 		}
 	}
+	if idText := q.Get("pool_id"); idText != "" {
+		if id, err := strconv.ParseInt(idText, 10, 64); err == nil {
+			filters.PoolID = id
+		}
+	}
+	if idText := q.Get("source_discovered_id"); idText != "" {
+		if id, err := uuid.Parse(idText); err == nil {
+			filters.SourceDiscoveredID = id.String()
+		}
+	}
 	return filters
 }
 

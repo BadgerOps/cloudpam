@@ -1184,6 +1184,8 @@ func networkObjectQueryParams() []openAPIParameter {
 		queryParam("region", "Cloud region", "string"),
 		queryParam("object_type", "Network object type", "string"),
 		queryParam("state", "Network object state", "string"),
+		queryParam("pool_id", "Associated pool ID", "integer"),
+		queryParam("source_discovered_id", "Source discovered resource ID", "string"),
 		queryParam("q", "Search query", "string"),
 	}
 }
