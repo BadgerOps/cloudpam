@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.17.0] - 2026-06-03
+
+### Added
+- Added durable managed network objects and explicit network relationships so VPCs, subnets, EIPs/public IPs, soft links, conflict evidence, placeholder parents, and imported relationships can be stored separately from allocated blocks.
+- Added network object and relationship APIs under `/api/v1/network/objects` and `/api/v1/network/relationships`, plus placeholder-parent conflict action support.
+- Added `POST /api/v1/network/relationships/resolve` so relationship IDs that contain URL path separators can be resolved from the request body while server-generated relationship IDs remain URL-safe.
+- Merged network conflict evaluation now supports schema policy query options for account-level, region-level, global, and manual duplicate handling with policy evidence in conflict responses.
+
 ## [0.16.2] - 2026-06-02
 
 ### Fixed

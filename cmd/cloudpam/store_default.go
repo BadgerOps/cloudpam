@@ -104,6 +104,13 @@ func selectDriftStore(_ observability.Logger, mainStore storage.Store) storage.D
 	return storage.NewMemoryDriftStore(storage.NewMemoryStore())
 }
 
+func selectNetworkStore(_ observability.Logger, mainStore storage.Store) storage.NetworkStore {
+	if ms, ok := mainStore.(*storage.MemoryStore); ok {
+		return storage.NewMemoryNetworkStore(ms)
+	}
+	return storage.NewMemoryNetworkStore(storage.NewMemoryStore())
+}
+
 // sqliteStatus returns schema status string when not built with sqlite tag.
 func sqliteStatus(dsn string) string { return "" }
 

@@ -793,6 +793,21 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 			{http.MethodPost, "/api/v1/network/conflicts/{conflictId}/resolve"},
 			{http.MethodPost, "/api/v1/network/conflicts/{conflictId}/actions/link"},
 			{http.MethodPost, "/api/v1/network/conflicts/{conflictId}/actions/import"},
+			{http.MethodPost, "/api/v1/network/conflicts/{conflictId}/actions/create_placeholder_parent"},
+		})
+	case "/api/v1/network/objects":
+		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/network/objects")
+	case "/api/v1/network/objects/":
+		return routesForKnown([][2]string{
+			{http.MethodGet, "/api/v1/network/objects/{objectId}"},
+			{http.MethodPatch, "/api/v1/network/objects/{objectId}"},
+		})
+	case "/api/v1/network/relationships":
+		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/network/relationships")
+	case "/api/v1/network/relationships/":
+		return routesForKnown([][2]string{
+			{http.MethodPost, "/api/v1/network/relationships/resolve"},
+			{http.MethodPost, "/api/v1/network/relationships/{relationshipId}/resolve"},
 		})
 	case "/api/v1/analysis":
 		return routesForMethodPath(http.MethodPost, "/api/v1/analysis")
@@ -906,16 +921,23 @@ func splitMethodPattern(pattern string) (string, string, bool) {
 	if len(parts) != 2 {
 		return "", "", false
 	}
-	path := normalizeOpenAPIPath(parts[1])
+	rawPath := strings.TrimSpace(parts[1])
+	path := normalizeOpenAPIPath(rawPath)
 	switch path {
 	case "/api/v1/ai/sessions/{id}/apply-plan":
 		path = "/api/v1/ai/sessions/{sessionId}/apply-plan"
+	case "/api/v1/network/objects":
+		if strings.HasSuffix(rawPath, "/") {
+			path = "/api/v1/network/objects/{objectId}"
+		}
 	case "/api/v1/network/conflicts/{id}/resolve":
 		path = "/api/v1/network/conflicts/{conflictId}/resolve"
 	case "/api/v1/network/conflicts/{id}/actions/link":
 		path = "/api/v1/network/conflicts/{conflictId}/actions/link"
 	case "/api/v1/network/conflicts/{id}/actions/import":
 		path = "/api/v1/network/conflicts/{conflictId}/actions/import"
+	case "/api/v1/network/conflicts/{id}/actions/create_placeholder_parent":
+		path = "/api/v1/network/conflicts/{conflictId}/actions/create_placeholder_parent"
 	case "/api/v1/settings/oidc/providers/{id}":
 		path = "/api/v1/settings/oidc/providers/{providerId}"
 	case "/api/v1/settings/oidc/providers/{id}/test":
@@ -1027,6 +1049,15 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "POST", Path: "/api/v1/network/conflicts/{conflictId}/resolve", Summary: "Record passive network conflict decision", Tag: "Network", RequestSchema: "ResolveNetworkConflictRequest", ResponseSchema: "NetworkConflict"},
 		{Method: "POST", Path: "/api/v1/network/conflicts/{conflictId}/actions/link", Summary: "Link network conflict resource to pool", Tag: "Network", RequestSchema: "NetworkConflictLinkActionRequest", ResponseSchema: "NetworkConflictActionResponse"},
 		{Method: "POST", Path: "/api/v1/network/conflicts/{conflictId}/actions/import", Summary: "Import network conflict resources as pools", Tag: "Network", RequestSchema: "NetworkConflictImportActionRequest", ResponseSchema: "NetworkConflictActionResponse"},
+		{Method: "POST", Path: "/api/v1/network/conflicts/{conflictId}/actions/create_placeholder_parent", Summary: "Create placeholder parent network object", Tag: "Network", RequestSchema: "NetworkConflictPlaceholderParentActionRequest", ResponseSchema: "NetworkConflictActionResponse"},
+		{Method: "GET", Path: "/api/v1/network/objects", Summary: "List managed network objects", Tag: "Network", ResponseSchema: "NetworkObjectListResponse", Parameters: networkObjectQueryParams()},
+		{Method: "POST", Path: "/api/v1/network/objects", Summary: "Create managed network object", Tag: "Network", RequestSchema: "CreateNetworkObject", SuccessStatus: "201", ResponseSchema: "NetworkObject"},
+		{Method: "GET", Path: "/api/v1/network/objects/{objectId}", Summary: "Get managed network object", Tag: "Network", ResponseSchema: "NetworkObject"},
+		{Method: "PATCH", Path: "/api/v1/network/objects/{objectId}", Summary: "Update managed network object", Tag: "Network", RequestSchema: "UpdateNetworkObject", ResponseSchema: "NetworkObject"},
+		{Method: "GET", Path: "/api/v1/network/relationships", Summary: "List network relationships", Tag: "Network", ResponseSchema: "NetworkRelationshipListResponse", Parameters: networkRelationshipQueryParams()},
+		{Method: "POST", Path: "/api/v1/network/relationships", Summary: "Create or update network relationship", Tag: "Network", RequestSchema: "CreateNetworkRelationship", SuccessStatus: "201", ResponseSchema: "NetworkRelationship"},
+		{Method: "POST", Path: "/api/v1/network/relationships/resolve", Summary: "Update network relationship resolution state by request body", Tag: "Network", RequestSchema: "ResolveNetworkRelationshipRequest", ResponseSchema: "NetworkRelationship"},
+		{Method: "POST", Path: "/api/v1/network/relationships/{relationshipId}/resolve", Summary: "Update network relationship resolution state", Tag: "Network", RequestSchema: "ResolveNetworkRelationshipRequest", ResponseSchema: "NetworkRelationship"},
 		{Method: "POST", Path: "/api/v1/analysis", Summary: "Run full network analysis", Tag: "Analysis", RequestSchema: "AnalysisRequest", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/analysis/gaps", Summary: "Run gap analysis", Tag: "Analysis", RequestSchema: "GapAnalysisRequest", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/analysis/fragmentation", Summary: "Run fragmentation analysis", Tag: "Analysis", RequestSchema: "AnalysisRequest", ResponseSchema: "Object"},
@@ -1140,7 +1171,31 @@ func networkViewQueryParams() []openAPIParameter {
 		queryParam("object_type", "Network object type", "string"),
 		queryParam("status", "Network object status", "string"),
 		queryParam("conflict_type", "Network conflict type", "string"),
+		queryParam("schema_policy", "Schema policy name", "string"),
+		queryParam("duplicates", "Duplicate handling override", "string"),
 		queryParam("q", "Search query", "string"),
+	}
+}
+
+func networkObjectQueryParams() []openAPIParameter {
+	return []openAPIParameter{
+		queryParam("account_id", "Account ID", "integer"),
+		queryParam("provider", "Cloud provider", "string"),
+		queryParam("region", "Cloud region", "string"),
+		queryParam("object_type", "Network object type", "string"),
+		queryParam("state", "Network object state", "string"),
+		queryParam("q", "Search query", "string"),
+	}
+}
+
+func networkRelationshipQueryParams() []openAPIParameter {
+	return []openAPIParameter{
+		queryParam("type", "Relationship type", "string"),
+		queryParam("source_kind", "Source entity kind", "string"),
+		queryParam("source_id", "Source entity ID", "string"),
+		queryParam("target_kind", "Target entity kind", "string"),
+		queryParam("target_id", "Target entity ID", "string"),
+		queryParam("resolution_state", "Resolution state", "string"),
 	}
 }
 
