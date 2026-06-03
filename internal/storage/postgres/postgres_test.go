@@ -60,6 +60,8 @@ func resetDB(t *testing.T) {
 	// Truncate in dependency order (children before parents)
 	tables := []string{
 		"pool_utilization_cache",
+		"network_relationships",
+		"network_objects",
 		"drift_items",
 		"sync_jobs",
 		"discovered_resources",
@@ -80,8 +82,92 @@ func resetDB(t *testing.T) {
 		}
 	}
 	// Reset sequences on pools and accounts so seq_id starts at 1
+	_, _ = testDB.pool.Exec(ctx, "ALTER SEQUENCE network_objects_id_seq RESTART WITH 1")
 	_, _ = testDB.pool.Exec(ctx, "ALTER SEQUENCE pools_seq_id_seq RESTART WITH 1")
 	_, _ = testDB.pool.Exec(ctx, "ALTER SEQUENCE accounts_seq_id_seq RESTART WITH 1")
+}
+
+func TestNetworkStorePostgresScopesRelationshipsAndObjectRefsByOrganization(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	storeA := testDB.store
+	orgB := "00000000-0000-0000-0000-000000000222"
+	if _, err := testDB.pool.Exec(ctx, `INSERT INTO organizations (id, name, slug, plan)
+		VALUES ($1, 'Other Org', 'other-org', 'free')
+		ON CONFLICT (id) DO NOTHING`, orgB); err != nil {
+		t.Fatalf("create second org: %v", err)
+	}
+	storeB := &Store{pool: testDB.pool, orgID: orgB}
+
+	accountA, err := storeA.CreateAccount(ctx, domain.CreateAccount{Key: "aws:a", Name: "A", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account A: %v", err)
+	}
+	accountB, err := storeB.CreateAccount(ctx, domain.CreateAccount{Key: "aws:b", Name: "B", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account B: %v", err)
+	}
+
+	if _, err := storeA.UpsertNetworkRelationship(ctx, domain.CreateNetworkRelationship{
+		ID:         "shared-id",
+		Type:       domain.NetworkRelationshipContains,
+		SourceKind: "network_object",
+		SourceID:   "1",
+		TargetKind: "pool",
+		TargetID:   "1",
+		Reason:     "org-a",
+	}); err != nil {
+		t.Fatalf("create relationship A: %v", err)
+	}
+	if _, err := storeB.UpsertNetworkRelationship(ctx, domain.CreateNetworkRelationship{
+		ID:         "shared-id",
+		Type:       domain.NetworkRelationshipContains,
+		SourceKind: "network_object",
+		SourceID:   "1",
+		TargetKind: "pool",
+		TargetID:   "1",
+		Reason:     "org-b",
+	}); err != nil {
+		t.Fatalf("create relationship B: %v", err)
+	}
+	relsA, err := storeA.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{})
+	if err != nil {
+		t.Fatalf("list relationships A: %v", err)
+	}
+	relsB, err := storeB.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{})
+	if err != nil {
+		t.Fatalf("list relationships B: %v", err)
+	}
+	if len(relsA) != 1 || relsA[0].Reason != "org-a" {
+		t.Fatalf("relationship A was not isolated: %+v", relsA)
+	}
+	if len(relsB) != 1 || relsB[0].Reason != "org-b" {
+		t.Fatalf("relationship B was not isolated: %+v", relsB)
+	}
+
+	if _, err := storeA.CreateNetworkObject(ctx, domain.CreateNetworkObject{
+		ObjectType: domain.NetworkObjectTypeVPC,
+		AccountID:  accountB.ID,
+		Name:       "cross-org-account",
+	}); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expected cross-org account reference to fail, got %v", err)
+	}
+	objA, err := storeA.CreateNetworkObject(ctx, domain.CreateNetworkObject{
+		ObjectType: domain.NetworkObjectTypeVPC,
+		AccountID:  accountA.ID,
+		Name:       "org-a-vpc",
+	})
+	if err != nil {
+		t.Fatalf("create object A: %v", err)
+	}
+	if _, err := storeB.CreateNetworkObject(ctx, domain.CreateNetworkObject{
+		ObjectType:     domain.NetworkObjectTypeSubnet,
+		AccountID:      accountB.ID,
+		Name:           "cross-org-parent",
+		ParentObjectID: &objA.ID,
+	}); !errors.Is(err, storage.ErrNotFound) {
+		t.Fatalf("expected cross-org parent reference to fail, got %v", err)
+	}
 }
 
 // =============================================================================

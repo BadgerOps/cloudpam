@@ -206,8 +206,15 @@ func TestComputedNetworkRelationshipResolutionSurvivesRecompute(t *testing.T) {
 		LastSeenAt:   now,
 	})
 
-	doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=unlinked_exact_pool", "", http.StatusOK)
-	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?source_kind=discovered&source_id="+vpcID.String(), "", http.StatusOK)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=unlinked_exact_pool", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 || len(conflicts.Items[0].Relationships) == 0 {
+		t.Fatalf("computed relationships missing from first conflict response: %+v", conflicts)
+	}
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?source_kind=discovered&source_id="+vpcID.String(), "", http.StatusOK)
 	var rels domain.NetworkRelationshipListResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
 		t.Fatalf("unmarshal relationships: %v", err)

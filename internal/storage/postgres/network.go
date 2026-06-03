@@ -95,6 +95,9 @@ func (s *Store) CreateNetworkObject(ctx context.Context, in domain.CreateNetwork
 	if state == "" {
 		state = domain.NetworkObjectStateManaged
 	}
+	if err := s.validateNetworkObjectRefs(ctx, in.AccountID, in.ParentObjectID, in.PoolID, in.SourceDiscoveredID); err != nil {
+		return domain.NetworkObject{}, err
+	}
 	metadata, _ := json.Marshal(in.Metadata)
 	if in.Metadata == nil {
 		metadata = []byte("{}")
@@ -157,6 +160,9 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 	}
 	if update.Metadata != nil {
 		obj.Metadata = *update.Metadata
+	}
+	if err := s.validateNetworkObjectRefs(ctx, obj.AccountID, obj.ParentObjectID, obj.PoolID, obj.SourceDiscoveredID); err != nil {
+		return domain.NetworkObject{}, false, err
 	}
 	metadata, _ := json.Marshal(obj.Metadata)
 	if obj.Metadata == nil {
@@ -243,7 +249,7 @@ func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateN
 	_, err := s.pool.Exec(ctx, `INSERT INTO network_relationships
 		(id, organization_id, type, source_kind, source_id, target_kind, target_id, confidence, reason, evidence, resolution_state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13)
-		ON CONFLICT(id) DO UPDATE SET
+		ON CONFLICT(organization_id, id) DO UPDATE SET
 			type = EXCLUDED.type,
 			source_kind = EXCLUDED.source_kind,
 			source_id = EXCLUDED.source_id,
@@ -299,6 +305,41 @@ func generatedNetworkRelationshipID(in domain.CreateNetworkRelationship) string 
 	raw := strings.Join([]string{string(in.Type), in.SourceKind, in.SourceID, in.TargetKind, in.TargetID}, "\x00")
 	sum := sha1.Sum([]byte(raw))
 	return "rel-" + base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func (s *Store) validateNetworkObjectRefs(ctx context.Context, accountID int64, parentObjectID *int64, poolID *int64, sourceDiscoveredID *uuid.UUID) error {
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL)`, accountID, s.orgID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("account not found: %w", storage.ErrNotFound)
+	}
+	if parentObjectID != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM network_objects WHERE id = $1 AND organization_id = $2)`, *parentObjectID, s.orgID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("parent network object not found: %w", storage.ErrNotFound)
+		}
+	}
+	if poolID != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pools WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL)`, *poolID, s.orgID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("pool not found: %w", storage.ErrNotFound)
+		}
+	}
+	if sourceDiscoveredID != nil {
+		if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM discovered_resources WHERE id = $1 AND organization_id = $2)`, *sourceDiscoveredID, s.orgID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return fmt.Errorf("source discovered resource not found: %w", storage.ErrNotFound)
+		}
+	}
+	return nil
 }
 
 func scanPostgresNetworkObject(row pgx.Row) (domain.NetworkObject, error) {

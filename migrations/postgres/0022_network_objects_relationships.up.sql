@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_network_objects_state ON network_objects(state);
 CREATE INDEX IF NOT EXISTS idx_network_objects_pool ON network_objects(pool_id);
 
 CREATE TABLE IF NOT EXISTS network_relationships (
-    id               TEXT PRIMARY KEY,
+    id               TEXT NOT NULL,
     organization_id  UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     type             TEXT NOT NULL,
     source_kind      TEXT NOT NULL,
@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS network_relationships (
     evidence         JSONB NOT NULL DEFAULT '[]',
     resolution_state TEXT NOT NULL DEFAULT 'open',
     created_at       TIMESTAMPTZ NOT NULL,
-    updated_at       TIMESTAMPTZ NOT NULL
+    updated_at       TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (organization_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_network_relationships_org_type ON network_relationships(organization_id, type);

@@ -883,16 +883,38 @@ func relationshipsByEntity(relationships []domain.NetworkRelationship) map[strin
 }
 
 func attachRelationshipsToConflicts(conflicts []domain.NetworkConflict, relationships []domain.NetworkRelationship) []domain.NetworkConflict {
-	byConflictID := map[string][]domain.NetworkRelationship{}
-	for _, rel := range relationships {
-		if rel.TargetKind == "conflict" {
-			byConflictID[rel.TargetID] = append(byConflictID[rel.TargetID], rel)
+	for i := range conflicts {
+		for _, rel := range relationships {
+			if relationshipMatchesConflict(rel, conflicts[i]) {
+				conflicts[i].Relationships = append(conflicts[i].Relationships, rel)
+			}
 		}
 	}
-	for i := range conflicts {
-		conflicts[i].Relationships = append(conflicts[i].Relationships, byConflictID[conflicts[i].ID]...)
-	}
 	return conflicts
+}
+
+func relationshipMatchesConflict(rel domain.NetworkRelationship, conflict domain.NetworkConflict) bool {
+	if rel.TargetKind == "conflict" && rel.TargetID == conflict.ID {
+		return true
+	}
+	matches := func(kind string, id string) bool {
+		switch kind {
+		case "discovered":
+			for _, discoveredID := range conflict.DiscoveredIDs {
+				if id == discoveredID.String() {
+					return true
+				}
+			}
+		case "pool":
+			for _, poolID := range conflict.PoolIDs {
+				if id == fmt.Sprintf("%d", poolID) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return matches(rel.SourceKind, rel.SourceID) || matches(rel.TargetKind, rel.TargetID)
 }
 
 func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkViewFilters) (builtNetworkView, error) {
@@ -919,18 +941,12 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 		return builtNetworkView{}, err
 	}
 	var networkObjects []domain.NetworkObject
-	var relationships []domain.NetworkRelationship
 	if ns.networkStore != nil {
 		networkObjects, err = ns.networkStore.ListNetworkObjects(ctx, domain.NetworkObjectFilters{})
 		if err != nil {
 			return builtNetworkView{}, err
 		}
-		relationships, err = ns.networkStore.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{})
-		if err != nil {
-			return builtNetworkView{}, err
-		}
 	}
-	relsByEntity := relationshipsByEntity(relationships)
 	resourceByProvider := make(map[string]domain.DiscoveredResource, len(resources))
 	for _, res := range resources {
 		resourceByProvider[resourceKey(res.AccountID, res.ResourceID)] = res
@@ -939,6 +955,14 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 	issuesByNode, conflicts := ns.computeNetworkConflicts(resources, pools, accountByID, poolByID, resourceByProvider, schemaPolicyFromFilters(filters))
 	ns.persistComputedNetworkRelationships(ctx, conflicts)
 	conflicts = ns.applyStoredConflictResolutions(ctx, conflicts)
+	var relationships []domain.NetworkRelationship
+	if ns.networkStore != nil {
+		relationships, err = ns.networkStore.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{})
+		if err != nil {
+			return builtNetworkView{}, err
+		}
+	}
+	relsByEntity := relationshipsByEntity(relationships)
 	conflicts = attachRelationshipsToConflicts(conflicts, relationships)
 	nodes := make([]domain.NetworkNode, 0, len(pools)+len(resources)+len(networkObjects)+len(accounts))
 	for _, pool := range pools {
