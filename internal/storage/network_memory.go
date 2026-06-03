@@ -187,7 +187,16 @@ func (m *MemoryNetworkStore) ListNetworkRelationships(_ context.Context, filters
 	defer m.store.mu.RUnlock()
 
 	out := make([]domain.NetworkRelationship, 0, len(m.relationships))
+	ids := map[string]struct{}{}
+	for _, id := range filters.IDs {
+		ids[id] = struct{}{}
+	}
 	for _, rel := range m.relationships {
+		if len(ids) > 0 {
+			if _, ok := ids[rel.ID]; !ok {
+				continue
+			}
+		}
 		if filters.Type != "" && string(rel.Type) != filters.Type {
 			continue
 		}
@@ -201,6 +210,11 @@ func (m *MemoryNetworkStore) ListNetworkRelationships(_ context.Context, filters
 			continue
 		}
 		if filters.TargetID != "" && rel.TargetID != filters.TargetID {
+			continue
+		}
+		if filters.EntityKind != "" && filters.EntityID != "" &&
+			!((rel.SourceKind == filters.EntityKind && rel.SourceID == filters.EntityID) ||
+				(rel.TargetKind == filters.EntityKind && rel.TargetID == filters.EntityID)) {
 			continue
 		}
 		if filters.ResolutionState != "" && rel.ResolutionState != filters.ResolutionState {

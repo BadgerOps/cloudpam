@@ -29,11 +29,14 @@ export interface NetworkFilters {
 
 export interface NetworkRelationshipFilters {
   account_id?: number
+  ids?: string[]
   type?: string
   source_kind?: string
   source_id?: string
   target_kind?: string
   target_id?: string
+  entity_kind?: string
+  entity_id?: string
   resolution_state?: string
 }
 
@@ -54,11 +57,14 @@ function networkQuery(filters?: NetworkFilters) {
 function relationshipQuery(filters?: NetworkRelationshipFilters) {
   const params = new URLSearchParams()
   if (filters?.account_id) params.set('account_id', String(filters.account_id))
+  filters?.ids?.forEach((id) => params.append('id', id))
   if (filters?.type) params.set('type', filters.type)
   if (filters?.source_kind) params.set('source_kind', filters.source_kind)
   if (filters?.source_id) params.set('source_id', filters.source_id)
   if (filters?.target_kind) params.set('target_kind', filters.target_kind)
   if (filters?.target_id) params.set('target_id', filters.target_id)
+  if (filters?.entity_kind) params.set('entity_kind', filters.entity_kind)
+  if (filters?.entity_id) params.set('entity_id', filters.entity_id)
   if (filters?.resolution_state) params.set('resolution_state', filters.resolution_state)
   const query = params.toString()
   return query ? `?${query}` : ''

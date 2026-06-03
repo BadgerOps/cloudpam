@@ -750,10 +750,13 @@ function NetworkTab({
   const [schemaPolicy, setSchemaPolicy] = useState('account_level')
   const [relationshipType, setRelationshipType] = useState('')
   const [relationshipState, setRelationshipState] = useState('')
+  const [relationshipIDs, setRelationshipIDs] = useState<string[]>([])
   const [relationshipSourceKind, setRelationshipSourceKind] = useState('')
   const [relationshipSourceID, setRelationshipSourceID] = useState('')
   const [relationshipTargetKind, setRelationshipTargetKind] = useState('')
   const [relationshipTargetID, setRelationshipTargetID] = useState('')
+  const [relationshipEntityKind, setRelationshipEntityKind] = useState('')
+  const [relationshipEntityID, setRelationshipEntityID] = useState('')
   const [selectedConflict, setSelectedConflict] = useState<NetworkConflict | null>(null)
   const [pendingJumpNodeID, setPendingJumpNodeID] = useState<string | null>(null)
   const {
@@ -793,13 +796,16 @@ function NetworkTab({
 
   const relationshipFilters = useMemo(() => ({
     account_id: selectedAccountId ?? undefined,
+    ids: relationshipIDs.length > 0 ? relationshipIDs : undefined,
     type: relationshipType || undefined,
     source_kind: relationshipSourceKind || undefined,
     source_id: relationshipSourceID || undefined,
     target_kind: relationshipTargetKind || undefined,
     target_id: relationshipTargetID || undefined,
+    entity_kind: relationshipEntityKind || undefined,
+    entity_id: relationshipEntityID || undefined,
     resolution_state: relationshipState || undefined,
-  }), [selectedAccountId, relationshipType, relationshipSourceKind, relationshipSourceID, relationshipTargetKind, relationshipTargetID, relationshipState])
+  }), [selectedAccountId, relationshipIDs, relationshipType, relationshipSourceKind, relationshipSourceID, relationshipTargetKind, relationshipTargetID, relationshipEntityKind, relationshipEntityID, relationshipState])
 
   const load = useCallback(() => {
     if (mode === 'hierarchy') {
@@ -933,54 +939,68 @@ function NetworkTab({
   }
 
   function showRelationshipFilter(filter: {
+    ids?: string[]
     type?: string
     source_kind?: string
     source_id?: string
     target_kind?: string
     target_id?: string
+    entity_kind?: string
+    entity_id?: string
   }) {
     setMode('relationships')
+    setRelationshipIDs(filter.ids ?? [])
+    setRelationshipEntityKind(filter.entity_kind || '')
+    setRelationshipEntityID(filter.entity_id || '')
     setRelationshipType(filter.type || '')
+    setRelationshipState('')
     setRelationshipSourceKind(filter.source_kind || '')
     setRelationshipSourceID(filter.source_id || '')
     setRelationshipTargetKind(filter.target_kind || '')
     setRelationshipTargetID(filter.target_id || '')
+    if (filter.entity_kind && filter.entity_id) {
+      setRelationshipSourceKind('')
+      setRelationshipSourceID('')
+      setRelationshipTargetKind('')
+      setRelationshipTargetID('')
+    }
+    if (filter.ids?.length) {
+      setRelationshipType('')
+      setRelationshipSourceKind('')
+      setRelationshipSourceID('')
+      setRelationshipTargetKind('')
+      setRelationshipTargetID('')
+    }
   }
 
   function showRelationshipsForConflict(conflict: NetworkConflict) {
-    const relationship = conflict.relationships?.[0]
-    if (relationship) {
-      showRelationshipFilter({
-        type: relationship.type,
-        source_kind: relationship.source_kind,
-        source_id: relationship.source_id,
-        target_kind: relationship.target_kind,
-        target_id: relationship.target_id,
-      })
+    const relationshipIDs = (conflict.relationships ?? []).map((relationship) => relationship.id).filter(Boolean)
+    if (relationshipIDs.length > 0) {
+      showRelationshipFilter({ ids: relationshipIDs })
       return
     }
     const discoveredID = conflict.discovered_ids?.[0]
     const poolID = conflict.pool_ids?.[0]
     showRelationshipFilter(discoveredID
-      ? { source_kind: 'discovered', source_id: discoveredID }
+      ? { entity_kind: 'discovered', entity_id: discoveredID }
       : poolID
-        ? { target_kind: 'pool', target_id: String(poolID) }
+        ? { entity_kind: 'pool', entity_id: String(poolID) }
         : { type: conflict.type })
   }
 
   function showRelationshipsForNode(node: NetworkNode) {
     const poolIDMatch = node.id.match(/^pool:(\d+)$/)
-    const objectIDMatch = node.id.match(/^network-object:(\d+)$/)
+    const objectIDMatch = node.id.match(/^network_object:(\d+)$/)
     showRelationshipFilter({
-      source_kind: node.kind === 'pool' ? 'pool' : node.kind,
-      source_id: poolIDMatch?.[1] || objectIDMatch?.[1] || node.discovered_id || node.id,
+      entity_kind: node.kind === 'pool' ? 'pool' : node.kind,
+      entity_id: poolIDMatch?.[1] || objectIDMatch?.[1] || node.discovered_id || node.id,
     })
   }
 
   function showRelationshipsForObject(object: NetworkObject) {
     showRelationshipFilter({
-      source_kind: 'network_object',
-      source_id: String(object.id),
+      entity_kind: 'network_object',
+      entity_id: String(object.id),
     })
   }
 
@@ -1000,7 +1020,16 @@ function NetworkTab({
           <NetworkModeButton active={mode === 'flat'} onClick={() => setMode('flat')} label="Flat" />
           <NetworkModeButton active={mode === 'conflicts'} onClick={() => setMode('conflicts')} label="Conflicts" />
           <NetworkModeButton active={mode === 'objects'} onClick={() => setMode('objects')} label="Objects" />
-          <NetworkModeButton active={mode === 'relationships'} onClick={() => setMode('relationships')} label="Relationships" />
+          <NetworkModeButton
+            active={mode === 'relationships'}
+            onClick={() => {
+              setRelationshipIDs([])
+              setRelationshipEntityKind('')
+              setRelationshipEntityID('')
+              setMode('relationships')
+            }}
+            label="Relationships"
+          />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[220px] flex-1">
@@ -1100,7 +1129,12 @@ function NetworkTab({
             <>
               <select
                 value={relationshipType}
-                onChange={(e) => setRelationshipType(e.target.value)}
+                onChange={(e) => {
+                  setRelationshipIDs([])
+                  setRelationshipEntityKind('')
+                  setRelationshipEntityID('')
+                  setRelationshipType(e.target.value)
+                }}
                 className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               >
                 <option value="">All relationships</option>
@@ -1124,25 +1158,45 @@ function NetworkTab({
               </select>
               <input
                 value={relationshipSourceKind}
-                onChange={(e) => setRelationshipSourceKind(e.target.value)}
+                onChange={(e) => {
+                  setRelationshipIDs([])
+                  setRelationshipEntityKind('')
+                  setRelationshipEntityID('')
+                  setRelationshipSourceKind(e.target.value)
+                }}
                 placeholder="Source kind"
                 className="w-32 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               />
               <input
                 value={relationshipSourceID}
-                onChange={(e) => setRelationshipSourceID(e.target.value)}
+                onChange={(e) => {
+                  setRelationshipIDs([])
+                  setRelationshipEntityKind('')
+                  setRelationshipEntityID('')
+                  setRelationshipSourceID(e.target.value)
+                }}
                 placeholder="Source ID"
                 className="w-36 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               />
               <input
                 value={relationshipTargetKind}
-                onChange={(e) => setRelationshipTargetKind(e.target.value)}
+                onChange={(e) => {
+                  setRelationshipIDs([])
+                  setRelationshipEntityKind('')
+                  setRelationshipEntityID('')
+                  setRelationshipTargetKind(e.target.value)
+                }}
                 placeholder="Target kind"
                 className="w-32 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               />
               <input
                 value={relationshipTargetID}
-                onChange={(e) => setRelationshipTargetID(e.target.value)}
+                onChange={(e) => {
+                  setRelationshipIDs([])
+                  setRelationshipEntityKind('')
+                  setRelationshipEntityID('')
+                  setRelationshipTargetID(e.target.value)
+                }}
                 placeholder="Target ID"
                 className="w-36 rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
               />

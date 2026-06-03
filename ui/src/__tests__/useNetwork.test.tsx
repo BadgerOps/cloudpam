@@ -80,6 +80,27 @@ describe('useNetworkView', () => {
     await waitFor(() => expect(result.current.relationships?.total).toBe(0))
   })
 
+  it('loads network relationships by attached IDs and endpoint entity filters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], total: 0 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { result } = renderHook(() => useNetworkView())
+
+    await act(async () => {
+      await result.current.fetchRelationships({
+        account_id: 7,
+        ids: ['rel-one', 'rel/two'],
+        entity_kind: 'pool',
+        entity_id: '42',
+      })
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/network/relationships?account_id=7&id=rel-one&id=rel%2Ftwo&entity_kind=pool&entity_id=42',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
+    await waitFor(() => expect(result.current.relationships?.total).toBe(0))
+  })
+
   it('resolves relationships through the body-form endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
       id: 'contains/discovered/id/with/slashes',

@@ -205,6 +205,14 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {
 	where := []string{"1=1"}
 	args := []any{}
+	if len(filters.IDs) > 0 {
+		placeholders := make([]string, 0, len(filters.IDs))
+		for _, id := range filters.IDs {
+			placeholders = append(placeholders, "?")
+			args = append(args, id)
+		}
+		where = append(where, "id IN ("+strings.Join(placeholders, ", ")+")")
+	}
 	if filters.Type != "" {
 		where = append(where, "type = ?")
 		args = append(args, filters.Type)
@@ -224,6 +232,10 @@ func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.Net
 	if filters.TargetID != "" {
 		where = append(where, "target_id = ?")
 		args = append(args, filters.TargetID)
+	}
+	if filters.EntityKind != "" && filters.EntityID != "" {
+		where = append(where, "((source_kind = ? AND source_id = ?) OR (target_kind = ? AND target_id = ?))")
+		args = append(args, filters.EntityKind, filters.EntityID, filters.EntityKind, filters.EntityID)
 	}
 	if filters.ResolutionState != "" {
 		where = append(where, "resolution_state = ?")

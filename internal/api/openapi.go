@@ -1194,10 +1194,13 @@ func networkRelationshipQueryParams() []openAPIParameter {
 	return []openAPIParameter{
 		queryParam("account_id", "Account ID", "integer"),
 		queryParam("type", "Relationship type", "string"),
+		queryParam("id", "Relationship ID. Repeat to match multiple IDs.", "string"),
 		queryParam("source_kind", "Source entity kind", "string"),
 		queryParam("source_id", "Source entity ID", "string"),
 		queryParam("target_kind", "Target entity kind", "string"),
 		queryParam("target_id", "Target entity ID", "string"),
+		queryParam("entity_kind", "Endpoint entity kind matched as source or target", "string"),
+		queryParam("entity_id", "Endpoint entity ID matched as source or target", "string"),
 		queryParam("resolution_state", "Resolution state", "string"),
 	}
 }

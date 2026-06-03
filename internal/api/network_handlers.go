@@ -853,11 +853,14 @@ func networkObjectFiltersFromRequest(r *http.Request) domain.NetworkObjectFilter
 func networkRelationshipFiltersFromRequest(r *http.Request) domain.NetworkRelationshipFilters {
 	q := r.URL.Query()
 	return domain.NetworkRelationshipFilters{
+		IDs:             q["id"],
 		Type:            q.Get("type"),
 		SourceKind:      q.Get("source_kind"),
 		SourceID:        q.Get("source_id"),
 		TargetKind:      q.Get("target_kind"),
 		TargetID:        q.Get("target_id"),
+		EntityKind:      q.Get("entity_kind"),
+		EntityID:        q.Get("entity_id"),
 		ResolutionState: q.Get("resolution_state"),
 	}
 }

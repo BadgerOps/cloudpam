@@ -139,11 +139,14 @@ type CreateNetworkRelationship struct {
 }
 
 type NetworkRelationshipFilters struct {
+	IDs             []string
 	Type            string
 	SourceKind      string
 	SourceID        string
 	TargetKind      string
 	TargetID        string
+	EntityKind      string
+	EntityID        string
 	ResolutionState string
 }
 

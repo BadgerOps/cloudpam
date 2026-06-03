@@ -171,6 +171,14 @@ func TestNetworkRelationshipsCreateFilterResolveAndAttachToMergedView(t *testing
 		t.Fatalf("account relationship filter returned %+v", rels)
 	}
 
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?entity_kind=pool&entity_id=42", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal entity relationships: %v", err)
+	}
+	if rels.Total != 1 || rels.Items[0].ID != "rel-test" {
+		t.Fatalf("entity relationship filter returned %+v", rels)
+	}
+
 	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships/rel-test/resolve", `{"resolution_state":"resolved","reason":"accepted"}`, http.StatusOK)
 	if err := json.Unmarshal(rr.Body.Bytes(), &rel); err != nil {
 		t.Fatalf("unmarshal resolved relationship: %v", err)
@@ -193,6 +201,14 @@ func TestNetworkRelationshipsCreateFilterResolveAndAttachToMergedView(t *testing
 	}
 	if rel.ResolutionState != "ignored" || rel.Reason != "body lookup" {
 		t.Fatalf("body relationship resolution did not persist: %+v", rel)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?id=rel-test&id=tenant%2Fa", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal id-filtered relationships: %v", err)
+	}
+	if rels.Total != 2 {
+		t.Fatalf("multi-id relationship filter returned %+v", rels)
 	}
 
 	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/flat?q=managed-net", "", http.StatusOK)
