@@ -782,13 +782,14 @@ function NetworkTab({
   }), [selectedAccountId, objectType, objectState, conflictType, schemaPolicy, query])
 
   const relationshipFilters = useMemo(() => ({
+    account_id: selectedAccountId ?? undefined,
     type: relationshipType || undefined,
     source_kind: relationshipSourceKind || undefined,
     source_id: relationshipSourceID || undefined,
     target_kind: relationshipTargetKind || undefined,
     target_id: relationshipTargetID || undefined,
     resolution_state: relationshipState || undefined,
-  }), [relationshipType, relationshipSourceKind, relationshipSourceID, relationshipTargetKind, relationshipTargetID, relationshipState])
+  }), [selectedAccountId, relationshipType, relationshipSourceKind, relationshipSourceID, relationshipTargetKind, relationshipTargetID, relationshipState])
 
   const load = useCallback(() => {
     if (mode === 'hierarchy') {
@@ -1002,8 +1003,7 @@ function NetworkTab({
               >
                 <option value="">All resolutions</option>
                 <option value="open">Open</option>
-                <option value="accepted">Accepted</option>
-                <option value="rejected">Rejected</option>
+                <option value="resolved">Resolved</option>
                 <option value="ignored">Ignored</option>
               </select>
               <input
@@ -1365,8 +1365,7 @@ export function NetworkRelationshipTable({
                       className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                     >
                       <option value="open">Open</option>
-                      <option value="accepted">Accepted</option>
-                      <option value="rejected">Rejected</option>
+                      <option value="resolved">Resolved</option>
                       <option value="ignored">Ignored</option>
                     </select>
                     <input

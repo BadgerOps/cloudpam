@@ -26,6 +26,7 @@ export interface NetworkFilters {
 }
 
 export interface NetworkRelationshipFilters {
+  account_id?: number
   type?: string
   source_kind?: string
   source_id?: string
@@ -50,6 +51,7 @@ function networkQuery(filters?: NetworkFilters) {
 
 function relationshipQuery(filters?: NetworkRelationshipFilters) {
   const params = new URLSearchParams()
+  if (filters?.account_id) params.set('account_id', String(filters.account_id))
   if (filters?.type) params.set('type', filters.type)
   if (filters?.source_kind) params.set('source_kind', filters.source_kind)
   if (filters?.source_id) params.set('source_id', filters.source_id)

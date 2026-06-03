@@ -55,6 +55,27 @@ describe('useNetworkView', () => {
     await waitFor(() => expect(result.current.objects?.total).toBe(0))
   })
 
+  it('loads network relationships scoped to the selected account', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], total: 0 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { result } = renderHook(() => useNetworkView())
+
+    await act(async () => {
+      await result.current.fetchRelationships({
+        account_id: 7,
+        type: 'matches',
+        source_kind: 'discovered',
+        resolution_state: 'resolved',
+      })
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/network/relationships?account_id=7&type=matches&source_kind=discovered&resolution_state=resolved',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
+    await waitFor(() => expect(result.current.relationships?.total).toBe(0))
+  })
+
   it('resolves relationships through the body-form endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
       id: 'contains/discovered/id/with/slashes',
@@ -64,7 +85,7 @@ describe('useNetworkView', () => {
       target_kind: 'discovered',
       target_id: 'id/with/slashes',
       confidence: 1,
-      resolution_state: 'accepted',
+      resolution_state: 'resolved',
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
     }))
@@ -74,7 +95,7 @@ describe('useNetworkView', () => {
     await act(async () => {
       await result.current.resolveNetworkRelationship({
         id: 'contains/discovered/id/with/slashes',
-        resolution_state: 'accepted',
+        resolution_state: 'resolved',
         reason: 'reviewed',
       })
     })
@@ -85,7 +106,7 @@ describe('useNetworkView', () => {
         method: 'POST',
         body: JSON.stringify({
           id: 'contains/discovered/id/with/slashes',
-          resolution_state: 'accepted',
+          resolution_state: 'resolved',
           reason: 'reviewed',
         }),
       }),

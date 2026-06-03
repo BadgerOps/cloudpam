@@ -1190,6 +1190,7 @@ func networkObjectQueryParams() []openAPIParameter {
 
 func networkRelationshipQueryParams() []openAPIParameter {
 	return []openAPIParameter{
+		queryParam("account_id", "Account ID", "integer"),
 		queryParam("type", "Relationship type", "string"),
 		queryParam("source_kind", "Source entity kind", "string"),
 		queryParam("source_id", "Source entity ID", "string"),

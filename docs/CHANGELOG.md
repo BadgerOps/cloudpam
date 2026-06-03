@@ -14,6 +14,9 @@ patch or minor version entry for every user-facing change.
 - Discovery Merged Network now includes managed network object and relationship browsers, request-scoped schema policy controls, relink-oriented alternate exact-pool actions, placeholder-parent action summaries, and inline network action result details.
 - Network relationship resolution in the UI now uses an explicit per-row Apply action with pending state and inline error handling.
 
+### Fixed
+- Merged Network relationship filters now stay scoped to the selected account and use the backend's `resolved` relationship state vocabulary.
+
 ## [0.17.1] - 2026-06-03
 
 ### Added

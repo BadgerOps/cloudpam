@@ -23,14 +23,14 @@ describe('NetworkRelationshipTable', () => {
     const onResolve = vi.fn().mockResolvedValue(undefined)
     render(<NetworkRelationshipTable relationships={[relationship]} loading={false} onResolve={onResolve} />)
 
-    fireEvent.change(screen.getByLabelText(`Resolution for ${relationship.id}`), { target: { value: 'accepted' } })
+    fireEvent.change(screen.getByLabelText(`Resolution for ${relationship.id}`), { target: { value: 'resolved' } })
     fireEvent.change(screen.getByPlaceholderText('Reason'), { target: { value: 'reviewed relationship' } })
     expect(onResolve).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByLabelText(`Apply relationship ${relationship.id}`))
 
     await waitFor(() => {
-      expect(onResolve).toHaveBeenCalledWith(relationship, 'accepted', 'reviewed relationship')
+      expect(onResolve).toHaveBeenCalledWith(relationship, 'resolved', 'reviewed relationship')
     })
   })
 
@@ -38,7 +38,7 @@ describe('NetworkRelationshipTable', () => {
     const onResolve = vi.fn().mockRejectedValue(new Error('server rejected relationship update'))
     render(<NetworkRelationshipTable relationships={[relationship]} loading={false} onResolve={onResolve} />)
 
-    fireEvent.change(screen.getByLabelText(`Resolution for ${relationship.id}`), { target: { value: 'rejected' } })
+    fireEvent.change(screen.getByLabelText(`Resolution for ${relationship.id}`), { target: { value: 'ignored' } })
     fireEvent.click(screen.getByLabelText(`Apply relationship ${relationship.id}`))
 
     await waitFor(() => {

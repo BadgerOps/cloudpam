@@ -136,6 +136,27 @@ func TestNetworkRelationshipsCreateFilterResolveAndAttachToMergedView(t *testing
 		t.Fatalf("relationship filter returned %+v", rels)
 	}
 
+	otherAccount, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:210987654321", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	otherObjBody := fmt.Sprintf(`{"object_type":"network","provider":"aws","account_id":%d,"name":"dev-net"}`, otherAccount.ID)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/objects", otherObjBody, http.StatusCreated)
+	var otherObj domain.NetworkObject
+	if err := json.Unmarshal(rr.Body.Bytes(), &otherObj); err != nil {
+		t.Fatalf("unmarshal other object: %v", err)
+	}
+	otherRelBody := fmt.Sprintf(`{"id":"rel-other-account","type":"contains","source_kind":"network_object","source_id":"%d","target_kind":"pool","target_id":"99","confidence":0.5}`, otherObj.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", otherRelBody, http.StatusCreated)
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/relationships?account_id=%d&type=contains&source_kind=network_object", account.ID), "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal account-scoped relationships: %v", err)
+	}
+	if rels.Total != 1 || rels.Items[0].ID != "rel-test" {
+		t.Fatalf("account relationship filter returned %+v", rels)
+	}
+
 	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships/rel-test/resolve", `{"resolution_state":"resolved","reason":"accepted"}`, http.StatusOK)
 	if err := json.Unmarshal(rr.Body.Bytes(), &rel); err != nil {
 		t.Fatalf("unmarshal resolved relationship: %v", err)
