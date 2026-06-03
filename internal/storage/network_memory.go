@@ -213,8 +213,8 @@ func (m *MemoryNetworkStore) ListNetworkRelationships(_ context.Context, filters
 			continue
 		}
 		if filters.EntityKind != "" && filters.EntityID != "" &&
-			!((rel.SourceKind == filters.EntityKind && rel.SourceID == filters.EntityID) ||
-				(rel.TargetKind == filters.EntityKind && rel.TargetID == filters.EntityID)) {
+			(rel.SourceKind != filters.EntityKind || rel.SourceID != filters.EntityID) &&
+			(rel.TargetKind != filters.EntityKind || rel.TargetID != filters.EntityID) {
 			continue
 		}
 		if filters.ResolutionState != "" && rel.ResolutionState != filters.ResolutionState {
