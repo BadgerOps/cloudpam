@@ -37,8 +37,11 @@ func CSRFMiddleware() Middleware {
 				return
 			}
 
-			// For state-changing methods: skip CSRF check if using API key auth
-			if authHeader := r.Header.Get("Authorization"); authHeader != "" && strings.HasPrefix(authHeader, "Bearer cpam_") {
+			// For state-changing methods: skip CSRF only for API-key-style requests
+			// that are not also carrying a browser session cookie. Actual API key
+			// validity is enforced later by auth middleware; a forged bearer header
+			// must not disable CSRF for a cookie-authenticated browser request.
+			if authHeader := r.Header.Get("Authorization"); authHeader != "" && strings.HasPrefix(authHeader, "Bearer cpam_") && !hasSessionCookie(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -70,4 +73,9 @@ func generateCSRFToken() string {
 	b := make([]byte, csrfTokenLength)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+func hasSessionCookie(r *http.Request) bool {
+	cookie, err := r.Cookie("session")
+	return err == nil && strings.TrimSpace(cookie.Value) != ""
 }

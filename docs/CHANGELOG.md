@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.17.4] - 2026-06-07
+
+### Security
+- API-key bearer credentials now take precedence over session cookies, preventing a browser session from widening a restricted API key's effective permissions.
+- CSRF protection now still applies to state-changing requests that carry a session cookie, even if they also include a `cpam_` bearer-style Authorization header.
+
 ## [0.17.3] - 2026-06-03
 
 ### Added

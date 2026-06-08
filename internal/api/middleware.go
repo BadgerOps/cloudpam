@@ -588,61 +588,18 @@ func DualAuthMiddleware(
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
 
-			// Strategy 1: Check session cookie
-			if cookie, err := r.Cookie("session"); err == nil && cookie.Value != "" {
-				session, err := sessionStore.Get(ctx, cookie.Value)
-				if err == nil && session != nil && session.IsValid() {
-					// Check if the user's account is still active (cached).
-					isActive, cacheHit := activeCache.check(session.UserID, activeStatusCacheTTL)
-					if !cacheHit {
-						// Cache miss or expired — fetch from DB.
-						user, _ := userStore.GetByID(ctx, session.UserID)
-						if user == nil {
-							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
-							return
-						}
-						isActive = user.IsActive
-						activeCache.set(session.UserID, isActive)
-						if !isActive {
-							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
-							return
-						}
-						ctx = auth.ContextWithSession(ctx, session)
-						ctx = auth.ContextWithRole(ctx, session.Role)
-						ctx = auth.ContextWithUser(ctx, user)
-					} else {
-						if !isActive {
-							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
-							return
-						}
-						ctx = auth.ContextWithSession(ctx, session)
-						ctx = auth.ContextWithRole(ctx, session.Role)
-						if user, _ := userStore.GetByID(ctx, session.UserID); user != nil {
-							ctx = auth.ContextWithUser(ctx, user)
-						}
-					}
-					r = r.WithContext(ctx)
-					next.ServeHTTP(w, r)
-					return
-				}
-			}
-
-			// Strategy 2: Check Authorization header
+			// Strategy 1: Check Authorization header. When a request supplies an API
+			// key and a session cookie, the API key is the active credential so its
+			// scopes cannot be widened by the browser session.
 			authHeader := r.Header.Get("Authorization")
 			if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
-				token := strings.TrimPrefix(authHeader, "Bearer ")
-				token = strings.TrimSpace(token)
+				token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 
 				if strings.HasPrefix(token, "cpam_") {
-					// Strategy 2: API key authentication
 					prefix, err := auth.ParseAPIKeyPrefix(token)
 					if err != nil {
-						if required {
-							logAuthFailure(logger, r, "invalid API key format")
-							writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid API key format"})
-							return
-						}
-						next.ServeHTTP(w, r)
+						logAuthFailure(logger, r, "invalid API key format")
+						writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid API key format"})
 						return
 					}
 
@@ -653,12 +610,8 @@ func DualAuthMiddleware(
 						return
 					}
 					if storedKey == nil {
-						if required {
-							logAuthFailure(logger, r, "API key not found")
-							writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid API key"})
-							return
-						}
-						next.ServeHTTP(w, r)
+						logAuthFailure(logger, r, "API key not found")
+						writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized", Detail: "invalid API key"})
 						return
 					}
 
@@ -695,6 +648,45 @@ func DualAuthMiddleware(
 				if required {
 					logAuthFailure(logger, r, "invalid bearer token format")
 					writeJSON(w, http.StatusUnauthorized, apiError{Error: "invalid bearer token", Detail: "bearer tokens must be API keys (cpam_ prefix)"})
+					return
+				}
+			}
+
+			// Strategy 2: Check session cookie
+			if cookie, err := r.Cookie("session"); err == nil && cookie.Value != "" {
+				session, err := sessionStore.Get(ctx, cookie.Value)
+				if err == nil && session != nil && session.IsValid() {
+					// Check if the user's account is still active (cached).
+					isActive, cacheHit := activeCache.check(session.UserID, activeStatusCacheTTL)
+					if !cacheHit {
+						// Cache miss or expired — fetch from DB.
+						user, _ := userStore.GetByID(ctx, session.UserID)
+						if user == nil {
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
+							return
+						}
+						isActive = user.IsActive
+						activeCache.set(session.UserID, isActive)
+						if !isActive {
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
+							return
+						}
+						ctx = auth.ContextWithSession(ctx, session)
+						ctx = auth.ContextWithRole(ctx, session.Role)
+						ctx = auth.ContextWithUser(ctx, user)
+					} else {
+						if !isActive {
+							writeJSON(w, http.StatusUnauthorized, apiError{Error: "account disabled"})
+							return
+						}
+						ctx = auth.ContextWithSession(ctx, session)
+						ctx = auth.ContextWithRole(ctx, session.Role)
+						if user, _ := userStore.GetByID(ctx, session.UserID); user != nil {
+							ctx = auth.ContextWithUser(ctx, user)
+						}
+					}
+					r = r.WithContext(ctx)
+					next.ServeHTTP(w, r)
 					return
 				}
 			}

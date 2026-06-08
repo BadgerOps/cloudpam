@@ -1837,6 +1837,61 @@ func TestDualAuth_ActiveUserAllowed(t *testing.T) {
 	}
 }
 
+func TestDualAuth_APIKeyTakesPrecedenceOverSessionCookie(t *testing.T) {
+	keyStore := auth.NewMemoryKeyStore()
+	sessionStore := auth.NewMemorySessionStore()
+	userStore := auth.NewMemoryUserStore()
+	ctx := context.Background()
+
+	user := &auth.User{
+		ID:       "u-mixed",
+		Username: "adminuser",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}
+	if err := userStore.Create(ctx, user); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	session := &auth.Session{
+		ID:        "sess-mixed",
+		UserID:    user.ID,
+		Role:      auth.RoleAdmin,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+	}
+	if err := sessionStore.Create(ctx, session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	plaintext, apiKey, err := auth.GenerateAPIKey(auth.GenerateAPIKeyOptions{
+		Name:   "read-only key",
+		Scopes: []string{"pools:read"},
+	})
+	if err != nil {
+		t.Fatalf("failed to generate API key: %v", err)
+	}
+	if err := keyStore.Create(ctx, apiKey); err != nil {
+		t.Fatalf("failed to store API key: %v", err)
+	}
+
+	mw := DualAuthMiddleware(keyStore, sessionStore, userStore, true, newTestLogger())
+	wrapped := mw(RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, newTestLogger())(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("handler should not be called when the API key lacks create scope")
+		}),
+	))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pools", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	req.AddCookie(&http.Cookie{Name: "session", Value: session.ID})
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 from read-only API key despite admin session cookie, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestLoginRateLimitMiddleware_AllowsBelowLimit(t *testing.T) {
 	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
 		AttemptsPerMinute: 5,
