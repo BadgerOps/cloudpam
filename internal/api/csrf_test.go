@@ -123,6 +123,22 @@ func TestCSRFMiddleware_POSTWithAPIKeyBypassesCSRF(t *testing.T) {
 	}
 }
 
+func TestCSRFMiddleware_POSTWithAPIKeyAndSessionRequiresCSRF(t *testing.T) {
+	handler := CSRFMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pools", nil)
+	req.Header.Set("Authorization", "Bearer cpam_forgedkey123abc")
+	req.AddCookie(&http.Cookie{Name: "session", Value: "browser-session"})
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when a bearer header is mixed with a session cookie and no CSRF token, got %d", rr.Code)
+	}
+}
+
 func TestCSRFMiddleware_POSTToLoginBypassesCSRF(t *testing.T) {
 	handler := CSRFMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
