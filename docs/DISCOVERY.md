@@ -152,7 +152,26 @@ curl -X POST http://localhost:8080/api/v1/network/relationships/resolve \
 
 ### Schema Policy
 
-Duplicate and hierarchy evidence can be evaluated with a schema policy:
+Duplicate and hierarchy evidence can be evaluated with a schema policy. If no
+query override is supplied, CloudPAM uses the persisted default from
+`/api/v1/settings/network-schema-policy`; if that setting does not exist, it
+falls back to `account_level`.
+
+Persist the default policy:
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/settings/network-schema-policy \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"global"}'
+```
+
+Read the active persisted default:
+
+```bash
+curl http://localhost:8080/api/v1/settings/network-schema-policy
+```
+
+Override the policy for one request:
 
 ```bash
 curl http://localhost:8080/api/v1/network/conflicts?schema_policy=account_level

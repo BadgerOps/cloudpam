@@ -523,6 +523,7 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"DriftItem", reflect.TypeOf(domain.DriftItem{})},
 		{"IgnoreDriftRequest", reflect.TypeOf(domain.IgnoreDriftRequest{})},
 		{"SecuritySettings", reflect.TypeOf(domain.SecuritySettings{})},
+		{"NetworkSchemaPolicy", reflect.TypeOf(domain.NetworkSchemaPolicy{})},
 		{"LoginRequest", reflect.TypeOf(openAPILoginRequest{})},
 		{"LoginResponse", reflect.TypeOf(openAPILoginResponse{})},
 		{"MeResponse", reflect.TypeOf(openAPIMeResponse{})},
@@ -839,6 +840,8 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 		})
 	case "/api/v1/settings/security":
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPatch}, "/api/v1/settings/security")
+	case "/api/v1/settings/network-schema-policy":
+		return routesForMethodsPath([]string{http.MethodGet, http.MethodPatch}, "/api/v1/settings/network-schema-policy")
 	case "/api/v1/settings/oidc/providers":
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/settings/oidc/providers")
 	case "/api/v1/settings/oidc/providers/{id}":
@@ -1074,6 +1077,8 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "POST", Path: "/api/v1/drift/{driftItemId}/ignore", Summary: "Ignore drift item", Tag: "Drift", RequestSchema: "IgnoreDriftRequest", ResponseSchema: "DriftItem"},
 		{Method: "GET", Path: "/api/v1/settings/security", Summary: "Get security settings", Tag: "Settings", ResponseSchema: "SecuritySettings"},
 		{Method: "PATCH", Path: "/api/v1/settings/security", Summary: "Update security settings", Tag: "Settings", RequestSchema: "SecuritySettings", ResponseSchema: "SecuritySettings"},
+		{Method: "GET", Path: "/api/v1/settings/network-schema-policy", Summary: "Get network schema policy", Tag: "Settings", ResponseSchema: "NetworkSchemaPolicy"},
+		{Method: "PATCH", Path: "/api/v1/settings/network-schema-policy", Summary: "Update network schema policy", Tag: "Settings", RequestSchema: "NetworkSchemaPolicy", ResponseSchema: "NetworkSchemaPolicy"},
 		{Method: "GET", Path: "/api/v1/auth/login", Summary: "Login", Tag: "Auth", Security: false, RequestSchema: "LoginRequest", ResponseSchema: "LoginResponse"},
 		{Method: "POST", Path: "/api/v1/auth/login", Summary: "Login", Tag: "Auth", Security: false, RequestSchema: "LoginRequest", ResponseSchema: "LoginResponse"},
 		{Method: "POST", Path: "/api/v1/auth/logout", Summary: "Logout", Tag: "Auth", ResponseDescription: "Session cleared"},

@@ -147,6 +147,83 @@ func TestSettingsHandler_UpdateValid(t *testing.T) {
 	}
 }
 
+func TestSettingsHandler_GetDefaultNetworkSchemaPolicy(t *testing.T) {
+	mux := setupSettingsServer()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/settings/network-schema-policy", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var policy domain.NetworkSchemaPolicy
+	if err := json.NewDecoder(rr.Body).Decode(&policy); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if policy != domain.DefaultNetworkSchemaPolicy() {
+		t.Fatalf("default policy mismatch: got %+v want %+v", policy, domain.DefaultNetworkSchemaPolicy())
+	}
+}
+
+func TestSettingsHandler_UpdateNetworkSchemaPolicy(t *testing.T) {
+	mux := setupSettingsServer()
+
+	body := `{"name":"manual","duplicate_scope":"global"}`
+	req := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/settings/network-schema-policy", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var policy domain.NetworkSchemaPolicy
+	if err := json.NewDecoder(rr.Body).Decode(&policy); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if policy.Name != "manual" || policy.OwnershipStrategy != "manual" || policy.DuplicateScope != "global" || policy.HierarchyScope != "manual" || !policy.ManualRelationships {
+		t.Fatalf("unexpected policy: %+v", policy)
+	}
+
+	getReq := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/settings/network-schema-policy", nil)
+	getRR := httptest.NewRecorder()
+	mux.ServeHTTP(getRR, getReq)
+	if err := json.NewDecoder(getRR.Body).Decode(&policy); err != nil {
+		t.Fatalf("decode stored policy: %v", err)
+	}
+	if policy.DuplicateScope != "global" {
+		t.Fatalf("stored policy duplicate scope = %q, want global", policy.DuplicateScope)
+	}
+}
+
+func TestSettingsHandler_UpdateNetworkSchemaPolicyRejectsInvalid(t *testing.T) {
+	mux := setupSettingsServer()
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "unknown name", body: `{"name":"workspace"}`},
+		{name: "mismatched duplicate scope", body: `{"name":"region_level","duplicate_scope":"global"}`},
+		{name: "bad manual duplicate scope", body: `{"name":"manual","duplicate_scope":"region"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(stdhttp.MethodPatch, "/api/v1/settings/network-schema-policy", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			if rr.Code != stdhttp.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestSettingsHandler_UpdateInvalidBounds(t *testing.T) {
 	mux := setupSettingsServer()
 

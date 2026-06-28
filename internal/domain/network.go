@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -169,6 +170,74 @@ type NetworkSchemaPolicy struct {
 	ManualRelationships bool   `json:"manual_relationships,omitempty"`
 }
 
+// DefaultNetworkSchemaPolicy returns the conservative merged-network policy.
+func DefaultNetworkSchemaPolicy() NetworkSchemaPolicy {
+	return NetworkSchemaPolicy{Name: "account_level", OwnershipStrategy: "account", DuplicateScope: "account", HierarchyScope: "account"}
+}
+
+// NormalizeNetworkSchemaPolicy fills derived policy fields and falls back to
+// the conservative account-level policy when the name is empty or unknown.
+func NormalizeNetworkSchemaPolicy(policy *NetworkSchemaPolicy) *NetworkSchemaPolicy {
+	if policy == nil {
+		defaults := DefaultNetworkSchemaPolicy()
+		return &defaults
+	}
+	name := strings.ToLower(strings.TrimSpace(policy.Name))
+	switch name {
+	case "region_level":
+		normalized := NetworkSchemaPolicy{Name: name, OwnershipStrategy: "region", DuplicateScope: "region", HierarchyScope: "region"}
+		return &normalized
+	case "global":
+		normalized := NetworkSchemaPolicy{Name: name, OwnershipStrategy: "global", DuplicateScope: "global", HierarchyScope: "global"}
+		return &normalized
+	case "custom", "manual":
+		normalized := NetworkSchemaPolicy{Name: name, OwnershipStrategy: "manual", DuplicateScope: "manual", HierarchyScope: "manual", ManualRelationships: true}
+		if strings.ToLower(strings.TrimSpace(policy.DuplicateScope)) == "global" {
+			normalized.DuplicateScope = "global"
+		}
+		return &normalized
+	default:
+		defaults := DefaultNetworkSchemaPolicy()
+		return &defaults
+	}
+}
+
+// ValidateNetworkSchemaPolicy returns a user-facing validation error, or an
+// empty string when the policy can be persisted.
+func ValidateNetworkSchemaPolicy(policy *NetworkSchemaPolicy) string {
+	if policy == nil {
+		return "policy is required"
+	}
+	name := strings.ToLower(strings.TrimSpace(policy.Name))
+	switch name {
+	case "account_level", "region_level", "global":
+		normalized := NormalizeNetworkSchemaPolicy(policy)
+		if policy.OwnershipStrategy != "" && strings.ToLower(strings.TrimSpace(policy.OwnershipStrategy)) != normalized.OwnershipStrategy {
+			return "ownership_strategy does not match schema policy"
+		}
+		if policy.DuplicateScope != "" && strings.ToLower(strings.TrimSpace(policy.DuplicateScope)) != normalized.DuplicateScope {
+			return "duplicate_scope does not match schema policy"
+		}
+		if policy.HierarchyScope != "" && strings.ToLower(strings.TrimSpace(policy.HierarchyScope)) != normalized.HierarchyScope {
+			return "hierarchy_scope does not match schema policy"
+		}
+	case "custom", "manual":
+		if policy.OwnershipStrategy != "" && strings.ToLower(strings.TrimSpace(policy.OwnershipStrategy)) != "manual" {
+			return "ownership_strategy does not match schema policy"
+		}
+		duplicateScope := strings.ToLower(strings.TrimSpace(policy.DuplicateScope))
+		if duplicateScope != "" && duplicateScope != "manual" && duplicateScope != "global" {
+			return "duplicate_scope for manual policy must be manual or global"
+		}
+		if policy.HierarchyScope != "" && strings.ToLower(strings.TrimSpace(policy.HierarchyScope)) != "manual" {
+			return "hierarchy_scope does not match schema policy"
+		}
+	default:
+		return "schema policy must be account_level, region_level, global, manual, or custom"
+	}
+	return ""
+}
+
 // NetworkIssue describes an actionable issue attached to a merged network row
 // or hierarchy node.
 type NetworkIssue struct {
@@ -230,16 +299,18 @@ type NetworkConflict struct {
 
 // NetworkViewResponse returns the flat or hierarchical merged network view.
 type NetworkViewResponse struct {
-	Items         []NetworkNode     `json:"items"`
-	Total         int               `json:"total"`
-	ConflictCount int               `json:"conflict_count"`
-	Conflicts     []NetworkConflict `json:"conflicts,omitempty"`
+	Items         []NetworkNode       `json:"items"`
+	Total         int                 `json:"total"`
+	ConflictCount int                 `json:"conflict_count"`
+	Conflicts     []NetworkConflict   `json:"conflicts,omitempty"`
+	SchemaPolicy  NetworkSchemaPolicy `json:"schema_policy"`
 }
 
 // NetworkConflictListResponse returns computed network conflicts.
 type NetworkConflictListResponse struct {
-	Items []NetworkConflict `json:"items"`
-	Total int               `json:"total"`
+	Items        []NetworkConflict   `json:"items"`
+	Total        int                 `json:"total"`
+	SchemaPolicy NetworkSchemaPolicy `json:"schema_policy"`
 }
 
 // ResolveNetworkConflictRequest asks the API to resolve or mark a computed
