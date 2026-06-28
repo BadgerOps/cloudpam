@@ -42,6 +42,7 @@ import type {
   AgentStatus,
   DiscoveryImportPreviewResponse,
   DiscoveryImportPreviewItem,
+  DiscoveryImportApplyResponse,
   NetworkNode,
   NetworkConflict,
   NetworkIssue,
@@ -51,6 +52,12 @@ import type {
 } from '../api/types'
 
 type Tab = 'resources' | 'network' | 'sync' | 'agents'
+type NetworkMode = 'hierarchy' | 'flat' | 'conflicts' | 'objects' | 'relationships'
+type NetworkJumpRequest = {
+  mode: NetworkMode
+  query: string
+  token: number
+}
 
 const NETWORK_TRIAGE_GUIDES = [
   {
@@ -131,6 +138,8 @@ export default function DiscoveryPage() {
   const [applyImportLoading, setApplyImportLoading] = useState(false)
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([])
   const [importPreview, setImportPreview] = useState<DiscoveryImportPreviewResponse | null>(null)
+  const [importApplyResult, setImportApplyResult] = useState<DiscoveryImportApplyResponse | null>(null)
+  const [networkJumpRequest, setNetworkJumpRequest] = useState<NetworkJumpRequest | null>(null)
   const [trackedScanJobs, setTrackedScanJobs] = useState<SyncJob[]>([])
   const [linkingResource, setLinkingResource] = useState<DiscoveredResource | null>(null)
   const [linkingLoading, setLinkingLoading] = useState(false)
@@ -180,6 +189,7 @@ export default function DiscoveryPage() {
   useEffect(() => {
     setSelectedResourceIds([])
     setImportPreview(null)
+    setImportApplyResult(null)
   }, [selectedAccountId])
 
   useEffect(() => {
@@ -308,6 +318,7 @@ export default function DiscoveryPage() {
     }
     setImportLoading(true)
     try {
+      setImportApplyResult(null)
       const preview = await previewDiscoveryImport(selectedAccountId, selectedResourceIds)
       setImportPreview(preview)
     } catch (err) {
@@ -319,21 +330,21 @@ export default function DiscoveryPage() {
 
   async function handleApplyImport() {
     if (!selectedAccountId || !importPreview) return
-    const importableIds = importPreview.items
-      .filter((item) => item.status === 'importable')
-      .map((item) => item.resource_id)
+    const previewResourceIds = importPreview.items.map((item) => item.resource_id)
+    const importableIds = importPreview.items.filter((item) => item.status === 'importable')
     if (importableIds.length === 0) {
       showToast('No importable resources in this preview', 'error')
       return
     }
     setApplyImportLoading(true)
     try {
-      const result = await applyDiscoveryImport(selectedAccountId, importableIds)
+      const result = await applyDiscoveryImport(selectedAccountId, previewResourceIds)
       const detail = result.errors.length > 0 ? ` (${result.errors.length} warning${result.errors.length === 1 ? '' : 's'})` : ''
       showToast(
         `Imported ${result.pools_created} pools and linked ${result.resources_linked} resources${detail}`,
         result.errors.length > 0 ? 'info' : 'success',
       )
+      setImportApplyResult(result)
       setImportPreview(null)
       setSelectedResourceIds([])
       fetchPools()
@@ -362,6 +373,13 @@ export default function DiscoveryPage() {
       return
     }
     setSelectedResourceIds((current) => current.filter((id) => !ids.includes(id)))
+  }
+
+  function handleViewImportResultResources(result: DiscoveryImportApplyResponse) {
+    const query = importApplyResultQuery(result)
+    if (!query) return
+    setNetworkJumpRequest({ mode: 'flat', query, token: Date.now() })
+    setTab('network')
   }
 
   async function handleDeleteAgent(agent: DiscoveryAgent) {
@@ -620,45 +638,54 @@ export default function DiscoveryPage() {
       </div>
 
       {tab === 'resources' && (
-        <ResourcesTab
-          resources={filteredResources}
-          loading={resLoading}
-          error={resError}
-          searchQuery={searchQuery}
-          onSearchChange={(query) => {
-            setSearchQuery(query)
-            setResourcePage(1)
-          }}
-          statusFilter={statusFilter}
-          onStatusChange={setStatusFilter}
-          typeFilter={typeFilter}
-          onTypeChange={setTypeFilter}
-          linkedFilter={linkedFilter}
-          onLinkedChange={setLinkedFilter}
-          onLink={handleLink}
-          onUnlink={handleUnlink}
-          accounts={accounts}
-          selectedAccountId={selectedAccountId}
-          pools={pools}
-          selectedResourceIds={selectedResourceIds}
-          onToggleSelection={toggleResourceSelection}
-          onSetVisibleSelection={setVisibleImportableResources}
-          onClearSelection={() => setSelectedResourceIds([])}
-          onBulkLink={handleBulkLink}
-          bulkLinking={bulkLinkingLoading}
-          total={resourcesData?.total ?? filteredResources.length}
-          page={resourcesData?.page ?? resourcePage}
-          pageSize={resourcesData?.page_size ?? resourcePageSize}
-          onPageChange={setResourcePage}
-          onPageSizeChange={(pageSize) => {
-            setResourcePageSize(pageSize)
-            setResourcePage(1)
-          }}
-        />
+        <div className="space-y-4">
+          {importApplyResult && (
+            <ImportApplySummaryPanel
+              result={importApplyResult}
+              onViewAffected={() => handleViewImportResultResources(importApplyResult)}
+              onDismiss={() => setImportApplyResult(null)}
+            />
+          )}
+          <ResourcesTab
+            resources={filteredResources}
+            loading={resLoading}
+            error={resError}
+            searchQuery={searchQuery}
+            onSearchChange={(query) => {
+              setSearchQuery(query)
+              setResourcePage(1)
+            }}
+            statusFilter={statusFilter}
+            onStatusChange={setStatusFilter}
+            typeFilter={typeFilter}
+            onTypeChange={setTypeFilter}
+            linkedFilter={linkedFilter}
+            onLinkedChange={setLinkedFilter}
+            onLink={handleLink}
+            onUnlink={handleUnlink}
+            accounts={accounts}
+            selectedAccountId={selectedAccountId}
+            pools={pools}
+            selectedResourceIds={selectedResourceIds}
+            onToggleSelection={toggleResourceSelection}
+            onSetVisibleSelection={setVisibleImportableResources}
+            onClearSelection={() => setSelectedResourceIds([])}
+            onBulkLink={handleBulkLink}
+            bulkLinking={bulkLinkingLoading}
+            total={resourcesData?.total ?? filteredResources.length}
+            page={resourcesData?.page ?? resourcePage}
+            pageSize={resourcesData?.page_size ?? resourcePageSize}
+            onPageChange={setResourcePage}
+            onPageSizeChange={(pageSize) => {
+              setResourcePageSize(pageSize)
+              setResourcePage(1)
+            }}
+          />
+        </div>
       )}
 
       {tab === 'network' && (
-        <NetworkTab selectedAccountId={selectedAccountId} accounts={accounts} pools={pools} />
+        <NetworkTab selectedAccountId={selectedAccountId} accounts={accounts} pools={pools} jumpRequest={networkJumpRequest} />
       )}
 
       {tab === 'sync' && (
@@ -750,16 +777,16 @@ const DEFAULT_RESOURCE_COLUMNS: ResourceColumnKey[] = [
   'last_seen',
 ]
 
-type NetworkMode = 'hierarchy' | 'flat' | 'conflicts' | 'objects' | 'relationships'
-
 function NetworkTab({
   selectedAccountId,
   accounts,
   pools,
+  jumpRequest,
 }: {
   selectedAccountId: number | null
   accounts: Account[]
   pools: Pool[]
+  jumpRequest?: NetworkJumpRequest | null
 }) {
   const [mode, setMode] = useState<NetworkMode>('hierarchy')
   const [query, setQuery] = useState('')
@@ -847,6 +874,12 @@ function NetworkTab({
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    if (!jumpRequest) return
+    setMode(jumpRequest.mode)
+    setQuery(jumpRequest.query)
+  }, [jumpRequest])
 
   const activeItems = mode === 'hierarchy' ? hierarchy?.items : flat?.items
   const activeTotal = mode === 'hierarchy' ? hierarchy?.total : flat?.total
@@ -1785,6 +1818,133 @@ function DetailList({ label, values }: { label: string; values: Array<string | n
 
 function evidenceValues(evidence: string[] | undefined, keys: string[]) {
   return (evidence ?? []).filter((line) => keys.some((key) => line.startsWith(`${key}=`) || line.includes(`${key}=`)))
+}
+
+export function importApplyResultQuery(result: DiscoveryImportApplyResponse) {
+  const affected = new Set(result.summary.affected_resource_ids ?? result.linked_resource_ids ?? [])
+  const affectedItem = result.preview.items.find((item) => affected.has(item.resource_id))
+  const fallbackItem = result.preview.items.find((item) => item.status === 'importable') ?? result.preview.items[0]
+  const item = affectedItem ?? fallbackItem
+  if (item?.provider_resource_id) return item.provider_resource_id
+  if (item?.name) return item.name
+  if (item?.cidr) return item.cidr
+  const createdPoolID = result.summary.created_pool_ids?.[0] ?? result.created_pool_ids?.[0]
+  return createdPoolID ? String(createdPoolID) : ''
+}
+
+export function ImportApplySummaryPanel({
+  result,
+  onViewAffected,
+  onDismiss,
+}: {
+  result: DiscoveryImportApplyResponse
+  onViewAffected?: () => void
+  onDismiss?: () => void
+}) {
+  const summary = result.summary
+  const canViewAffected = importApplyResultQuery(result) !== ''
+  const countCards = [
+    { label: 'Imported', value: summary.imported },
+    { label: 'Linked-only', value: summary.linked_only },
+    { label: 'Skipped', value: summary.skipped },
+    { label: 'Blocked', value: summary.blocked },
+    { label: 'Conflicts', value: summary.conflicts },
+    { label: 'Created records', value: summary.created_records },
+    { label: 'Linked records', value: summary.linked_records },
+  ]
+
+  return (
+    <section className="rounded border border-green-200 bg-green-50 p-4 text-sm dark:border-green-800 dark:bg-green-900/20">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-green-950 dark:text-green-100">Import apply summary</h2>
+          <p className="mt-1 text-xs text-green-800 dark:text-green-300">
+            {summary.created_records} records created, {summary.linked_records} records linked, {summary.skipped} skipped
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {onViewAffected && (
+            <button
+              type="button"
+              onClick={onViewAffected}
+              disabled={!canViewAffected}
+              className="inline-flex items-center gap-1 rounded border border-green-300 px-2.5 py-1.5 text-xs font-medium text-green-900 hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-green-700 dark:text-green-200 dark:hover:bg-green-900/40"
+            >
+              <ArrowRight className="h-3.5 w-3.5" />
+              View affected resources
+            </button>
+          )}
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="rounded p-1.5 text-green-700 hover:bg-green-100 hover:text-green-950 dark:text-green-300 dark:hover:bg-green-900/40 dark:hover:text-green-100"
+              title="Dismiss summary"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
+        {countCards.map((card) => (
+          <div key={card.label} className="rounded border border-green-200 bg-white px-3 py-2 dark:border-green-800 dark:bg-gray-900">
+            <div className="text-lg font-semibold text-gray-900 dark:text-gray-100">{card.value}</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">{card.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {result.errors.length > 0 && (
+        <div className="mt-3 rounded border border-yellow-200 bg-yellow-50 p-2 text-xs text-yellow-900 dark:border-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
+          {result.errors.length} warning{result.errors.length === 1 ? '' : 's'} while applying import
+        </div>
+      )}
+
+      <div className="mt-3 overflow-hidden rounded border border-green-200 bg-white dark:border-green-800 dark:bg-gray-900">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-green-100 bg-green-100/60 text-left dark:border-green-800 dark:bg-green-900/30">
+              <th className="px-3 py-2 font-medium text-green-950 dark:text-green-100">Resource</th>
+              <th className="px-3 py-2 font-medium text-green-950 dark:text-green-100">Outcome</th>
+              <th className="px-3 py-2 font-medium text-green-950 dark:text-green-100">Action</th>
+              <th className="px-3 py-2 font-medium text-green-950 dark:text-green-100">Issues</th>
+            </tr>
+          </thead>
+          <tbody>
+            {result.preview.items.map((item) => (
+              <tr key={item.resource_id} className="border-b border-green-50 last:border-b-0 dark:border-green-900/40">
+                <td className="px-3 py-2">
+                  <div className="font-medium text-gray-900 dark:text-gray-100">{item.name || item.provider_resource_id || item.resource_id}</div>
+                  {item.provider_resource_id && item.name && (
+                    <div className="font-mono text-[11px] text-gray-500 dark:text-gray-400">{item.provider_resource_id}</div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{importApplyItemOutcome(result, item)}</td>
+                <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{importActionLabel(item)}</td>
+                <td className="px-3 py-2 text-gray-500 dark:text-gray-400">{item.issues.length > 0 ? item.issues.join(', ') : '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
+function importApplyItemOutcome(result: DiscoveryImportApplyResponse, item: DiscoveryImportPreviewItem) {
+  const affected = new Set(result.summary.affected_resource_ids ?? result.linked_resource_ids ?? [])
+  if (affected.has(item.resource_id)) {
+    if (item.proposed_action === 'link_pool') return 'Linked existing pool'
+    return 'Imported'
+  }
+  if (item.status === 'conflict') return 'Conflict'
+  if (item.status === 'blocked') return 'Blocked'
+  if (item.status === 'linked_only') return 'Skipped link-only object'
+  if (item.status === 'already_linked') return 'Already linked'
+  if (item.status === 'not_found') return 'Not found'
+  return 'Skipped'
 }
 
 function NetworkActionResultSummary({

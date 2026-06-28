@@ -526,10 +526,25 @@ export interface DiscoveryImportPreviewResponse {
 
 export interface DiscoveryImportApplyResponse {
   preview: DiscoveryImportPreviewResponse
+  summary: DiscoveryImportApplySummary
   pools_created: number
   resources_linked: number
   skipped: number
   errors: string[]
+  created_pool_ids?: number[]
+  linked_resource_ids?: string[]
+}
+
+export interface DiscoveryImportApplySummary {
+  imported: number
+  linked_only: number
+  skipped: number
+  blocked: number
+  conflicts: number
+  created_records: number
+  linked_records: number
+  affected_resource_ids?: string[]
+  created_pool_ids?: number[]
 }
 
 export interface NetworkIssue {

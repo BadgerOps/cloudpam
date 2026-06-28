@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import type { Account, DiscoveredResource, Pool } from '../api/types'
-import { ResourcesTab } from '../pages/DiscoveryPage'
+import type { Account, DiscoveredResource, DiscoveryImportApplyResponse, Pool } from '../api/types'
+import { ImportApplySummaryPanel, ResourcesTab, importApplyResultQuery } from '../pages/DiscoveryPage'
 
 const resources: DiscoveredResource[] = [
   {
@@ -234,5 +234,99 @@ describe('ResourcesTab', () => {
 
     expect(onPageChange).toHaveBeenCalledWith(3)
     expect(onPageSizeChange).toHaveBeenCalledWith(100)
+  })
+})
+
+describe('ImportApplySummaryPanel', () => {
+  const applyResult: DiscoveryImportApplyResponse = {
+    pools_created: 1,
+    resources_linked: 2,
+    skipped: 2,
+    errors: ['resource warning'],
+    created_pool_ids: [101],
+    linked_resource_ids: ['resource-imported', 'resource-linked'],
+    summary: {
+      imported: 1,
+      linked_only: 1,
+      skipped: 2,
+      blocked: 1,
+      conflicts: 1,
+      created_records: 1,
+      linked_records: 2,
+      affected_resource_ids: ['resource-imported', 'resource-linked'],
+      created_pool_ids: [101],
+    },
+    preview: {
+      importable: 2,
+      blocked: 1,
+      linked_only: 1,
+      already_linked: 0,
+      conflict_count: 1,
+      items: [
+        {
+          resource_id: 'resource-imported',
+          provider_resource_id: 'vpc-imported',
+          name: 'imported-vpc',
+          resource_type: 'vpc',
+          cidr: '10.70.0.0/16',
+          status: 'importable',
+          proposed_action: 'create_pool',
+          issues: [],
+        },
+        {
+          resource_id: 'resource-linked',
+          provider_resource_id: 'vpc-linked',
+          name: 'linked-vpc',
+          resource_type: 'vpc',
+          cidr: '10.71.0.0/16',
+          status: 'importable',
+          proposed_action: 'link_pool',
+          proposed_pool_id: 42,
+          issues: [],
+        },
+        {
+          resource_id: 'resource-blocked',
+          provider_resource_id: 'subnet-blocked',
+          name: 'blocked-subnet',
+          resource_type: 'subnet',
+          cidr: '10.72.1.0/24',
+          status: 'blocked',
+          proposed_action: 'none',
+          issues: ['missing_parent'],
+        },
+        {
+          resource_id: 'resource-conflict',
+          provider_resource_id: 'vpc-conflict',
+          name: 'conflict-vpc',
+          resource_type: 'vpc',
+          cidr: '10.73.0.0/16',
+          status: 'conflict',
+          proposed_action: 'none',
+          issues: ['duplicate_cidr'],
+        },
+      ],
+    },
+  }
+
+  it('renders aggregate and item-level apply outcomes', () => {
+    const onViewAffected = vi.fn()
+    render(<ImportApplySummaryPanel result={applyResult} onViewAffected={onViewAffected} />)
+
+    expect(screen.getByText('Import apply summary')).toBeTruthy()
+    expect(screen.getAllByText('Imported').length).toBeGreaterThan(0)
+    expect(screen.getByText('Linked-only')).toBeTruthy()
+    expect(screen.getAllByText('Blocked').length).toBeGreaterThan(0)
+    expect(screen.getByText('Conflicts')).toBeTruthy()
+    expect(screen.getByText('Linked existing pool')).toBeTruthy()
+    expect(screen.getByText('missing_parent')).toBeTruthy()
+    expect(screen.getByText('duplicate_cidr')).toBeTruthy()
+    expect(screen.getByText('1 warning while applying import')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /View affected resources/i }))
+    expect(onViewAffected).toHaveBeenCalled()
+  })
+
+  it('uses the first affected provider resource as the merged-network query', () => {
+    expect(importApplyResultQuery(applyResult)).toBe('vpc-imported')
   })
 })

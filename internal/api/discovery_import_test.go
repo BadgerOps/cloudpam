@@ -217,12 +217,157 @@ func TestDiscoveryImportPreviewAndApplySelectedResources(t *testing.T) {
 	if applied.PoolsCreated != 2 || applied.ResourcesLinked != 2 || applied.Skipped != 0 {
 		t.Fatalf("unexpected apply response: %+v", applied)
 	}
+	if applied.Summary.Imported != 2 || applied.Summary.LinkedOnly != 0 || applied.Summary.CreatedRecords != 2 || applied.Summary.LinkedRecords != 2 {
+		t.Fatalf("unexpected apply summary: %+v", applied.Summary)
+	}
+	if len(applied.Summary.AffectedResourceIDs) != 2 || !containsDiscoveryUUID(applied.Summary.AffectedResourceIDs, vpcID) || !containsDiscoveryUUID(applied.Summary.AffectedResourceIDs, subnetID) {
+		t.Fatalf("unexpected affected resources: %+v", applied.Summary.AffectedResourceIDs)
+	}
 	pools, err := st.ListPools(t.Context())
 	if err != nil {
 		t.Fatalf("list pools: %v", err)
 	}
 	if len(pools) != 2 {
 		t.Fatalf("len(pools) = %d, want 2", len(pools))
+	}
+}
+
+func TestDiscoveryImportApplyReturnsMixedResultSummary(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	otherAccount, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:210987654321", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	if _, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "linked-vpc", CIDR: "10.71.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID}); err != nil {
+		t.Fatalf("create matching pool: %v", err)
+	}
+
+	now := time.Now().UTC()
+	importID := uuid.New()
+	linkID := uuid.New()
+	eipID := uuid.New()
+	blockedID := uuid.New()
+	conflictID := uuid.New()
+	duplicateID := uuid.New()
+	missingParent := "vpc-missing"
+	for _, res := range []domain.DiscoveredResource{
+		{
+			ID:           importID,
+			AccountID:    account.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeVPC,
+			ResourceID:   "vpc-import",
+			Name:         "import-vpc",
+			CIDR:         "10.70.0.0/16",
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now,
+			LastSeenAt:   now,
+		},
+		{
+			ID:           linkID,
+			AccountID:    account.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeVPC,
+			ResourceID:   "vpc-link",
+			Name:         "link-vpc",
+			CIDR:         "10.71.0.0/16",
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now,
+			LastSeenAt:   now,
+		},
+		{
+			ID:           eipID,
+			AccountID:    account.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeElasticIP,
+			ResourceID:   "eipalloc-summary",
+			Name:         "summary-eip",
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now,
+			LastSeenAt:   now,
+		},
+		{
+			ID:               blockedID,
+			AccountID:        account.ID,
+			Provider:         "aws",
+			Region:           "us-east-1",
+			ResourceType:     domain.ResourceTypeSubnet,
+			ResourceID:       "subnet-blocked",
+			Name:             "blocked-subnet",
+			CIDR:             "10.72.1.0/24",
+			ParentResourceID: &missingParent,
+			Status:           domain.DiscoveryStatusActive,
+			DiscoveredAt:     now,
+			LastSeenAt:       now,
+		},
+		{
+			ID:           conflictID,
+			AccountID:    account.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeVPC,
+			ResourceID:   "vpc-conflict",
+			Name:         "conflict-vpc",
+			CIDR:         "10.73.0.0/16",
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now,
+			LastSeenAt:   now,
+		},
+		{
+			ID:           duplicateID,
+			AccountID:    otherAccount.ID,
+			Provider:     "aws",
+			Region:       "us-east-1",
+			ResourceType: domain.ResourceTypeVPC,
+			ResourceID:   "vpc-conflict-other",
+			Name:         "conflict-vpc-other",
+			CIDR:         "10.73.0.0/16",
+			Status:       domain.DiscoveryStatusActive,
+			DiscoveredAt: now,
+			LastSeenAt:   now,
+		},
+	} {
+		upsertDiscoveredForImportTest(t, ds, res)
+	}
+
+	body := fmt.Sprintf(
+		`{"account_id":%d,"resource_ids":["%s","%s","%s","%s","%s"]}`,
+		account.ID,
+		importID,
+		linkID,
+		eipID,
+		blockedID,
+		conflictID,
+	)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("unmarshal apply: %v", err)
+	}
+	if applied.PoolsCreated != 1 || applied.ResourcesLinked != 2 || applied.Skipped != 3 {
+		t.Fatalf("unexpected apply response: %+v", applied)
+	}
+	if applied.Summary.Imported != 1 ||
+		applied.Summary.LinkedOnly != 1 ||
+		applied.Summary.Skipped != 3 ||
+		applied.Summary.Blocked != 1 ||
+		applied.Summary.Conflicts != 1 ||
+		applied.Summary.CreatedRecords != 1 ||
+		applied.Summary.LinkedRecords != 2 {
+		t.Fatalf("unexpected summary: %+v", applied.Summary)
+	}
+	if len(applied.Summary.CreatedPoolIDs) != 1 || len(applied.CreatedPoolIDs) != 1 || applied.Summary.CreatedPoolIDs[0] != applied.CreatedPoolIDs[0] {
+		t.Fatalf("unexpected created pool ids: summary=%v top-level=%v", applied.Summary.CreatedPoolIDs, applied.CreatedPoolIDs)
+	}
+	if !containsDiscoveryUUID(applied.Summary.AffectedResourceIDs, importID) || !containsDiscoveryUUID(applied.Summary.AffectedResourceIDs, linkID) || containsDiscoveryUUID(applied.Summary.AffectedResourceIDs, eipID) {
+		t.Fatalf("unexpected affected resource ids: %+v", applied.Summary.AffectedResourceIDs)
 	}
 }
 
@@ -694,6 +839,15 @@ func singleDiscoveryPreviewItem(t *testing.T, rr *httptest.ResponseRecorder) dom
 }
 
 func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsDiscoveryUUID(items []uuid.UUID, want uuid.UUID) bool {
 	for _, item := range items {
 		if item == want {
 			return true

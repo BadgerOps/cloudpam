@@ -367,7 +367,11 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 		return domain.DiscoveryImportApplyResponse{}, err
 	}
 
-	resp := domain.DiscoveryImportApplyResponse{Preview: preview, Errors: []string{}}
+	resp := domain.DiscoveryImportApplyResponse{
+		Preview: preview,
+		Summary: discoveryImportApplyPreviewSummary(preview),
+		Errors:  []string{},
+	}
 	items := append([]domain.DiscoveryImportPreviewItem{}, preview.Items...)
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].ResourceType == items[j].ResourceType {
@@ -447,10 +451,32 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 		createdPoolByProviderID[res.ResourceID] = pool.ID
 		resp.PoolsCreated++
 		resp.ResourcesLinked++
+		resp.Summary.Imported++
 		resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
 	}
 
+	resp.Summary.Skipped = resp.Skipped
+	resp.Summary.CreatedRecords = resp.PoolsCreated
+	resp.Summary.LinkedRecords = resp.ResourcesLinked
+	resp.Summary.AffectedResourceIDs = resp.LinkedResourceIDs
+	resp.Summary.CreatedPoolIDs = resp.CreatedPoolIDs
+
 	return resp, nil
+}
+
+func discoveryImportApplyPreviewSummary(preview domain.DiscoveryImportPreviewResponse) domain.DiscoveryImportApplySummary {
+	var summary domain.DiscoveryImportApplySummary
+	for _, item := range preview.Items {
+		switch item.Status {
+		case "linked_only":
+			summary.LinkedOnly++
+		case "blocked":
+			summary.Blocked++
+		case "conflict":
+			summary.Conflicts++
+		}
+	}
+	return summary
 }
 
 func canForceDiscoveryImport(item domain.DiscoveryImportPreviewItem, opts discoveryImportApplyOptions) bool {
