@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.18.1] - 2026-06-28
+
+### Fixed
+- Upgrade status now includes a stable `upgrade_id` and completed upgrades can be acknowledged through `POST /api/v1/updates/status/ack`, preventing `/api/v1/updates/status` from returning the same completed state indefinitely.
+- Completed upgrade status now expires back to an idle active state after a short backend TTL if no client acknowledges it.
+
 ## [0.18.0] - 2026-06-28
 
 ### Added

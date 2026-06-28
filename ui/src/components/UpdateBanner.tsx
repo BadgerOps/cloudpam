@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { checkForUpdates, getUpgradeStatus, triggerUpgrade } from '../api/client'
+import { acknowledgeUpgradeStatus, checkForUpdates, getUpgradeStatus, triggerUpgrade } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { scheduleFrontendResetAfterUpgrade } from '../utils/upgradeReload'
 
@@ -80,6 +80,9 @@ export default function UpdateBanner() {
             setUpgradeStep('completed')
             setUpgradeMessage(status.message || 'Upgrade complete. Reloading...')
             reloadTimeoutRef.current = scheduleFrontendResetAfterUpgrade()
+            void acknowledgeUpgradeStatus().catch(() => {
+              // The backend TTL still clears stale completed state if acknowledgment fails.
+            })
           } else if (status.status === 'failed') {
             if (statusPollRef.current) window.clearInterval(statusPollRef.current)
             setUpgradeStep('failed')

@@ -1,5 +1,5 @@
 import type { ApiError } from './types'
-import type { SystemInfoResponse, UpdateCheckResponse, UpgradeStatusResponse } from './types'
+import type { SystemInfoResponse, UpdateCheckResponse, UpgradeStatusAckResponse, UpgradeStatusResponse } from './types'
 
 export class ApiRequestError extends Error {
   constructor(
@@ -110,12 +110,16 @@ export function checkForUpdates(force = false): Promise<UpdateCheckResponse> {
   return get<UpdateCheckResponse>(`/api/v1/updates${suffix}`)
 }
 
-export function triggerUpgrade(): Promise<{ status: string; target_version: string; message: string }> {
-  return post<{ status: string; target_version: string; message: string }>('/api/v1/updates/upgrade', {})
+export function triggerUpgrade(): Promise<{ status: string; upgrade_id?: string; target_version: string; message: string }> {
+  return post<{ status: string; upgrade_id?: string; target_version: string; message: string }>('/api/v1/updates/upgrade', {})
 }
 
 export function getUpgradeStatus(): Promise<UpgradeStatusResponse> {
   return get<UpgradeStatusResponse>('/api/v1/updates/status')
+}
+
+export function acknowledgeUpgradeStatus(): Promise<UpgradeStatusAckResponse> {
+  return post<UpgradeStatusAckResponse>('/api/v1/updates/status/ack', {})
 }
 
 export interface SSECallbacks {

@@ -276,6 +276,7 @@ export interface UpdateCheckResponse {
 
 export interface UpgradeTriggerResponse {
   status: string
+  upgrade_id?: string
   target_version: string
   message?: string
 }
@@ -283,6 +284,10 @@ export interface UpgradeTriggerResponse {
 export interface UpdateStatusResponse {
   status: string
   supported?: boolean
+  upgrade_id?: string
+  acknowledged?: boolean
+  completed_status_expired?: boolean
+  last_upgrade?: Record<string, unknown>
   message?: string
   step?: number | string
   total_steps?: number
@@ -303,6 +308,8 @@ export interface UpdateStatusResponse {
 }
 
 export type UpgradeStatusResponse = UpdateStatusResponse
+
+export type UpgradeStatusAckResponse = UpdateStatusResponse
 
 // --- User types ---
 

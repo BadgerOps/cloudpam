@@ -156,6 +156,7 @@ export default function UpdatesPage() {
     refreshSummary,
     refreshStatus,
     triggerUpgrade,
+    acknowledgeUpgradeStatus,
   } = useUpdates()
   const [pendingTargetVersion, setPendingTargetVersion] = useState<string | null>(null)
   const reloadTimeoutRef = useRef<number | null>(null)
@@ -191,7 +192,10 @@ export default function UpdatesPage() {
     reloadScheduledRef.current = true
     showToast('Upgrade completed. Refreshing the frontend...', 'success')
     reloadTimeoutRef.current = scheduleFrontendResetAfterUpgrade()
-  }, [showToast, status?.status])
+    void acknowledgeUpgradeStatus().catch(() => {
+      // The backend TTL still clears stale completed state if acknowledgment fails.
+    })
+  }, [acknowledgeUpgradeStatus, showToast, status?.status])
 
   async function handleRefresh() {
     const results = await Promise.allSettled([refreshSummary(true), refreshStatus()])

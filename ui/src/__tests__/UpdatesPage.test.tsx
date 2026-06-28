@@ -26,6 +26,7 @@ vi.mock('../utils/upgradeReload', () => ({
 describe('UpdatesPage', () => {
   const showToast = vi.fn()
   const triggerUpgrade = vi.fn()
+  const acknowledgeUpgradeStatus = vi.fn()
   const refreshSummary = vi.fn()
   const refreshStatus = vi.fn()
 
@@ -54,6 +55,7 @@ describe('UpdatesPage', () => {
       refreshSummary,
       refreshStatus,
       triggerUpgrade,
+      acknowledgeUpgradeStatus,
     })
 
     triggerUpgrade.mockResolvedValue({
@@ -62,6 +64,7 @@ describe('UpdatesPage', () => {
     })
     refreshSummary.mockResolvedValue(undefined)
     refreshStatus.mockResolvedValue(undefined)
+    acknowledgeUpgradeStatus.mockResolvedValue({ status: 'idle', acknowledged: true })
   })
 
   it('shows updater details for admins', () => {
@@ -102,6 +105,7 @@ describe('UpdatesPage', () => {
       refreshSummary,
       refreshStatus,
       triggerUpgrade,
+      acknowledgeUpgradeStatus,
     })
     scheduleFrontendResetAfterUpgrade.mockReturnValue(123)
 
@@ -110,6 +114,7 @@ describe('UpdatesPage', () => {
     await waitFor(() => {
       expect(showToast).toHaveBeenCalledWith('Upgrade completed. Refreshing the frontend...', 'success')
       expect(scheduleFrontendResetAfterUpgrade).toHaveBeenCalledTimes(1)
+      expect(acknowledgeUpgradeStatus).toHaveBeenCalledTimes(1)
     })
   })
 

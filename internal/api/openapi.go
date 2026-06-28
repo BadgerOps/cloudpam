@@ -240,13 +240,26 @@ type openAPIUpdateCheckResponse struct {
 
 type openAPIUpgradeRequestResponse struct {
 	Status        string `json:"status"`
+	UpgradeID     string `json:"upgrade_id"`
 	TargetVersion string `json:"target_version"`
 	Message       string `json:"message"`
 }
 
 type openAPIUpgradeStatusResponse struct {
-	Status    string `json:"status"`
-	Supported bool   `json:"supported"`
+	Status                 string         `json:"status"`
+	Supported              bool           `json:"supported"`
+	UpgradeID              string         `json:"upgrade_id,omitempty"`
+	Acknowledged           bool           `json:"acknowledged,omitempty"`
+	CompletedStatusExpired bool           `json:"completed_status_expired,omitempty"`
+	LastUpgrade            map[string]any `json:"last_upgrade,omitempty"`
+}
+
+type openAPIUpgradeStatusAckResponse struct {
+	Status       string         `json:"status"`
+	Supported    bool           `json:"supported"`
+	UpgradeID    string         `json:"upgrade_id,omitempty"`
+	Acknowledged bool           `json:"acknowledged,omitempty"`
+	LastUpgrade  map[string]any `json:"last_upgrade,omitempty"`
 }
 
 type openAPISystemInfoResponse struct {
@@ -558,6 +571,7 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"UpdateCheckResponse", reflect.TypeOf(openAPIUpdateCheckResponse{})},
 		{"UpgradeRequestResponse", reflect.TypeOf(openAPIUpgradeRequestResponse{})},
 		{"UpgradeStatusResponse", reflect.TypeOf(openAPIUpgradeStatusResponse{})},
+		{"UpgradeStatusAckResponse", reflect.TypeOf(openAPIUpgradeStatusAckResponse{})},
 	}
 	sort.Slice(types, func(i, j int) bool { return types[i].name < types[j].name })
 	return types
@@ -909,6 +923,8 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 		return routesForMethodPath(http.MethodPost, "/api/v1/updates/upgrade")
 	case "/api/v1/updates/status":
 		return routesForMethodPath(http.MethodGet, "/api/v1/updates/status")
+	case "/api/v1/updates/status/ack":
+		return routesForMethodPath(http.MethodPost, "/api/v1/updates/status/ack")
 	default:
 		if strings.HasPrefix(pattern, "GET ") || strings.HasPrefix(pattern, "POST ") ||
 			strings.HasPrefix(pattern, "PATCH ") || strings.HasPrefix(pattern, "DELETE ") {
@@ -1120,6 +1136,7 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "GET", Path: "/api/v1/updates", Summary: "Check for updates", Tag: "Updates", ResponseSchema: "UpdateCheckResponse", Parameters: []openAPIParameter{queryParam("force", "Force refresh release metadata", "boolean")}},
 		{Method: "POST", Path: "/api/v1/updates/upgrade", Summary: "Request in-app upgrade", Tag: "Updates", SuccessStatus: "202", ResponseSchema: "UpgradeRequestResponse"},
 		{Method: "GET", Path: "/api/v1/updates/status", Summary: "Get upgrade status", Tag: "Updates", ResponseSchema: "UpgradeStatusResponse"},
+		{Method: "POST", Path: "/api/v1/updates/status/ack", Summary: "Acknowledge completed upgrade status", Tag: "Updates", ResponseSchema: "UpgradeStatusAckResponse"},
 	}
 	catalog := make(map[string]openAPIRoute, len(routes))
 	for _, route := range routes {
