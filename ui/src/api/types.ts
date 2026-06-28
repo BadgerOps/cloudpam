@@ -578,16 +578,26 @@ export interface NetworkConflict {
   resolution_requested?: string
 }
 
+export interface NetworkSchemaPolicy {
+  name: string
+  ownership_strategy: string
+  duplicate_scope: string
+  hierarchy_scope: string
+  manual_relationships?: boolean
+}
+
 export interface NetworkViewResponse {
   items: NetworkNode[]
   total: number
   conflict_count: number
   conflicts?: NetworkConflict[]
+  schema_policy: NetworkSchemaPolicy
 }
 
 export interface NetworkConflictListResponse {
   items: NetworkConflict[]
   total: number
+  schema_policy: NetworkSchemaPolicy
 }
 
 export interface NetworkConflictLinkActionRequest {

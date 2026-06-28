@@ -219,15 +219,17 @@ func main() {
 	driftDetector := discovery.NewDriftDetector(store, discoveryStore, driftStore)
 	driftSrv := api.NewDriftServer(srv, driftDetector, driftStore)
 	logger.Info("drift detection subsystem initialized")
-	networkSrv := api.NewNetworkServer(srv, store, discoveryStore, driftStore)
-	networkSrv.SetNetworkStore(selectNetworkStore(logger, store))
-	logger.Info("merged network view subsystem initialized")
 
 	// Initialize settings subsystem
 	settingsStore := selectSettingsStore(logger, store)
 	settingsSrv := api.NewSettingsServer(srv, settingsStore)
 	srv.SetSettingsStore(settingsStore)
 	logger.Info("settings subsystem initialized")
+
+	networkSrv := api.NewNetworkServer(srv, store, discoveryStore, driftStore)
+	networkSrv.SetNetworkStore(selectNetworkStore(logger, store))
+	networkSrv.SetSettingsStore(settingsStore)
+	logger.Info("merged network view subsystem initialized")
 
 	// OIDC subsystem
 	oidcStore := selectOIDCProviderStore(logger, store)

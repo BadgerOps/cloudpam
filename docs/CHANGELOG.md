@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.18.0] - 2026-06-28
+
+### Added
+- Merged Network schema policy can now be persisted through `GET/PATCH /api/v1/settings/network-schema-policy`, with per-request query overrides still taking precedence over the stored default.
+- Network merged-view and conflict responses now include the active schema policy used for duplicate and hierarchy evaluation.
+
 ## [0.17.4] - 2026-06-07
 
 ### Security

@@ -31,12 +31,18 @@ func (ss *SettingsServer) RegisterProtectedSettingsRoutes(dualMW func(http.Handl
 		dualMW(adminRead(http.HandlerFunc(ss.handleGetSecuritySettings))))
 	ss.handleOpenAPIRoute("PATCH /api/v1/settings/security",
 		dualMW(adminWrite(http.HandlerFunc(ss.handleUpdateSecuritySettings))))
+	ss.handleOpenAPIRoute("GET /api/v1/settings/network-schema-policy",
+		dualMW(adminRead(http.HandlerFunc(ss.handleGetNetworkSchemaPolicy))))
+	ss.handleOpenAPIRoute("PATCH /api/v1/settings/network-schema-policy",
+		dualMW(adminWrite(http.HandlerFunc(ss.handleUpdateNetworkSchemaPolicy))))
 }
 
 // RegisterSettingsRoutes registers settings endpoints without RBAC (for tests).
 func (ss *SettingsServer) RegisterSettingsRoutes() {
 	ss.handleOpenAPIRouteFunc("GET /api/v1/settings/security", ss.handleGetSecuritySettings)
 	ss.handleOpenAPIRouteFunc("PATCH /api/v1/settings/security", ss.handleUpdateSecuritySettings)
+	ss.handleOpenAPIRouteFunc("GET /api/v1/settings/network-schema-policy", ss.handleGetNetworkSchemaPolicy)
+	ss.handleOpenAPIRouteFunc("PATCH /api/v1/settings/network-schema-policy", ss.handleUpdateNetworkSchemaPolicy)
 }
 
 func (ss *SettingsServer) handleGetSecuritySettings(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +122,36 @@ func (ss *SettingsServer) handleUpdateSecuritySettings(w http.ResponseWriter, r 
 
 	ss.logAudit(r.Context(), "update", "settings", "security", "security_settings", http.StatusOK)
 	writeJSON(w, http.StatusOK, input)
+}
+
+func (ss *SettingsServer) handleGetNetworkSchemaPolicy(w http.ResponseWriter, r *http.Request) {
+	policy, err := ss.settingsStore.GetNetworkSchemaPolicy(r.Context())
+	if err != nil {
+		ss.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to load network schema policy", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
+}
+
+func (ss *SettingsServer) handleUpdateNetworkSchemaPolicy(w http.ResponseWriter, r *http.Request) {
+	var input domain.NetworkSchemaPolicy
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	if denied := domain.ValidateNetworkSchemaPolicy(&input); denied != "" {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid network schema policy", denied)
+		return
+	}
+
+	policy := domain.NormalizeNetworkSchemaPolicy(&input)
+	if err := ss.settingsStore.UpdateNetworkSchemaPolicy(r.Context(), policy); err != nil {
+		ss.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to save network schema policy", err.Error())
+		return
+	}
+
+	ss.logAudit(r.Context(), "update", "settings", "network_schema_policy", "network_schema_policy", http.StatusOK)
+	writeJSON(w, http.StatusOK, policy)
 }
 
 func validateAPIKeyScopePolicy(policy map[string][]string) string {

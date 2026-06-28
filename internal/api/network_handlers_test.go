@@ -552,6 +552,47 @@ func TestNetworkSchemaPolicyChangesDuplicateDetection(t *testing.T) {
 	}
 }
 
+func TestNetworkSchemaPolicyUsesPersistedDefaultAndQueryOverride(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	now := time.Now().UTC()
+	for _, res := range []domain.DiscoveredResource{
+		{ID: uuid.New(), AccountID: account.ID, Provider: "aws", Region: "us-east-1", ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-east", CIDR: "10.93.0.0/16", Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now},
+		{ID: uuid.New(), AccountID: account.ID, Provider: "aws", Region: "us-west-2", ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-west", CIDR: "10.93.0.0/16", Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now},
+	} {
+		upsertDiscoveredForImportTest(t, ds, res)
+	}
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPatch, "/api/v1/settings/network-schema-policy", `{"name":"global"}`, http.StatusOK)
+	var policy domain.NetworkSchemaPolicy
+	if err := json.Unmarshal(rr.Body.Bytes(), &policy); err != nil {
+		t.Fatalf("unmarshal policy: %v", err)
+	}
+	if policy.Name != "global" || policy.DuplicateScope != "global" {
+		t.Fatalf("unexpected persisted policy: %+v", policy)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal persisted-default conflicts: %v", err)
+	}
+	if conflicts.SchemaPolicy.Name != "global" || conflicts.Total != 1 {
+		t.Fatalf("persisted global policy should flag duplicate, got %+v", conflicts)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr&schema_policy=account_level", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal override conflicts: %v", err)
+	}
+	if conflicts.SchemaPolicy.Name != "account_level" || conflicts.Total != 0 {
+		t.Fatalf("query override should use account-level policy, got %+v", conflicts)
+	}
+}
+
 func TestNetworkConflictRoutesAppearInOpenAPISpec(t *testing.T) {
 	discSrv, _, _, _ := setupDiscoveryTestServer()
 

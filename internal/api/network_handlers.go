@@ -25,11 +25,12 @@ import (
 
 // NetworkServer handles merged network view endpoints.
 type NetworkServer struct {
-	srv          *Server
-	store        storage.Store
-	discStore    storage.DiscoveryStore
-	driftStore   storage.DriftStore
-	networkStore storage.NetworkStore
+	srv           *Server
+	store         storage.Store
+	discStore     storage.DiscoveryStore
+	driftStore    storage.DriftStore
+	networkStore  storage.NetworkStore
+	settingsStore storage.SettingsStore
 }
 
 // NewNetworkServer creates a merged network view server.
@@ -40,6 +41,11 @@ func NewNetworkServer(srv *Server, store storage.Store, discStore storage.Discov
 // SetNetworkStore attaches durable managed network object and relationship storage.
 func (ns *NetworkServer) SetNetworkStore(networkStore storage.NetworkStore) {
 	ns.networkStore = networkStore
+}
+
+// SetSettingsStore attaches persisted operator settings.
+func (ns *NetworkServer) SetSettingsStore(settingsStore storage.SettingsStore) {
+	ns.settingsStore = settingsStore
 }
 
 // RegisterNetworkRoutes registers network routes without RBAC.
@@ -89,6 +95,7 @@ func (ns *NetworkServer) handleFlat(w http.ResponseWriter, r *http.Request) {
 		Total:         len(view.flat),
 		ConflictCount: len(view.conflicts),
 		Conflicts:     view.conflicts,
+		SchemaPolicy:  view.schemaPolicy,
 	})
 }
 
@@ -108,6 +115,7 @@ func (ns *NetworkServer) handleHierarchy(w http.ResponseWriter, r *http.Request)
 		Total:         len(view.flat),
 		ConflictCount: len(view.conflicts),
 		Conflicts:     view.conflicts,
+		SchemaPolicy:  view.schemaPolicy,
 	})
 }
 
@@ -126,7 +134,7 @@ func (ns *NetworkServer) handleConflicts(w http.ResponseWriter, r *http.Request)
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "network conflicts failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, domain.NetworkConflictListResponse{Items: view.conflicts, Total: len(view.conflicts)})
+	writeJSON(w, http.StatusOK, domain.NetworkConflictListResponse{Items: view.conflicts, Total: len(view.conflicts), SchemaPolicy: view.schemaPolicy})
 }
 
 func (ns *NetworkServer) handleConflictSubroutes(w http.ResponseWriter, r *http.Request) {
@@ -798,9 +806,10 @@ type networkViewFilters struct {
 }
 
 type builtNetworkView struct {
-	flat      []domain.NetworkNode
-	hierarchy []domain.NetworkNode
-	conflicts []domain.NetworkConflict
+	flat         []domain.NetworkNode
+	hierarchy    []domain.NetworkNode
+	conflicts    []domain.NetworkConflict
+	schemaPolicy domain.NetworkSchemaPolicy
 }
 
 func networkFiltersFromRequest(r *http.Request) networkViewFilters {
@@ -913,24 +922,25 @@ func (ns *NetworkServer) relationshipEndpointBelongsToAccount(ctx context.Contex
 }
 
 func schemaPolicyFromFilters(filters networkViewFilters) domain.NetworkSchemaPolicy {
-	name := filters.schemaPolicy
-	if name == "" {
-		name = "account_level"
+	policy := domain.NormalizeNetworkSchemaPolicy(&domain.NetworkSchemaPolicy{Name: filters.schemaPolicy})
+	if policy.ManualRelationships && filters.duplicates == "global" {
+		policy.DuplicateScope = "global"
 	}
-	switch name {
-	case "region_level":
-		return domain.NetworkSchemaPolicy{Name: name, OwnershipStrategy: "region", DuplicateScope: "region", HierarchyScope: "region"}
-	case "global":
-		return domain.NetworkSchemaPolicy{Name: name, OwnershipStrategy: "global", DuplicateScope: "global", HierarchyScope: "global"}
-	case "custom", "manual":
-		policy := domain.NetworkSchemaPolicy{Name: name, OwnershipStrategy: "manual", DuplicateScope: "manual", HierarchyScope: "manual", ManualRelationships: true}
-		if filters.duplicates == "global" {
-			policy.DuplicateScope = "global"
-		}
-		return policy
-	default:
-		return domain.NetworkSchemaPolicy{Name: "account_level", OwnershipStrategy: "account", DuplicateScope: "account", HierarchyScope: "account"}
+	return *policy
+}
+
+func (ns *NetworkServer) schemaPolicyForView(ctx context.Context, filters networkViewFilters) (domain.NetworkSchemaPolicy, error) {
+	if filters.schemaPolicy != "" {
+		return schemaPolicyFromFilters(filters), nil
 	}
+	if ns.settingsStore == nil {
+		return domain.DefaultNetworkSchemaPolicy(), nil
+	}
+	policy, err := ns.settingsStore.GetNetworkSchemaPolicy(ctx)
+	if err != nil {
+		return domain.NetworkSchemaPolicy{}, err
+	}
+	return *domain.NormalizeNetworkSchemaPolicy(policy), nil
 }
 
 func duplicatePolicyKey(res domain.DiscoveredResource, policy domain.NetworkSchemaPolicy) string {
@@ -1002,6 +1012,10 @@ func relationshipIDsForConflict(conflict domain.NetworkConflict) map[string]stru
 }
 
 func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkViewFilters) (builtNetworkView, error) {
+	policy, err := ns.schemaPolicyForView(ctx, filters)
+	if err != nil {
+		return builtNetworkView{}, err
+	}
 	accounts, err := ns.store.ListAccounts(ctx)
 	if err != nil {
 		return builtNetworkView{}, err
@@ -1036,7 +1050,7 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 		resourceByProvider[resourceKey(res.AccountID, res.ResourceID)] = res
 	}
 
-	issuesByNode, conflicts := ns.computeNetworkConflicts(resources, pools, accountByID, poolByID, resourceByProvider, schemaPolicyFromFilters(filters))
+	issuesByNode, conflicts := ns.computeNetworkConflicts(resources, pools, accountByID, poolByID, resourceByProvider, policy)
 	ns.persistComputedNetworkRelationships(ctx, conflicts)
 	conflicts = ns.applyStoredConflictResolutions(ctx, conflicts)
 	var relationships []domain.NetworkRelationship
@@ -1094,9 +1108,10 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 
 	filteredConflicts := filterNetworkConflicts(conflicts, filters)
 	return builtNetworkView{
-		flat:      filtered,
-		hierarchy: buildNetworkHierarchy(filtered),
-		conflicts: filteredConflicts,
+		flat:         filtered,
+		hierarchy:    buildNetworkHierarchy(filtered),
+		conflicts:    filteredConflicts,
+		schemaPolicy: policy,
 	}, nil
 }
 
