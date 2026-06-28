@@ -490,11 +490,14 @@ func ensureUpgradeID(status map[string]any) string {
 
 func derivedUpgradeID(status map[string]any) string {
 	fields := []string{
+		stringValue(status["status"]),
+		stringValue(status["message"]),
 		stringValue(status["current_version"]),
 		stringValue(status["target_version"]),
 		stringValue(status["target_image_tag"]),
 		stringValue(status["requested_at"]),
 		stringValue(status["started_at"]),
+		stringValue(status["updated_at"]),
 		stringValue(status["release_url"]),
 	}
 	sum := sha1.Sum([]byte(strings.Join(fields, "|")))

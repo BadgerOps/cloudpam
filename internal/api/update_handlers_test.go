@@ -257,6 +257,25 @@ func TestUpdateServerCompletedStatusExpiresToIdle(t *testing.T) {
 	}
 }
 
+func TestDerivedUpgradeIDUsesLegacyStatusFields(t *testing.T) {
+	first := map[string]any{
+		"status":     "completed",
+		"message":    "Upgrade completed to v0.9.0",
+		"step":       float64(4),
+		"updated_at": "2026-06-28T22:00:00Z",
+	}
+	second := map[string]any{
+		"status":     "completed",
+		"message":    "Upgrade completed to v0.9.1",
+		"step":       float64(4),
+		"updated_at": "2026-06-28T22:10:00Z",
+	}
+
+	if got, wantDifferentFrom := derivedUpgradeID(first), derivedUpgradeID(second); got == wantDifferentFrom {
+		t.Fatalf("expected legacy completed statuses to derive distinct upgrade IDs, got %q", got)
+	}
+}
+
 func TestUpdateServerAcknowledgeRequiresCompletedStatus(t *testing.T) {
 	updateSrv := newTestUpdateServer(t, nil)
 	statusPath := filepath.Join(updateSrv.controlDir, upgradeStatusFile)
