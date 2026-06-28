@@ -1,8 +1,11 @@
 package api
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,10 +19,14 @@ import (
 )
 
 const (
-	updateCacheTTL       = time.Hour
-	defaultControlDir    = "/var/lib/cloudpam-control"
-	defaultCloudPAMRepo  = "BadgerOps/cloudpam"
-	defaultGitHubAPIRoot = "https://api.github.com"
+	updateCacheTTL            = time.Hour
+	completedUpgradeStatusTTL = 10 * time.Minute
+	defaultControlDir         = "/var/lib/cloudpam-control"
+	defaultCloudPAMRepo       = "BadgerOps/cloudpam"
+	defaultGitHubAPIRoot      = "https://api.github.com"
+	upgradeStatusFile         = "upgrade-status.json"
+	upgradeAckFile            = "upgrade-status-ack.json"
+	upgradeRequestedFile      = "upgrade-requested"
 )
 
 type updateRelease struct {
@@ -77,12 +84,15 @@ func (us *UpdateServer) RegisterProtectedUpdateRoutes(dualMW func(http.Handler) 
 		dualMW(adminWrite(http.HandlerFunc(us.handleTriggerUpgrade))))
 	us.handleOpenAPIRoute("GET /api/v1/updates/status",
 		dualMW(adminRead(http.HandlerFunc(us.handleGetUpgradeStatus))))
+	us.handleOpenAPIRoute("POST /api/v1/updates/status/ack",
+		dualMW(adminWrite(http.HandlerFunc(us.handleAcknowledgeUpgradeStatus))))
 }
 
 func (us *UpdateServer) RegisterUpdateRoutesNoAuth() {
 	us.handleOpenAPIRouteFunc("GET /api/v1/updates", us.handleCheckUpdates)
 	us.handleOpenAPIRouteFunc("POST /api/v1/updates/upgrade", us.handleTriggerUpgrade)
 	us.handleOpenAPIRouteFunc("GET /api/v1/updates/status", us.handleGetUpgradeStatus)
+	us.handleOpenAPIRouteFunc("POST /api/v1/updates/status/ack", us.handleAcknowledgeUpgradeStatus)
 }
 
 func (us *UpdateServer) handleCheckUpdates(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +142,7 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	statusPath := filepath.Join(controlDir, "upgrade-status.json")
+	statusPath := filepath.Join(controlDir, upgradeStatusFile)
 	if status, err := readJSONFile(statusPath); err == nil {
 		if state, _ := status["status"].(string); state == "running" {
 			us.writeErr(r.Context(), w, http.StatusConflict, "upgrade already in progress", "")
@@ -152,8 +162,11 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	now := time.Now().UTC()
+	upgradeID := newUpgradeID(now)
 	request := map[string]any{
-		"requested_at":       time.Now().UTC().Format(time.RFC3339),
+		"upgrade_id":         upgradeID,
+		"requested_at":       now.Format(time.RFC3339),
 		"current_version":    cleanVersion(currentAppVersion()),
 		"target_version":     cleanVersion(latest.TagName),
 		"target_release_tag": latest.TagName,
@@ -169,7 +182,7 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	requestPath := filepath.Join(controlDir, "upgrade-requested")
+	requestPath := filepath.Join(controlDir, upgradeRequestedFile)
 	f, err := os.Create(requestPath)
 	if err != nil {
 		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to write upgrade request", err.Error())
@@ -193,6 +206,7 @@ func (us *UpdateServer) handleTriggerUpgrade(w http.ResponseWriter, r *http.Requ
 	us.logAudit(r.Context(), "update", "system", cleanVersion(latest.TagName), "cloudpam_upgrade", http.StatusAccepted)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"status":         "upgrade_requested",
+		"upgrade_id":     upgradeID,
 		"target_version": cleanVersion(latest.TagName),
 		"message":        "Upgrade request submitted",
 	})
@@ -208,7 +222,7 @@ func (us *UpdateServer) handleGetUpgradeStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	statusPath := filepath.Join(controlDir, "upgrade-status.json")
+	statusPath := filepath.Join(controlDir, upgradeStatusFile)
 	status, err := readJSONFile(statusPath)
 	if errors.Is(err, os.ErrNotExist) {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -221,8 +235,91 @@ func (us *UpdateServer) handleGetUpgradeStatus(w http.ResponseWriter, r *http.Re
 		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to read upgrade status", err.Error())
 		return
 	}
+	info, _ := os.Stat(statusPath)
+	ensureUpgradeID(status)
+	if idle, ok := us.completedUpgradeIdleResponse(controlDir, status, info); ok {
+		writeJSON(w, http.StatusOK, idle)
+		return
+	}
 	status["supported"] = true
 	writeJSON(w, http.StatusOK, status)
+}
+
+func (us *UpdateServer) handleAcknowledgeUpgradeStatus(w http.ResponseWriter, r *http.Request) {
+	controlDir := strings.TrimSpace(us.controlDir)
+	if controlDir == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "unsupported",
+			"supported": false,
+		})
+		return
+	}
+
+	statusPath := filepath.Join(controlDir, upgradeStatusFile)
+	status, err := readJSONFile(statusPath)
+	if errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":    "idle",
+			"supported": true,
+		})
+		return
+	}
+	if err != nil {
+		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to read upgrade status", err.Error())
+		return
+	}
+	if normalizeUpgradeStatus(status["status"]) != "completed" {
+		us.writeErr(r.Context(), w, http.StatusConflict, "upgrade is not completed", "")
+		return
+	}
+
+	upgradeID := ensureUpgradeID(status)
+	ack := map[string]any{
+		"upgrade_id":      upgradeID,
+		"acknowledged_at": time.Now().UTC().Format(time.RFC3339),
+	}
+	if target, ok := status["target_version"].(string); ok && strings.TrimSpace(target) != "" {
+		ack["target_version"] = target
+	}
+	if err := writeJSONFile(filepath.Join(controlDir, upgradeAckFile), ack); err != nil {
+		us.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to acknowledge upgrade status", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "idle",
+		"supported":    true,
+		"upgrade_id":   upgradeID,
+		"acknowledged": true,
+		"last_upgrade": status,
+	})
+}
+
+func (us *UpdateServer) completedUpgradeIdleResponse(controlDir string, status map[string]any, info os.FileInfo) (map[string]any, bool) {
+	if normalizeUpgradeStatus(status["status"]) != "completed" {
+		return nil, false
+	}
+	upgradeID := ensureUpgradeID(status)
+	if ackedUpgradeStatus(controlDir, upgradeID) {
+		return map[string]any{
+			"status":       "idle",
+			"supported":    true,
+			"upgrade_id":   upgradeID,
+			"acknowledged": true,
+			"last_upgrade": status,
+		}, true
+	}
+	completedAt := completedUpgradeTime(status, info)
+	if !completedAt.IsZero() && time.Since(completedAt) > completedUpgradeStatusTTL {
+		return map[string]any{
+			"status":                   "idle",
+			"supported":                true,
+			"upgrade_id":               upgradeID,
+			"completed_status_expired": true,
+			"last_upgrade":             status,
+		}, true
+	}
+	return nil, false
 }
 
 func (us *UpdateServer) loadReleases(force bool) ([]updateRelease, bool, error) {
@@ -357,6 +454,104 @@ func readJSONFile(path string) (map[string]any, error) {
 		return nil, closeErr
 	}
 	return data, nil
+}
+
+func writeJSONFile(path string, data map[string]any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(data); err != nil {
+		if closeErr := f.Close(); closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		return err
+	}
+	return f.Close()
+}
+
+func newUpgradeID(t time.Time) string {
+	return "upg_" + t.UTC().Format("20060102T150405.000000000Z")
+}
+
+func ensureUpgradeID(status map[string]any) string {
+	if id, ok := status["upgrade_id"].(string); ok && strings.TrimSpace(id) != "" {
+		return strings.TrimSpace(id)
+	}
+	id := derivedUpgradeID(status)
+	status["upgrade_id"] = id
+	return id
+}
+
+func derivedUpgradeID(status map[string]any) string {
+	fields := []string{
+		stringValue(status["status"]),
+		stringValue(status["message"]),
+		stringValue(status["current_version"]),
+		stringValue(status["target_version"]),
+		stringValue(status["target_image_tag"]),
+		stringValue(status["requested_at"]),
+		stringValue(status["started_at"]),
+		stringValue(status["updated_at"]),
+		stringValue(status["release_url"]),
+	}
+	sum := sha1.Sum([]byte(strings.Join(fields, "|")))
+	return "upg_" + hex.EncodeToString(sum[:])[:16]
+}
+
+func ackedUpgradeStatus(controlDir string, upgradeID string) bool {
+	ack, err := readJSONFile(filepath.Join(controlDir, upgradeAckFile))
+	if err != nil {
+		return false
+	}
+	ackID, _ := ack["upgrade_id"].(string)
+	return strings.TrimSpace(ackID) == upgradeID
+}
+
+func completedUpgradeTime(status map[string]any, info os.FileInfo) time.Time {
+	for _, key := range []string{"finished_at", "completed_at", "updated_at"} {
+		if parsed, ok := parseStatusTime(status[key]); ok {
+			return parsed
+		}
+	}
+	if info != nil {
+		return info.ModTime()
+	}
+	return time.Time{}
+}
+
+func parseStatusTime(value any) (time.Time, bool) {
+	text := stringValue(value)
+	if text == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		parsed, err := time.Parse(layout, text)
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func normalizeUpgradeStatus(value any) string {
+	return strings.ToLower(strings.TrimSpace(stringValue(value)))
+}
+
+func stringValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case fmt.Stringer:
+		return strings.TrimSpace(v.String())
+	default:
+		return ""
+	}
 }
 
 func getenvDefault(key, def string) string {

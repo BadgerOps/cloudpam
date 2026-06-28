@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"cloudpam/internal/storage"
 )
@@ -115,6 +116,9 @@ func TestUpdateServerTriggerUpgrade(t *testing.T) {
 	if err := json.Unmarshal(raw, &reqFile); err != nil {
 		t.Fatalf("decode upgrade request: %v", err)
 	}
+	if got, ok := reqFile["upgrade_id"].(string); !ok || got == "" {
+		t.Fatalf("expected upgrade_id in request file, got %v", reqFile["upgrade_id"])
+	}
 	if got := reqFile["target_version"]; got != "0.9.0" {
 		t.Fatalf("expected target_version=0.9.0, got %v", got)
 	}
@@ -123,6 +127,14 @@ func TestUpdateServerTriggerUpgrade(t *testing.T) {
 	}
 	if got := reqFile["target_release_tag"]; got != "v0.9.0" {
 		t.Fatalf("expected target_release_tag=v0.9.0, got %v", got)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode trigger response: %v", err)
+	}
+	if got, ok := resp["upgrade_id"].(string); !ok || got == "" || got != reqFile["upgrade_id"] {
+		t.Fatalf("expected matching response upgrade_id, got %v request=%v", got, reqFile["upgrade_id"])
 	}
 }
 
@@ -156,6 +168,126 @@ func TestUpdateServerGetStatus(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), `"status":"running"`) {
 		t.Fatalf("expected running status, got %s", rr.Body.String())
+	}
+
+	if err := os.WriteFile(statusPath, []byte(`{"status":"completed","target_version":"0.9.0","finished_at":"`+time.Now().UTC().Format(time.RFC3339)+`"}`), 0o644); err != nil {
+		t.Fatalf("write completed status file: %v", err)
+	}
+	rr = httptest.NewRecorder()
+	updateSrv.handleGetUpgradeStatus(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var completedResp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &completedResp); err != nil {
+		t.Fatalf("decode completed response: %v", err)
+	}
+	if completedResp["status"] != "completed" {
+		t.Fatalf("expected completed status, got %+v", completedResp)
+	}
+	if got, ok := completedResp["upgrade_id"].(string); !ok || got == "" {
+		t.Fatalf("expected derived upgrade_id, got %+v", completedResp)
+	}
+}
+
+func TestUpdateServerAcknowledgeCompletedStatus(t *testing.T) {
+	updateSrv := newTestUpdateServer(t, nil)
+	statusPath := filepath.Join(updateSrv.controlDir, upgradeStatusFile)
+	if err := os.WriteFile(statusPath, []byte(`{"status":"completed","upgrade_id":"upg-test","target_version":"0.9.0","finished_at":"`+time.Now().UTC().Format(time.RFC3339)+`"}`), 0o644); err != nil {
+		t.Fatalf("write completed status file: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/updates/status/ack", nil)
+	rr := httptest.NewRecorder()
+	updateSrv.handleAcknowledgeUpgradeStatus(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var ackResp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &ackResp); err != nil {
+		t.Fatalf("decode ack response: %v", err)
+	}
+	if ackResp["status"] != "idle" || ackResp["acknowledged"] != true || ackResp["upgrade_id"] != "upg-test" {
+		t.Fatalf("unexpected ack response: %+v", ackResp)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/updates/status", nil)
+	rr = httptest.NewRecorder()
+	updateSrv.handleGetUpgradeStatus(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var statusResp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &statusResp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if statusResp["status"] != "idle" || statusResp["acknowledged"] != true {
+		t.Fatalf("expected acknowledged idle status, got %+v", statusResp)
+	}
+	if _, ok := statusResp["last_upgrade"].(map[string]any); !ok {
+		t.Fatalf("expected last_upgrade payload, got %+v", statusResp["last_upgrade"])
+	}
+}
+
+func TestUpdateServerCompletedStatusExpiresToIdle(t *testing.T) {
+	updateSrv := newTestUpdateServer(t, nil)
+	statusPath := filepath.Join(updateSrv.controlDir, upgradeStatusFile)
+	oldFinishedAt := time.Now().UTC().Add(-completedUpgradeStatusTTL - time.Minute)
+	if err := os.WriteFile(statusPath, []byte(`{"status":"completed","upgrade_id":"upg-old","target_version":"0.9.0","finished_at":"`+oldFinishedAt.Format(time.RFC3339)+`"}`), 0o644); err != nil {
+		t.Fatalf("write completed status file: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/updates/status", nil)
+	rr := httptest.NewRecorder()
+	updateSrv.handleGetUpgradeStatus(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var statusResp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &statusResp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if statusResp["status"] != "idle" || statusResp["completed_status_expired"] != true || statusResp["upgrade_id"] != "upg-old" {
+		t.Fatalf("expected expired idle status, got %+v", statusResp)
+	}
+	if _, ok := statusResp["last_upgrade"].(map[string]any); !ok {
+		t.Fatalf("expected last_upgrade payload, got %+v", statusResp["last_upgrade"])
+	}
+}
+
+func TestDerivedUpgradeIDUsesLegacyStatusFields(t *testing.T) {
+	first := map[string]any{
+		"status":     "completed",
+		"message":    "Upgrade completed to v0.9.0",
+		"step":       float64(4),
+		"updated_at": "2026-06-28T22:00:00Z",
+	}
+	second := map[string]any{
+		"status":     "completed",
+		"message":    "Upgrade completed to v0.9.1",
+		"step":       float64(4),
+		"updated_at": "2026-06-28T22:10:00Z",
+	}
+
+	if got, wantDifferentFrom := derivedUpgradeID(first), derivedUpgradeID(second); got == wantDifferentFrom {
+		t.Fatalf("expected legacy completed statuses to derive distinct upgrade IDs, got %q", got)
+	}
+}
+
+func TestUpdateServerAcknowledgeRequiresCompletedStatus(t *testing.T) {
+	updateSrv := newTestUpdateServer(t, nil)
+	statusPath := filepath.Join(updateSrv.controlDir, upgradeStatusFile)
+	if err := os.WriteFile(statusPath, []byte(`{"status":"running","upgrade_id":"upg-running"}`), 0o644); err != nil {
+		t.Fatalf("write running status file: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/updates/status/ack", nil)
+	rr := httptest.NewRecorder()
+	updateSrv.handleAcknowledgeUpgradeStatus(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

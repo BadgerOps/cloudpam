@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { get, post } from '../api/client'
-import type { UpdateCheckResponse, UpdateStatusResponse, UpgradeTriggerResponse } from '../api/types'
+import type { UpdateCheckResponse, UpdateStatusResponse, UpgradeStatusAckResponse, UpgradeTriggerResponse } from '../api/types'
 
 export function useUpdates() {
   const [summary, setSummary] = useState<UpdateCheckResponse | null>(null)
@@ -61,6 +61,12 @@ export function useUpdates() {
     }
   }, [refreshStatus, refreshSummary])
 
+  const acknowledgeUpgradeStatus = useCallback(async () => {
+    const data = await post<UpgradeStatusAckResponse>('/api/v1/updates/status/ack', {})
+    setStatus(data)
+    return data
+  }, [])
+
   useEffect(() => {
     void refreshSummary()
     void refreshStatus()
@@ -78,5 +84,6 @@ export function useUpdates() {
     refreshSummary,
     refreshStatus,
     triggerUpgrade,
+    acknowledgeUpgradeStatus,
   }
 }
