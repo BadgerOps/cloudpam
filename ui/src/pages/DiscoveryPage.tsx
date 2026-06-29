@@ -2759,6 +2759,9 @@ export function ResourcesTab({
   )
   const selectableResources = resources.filter(isSelectableDiscoveryResource)
   const selectableVisibleIds = selectableResources.map((resource) => resource.id)
+  const selectedVisibleResources = resources.filter((resource) => selectedResourceIds.includes(resource.id))
+  const selectedStaleResources = selectedVisibleResources.filter((resource) => resource.status !== 'active')
+  const staleSelectionBlocksLink = selectedStaleResources.length > 0
   const selectedVisibleCount = selectableVisibleIds.filter((id) => selectedResourceIds.includes(id)).length
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleCount === selectableVisibleIds.length
   const someVisibleSelected = selectedVisibleCount > 0 && selectedVisibleCount < selectableVisibleIds.length
@@ -2897,12 +2900,18 @@ export function ResourcesTab({
           <button
             type="button"
             onClick={() => bulkLinkPool > 0 && onBulkLink(selectedResourceIds, bulkLinkPool)}
-            disabled={bulkLinking || selectedResourceIds.length === 0 || bulkLinkPool <= 0}
+            disabled={bulkLinking || selectedResourceIds.length === 0 || bulkLinkPool <= 0 || staleSelectionBlocksLink}
+            title={staleSelectionBlocksLink ? 'Stale resources require fresh discovery before linking' : undefined}
             className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {bulkLinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
             Link selected
           </button>
+          {staleSelectionBlocksLink && (
+            <div className="basis-full text-xs text-yellow-700 dark:text-yellow-300">
+              {selectedStaleResources.length} stale selected; run discovery again before linking.
+            </div>
+          )}
         </div>
       </div>
 
@@ -3234,7 +3243,7 @@ function PoolLabel({ poolId, pools }: { poolId: number; pools: Pool[] }) {
   )
 }
 
-function ImportPreviewModal({
+export function ImportPreviewModal({
   preview,
   pools,
   loading,
@@ -3389,6 +3398,7 @@ function importActionLabel(item: DiscoveryImportPreviewItem) {
 }
 
 function issueLabel(issue: string) {
+  if (issue === 'stale_resource') return 'stale resource requires fresh discovery'
   return issue.replace(/_/g, ' ')
 }
 

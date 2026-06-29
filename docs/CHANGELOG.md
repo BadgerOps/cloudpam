@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.21.0] - 2026-06-29
+
+### Changed
+- Discovery import and link workflows now block stale discovered resources until a fresh discovery marks them active, with preview evidence explaining the stale-resource decision.
+
 ## [0.20.0] - 2026-06-29
 
 ### Added

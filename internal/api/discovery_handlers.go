@@ -238,6 +238,10 @@ func (d *DiscoveryServer) handleLink(w http.ResponseWriter, r *http.Request, id 
 			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "pool account does not match discovered resource account", "")
 			return
 		}
+		if err := validateDiscoveredResourceActiveForMutation(*resource); err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+			return
+		}
 
 		if err := d.store.LinkResourceToPool(r.Context(), id, body.PoolID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
@@ -561,6 +565,7 @@ func discoveryRelationshipEvidence(res domain.DiscoveredResource, values ...stri
 		"region=" + res.Region,
 		"resource_id=" + res.ResourceID,
 		"resource_type=" + string(res.ResourceType),
+		"discovery_status=" + string(res.Status),
 	}
 	if res.CIDR != "" {
 		evidence = append(evidence, "cidr="+res.CIDR)
@@ -569,6 +574,24 @@ func discoveryRelationshipEvidence(res domain.DiscoveredResource, values ...stri
 		if strings.TrimSpace(value) != "" {
 			evidence = append(evidence, value)
 		}
+	}
+	return evidence
+}
+
+func validateDiscoveredResourceActiveForMutation(res domain.DiscoveredResource) error {
+	if res.Status == domain.DiscoveryStatusActive {
+		return nil
+	}
+	return fmt.Errorf("discovered resource is %s; run discovery again before linking or importing it", res.Status)
+}
+
+func staleDiscoveryEvidence(res domain.DiscoveredResource) []string {
+	evidence := []string{
+		"discovery_status=" + string(res.Status),
+		"stale resources cannot be imported or linked until a fresh discovery marks them active",
+	}
+	if !res.LastSeenAt.IsZero() {
+		evidence = append(evidence, "last_seen_at="+res.LastSeenAt.UTC().Format(time.RFC3339))
 	}
 	return evidence
 }
@@ -593,6 +616,9 @@ func canForceDiscoveryImport(item domain.DiscoveryImportPreviewItem, opts discov
 		return false
 	}
 	if item.Status == "not_found" || item.Status == "already_linked" || item.Status == "linked_only" {
+		return false
+	}
+	if hasAnyIssue(item.Issues, "stale_resource") {
 		return false
 	}
 	if item.ResourceType != domain.ResourceTypeVPC && item.ResourceType != domain.ResourceTypeSubnet {
@@ -713,6 +739,9 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 		}
 		if res.Status != domain.DiscoveryStatusActive {
 			item.Issues = append(item.Issues, "stale_resource")
+			item.Evidence = append(item.Evidence, staleDiscoveryEvidence(*res)...)
+			addDiscoveryPreviewItem(&resp, item)
+			continue
 		}
 		if res.ResourceType != domain.ResourceTypeVPC && res.ResourceType != domain.ResourceTypeSubnet {
 			item.Status = "linked_only"

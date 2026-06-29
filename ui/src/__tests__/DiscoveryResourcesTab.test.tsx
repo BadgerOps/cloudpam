@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { useState, type ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import type { Account, DiscoveredResource, DiscoveryImportApplyResponse, Pool } from '../api/types'
-import { ImportApplySummaryPanel, ResourcesTab, importApplyResultQuery } from '../pages/DiscoveryPage'
+import type { Account, DiscoveredResource, DiscoveryImportApplyResponse, DiscoveryImportPreviewResponse, Pool } from '../api/types'
+import { ImportApplySummaryPanel, ImportPreviewModal, ResourcesTab, importApplyResultQuery } from '../pages/DiscoveryPage'
 
 const resources: DiscoveredResource[] = [
   {
@@ -160,7 +160,7 @@ function renderResourcesTab(overrides: Partial<ComponentProps<typeof ResourcesTa
 }
 
 describe('ResourcesTab', () => {
-  it('selects multiple unlinked resources and links them to a pool', () => {
+  it('links selected active resources to a pool', () => {
     const { onBulkLink } = renderResourcesTab()
 
     const activeCheckbox = screen.getAllByLabelText('Select prod-vpc')[0] as HTMLInputElement
@@ -172,14 +172,30 @@ describe('ResourcesTab', () => {
     expect(linkedCheckbox.disabled).toBe(true)
 
     fireEvent.click(activeCheckbox)
-    fireEvent.click(staleCheckbox)
 
-    expect(screen.getByText('2 selected')).toBeTruthy()
+    expect(screen.getByText('1 selected')).toBeTruthy()
 
     fireEvent.change(screen.getByLabelText('Pool for selected resources'), { target: { value: '42' } })
     fireEvent.click(screen.getByRole('button', { name: /Link selected/i }))
 
-    expect(onBulkLink).toHaveBeenCalledWith(['resource-active-vpc', 'resource-stale-subnet'], 42)
+    expect(onBulkLink).toHaveBeenCalledWith(['resource-active-vpc'], 42)
+  })
+
+  it('keeps stale resources selectable but blocks bulk linking', () => {
+    const { onBulkLink } = renderResourcesTab()
+
+    const staleCheckbox = screen.getAllByLabelText('Select stale-subnet')[0] as HTMLInputElement
+    expect(staleCheckbox.disabled).toBe(false)
+
+    fireEvent.click(staleCheckbox)
+    fireEvent.change(screen.getByLabelText('Pool for selected resources'), { target: { value: '42' } })
+
+    const linkButton = screen.getByRole('button', { name: /Link selected/i }) as HTMLButtonElement
+    expect(linkButton.disabled).toBe(true)
+    expect(screen.getByText(/1 stale selected; run discovery again before linking/i)).toBeTruthy()
+
+    fireEvent.click(linkButton)
+    expect(onBulkLink).not.toHaveBeenCalled()
   })
 
   it('filters bulk link pools to the selected account', () => {
@@ -234,6 +250,48 @@ describe('ResourcesTab', () => {
 
     expect(onPageChange).toHaveBeenCalledWith(3)
     expect(onPageSizeChange).toHaveBeenCalledWith(100)
+  })
+})
+
+describe('ImportPreviewModal', () => {
+  it('shows stale resource block evidence and disables apply when nothing is importable', () => {
+    const preview: DiscoveryImportPreviewResponse = {
+      importable: 0,
+      blocked: 1,
+      linked_only: 0,
+      already_linked: 0,
+      conflict_count: 0,
+      items: [
+        {
+          resource_id: 'resource-stale-vpc',
+          provider_resource_id: 'vpc-stale',
+          name: 'stale-vpc',
+          resource_type: 'vpc',
+          cidr: '10.80.0.0/16',
+          status: 'blocked',
+          proposed_action: 'none',
+          issues: ['stale_resource'],
+          evidence: [
+            'discovery_status=stale',
+            'stale resources cannot be imported or linked until a fresh discovery marks them active',
+          ],
+        },
+      ],
+    }
+
+    render(
+      <ImportPreviewModal
+        preview={preview}
+        pools={pools}
+        loading={false}
+        onClose={vi.fn()}
+        onApply={vi.fn()}
+      />,
+    )
+
+    expect(screen.getAllByText('stale resource requires fresh discovery').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/fresh discovery marks them active/i).length).toBeGreaterThan(0)
+    expect((screen.getByRole('button', { name: /Apply import/i }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
 

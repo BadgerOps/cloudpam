@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,6 +230,110 @@ func TestDiscoveryImportPreviewAndApplySelectedResources(t *testing.T) {
 	}
 	if len(pools) != 2 {
 		t.Fatalf("len(pools) = %d, want 2", len(pools))
+	}
+}
+
+func TestDiscoveryImportPreviewBlocksStaleResourcesAndApplySkips(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	now := time.Now().UTC()
+	staleID := uuid.New()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           staleID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-stale",
+		Name:         "stale-vpc",
+		CIDR:         "10.12.0.0/16",
+		Status:       domain.DiscoveryStatusStale,
+		DiscoveredAt: now.Add(-2 * time.Hour),
+		LastSeenAt:   now.Add(-1 * time.Hour),
+	})
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s"]}`, account.ID, staleID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	item := singleDiscoveryPreviewItem(t, rr)
+	if item.Status != "blocked" || item.ProposedAction != "none" || !containsString(item.Issues, "stale_resource") {
+		t.Fatalf("stale resource should be blocked: %+v", item)
+	}
+	if !containsString(item.Evidence, "discovery_status=stale") {
+		t.Fatalf("stale evidence missing status: %+v", item.Evidence)
+	}
+	if item.ProposedPoolID != nil || item.ProposedParentPoolID != nil {
+		t.Fatalf("stale resource should not receive import targets: %+v", item)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("unmarshal apply: %v", err)
+	}
+	if applied.PoolsCreated != 0 || applied.ResourcesLinked != 0 || applied.Skipped != 1 {
+		t.Fatalf("stale resource should be skipped by apply: %+v", applied)
+	}
+	if applied.Summary.Blocked != 1 || applied.Summary.Imported != 0 || len(applied.Summary.AffectedResourceIDs) != 0 {
+		t.Fatalf("unexpected stale apply summary: %+v", applied.Summary)
+	}
+}
+
+func TestDiscoveryImportForceDoesNotAllowStaleResources(t *testing.T) {
+	item := domain.DiscoveryImportPreviewItem{
+		ResourceID:     uuid.New(),
+		ResourceType:   domain.ResourceTypeVPC,
+		CIDR:           "10.12.0.0/16",
+		Status:         "blocked",
+		ProposedAction: "create_pool",
+		Issues:         []string{"stale_resource"},
+	}
+	if canForceDiscoveryImport(item, discoveryImportApplyOptions{AllowBlocked: true}) {
+		t.Fatalf("stale blocked resource must not be force importable")
+	}
+}
+
+func TestDiscoveryLinkRejectsStaleResource(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "prod-vpc", CIDR: "10.13.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	now := time.Now().UTC()
+	staleID := uuid.New()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           staleID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-stale-link",
+		Name:         "stale-link-vpc",
+		CIDR:         "10.13.0.0/16",
+		Status:       domain.DiscoveryStatusStale,
+		DiscoveredAt: now.Add(-2 * time.Hour),
+		LastSeenAt:   now.Add(-1 * time.Hour),
+	})
+
+	body := fmt.Sprintf(`{"pool_id":%d}`, pool.ID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/discovery/resources/%s/link", staleID), body, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "run discovery again") {
+		t.Fatalf("expected stale link error, got %s", rr.Body.String())
+	}
+	res, err := ds.GetDiscoveredResource(t.Context(), staleID)
+	if err != nil {
+		t.Fatalf("get stale resource: %v", err)
+	}
+	if res.PoolID != nil {
+		t.Fatalf("stale resource should not be linked: %+v", res.PoolID)
 	}
 }
 

@@ -1789,6 +1789,9 @@ func validateNetworkConflictLinkAction(conflict domain.NetworkConflict, res doma
 	if res.PoolID != nil && *res.PoolID == req.PoolID {
 		return fmt.Errorf("discovered resource is already linked to this pool")
 	}
+	if err := validateDiscoveredResourceActiveForMutation(res); err != nil {
+		return err
+	}
 	if !req.Override {
 		if pool.AccountID != nil && *pool.AccountID != res.AccountID {
 			return fmt.Errorf("pool account does not match discovered resource account; set override to force")
