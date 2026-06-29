@@ -97,6 +97,7 @@ const accounts: Account[] = [
 ]
 
 function renderResourcesTab(overrides: Partial<ComponentProps<typeof ResourcesTab>> = {}) {
+  const onLink = vi.fn()
   const onBulkLink = vi.fn()
   const onPageChange = vi.fn()
   const onPageSizeChange = vi.fn()
@@ -124,7 +125,7 @@ function renderResourcesTab(overrides: Partial<ComponentProps<typeof ResourcesTa
       onTypeChange: vi.fn(),
       linkedFilter: '',
       onLinkedChange: vi.fn(),
-      onLink: vi.fn(),
+      onLink,
       onUnlink: vi.fn(),
       accounts,
       selectedAccountId: 1,
@@ -156,7 +157,7 @@ function renderResourcesTab(overrides: Partial<ComponentProps<typeof ResourcesTa
   }
 
   render(<Wrapper />)
-  return { onBulkLink, onPageChange, onPageSizeChange }
+  return { onLink, onBulkLink, onPageChange, onPageSizeChange }
 }
 
 describe('ResourcesTab', () => {
@@ -196,6 +197,17 @@ describe('ResourcesTab', () => {
 
     fireEvent.click(linkButton)
     expect(onBulkLink).not.toHaveBeenCalled()
+  })
+
+  it('disables row-level linking for stale resources', () => {
+    const { onLink } = renderResourcesTab()
+
+    const staleLinkButtons = screen.getAllByTitle('Stale resources require fresh discovery before linking') as HTMLButtonElement[]
+    expect(staleLinkButtons.length).toBeGreaterThan(0)
+    staleLinkButtons.forEach((button) => expect(button.disabled).toBe(true))
+
+    fireEvent.click(staleLinkButtons[0])
+    expect(onLink).not.toHaveBeenCalled()
   })
 
   it('filters bulk link pools to the selected account', () => {

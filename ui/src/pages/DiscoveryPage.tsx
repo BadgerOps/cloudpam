@@ -397,10 +397,18 @@ export default function DiscoveryPage() {
   }
 
   async function handleLink(resource: DiscoveredResource) {
+    if (!isLinkableDiscoveryResource(resource)) {
+      showToast('Run discovery again before linking stale resources', 'error')
+      return
+    }
     setLinkingResource(resource)
   }
 
   async function handleApplyLink(resource: DiscoveredResource, poolId: number) {
+    if (!isLinkableDiscoveryResource(resource)) {
+      showToast('Run discovery again before linking stale resources', 'error')
+      return
+    }
     setLinkingLoading(true)
     try {
       await linkToPool(resource.id, poolId)
@@ -446,6 +454,10 @@ export default function DiscoveryPage() {
   }
 
   async function handleCreateAndLink(resource: DiscoveredResource, data: CreatePoolRequest) {
+    if (!isLinkableDiscoveryResource(resource)) {
+      showToast('Run discovery again before building from stale resources', 'error')
+      return
+    }
     setLinkingLoading(true)
     try {
       const pool = await createPool(data)
@@ -744,6 +756,10 @@ export default function DiscoveryPage() {
 
 function isSelectableDiscoveryResource(resource: DiscoveredResource) {
   return !resource.pool_id
+}
+
+function isLinkableDiscoveryResource(resource: DiscoveredResource) {
+  return isSelectableDiscoveryResource(resource) && resource.status === 'active'
 }
 
 type ResourceColumnKey =
@@ -2994,8 +3010,9 @@ export function ResourcesTab({
                     ) : (
                       <button
                         onClick={() => onLink(r)}
-                        title="Link to pool"
-                        className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
+                        disabled={!isLinkableDiscoveryResource(r)}
+                        title={isLinkableDiscoveryResource(r) ? 'Link to pool' : 'Stale resources require fresh discovery before linking'}
+                        className="p-1 text-gray-400 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-blue-400"
                       >
                         <Link2 className="w-4 h-4" />
                       </button>
@@ -3459,8 +3476,9 @@ function ResourceCard({
         ) : (
           <button
             onClick={() => onLink(resource)}
-            title="Link to pool"
-            className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+            disabled={!isLinkableDiscoveryResource(resource)}
+            title={isLinkableDiscoveryResource(resource) ? 'Link to pool' : 'Stale resources require fresh discovery before linking'}
+            className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
           >
             <Link2 className="h-4 w-4" />
           </button>
