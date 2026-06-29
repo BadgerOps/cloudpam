@@ -18,7 +18,7 @@ import (
 	"cloudpam/internal/storage"
 )
 
-func TestNetworkFlatShowsDiscoveredObjectsAndDuplicateConflict(t *testing.T) {
+func TestNetworkFlatShowsDiscoveredObjectsAndGlobalDuplicateConflict(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	a1, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:111111111111", Name: "prod", Provider: "aws"})
 	if err != nil {
@@ -41,7 +41,7 @@ func TestNetworkFlatShowsDiscoveredObjectsAndDuplicateConflict(t *testing.T) {
 		upsertDiscoveredForImportTest(t, ds, res)
 	}
 
-	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/flat", "", http.StatusOK)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/flat?schema_policy=global", "", http.StatusOK)
 	var resp domain.NetworkViewResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal flat: %v", err)
@@ -395,6 +395,47 @@ func TestNetworkHierarchyPlacesVPCUnderPoolAndSubnetUnderVPC(t *testing.T) {
 	}
 }
 
+func TestNetworkSchemaPolicyChangesHierarchyEvaluation(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	now := time.Now().UTC()
+	vpcID := uuid.New()
+	subnetID := uuid.New()
+	parent := "vpc-shared"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{ID: vpcID, AccountID: account.ID, Provider: "aws", Region: "us-east-1", ResourceType: domain.ResourceTypeVPC, ResourceID: parent, Name: "prod-vpc", CIDR: "10.81.0.0/16", Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now})
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{ID: subnetID, AccountID: account.ID, Provider: "aws", Region: "us-west-2", ResourceType: domain.ResourceTypeSubnet, ResourceID: "subnet-cross-region", Name: "prod-subnet", CIDR: "10.81.1.0/24", ParentResourceID: &parent, Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now})
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/hierarchy?schema_policy=account_level", "", http.StatusOK)
+	var view domain.NetworkViewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &view); err != nil {
+		t.Fatalf("unmarshal account-level hierarchy: %v", err)
+	}
+	if !hierarchyHasParentChild(view.Items, "discovered:"+vpcID.String(), "discovered:"+subnetID.String()) {
+		t.Fatalf("account-level hierarchy should allow same-account cross-region parent: %+v", view.Items)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=missing_parent&schema_policy=region_level", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal region-level conflicts: %v", err)
+	}
+	if conflicts.Total != 1 || !strings.Contains(strings.Join(conflicts.Items[0].Evidence, ","), "hierarchy_scope=region") {
+		t.Fatalf("region-level hierarchy should flag cross-region missing parent with policy evidence, got %+v", conflicts)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=missing_parent&schema_policy=manual", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal manual conflicts: %v", err)
+	}
+	if conflicts.Total != 0 {
+		t.Fatalf("manual hierarchy should suppress inferred missing-parent conflicts, got %+v", conflicts)
+	}
+}
+
 func TestNetworkConflictsExposeMissingParentAndResolveRequest(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
@@ -531,8 +572,24 @@ func TestNetworkSchemaPolicyChangesDuplicateDetection(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
 		t.Fatalf("unmarshal default conflicts: %v", err)
 	}
+	if conflicts.SchemaPolicy.Name != "account_level" || conflicts.Total != 1 {
+		t.Fatalf("default account-level policy should flag same-account duplicate, got %+v", conflicts)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr&schema_policy=account_level", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal account-level conflicts: %v", err)
+	}
+	if conflicts.Total != 1 || !strings.Contains(strings.Join(conflicts.Items[0].Evidence, ","), "duplicate_scope=account") {
+		t.Fatalf("account-level policy should flag same-account duplicate with evidence, got %+v", conflicts)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr&schema_policy=region_level", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal region-level conflicts: %v", err)
+	}
 	if conflicts.Total != 0 {
-		t.Fatalf("account-level policy should allow same-CIDR reuse inside one account, got %+v", conflicts)
+		t.Fatalf("region-level policy should allow same-CIDR reuse across regions in one account, got %+v", conflicts)
 	}
 
 	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr&schema_policy=global", "", http.StatusOK)
@@ -550,6 +607,14 @@ func TestNetworkSchemaPolicyChangesDuplicateDetection(t *testing.T) {
 	if conflicts.Total != 0 {
 		t.Fatalf("manual policy should suppress duplicate conflicts, got %+v", conflicts)
 	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=duplicate_cidr&schema_policy=custom&duplicates=global", "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal custom global conflicts: %v", err)
+	}
+	if conflicts.SchemaPolicy.Name != "custom" || conflicts.SchemaPolicy.DuplicateScope != "global" || conflicts.Total != 1 {
+		t.Fatalf("custom policy with global duplicate override should flag duplicate, got %+v", conflicts)
+	}
 }
 
 func TestNetworkSchemaPolicyUsesPersistedDefaultAndQueryOverride(t *testing.T) {
@@ -558,10 +623,14 @@ func TestNetworkSchemaPolicyUsesPersistedDefaultAndQueryOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}
+	otherAccount, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:210987654321", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
 	now := time.Now().UTC()
 	for _, res := range []domain.DiscoveredResource{
 		{ID: uuid.New(), AccountID: account.ID, Provider: "aws", Region: "us-east-1", ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-east", CIDR: "10.93.0.0/16", Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now},
-		{ID: uuid.New(), AccountID: account.ID, Provider: "aws", Region: "us-west-2", ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-west", CIDR: "10.93.0.0/16", Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now},
+		{ID: uuid.New(), AccountID: otherAccount.ID, Provider: "aws", Region: "us-east-1", ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-dev", CIDR: "10.93.0.0/16", Status: domain.DiscoveryStatusActive, DiscoveredAt: now, LastSeenAt: now},
 	} {
 		upsertDiscoveredForImportTest(t, ds, res)
 	}
@@ -589,7 +658,7 @@ func TestNetworkSchemaPolicyUsesPersistedDefaultAndQueryOverride(t *testing.T) {
 		t.Fatalf("unmarshal override conflicts: %v", err)
 	}
 	if conflicts.SchemaPolicy.Name != "account_level" || conflicts.Total != 0 {
-		t.Fatalf("query override should use account-level policy, got %+v", conflicts)
+		t.Fatalf("query override should use account-scoped policy, got %+v", conflicts)
 	}
 }
 

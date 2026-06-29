@@ -80,8 +80,8 @@ const duplicateConflict: NetworkConflict = {
   id: 'duplicate-cidr:account:172.31.0.0_16',
   type: 'duplicate_cidr',
   severity: 'critical',
-  title: 'Duplicate CIDR across accounts',
-  description: '172.31.0.0/16 is discovered in multiple accounts',
+  title: 'Duplicate CIDR in account',
+  description: '172.31.0.0/16 is discovered multiple times in the same account',
   recommended_action: 'Choose the authoritative account or mark the duplicate reviewed.',
   pool_ids: [],
   account_ids: [7, 8],
@@ -276,6 +276,6 @@ describe('NetworkConflictList', () => {
     })
 
     expect(screen.getByText('Operator note: duplicate address space')).toBeTruthy()
-    expect(screen.getByText(/For AWS default VPC space, mark expected reuse ignored or defer it/i)).toBeTruthy()
+    expect(screen.getByText(/Mark expected reuse ignored or defer it/i)).toBeTruthy()
   })
 })

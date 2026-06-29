@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.19.1] - 2026-06-29
+
+### Fixed
+- Merged Network schema policy evaluation now scopes duplicate CIDR and discovered-parent hierarchy checks according to the selected account, region, global, or manual policy, with policy scope evidence included in conflicts.
+- UI production builds now use a Vite 8/Rolldown-compatible manual chunk function instead of object-form `manualChunks`.
+
 ## [0.19.0] - 2026-06-28
 
 ### Added

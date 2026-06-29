@@ -948,11 +948,11 @@ func duplicatePolicyKey(res domain.DiscoveredResource, policy domain.NetworkSche
 	case "manual":
 		return ""
 	case "region":
-		return strings.Join([]string{res.CIDR, res.Region}, "|")
+		return strings.Join([]string{res.CIDR, fmt.Sprintf("%d", res.AccountID), res.Region}, "|")
 	case "global":
 		return res.CIDR
 	default:
-		return res.CIDR
+		return strings.Join([]string{res.CIDR, fmt.Sprintf("%d", res.AccountID)}, "|")
 	}
 }
 
@@ -963,14 +963,30 @@ func duplicatePolicyConflict(matches []domain.DiscoveredResource, policy domain.
 	switch policy.DuplicateScope {
 	case "manual":
 		return false
-	case "global", "region":
-		return true
 	default:
-		accountsSeen := map[int64]bool{}
-		for _, res := range matches {
-			accountsSeen[res.AccountID] = true
-		}
-		return len(accountsSeen) > 1
+		return true
+	}
+}
+
+func duplicateConflictTitle(policy domain.NetworkSchemaPolicy) string {
+	switch policy.DuplicateScope {
+	case "region":
+		return "Duplicate CIDR in account region"
+	case "global":
+		return "Duplicate CIDR globally"
+	default:
+		return "Duplicate CIDR in account"
+	}
+}
+
+func duplicateConflictDescription(cidr string, policy domain.NetworkSchemaPolicy) string {
+	switch policy.DuplicateScope {
+	case "region":
+		return fmt.Sprintf("%s is discovered multiple times in the same account and region", cidr)
+	case "global":
+		return fmt.Sprintf("%s is discovered multiple times globally", cidr)
+	default:
+		return fmt.Sprintf("%s is discovered multiple times in the same account", cidr)
 	}
 }
 
@@ -1047,7 +1063,13 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 	}
 	resourceByProvider := make(map[string]domain.DiscoveredResource, len(resources))
 	for _, res := range resources {
-		resourceByProvider[resourceKey(res.AccountID, res.ResourceID)] = res
+		key := resourceKeyForPolicy(res, policy)
+		if key == "" {
+			continue
+		}
+		if _, exists := resourceByProvider[key]; !exists {
+			resourceByProvider[key] = res
+		}
 	}
 
 	issuesByNode, conflicts := ns.computeNetworkConflicts(resources, pools, accountByID, poolByID, resourceByProvider, policy)
@@ -1073,7 +1095,7 @@ func (ns *NetworkServer) buildNetworkView(ctx context.Context, filters networkVi
 		nodes = append(nodes, node)
 	}
 	for _, res := range resources {
-		node := ns.networkNodeFromResource(res, accountByID, poolByID, resourceByProvider)
+		node := ns.networkNodeFromResource(res, accountByID, poolByID, resourceByProvider, policy)
 		node.Relationships = relsByEntity["discovered:"+res.ID.String()]
 		if nodeIssues := issuesByNode[node.ID]; len(nodeIssues) > 0 {
 			node.Issues = append(node.Issues, nodeIssues...)
@@ -1160,7 +1182,7 @@ func networkNodeFromPool(pool domain.Pool, accounts map[int64]domain.Account) do
 	return node
 }
 
-func (ns *NetworkServer) networkNodeFromResource(res domain.DiscoveredResource, accounts map[int64]domain.Account, pools map[int64]domain.Pool, resources map[string]domain.DiscoveredResource) domain.NetworkNode {
+func (ns *NetworkServer) networkNodeFromResource(res domain.DiscoveredResource, accounts map[int64]domain.Account, pools map[int64]domain.Pool, resources map[string]domain.DiscoveredResource, policy domain.NetworkSchemaPolicy) domain.NetworkNode {
 	nodeID := resourceNodeID(res.ID)
 	state := "discovered"
 	source := "discovered"
@@ -1171,7 +1193,7 @@ func (ns *NetworkServer) networkNodeFromResource(res domain.DiscoveredResource, 
 		id := poolNodeID(*res.PoolID)
 		parentID = &id
 	} else if res.ParentResourceID != nil {
-		if parent, ok := resources[resourceKey(res.AccountID, *res.ParentResourceID)]; ok {
+		if parent, ok := resources[resourceParentKeyForPolicy(res, *res.ParentResourceID, policy)]; ok {
 			id := resourceNodeID(parent.ID)
 			parentID = &id
 		}
@@ -1285,8 +1307,8 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 				})
 			}
 		}
-		if res.ResourceType == domain.ResourceTypeSubnet && res.ParentResourceID != nil {
-			parent, ok := resourceByProvider[resourceKey(res.AccountID, *res.ParentResourceID)]
+		if res.ResourceType == domain.ResourceTypeSubnet && res.ParentResourceID != nil && policy.HierarchyScope != "manual" {
+			parent, ok := resourceByProvider[resourceParentKeyForPolicy(res, *res.ParentResourceID, policy)]
 			if !ok {
 				add(domain.NetworkConflict{
 					ID:                "missing-parent:" + res.ID.String(),
@@ -1302,7 +1324,7 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 					Regions:           []string{res.Region},
 					ObjectTypes:       []string{string(res.ResourceType)},
 					CIDR:              res.CIDR,
-					Evidence:          []string{"parent_provider_resource_id=" + *res.ParentResourceID, "policy=" + policy.Name},
+					Evidence:          []string{"parent_provider_resource_id=" + *res.ParentResourceID, "policy=" + policy.Name, "hierarchy_scope=" + policy.HierarchyScope},
 				})
 			} else if res.CIDR != "" && parent.CIDR != "" && !networkCIDRContains(parent.CIDR, res.CIDR) {
 				add(domain.NetworkConflict{
@@ -1319,7 +1341,7 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 					Regions:           []string{res.Region},
 					ObjectTypes:       []string{string(res.ResourceType), string(parent.ResourceType)},
 					CIDR:              res.CIDR,
-					Evidence:          []string{fmt.Sprintf("parent_cidr=%s", parent.CIDR), "policy=" + policy.Name},
+					Evidence:          []string{fmt.Sprintf("parent_cidr=%s", parent.CIDR), "policy=" + policy.Name, "hierarchy_scope=" + policy.HierarchyScope},
 				})
 			}
 		}
@@ -1451,8 +1473,8 @@ func (ns *NetworkServer) computeNetworkConflicts(resources []domain.DiscoveredRe
 			Type:              "duplicate_cidr",
 			Severity:          "critical",
 			Status:            "open",
-			Title:             "Duplicate CIDR across accounts",
-			Description:       fmt.Sprintf("%s is discovered in multiple accounts", cidr),
+			Title:             duplicateConflictTitle(policy),
+			Description:       duplicateConflictDescription(cidr, policy),
 			RecommendedAction: "Choose the authoritative account or mark the duplicate reviewed.",
 			NodeIDs:           nodeIDs,
 			DiscoveredIDs:     ids,
@@ -2044,6 +2066,23 @@ func networkObjectNodeID(id int64) string { return fmt.Sprintf("network_object:%
 
 func resourceKey(accountID int64, providerResourceID string) string {
 	return fmt.Sprintf("%d:%s", accountID, providerResourceID)
+}
+
+func resourceKeyForPolicy(res domain.DiscoveredResource, policy domain.NetworkSchemaPolicy) string {
+	return resourceParentKeyForPolicy(res, res.ResourceID, policy)
+}
+
+func resourceParentKeyForPolicy(res domain.DiscoveredResource, providerResourceID string, policy domain.NetworkSchemaPolicy) string {
+	switch policy.HierarchyScope {
+	case "manual":
+		return ""
+	case "region":
+		return strings.Join([]string{fmt.Sprintf("%d", res.AccountID), res.Region, providerResourceID}, ":")
+	case "global":
+		return providerResourceID
+	default:
+		return resourceKey(res.AccountID, providerResourceID)
+	}
 }
 
 func bestContainingPool(cidr string, pools map[int64]domain.Pool) *domain.Pool {

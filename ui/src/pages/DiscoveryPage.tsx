@@ -78,7 +78,7 @@ const NETWORK_TRIAGE_GUIDES = [
   {
     type: 'duplicate_cidr',
     label: 'Ignore expected reuse',
-    summary: 'Repeated CIDRs across accounts are often normal cloud tenancy. Review once, then ignore or defer expected reuse.',
+    summary: 'Repeated CIDRs can be normal in scoped tenancy. Review policy-scoped duplicates, then ignore or defer expected reuse.',
   },
 ] as const
 
@@ -1378,7 +1378,7 @@ function NetworkTriageGuide({
           </div>
           {schemaPolicy === 'account_level' && (
             <div className="mt-1 text-xs text-blue-800 dark:text-blue-300">
-              Account policy still flags same-CIDR resources across accounts. AWS default VPC ranges are usually review-and-ignore noise unless they share a real managed pool.
+              Account policy flags repeated CIDRs inside one account. Use region or global policy when tenancy boundaries follow regions or shared global pools.
             </div>
           )}
         </div>
@@ -2439,7 +2439,7 @@ function operatorNoteForConflict(conflict: NetworkConflict) {
     case 'duplicate_cidr':
       return {
         title: 'Operator note: duplicate address space',
-        body: 'Repeated CIDRs across cloud accounts can be normal. For AWS default VPC space, mark expected reuse ignored or defer it unless two records should point at the same managed pool.',
+        body: 'Repeated CIDRs can be normal when they cross the selected policy boundary. Mark expected reuse ignored or defer it unless two records should point at the same managed pool.',
       }
     case 'missing_parent':
       return {
