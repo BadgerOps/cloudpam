@@ -182,10 +182,12 @@ func main() {
 
 	// Initialize discovery subsystem
 	discoveryStore := selectDiscoveryStore(logger, store)
+	networkStore := selectNetworkStore(logger, store)
 	syncService := discovery.NewSyncService(discoveryStore)
 	syncService.RegisterCollector(awscollector.New())
 	syncService.RegisterCollector(gcpcollector.New())
 	discoverySrv := api.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
+	discoverySrv.SetNetworkStore(networkStore)
 	logger.Info("discovery subsystem initialized", "collectors", "aws,gcp")
 
 	// Initialize analysis subsystem
@@ -227,7 +229,7 @@ func main() {
 	logger.Info("settings subsystem initialized")
 
 	networkSrv := api.NewNetworkServer(srv, store, discoveryStore, driftStore)
-	networkSrv.SetNetworkStore(selectNetworkStore(logger, store))
+	networkSrv.SetNetworkStore(networkStore)
 	networkSrv.SetSettingsStore(settingsStore)
 	logger.Info("merged network view subsystem initialized")
 

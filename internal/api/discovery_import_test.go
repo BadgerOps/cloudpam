@@ -232,6 +232,85 @@ func TestDiscoveryImportPreviewAndApplySelectedResources(t *testing.T) {
 	}
 }
 
+func TestDiscoveryImportApplyPersistsNetworkRelationships(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	vpcPool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "prod-vpc", CIDR: "10.11.0.0/20", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create parent pool: %v", err)
+	}
+
+	now := time.Now().UTC()
+	vpcID := uuid.New()
+	subnetID := uuid.New()
+	parent := "vpc-relationships"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   parent,
+		Name:         "relationship-vpc",
+		CIDR:         "10.11.0.0/20",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:               subnetID,
+		AccountID:        account.ID,
+		Provider:         "aws",
+		Region:           "us-east-1",
+		ResourceType:     domain.ResourceTypeSubnet,
+		ResourceID:       "subnet-relationships",
+		Name:             "relationship-subnet",
+		CIDR:             "10.11.1.0/24",
+		ParentResourceID: &parent,
+		Status:           domain.DiscoveryStatusActive,
+		DiscoveredAt:     now,
+		LastSeenAt:       now,
+	})
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s","%s"]}`, account.ID, vpcID, subnetID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("unmarshal apply: %v", err)
+	}
+	if applied.PoolsCreated != 1 || applied.ResourcesLinked != 2 {
+		t.Fatalf("unexpected apply response: %+v", applied)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?type=candidate_import&source_kind=discovered&source_id="+vpcID.String(), "", http.StatusOK)
+	var rels domain.NetworkRelationshipListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal candidate relationships: %v", err)
+	}
+	if rels.Total != 1 || rels.Items[0].TargetKind != "pool" || rels.Items[0].TargetID != fmt.Sprintf("%d", vpcPool.ID) || rels.Items[0].ResolutionState != "open" {
+		t.Fatalf("unexpected candidate relationship: %+v", rels)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?type=imported_as&source_kind=discovered&source_id="+vpcID.String(), "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal imported relationships: %v", err)
+	}
+	if rels.Total != 1 || rels.Items[0].TargetID != fmt.Sprintf("%d", vpcPool.ID) || rels.Items[0].ResolutionState != "resolved" {
+		t.Fatalf("unexpected imported relationship: %+v", rels)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?type=contains&entity_kind=pool&entity_id="+fmt.Sprintf("%d", vpcPool.ID), "", http.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal parent contains relationships: %v", err)
+	}
+	if rels.Total != 1 {
+		t.Fatalf("expected imported subnet containment relationship, got %+v", rels)
+	}
+}
+
 func TestDiscoveryImportApplyReturnsMixedResultSummary(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
@@ -585,6 +664,50 @@ func TestDiscoveryResourceLinkRejectsCrossAccountPool(t *testing.T) {
 	}
 	if resource.PoolID != nil {
 		t.Fatalf("resource linked to cross-account pool: %v", *resource.PoolID)
+	}
+}
+
+func TestDiscoveryResourceLinkPersistsNetworkRelationship(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "prod-vpc", CIDR: "10.43.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	resourceID := uuid.New()
+	now := time.Now().UTC()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           resourceID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-prod",
+		Name:         "prod-vpc",
+		CIDR:         "10.43.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+
+	body := fmt.Sprintf("{\"pool_id\":%d}", pool.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/resources/"+resourceID.String()+"/link", body, http.StatusOK)
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships?type=matches&source_kind=discovered&source_id="+resourceID.String(), "", http.StatusOK)
+	var rels domain.NetworkRelationshipListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &rels); err != nil {
+		t.Fatalf("unmarshal relationships: %v", err)
+	}
+	if rels.Total != 1 {
+		t.Fatalf("expected one direct-link relationship, got %+v", rels)
+	}
+	rel := rels.Items[0]
+	if rel.TargetKind != "pool" || rel.TargetID != fmt.Sprintf("%d", pool.ID) || rel.ResolutionState != "resolved" {
+		t.Fatalf("unexpected direct-link relationship: %+v", rel)
 	}
 }
 
