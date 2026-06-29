@@ -179,12 +179,27 @@ type DiscoveryImportPreviewResponse struct {
 // importable discovery preview rows.
 type DiscoveryImportApplyResponse struct {
 	Preview           DiscoveryImportPreviewResponse `json:"preview"`
+	Summary           DiscoveryImportApplySummary    `json:"summary"`
 	PoolsCreated      int                            `json:"pools_created"`
 	ResourcesLinked   int                            `json:"resources_linked"`
 	Skipped           int                            `json:"skipped"`
 	Errors            []string                       `json:"errors"`
 	CreatedPoolIDs    []int64                        `json:"created_pool_ids,omitempty"`
 	LinkedResourceIDs []uuid.UUID                    `json:"linked_resource_ids,omitempty"`
+}
+
+// DiscoveryImportApplySummary provides aggregate import outcomes for operator
+// review after a bulk apply.
+type DiscoveryImportApplySummary struct {
+	Imported            int         `json:"imported"`
+	LinkedOnly          int         `json:"linked_only"`
+	Skipped             int         `json:"skipped"`
+	Blocked             int         `json:"blocked"`
+	Conflicts           int         `json:"conflicts"`
+	CreatedRecords      int         `json:"created_records"`
+	LinkedRecords       int         `json:"linked_records"`
+	AffectedResourceIDs []uuid.UUID `json:"affected_resource_ids,omitempty"`
+	CreatedPoolIDs      []int64     `json:"created_pool_ids,omitempty"`
 }
 
 // SyncJobsResponse is the response for listing sync jobs.

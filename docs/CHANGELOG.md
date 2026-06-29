@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.19.0] - 2026-06-28
+
+### Added
+- Discovery import apply responses now include a structured aggregate summary for imported, linked-only, skipped, blocked, conflict, created-record, and linked-record outcomes, and the Discovery UI keeps that post-apply summary visible with affected-resource navigation.
+
 ## [0.18.1] - 2026-06-28
 
 ### Fixed

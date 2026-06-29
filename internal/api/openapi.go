@@ -500,6 +500,10 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"DiscoveryResourcesResponse", reflect.TypeOf(domain.DiscoveryResourcesResponse{})},
 		{"DiscoveryImportRequest", reflect.TypeOf(openAPIDiscoveryImportRequest{})},
 		{"DiscoveryImportResponse", reflect.TypeOf(openAPIDiscoveryImportResponse{})},
+		{"DiscoveryImportPreviewRequest", reflect.TypeOf(domain.DiscoveryImportPreviewRequest{})},
+		{"DiscoveryImportPreviewResponse", reflect.TypeOf(domain.DiscoveryImportPreviewResponse{})},
+		{"DiscoveryImportApplyRequest", reflect.TypeOf(domain.DiscoveryImportApplyRequest{})},
+		{"DiscoveryImportApplyResponse", reflect.TypeOf(domain.DiscoveryImportApplyResponse{})},
 		{"LinkResourceRequest", reflect.TypeOf(openAPILinkResourceRequest{})},
 		{"SyncRequest", reflect.TypeOf(openAPISyncRequest{})},
 		{"SyncJob", reflect.TypeOf(domain.SyncJob{})},
@@ -775,6 +779,11 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 		})
 	case "/api/v1/discovery/import":
 		return routesForMethodPath(http.MethodPost, "/api/v1/discovery/import")
+	case "/api/v1/discovery/import/":
+		return routesForKnown([][2]string{
+			{http.MethodPost, "/api/v1/discovery/import/preview"},
+			{http.MethodPost, "/api/v1/discovery/import/apply"},
+		})
 	case "/api/v1/discovery/sync":
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/discovery/sync")
 	case "/api/v1/discovery/sync/":
@@ -1048,6 +1057,8 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "POST", Path: "/api/v1/discovery/resources/{resourceId}/link", Summary: "Link discovered resource to pool", Tag: "Discovery", RequestSchema: "LinkResourceRequest", ResponseSchema: "StatusResponse"},
 		{Method: "DELETE", Path: "/api/v1/discovery/resources/{resourceId}/link", Summary: "Unlink discovered resource from pool", Tag: "Discovery", SuccessStatus: "200", ResponseSchema: "StatusResponse"},
 		{Method: "POST", Path: "/api/v1/discovery/import", Summary: "Import discovered resources as pools", Tag: "Discovery", RequestSchema: "DiscoveryImportRequest", ResponseSchema: "DiscoveryImportResponse"},
+		{Method: "POST", Path: "/api/v1/discovery/import/preview", Summary: "Preview selected discovery import", Tag: "Discovery", RequestSchema: "DiscoveryImportPreviewRequest", ResponseSchema: "DiscoveryImportPreviewResponse"},
+		{Method: "POST", Path: "/api/v1/discovery/import/apply", Summary: "Apply selected discovery import", Tag: "Discovery", RequestSchema: "DiscoveryImportApplyRequest", ResponseSchema: "DiscoveryImportApplyResponse"},
 		{Method: "GET", Path: "/api/v1/discovery/sync", Summary: "List discovery sync jobs", Tag: "Discovery", ResponseSchema: "SyncJobsResponse", Parameters: []openAPIParameter{queryParam("account_id", "Account ID", "integer"), queryParam("limit", "Maximum jobs to return", "integer")}},
 		{Method: "POST", Path: "/api/v1/discovery/sync", Summary: "Trigger discovery sync", Tag: "Discovery", RequestSchema: "SyncRequest", ResponseSchema: "Object"},
 		{Method: "GET", Path: "/api/v1/discovery/sync/{syncJobId}", Summary: "Get discovery sync job", Tag: "Discovery", ResponseSchema: "SyncJob"},
