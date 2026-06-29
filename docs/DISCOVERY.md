@@ -180,7 +180,12 @@ curl http://localhost:8080/api/v1/network/conflicts?schema_policy=global
 curl http://localhost:8080/api/v1/network/conflicts?schema_policy=manual
 ```
 
-`account_level` is the default conservative behavior. `region_level` scopes duplicate CIDR checks by region, `global` treats duplicate CIDRs anywhere as conflicts, and `manual` suppresses duplicate conflicts unless callers pass an explicit duplicate override.
+`account_level` is the default behavior and scopes duplicate CIDR checks and
+discovered parent lookup to each account. `region_level` scopes duplicate and
+parent checks to each account/region pair. `global` treats duplicate CIDRs and
+discovered parent IDs anywhere as shared. `manual` suppresses inferred duplicate
+and parent-placement conflicts unless callers pass an explicit duplicate
+override such as `duplicates=global`.
 
 ## AWS Setup
 

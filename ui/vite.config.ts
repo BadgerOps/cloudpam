@@ -3,6 +3,16 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+function manualChunks(id: string): string | undefined {
+  const normalized = id.split('\\').join('/')
+  if (normalized.includes('/node_modules/react/') || normalized.includes('/node_modules/react-dom/') || normalized.includes('/node_modules/react-router-dom/')) {
+    return 'vendor-react'
+  }
+  if (normalized.includes('/node_modules/lucide-react/')) {
+    return 'vendor-icons'
+  }
+}
+
 export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
   base: '/',
@@ -14,10 +24,7 @@ export default defineConfig(({ mode }) => ({
     cssMinify: true,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-icons': ['lucide-react'],
-        },
+        manualChunks,
         chunkFileNames: 'assets/[name]-[hash].js',
         entryFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash][extname]',
