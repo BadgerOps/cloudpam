@@ -187,6 +187,337 @@ discovered parent IDs anywhere as shared. `manual` suppresses inferred duplicate
 and parent-placement conflicts unless callers pass an explicit duplicate
 override such as `duplicates=global`.
 
+## Operator Examples
+
+Use these examples as a guide for deciding whether discovered cloud resources
+should stay observed-only, be linked to an existing pool, become managed network
+objects, or become allocated blocks.
+
+| Resource state | Use when | CloudPAM behavior |
+|----------------|----------|-------------------|
+| Discovered-only | The object is real cloud state, but you are not ready to attach it to the IPAM plan. | The resource appears in Discovery and merged network views with provider/account/region evidence, but no pool link or managed record is created. |
+| Link-only | The object should be visible in context but should not reserve address space as approved IPAM intent. | CloudPAM records a soft relationship to the containing pool or related record without creating an allocated block. EIPs and public IPs usually land here. |
+| Imported network object | The cloud object should be durable and queryable as a VPC, subnet, EIP, public IP, or placeholder parent. | CloudPAM creates or updates a managed network object and relationships while preserving the discovered source. |
+| Allocated block | The CIDR is approved or designed address intent that should appear in Allocated Blocks. | CloudPAM represents the address space as managed IPAM intent. Use this for planned allocations, not every discovered cloud object. |
+
+### VPC Inside a Pool
+
+Example layout:
+
+```text
+Pool: prod-aws-account-a       10.40.0.0/12
+  Discovered AWS VPC: prod-vpc  10.40.0.0/16  vpc-0a111111
+    Discovered subnet: app-a    10.40.1.0/24  subnet-0a222222
+```
+
+In the Discovery UI, the VPC can remain discovered-only while operators review
+it in **Merged Network**. If the VPC is expected and the containing pool is
+correct, link it to the pool or import it through the discovery flow as a
+discovered-source pool. Use a managed VPC network object when you need a durable
+cloud object record without treating the CIDR as approved allocation intent. Do
+not model it as an allocated block unless your IPAM policy treats VPC CIDRs as
+approved allocation records.
+
+Illustrative hierarchy response:
+
+```json
+{
+  "items": [
+    {
+      "id": "pool:42",
+      "kind": "pool",
+      "name": "prod-aws-account-a",
+      "cidr": "10.40.0.0/12",
+      "children": [
+        {
+          "id": "discovered:11111111-1111-1111-1111-111111111111",
+          "kind": "discovered",
+          "object_type": "vpc",
+          "name": "prod-vpc",
+          "cidr": "10.40.0.0/16",
+          "source": "discovered",
+          "issues": [],
+          "children": [
+            {
+              "id": "discovered:22222222-2222-2222-2222-222222222222",
+              "kind": "discovered",
+              "object_type": "subnet",
+              "name": "app-a",
+              "cidr": "10.40.1.0/24",
+              "parent_provider_resource_id": "vpc-0a111111",
+              "issues": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "schema_policy": "account_level"
+}
+```
+
+Previewing an import for the VPC should return an `importable` item when the
+CIDR is valid, the selected pool contains it, and no conflicting duplicate or
+managed overlap blocks it:
+
+```json
+{
+  "items": [
+    {
+      "resource_id": "11111111-1111-1111-1111-111111111111",
+      "resource_type": "vpc",
+      "cidr": "10.40.0.0/16",
+      "status": "importable",
+      "proposed_action": "create_pool",
+      "proposed_managed_type": "discovered_pool",
+      "proposed_pool_id": 42,
+      "issues": []
+    }
+  ],
+  "importable": 1,
+  "conflict_count": 0,
+  "blocked": 0,
+  "linked_only": 0
+}
+```
+
+### Subnet With a Missing VPC Parent
+
+Cloud providers can return a subnet whose `parent_provider_resource_id` points
+to a VPC that CloudPAM did not discover in the same scope. This can happen when
+credentials are incomplete, a region was omitted, or data was ingested from a
+partial inventory.
+
+Example:
+
+```text
+Discovered subnet: app-orphan      10.51.4.0/24
+Parent provider resource ID:       vpc-missing
+Discovered VPC record:             absent
+```
+
+Merged views should show a `missing_parent` issue instead of silently nesting
+the subnet under any pool that happens to contain `10.51.4.0/24`.
+
+```json
+{
+  "id": "missing-parent:33333333-3333-3333-3333-333333333333",
+  "type": "missing_parent",
+  "severity": "warning",
+  "title": "Subnet references missing VPC parent",
+  "discovered_ids": ["33333333-3333-3333-3333-333333333333"],
+  "evidence": [
+    "subnet subnet-0b333333 references parent vpc-missing",
+    "no discovered VPC with provider_resource_id vpc-missing was found in account aws:111111111111 region us-east-1"
+  ],
+  "available_decisions": ["skip", "ignore", "defer"]
+}
+```
+
+Import preview blocks the subnet until the missing parent is handled:
+
+```json
+{
+  "items": [
+    {
+      "resource_id": "33333333-3333-3333-3333-333333333333",
+      "resource_type": "subnet",
+      "cidr": "10.51.4.0/24",
+      "status": "blocked",
+      "issues": ["missing_parent"]
+    }
+  ],
+  "blocked": 1
+}
+```
+
+Current resolution paths are to rediscover the missing VPC, skip or defer the
+conflict, ignore it when the provider data is intentionally incomplete, or use
+the placeholder-parent action from the conflict panel/API when a durable
+placeholder VPC object is the right operational record.
+
+### Duplicate VPC CIDR Across AWS Accounts
+
+When two AWS accounts use the same VPC CIDR, the correct interpretation depends
+on your schema policy. Under `account_level`, duplicate CIDRs are scoped per
+account, so two accounts can use the same address range without being treated as
+a duplicate by default. Under `global`, the same layout is flagged as a
+cross-account duplicate.
+
+Example:
+
+```text
+AWS account A / us-east-1 / vpc-prod-a   10.60.0.0/16
+AWS account B / us-east-1 / vpc-prod-b   10.60.0.0/16
+```
+
+Use a global duplicate review when address space must be unique across the whole
+organization:
+
+```bash
+curl 'http://localhost:8080/api/v1/network/conflicts?conflict_type=duplicate_cidr&schema_policy=global'
+```
+
+Illustrative conflict response:
+
+```json
+{
+  "items": [
+    {
+      "id": "duplicate-cidr:10.60.0.0_16",
+      "type": "duplicate_cidr",
+      "severity": "error",
+      "title": "Duplicate CIDR 10.60.0.0/16",
+      "discovered_ids": [
+        "44444444-4444-4444-4444-444444444444",
+        "55555555-5555-5555-5555-555555555555"
+      ],
+      "evidence": [
+        "aws account aws:111111111111 region us-east-1 vpc vpc-prod-a uses 10.60.0.0/16",
+        "aws account aws:222222222222 region us-east-1 vpc vpc-prod-b uses 10.60.0.0/16",
+        "schema_policy=global requires duplicate CIDRs to be reviewed across accounts"
+      ],
+      "available_decisions": ["skip", "ignore", "defer"]
+    }
+  ],
+  "schema_policy": "global"
+}
+```
+
+If the duplicate is expected because each account has isolated address space,
+keep the default `account_level` policy or record an `ignore` decision with a
+reason. If it is unintended drift, import or link only the authoritative object
+and leave the conflicting VPC discovered-only until the cloud network is fixed.
+
+### EIP as an Account and Region Object
+
+An Elastic IP is an address-bearing cloud object, but it is not a pool and
+should not become an allocated block. CloudPAM surfaces EIPs as network-object
+candidates so they can be searched, related to pools or conflicts, and grouped
+by account/region.
+
+Example managed object request:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/network/objects \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "object_type": "eip",
+    "provider": "aws",
+    "account_id": 7,
+    "region": "us-west-2",
+    "name": "nat-prod-a",
+    "ip_address": "198.51.100.42",
+    "provider_resource_id": "eipalloc-0e444444"
+  }'
+```
+
+Discovery import preview reports EIPs as `linked_only` rather than pool imports:
+
+```json
+{
+  "items": [
+    {
+      "resource_id": "66666666-6666-6666-6666-666666666666",
+      "resource_type": "eip",
+      "provider_resource_id": "eipalloc-0e444444",
+      "ip_address": "198.51.100.42",
+      "status": "linked_only",
+      "proposed_action": "link_only",
+      "proposed_managed_type": "network_object",
+      "issues": ["network_object_only"],
+      "evidence": [
+        "EIPs are network-object candidates and are not converted into pools"
+      ]
+    }
+  ],
+  "linked_only": 1
+}
+```
+
+Keep EIPs link-only when they are operational evidence attached to NAT gateways,
+instances, load balancers, or account inventory. Create an allocated block only
+for intentionally managed public address space, not for each discovered EIP.
+
+### Pool Per Account
+
+Use a pool-per-account layout when each AWS account owns an address boundary and
+regions or VPCs sit below that account boundary.
+
+```text
+Global private space        10.0.0.0/8
+  AWS account A pool        10.70.0.0/12
+    us-east-1 VPC object    10.70.0.0/16
+    us-west-2 VPC object    10.71.0.0/16
+  AWS account B pool        10.80.0.0/12
+    us-east-1 VPC object    10.80.0.0/16
+```
+
+Recommended behavior:
+
+| Scenario | Recommended state |
+|----------|-------------------|
+| VPC CIDR is inside the account pool and expected | Link to the account pool, import as a discovered-source pool, or create a managed network object if it should not be allocation intent. |
+| VPC CIDR exactly matches an approved account allocation | Link to the existing allocated block; do not create a duplicate block. |
+| VPC CIDR belongs to a different account pool | Treat as outside-pool drift and review before import. |
+| Same VPC CIDR appears in two accounts | Usually acceptable under `account_level`; use `global` when the organization requires uniqueness. |
+
+Set the default schema policy to account-level when this is the standard
+operating model:
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/settings/network-schema-policy \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"account_level"}'
+```
+
+### Pool Per Region
+
+Use a pool-per-region layout when each account has regional address boundaries
+and VPCs are expected to sit under the matching account/region pool.
+
+```text
+AWS account A pool          10.90.0.0/12
+  us-east-1 region pool     10.90.0.0/16
+    prod VPC object         10.90.8.0/21
+  us-west-2 region pool     10.91.0.0/16
+    prod VPC object         10.91.8.0/21
+```
+
+Recommended behavior:
+
+| Scenario | Recommended state |
+|----------|-------------------|
+| VPC is inside the matching region pool | Link, import as a discovered-source pool, or create a managed network object if it should not be allocation intent. |
+| VPC is inside the account pool but outside its region pool | Treat as outside-pool or placement drift; fix the pool selection before import. |
+| Same CIDR appears in two regions of the same account | Review with `region_level` or stricter policy depending on whether regional overlap is allowed. |
+| Subnet parent VPC is in another region | Treat as invalid provider hierarchy and do not import into the selected region pool. |
+
+Set or override the schema policy to region-level for review:
+
+```bash
+curl -X PATCH http://localhost:8080/api/v1/settings/network-schema-policy \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"region_level"}'
+
+curl 'http://localhost:8080/api/v1/network/conflicts?schema_policy=region_level'
+```
+
+### Current Limitations
+
+- Import preview creates discovered-source pools for importable VPCs and subnets;
+  it does not let the operator choose every future conversion shape from the
+  preview response alone.
+- EIPs and public IPs are represented as link-only or managed network objects,
+  not as allocated blocks.
+- Missing-parent handling can create a placeholder parent from the conflict
+  workflow, but CloudPAM does not infer all missing provider hierarchy for you.
+- Conflict resolution records durable review decisions and relationship
+  evidence where durable drift/network storage is configured. In-memory
+  development mode loses those records when the process exits.
+- Schema policy is global or request-scoped today; per-pool or per-account
+  schema policy is a follow-up area.
+
 ## AWS Setup
 
 ### Prerequisites

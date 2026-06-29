@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.19.3] - 2026-06-29
+
+### Added
+- Discovery documentation now includes practical operator examples for VPCs inside pools, missing VPC parents, duplicate VPC CIDRs across AWS accounts, EIPs as network objects, and account- or region-scoped pool layouts.
+
 ## [0.19.2] - 2026-06-29
 
 ### Fixed
