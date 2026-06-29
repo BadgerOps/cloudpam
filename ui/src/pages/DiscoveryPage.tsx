@@ -56,6 +56,7 @@ type NetworkMode = 'hierarchy' | 'flat' | 'conflicts' | 'objects' | 'relationshi
 type NetworkJumpRequest = {
   mode: NetworkMode
   query: string
+  nodeID?: string
   token: number
 }
 
@@ -879,6 +880,7 @@ function NetworkTab({
     if (!jumpRequest) return
     setMode(jumpRequest.mode)
     setQuery(jumpRequest.query)
+    setPendingJumpNodeID(jumpRequest.nodeID ?? null)
   }, [jumpRequest])
 
   const activeItems = mode === 'hierarchy' ? hierarchy?.items : flat?.items
@@ -984,14 +986,18 @@ function NetworkTab({
     return previewNetworkImport(accountId, resourceIds, poolId)
   }
 
-  function showConflictInMode(conflict: NetworkConflict, nextMode: Extract<NetworkMode, 'flat' | 'hierarchy'>) {
-    const nodeID = conflict.node_ids?.[0]
+  function showConflictInMode(conflict: NetworkConflict, nextMode: Extract<NetworkMode, 'flat' | 'hierarchy'>, requestedNodeID?: string) {
+    const nodeID = requestedNodeID ?? conflict.node_ids?.[0]
     setMode(nextMode)
     if (nodeID) {
       setPendingJumpNodeID(nodeID)
       return
     }
-    if (conflict.cidr) setQuery(conflict.cidr)
+    if (conflict.cidr) {
+      setQuery(conflict.cidr)
+    } else if (conflict.discovered_ids?.[0]) {
+      setQuery(conflict.discovered_ids[0])
+    }
   }
 
   function showRelationshipFilter(filter: {
@@ -1307,8 +1313,8 @@ function NetworkTab({
           onImport={handleImportAction}
           onPlaceholderParent={handlePlaceholderParentAction}
           onPreviewImport={handlePreviewImportAction}
-          onViewFlat={(conflict) => showConflictInMode(conflict, 'flat')}
-          onViewHierarchy={(conflict) => showConflictInMode(conflict, 'hierarchy')}
+          onViewFlat={(conflict, nodeID) => showConflictInMode(conflict, 'flat', nodeID)}
+          onViewHierarchy={(conflict, nodeID) => showConflictInMode(conflict, 'hierarchy', nodeID)}
           onShowRelationships={showRelationshipsForConflict}
           pools={pools}
           accounts={accounts}
@@ -1820,6 +1826,53 @@ function evidenceValues(evidence: string[] | undefined, keys: string[]) {
   return (evidence ?? []).filter((line) => keys.some((key) => line.startsWith(`${key}=`) || line.includes(`${key}=`)))
 }
 
+const DEFAULT_CONFLICT_DECISIONS = ['skip', 'ignore', 'defer'] as const
+
+type ActionAvailability = {
+  enabled: boolean
+  reason: string
+}
+
+function conflictNavigationQuery(conflict: NetworkConflict) {
+  return conflict.cidr || conflict.discovered_ids?.[0] || ''
+}
+
+function conflictActionAvailability(
+  conflict: NetworkConflict,
+  candidatePools: Pool[],
+): {
+  link: ActionAvailability
+  import: ActionAvailability
+  placeholder: ActionAvailability
+} {
+  const hasDiscoveredIDs = (conflict.discovered_ids?.length ?? 0) > 0
+  const hasCandidatePools = candidatePools.length > 0
+  return {
+    link: {
+      enabled: hasDiscoveredIDs && hasCandidatePools,
+      reason: !hasDiscoveredIDs
+        ? 'Linking needs an affected discovered resource.'
+        : !hasCandidatePools
+          ? 'Linking needs a candidate pool from this conflict or the loaded pool list.'
+          : 'A discovered resource and candidate pool are available.',
+    },
+    import: {
+      enabled: hasDiscoveredIDs,
+      reason: hasDiscoveredIDs
+        ? 'Affected discovered resources can be previewed before import.'
+        : 'Import needs at least one affected discovered resource.',
+    },
+    placeholder: {
+      enabled: conflict.type === 'missing_parent' && hasDiscoveredIDs,
+      reason: conflict.type !== 'missing_parent'
+        ? 'Placeholder parents are only available for missing-parent conflicts.'
+        : hasDiscoveredIDs
+          ? 'A missing parent can be represented as a placeholder object.'
+          : 'Placeholder parent creation needs an affected discovered resource.',
+    },
+  }
+}
+
 export function importApplyResultQuery(result: DiscoveryImportApplyResponse) {
   const affected = new Set(result.summary.affected_resource_ids ?? result.linked_resource_ids ?? [])
   const affectedItem = result.preview.items.find((item) => affected.has(item.resource_id))
@@ -1953,7 +2006,7 @@ function NetworkActionResultSummary({
   onShowRelationships,
 }: {
   result: NetworkConflictActionResponse
-  onViewFlat: (conflict: NetworkConflict) => void
+  onViewFlat: (conflict: NetworkConflict, nodeID?: string) => void
   onShowRelationships: (conflict: NetworkConflict) => void
 }) {
   const relationshipCount = result.relationships?.length ?? 0
@@ -2031,8 +2084,8 @@ export function NetworkConflictList({
   onImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined, reason: string, override: boolean) => Promise<NetworkConflictActionResponse>
   onPlaceholderParent: (conflict: NetworkConflict, discoveredId: string, name: string, reason: string) => Promise<NetworkConflictActionResponse>
   onPreviewImport: (conflict: NetworkConflict, resourceIds: string[], poolId: number | undefined) => Promise<DiscoveryImportPreviewResponse>
-  onViewFlat: (conflict: NetworkConflict) => void
-  onViewHierarchy: (conflict: NetworkConflict) => void
+  onViewFlat: (conflict: NetworkConflict, nodeID?: string) => void
+  onViewHierarchy: (conflict: NetworkConflict, nodeID?: string) => void
   onShowRelationships: (conflict: NetworkConflict) => void
   pools: Pool[]
   accounts: Account[]
@@ -2073,6 +2126,14 @@ export function NetworkConflictList({
   const isRelinkCandidate = selected?.type === 'alternate_exact_pool'
   const selectedPools = selected?.pool_ids?.map((id) => pools.find((pool) => pool.id === id) ?? null) ?? []
   const selectedAccounts = selected?.account_ids?.map((id) => accounts.find((account) => account.id === id) ?? null) ?? []
+  const selectedAvailability = selected ? conflictActionAvailability(selected, allPoolOptions) : null
+  const selectedNodeIDs = selected?.node_ids ?? []
+  const selectedNavigationFallback = selected ? conflictNavigationQuery(selected) : ''
+  const reviewDecisions = Array.from(new Set([
+    ...DEFAULT_CONFLICT_DECISIONS,
+    ...(selected?.available_decisions ?? []),
+  ]))
+  const availableDecisionSet = selected?.available_decisions ? new Set(selected.available_decisions) : null
 
   async function previewImport() {
     if (!selected) return
@@ -2166,6 +2227,41 @@ export function NetworkConflictList({
                 Show relationships
               </button>
             </div>
+            <ConflictDetailSection title="Affected rows">
+              {selectedNodeIDs.length > 0 ? (
+                <div className="space-y-2">
+                  {selectedNodeIDs.map((nodeID) => (
+                    <div key={nodeID} className="rounded border border-gray-200 bg-gray-50 p-2 text-xs dark:border-gray-700 dark:bg-gray-900/40">
+                      <div className="font-mono text-gray-700 dark:text-gray-300">{nodeID}</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onViewFlat(selected, nodeID)}
+                          className="inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-white dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                        >
+                          <ArrowRight className="h-3.5 w-3.5" />
+                          Flat row
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onViewHierarchy(selected, nodeID)}
+                          className="inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-white dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                        >
+                          <ArrowRight className="h-3.5 w-3.5" />
+                          Hierarchy row
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : selectedNavigationFallback ? (
+                <div className="rounded border border-gray-200 bg-gray-50 p-2 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-900/40 dark:text-gray-300">
+                  No merged row ID was returned. Navigation will search for <span className="font-mono">{selectedNavigationFallback}</span>.
+                </div>
+              ) : (
+                <div className="text-xs text-gray-500 dark:text-gray-400">No affected merged rows were returned for this conflict.</div>
+              )}
+            </ConflictDetailSection>
             <ConflictDetailSection title="Affected resources">
               <DetailList label="Discovered" values={selected.discovered_ids ?? []} />
               <DetailList label="Nodes" values={selected.node_ids ?? []} />
@@ -2208,16 +2304,37 @@ export function NetworkConflictList({
             <div className="border-t border-gray-100 pt-3 dark:border-gray-700">
               <div className="text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Review</div>
               <div className="mt-2 flex flex-wrap gap-2">
-                {(selected.available_decisions ?? ['skip', 'ignore', 'defer']).map((decision) => (
-                  <button
-                    key={decision}
-                    type="button"
-                    onClick={() => onResolve(selected, decision)}
-                    className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
-                  >
-                    {decision}
-                  </button>
-                ))}
+                {reviewDecisions.map((decision) => {
+                  const disabled = availableDecisionSet !== null && !availableDecisionSet.has(decision)
+                  const reason = disabled
+                    ? `${decision} is unavailable because this conflict did not advertise that review decision.`
+                    : `${decision} is available for this conflict.`
+                  return (
+                    <button
+                      key={decision}
+                      type="button"
+                      disabled={disabled}
+                      title={reason}
+                      onClick={() => onResolve(selected, decision)}
+                      className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                    >
+                      {decision}
+                    </button>
+                  )
+                })}
+              </div>
+              <div className="mt-2 space-y-1 text-xs text-gray-500 dark:text-gray-400">
+                {reviewDecisions.map((decision) => {
+                  const disabled = availableDecisionSet !== null && !availableDecisionSet.has(decision)
+                  return (
+                    <div key={decision}>
+                      <span className="font-medium text-gray-700 dark:text-gray-300">{decision}:</span>{' '}
+                      {disabled
+                        ? 'Unavailable because the backend did not offer this decision.'
+                        : 'Available as a passive review decision.'}
+                    </div>
+                  )
+                })}
               </div>
             </div>
             <div className="border-t border-gray-100 pt-3 dark:border-gray-700">
@@ -2225,31 +2342,42 @@ export function NetworkConflictList({
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
+                  disabled={!selectedAvailability?.link.enabled}
+                  title={selectedAvailability?.link.reason}
                   onClick={() => setActionMode(actionMode === 'link' ? null : 'link')}
-                  className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   <Link2 className="h-3.5 w-3.5" />
                   {isRelinkCandidate ? 'Relink to pool' : 'Link to pool'}
                 </button>
                 <button
                   type="button"
+                  disabled={!selectedAvailability?.import.enabled}
+                  title={selectedAvailability?.import.reason}
                   onClick={() => setActionMode(actionMode === 'import' ? null : 'import')}
-                  className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
                 >
                   <UploadCloud className="h-3.5 w-3.5" />
                   Import as pool
                 </button>
-                {canCreatePlaceholderParent && (
-                  <button
-                    type="button"
-                    onClick={() => setActionMode(actionMode === 'placeholder_parent' ? null : 'placeholder_parent')}
-                    className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    Placeholder parent
-                  </button>
-                )}
+                <button
+                  type="button"
+                  disabled={!selectedAvailability?.placeholder.enabled}
+                  title={selectedAvailability?.placeholder.reason}
+                  onClick={() => setActionMode(actionMode === 'placeholder_parent' ? null : 'placeholder_parent')}
+                  className="inline-flex items-center gap-1 rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Placeholder parent
+                </button>
               </div>
+              {selectedAvailability && (
+                <div className="mt-2 space-y-1 text-xs text-gray-500 dark:text-gray-400">
+                  <div><span className="font-medium text-gray-700 dark:text-gray-300">{isRelinkCandidate ? 'Relink' : 'Link'}:</span> {selectedAvailability.link.reason}</div>
+                  <div><span className="font-medium text-gray-700 dark:text-gray-300">Import:</span> {selectedAvailability.import.reason}</div>
+                  <div><span className="font-medium text-gray-700 dark:text-gray-300">Placeholder parent:</span> {selectedAvailability.placeholder.reason}</div>
+                </div>
+              )}
               {actionError && <div className="mt-2 text-xs text-red-600 dark:text-red-400">{actionError}</div>}
               {actionResult && (
                 <NetworkActionResultSummary

@@ -12,6 +12,7 @@ const conflict: NetworkConflict = {
   title: 'Discovered CIDR matches managed pool',
   description: 'vpc-prod exactly matches prod-vpc',
   recommended_action: 'Link the discovered resource to the matching managed pool.',
+  node_ids: ['discovered:00000000-0000-0000-0000-000000000001', 'pool:42'],
   discovered_ids: ['00000000-0000-0000-0000-000000000001'],
   pool_ids: [42],
   account_ids: [7],
@@ -89,6 +90,19 @@ const duplicateConflict: NetworkConflict = {
   evidence: ['policy=account_level', 'duplicate_scope=account'],
 }
 
+const unavailableActionConflict: NetworkConflict = {
+  ...conflict,
+  id: 'managed-overlap:empty',
+  type: 'managed_overlap',
+  title: 'Managed overlap requires review',
+  description: 'The overlap has no directly actionable discovered resource in this response',
+  recommended_action: 'Review the evidence and defer until data is complete.',
+  node_ids: [],
+  discovered_ids: [],
+  pool_ids: [],
+  available_decisions: ['defer'],
+}
+
 const preview: DiscoveryImportPreviewResponse = {
   items: [],
   importable: 1,
@@ -162,6 +176,45 @@ describe('NetworkConflictList', () => {
     expect(props.onViewFlat).toHaveBeenCalledWith(conflict)
     expect(props.onViewHierarchy).toHaveBeenCalledWith(conflict)
     expect(props.onShowRelationships).toHaveBeenCalledWith(conflict)
+  })
+
+  it('jumps to each affected merged-network row from conflict details', () => {
+    const props = renderList()
+
+    expect(screen.getByText('Affected rows')).toBeTruthy()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Flat row' })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: 'Hierarchy row' })[0])
+
+    expect(props.onViewFlat).toHaveBeenCalledWith(
+      conflict,
+      'discovered:00000000-0000-0000-0000-000000000001',
+    )
+    expect(props.onViewHierarchy).toHaveBeenCalledWith(
+      conflict,
+      'discovered:00000000-0000-0000-0000-000000000001',
+    )
+  })
+
+  it('shows disabled action states with visible reasons', () => {
+    renderList({
+      conflicts: [unavailableActionConflict],
+      selected: unavailableActionConflict,
+      pools: [],
+    })
+
+    const skip = screen.getByRole('button', { name: 'skip' }) as HTMLButtonElement
+    const ignore = screen.getByRole('button', { name: 'ignore' }) as HTMLButtonElement
+    const defer = screen.getByRole('button', { name: 'defer' }) as HTMLButtonElement
+    expect(skip.disabled).toBe(true)
+    expect(ignore.disabled).toBe(true)
+    expect(defer.disabled).toBe(false)
+    expect(screen.getAllByText(/Unavailable because the backend did not offer this decision/i).length).toBeGreaterThan(0)
+
+    expect((screen.getByRole('button', { name: /Link to pool/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /Import as pool/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /Placeholder parent/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getAllByText(/needs an affected discovered resource/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/Placeholder parents are only available for missing-parent conflicts/i)).toBeTruthy()
   })
 
   it('submits a link action with selected resource, pool, reason, and override', async () => {

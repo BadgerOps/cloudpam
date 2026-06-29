@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.20.0] - 2026-06-29
+
+### Added
+- Merged Network conflict review now shows affected row jump targets and visible availability reasons for review decisions, link/relink, import, and placeholder-parent actions.
+
 ## [0.19.3] - 2026-06-29
 
 ### Added
