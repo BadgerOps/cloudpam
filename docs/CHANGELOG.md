@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.19.2] - 2026-06-29
+
+### Fixed
+- Discovery link and import apply workflows now persist explicit network relationship records for matches, candidate imports, imported resources, and parent-child containment so relationship queries survive merged-network recomputation.
+
 ## [0.19.1] - 2026-06-29
 
 ### Fixed

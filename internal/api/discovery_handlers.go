@@ -23,15 +23,22 @@ import (
 
 // DiscoveryServer handles discovery-related API endpoints.
 type DiscoveryServer struct {
-	srv         *Server
-	store       storage.DiscoveryStore
-	syncService *discovery.SyncService
-	keyStore    auth.KeyStore
+	srv          *Server
+	store        storage.DiscoveryStore
+	syncService  *discovery.SyncService
+	keyStore     auth.KeyStore
+	networkStore storage.NetworkStore
 }
 
 // NewDiscoveryServer creates a new DiscoveryServer.
 func NewDiscoveryServer(srv *Server, store storage.DiscoveryStore, syncService *discovery.SyncService, keyStore auth.KeyStore) *DiscoveryServer {
 	return &DiscoveryServer{srv: srv, store: store, syncService: syncService, keyStore: keyStore}
+}
+
+// SetNetworkStore attaches durable network relationship storage for discovery
+// link and import workflows.
+func (d *DiscoveryServer) SetNetworkStore(networkStore storage.NetworkStore) {
+	d.networkStore = networkStore
 }
 
 // RegisterDiscoveryRoutes registers discovery routes without RBAC.
@@ -240,6 +247,17 @@ func (d *DiscoveryServer) handleLink(w http.ResponseWriter, r *http.Request, id 
 			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "link failed", err.Error())
 			return
 		}
+		d.persistDiscoveryRelationship(r.Context(), domain.CreateNetworkRelationship{
+			Type:            domain.NetworkRelationshipMatches,
+			SourceKind:      "discovered",
+			SourceID:        id.String(),
+			TargetKind:      "pool",
+			TargetID:        fmt.Sprintf("%d", body.PoolID),
+			Confidence:      1,
+			Reason:          "linked discovered resource to pool",
+			Evidence:        discoveryRelationshipEvidence(*resource, "action=link", "pool_id="+fmt.Sprintf("%d", body.PoolID)),
+			ResolutionState: string(domain.DriftStatusResolved),
+		})
 		writeJSON(w, http.StatusOK, map[string]string{"status": "linked"})
 
 	case http.MethodDelete:
@@ -398,6 +416,7 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 			resp.Skipped++
 			continue
 		}
+		d.persistDiscoveryImportCandidate(ctx, item, *res)
 
 		if item.ProposedPoolID != nil && (item.ProposedAction == "link_pool" || opts.AllowBlocked) {
 			if err := d.store.LinkResourceToPool(ctx, item.ResourceID, *item.ProposedPoolID); err != nil {
@@ -405,6 +424,17 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 				resp.Skipped++
 				continue
 			}
+			d.persistDiscoveryRelationship(ctx, domain.CreateNetworkRelationship{
+				Type:            domain.NetworkRelationshipImportedAs,
+				SourceKind:      "discovered",
+				SourceID:        item.ResourceID.String(),
+				TargetKind:      "pool",
+				TargetID:        fmt.Sprintf("%d", *item.ProposedPoolID),
+				Confidence:      1,
+				Reason:          "import linked discovered resource to existing pool",
+				Evidence:        discoveryRelationshipEvidence(*res, "action=import_link", "pool_id="+fmt.Sprintf("%d", *item.ProposedPoolID)),
+				ResolutionState: string(domain.DriftStatusResolved),
+			})
 			createdPoolByProviderID[res.ResourceID] = *item.ProposedPoolID
 			resp.ResourcesLinked++
 			resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
@@ -448,6 +478,30 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 			resp.Skipped++
 			continue
 		}
+		d.persistDiscoveryRelationship(ctx, domain.CreateNetworkRelationship{
+			Type:            domain.NetworkRelationshipImportedAs,
+			SourceKind:      "discovered",
+			SourceID:        item.ResourceID.String(),
+			TargetKind:      "pool",
+			TargetID:        fmt.Sprintf("%d", pool.ID),
+			Confidence:      1,
+			Reason:          "import created pool from discovered resource",
+			Evidence:        discoveryRelationshipEvidence(*res, "action=import_create", "pool_id="+fmt.Sprintf("%d", pool.ID)),
+			ResolutionState: string(domain.DriftStatusResolved),
+		})
+		if parentID != nil {
+			d.persistDiscoveryRelationship(ctx, domain.CreateNetworkRelationship{
+				Type:            domain.NetworkRelationshipContains,
+				SourceKind:      "pool",
+				SourceID:        fmt.Sprintf("%d", *parentID),
+				TargetKind:      "pool",
+				TargetID:        fmt.Sprintf("%d", pool.ID),
+				Confidence:      1,
+				Reason:          "import placed discovered pool under parent pool",
+				Evidence:        discoveryRelationshipEvidence(*res, "action=import_contains", "parent_pool_id="+fmt.Sprintf("%d", *parentID), "child_pool_id="+fmt.Sprintf("%d", pool.ID)),
+				ResolutionState: string(domain.DriftStatusResolved),
+			})
+		}
 		createdPoolByProviderID[res.ResourceID] = pool.ID
 		resp.PoolsCreated++
 		resp.ResourcesLinked++
@@ -462,6 +516,61 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 	resp.Summary.CreatedPoolIDs = resp.CreatedPoolIDs
 
 	return resp, nil
+}
+
+func (d *DiscoveryServer) persistDiscoveryImportCandidate(ctx context.Context, item domain.DiscoveryImportPreviewItem, res domain.DiscoveredResource) {
+	targetPoolID := item.ProposedPoolID
+	if targetPoolID == nil {
+		targetPoolID = item.ProposedParentPoolID
+	}
+	if targetPoolID == nil {
+		return
+	}
+	d.persistDiscoveryRelationship(ctx, domain.CreateNetworkRelationship{
+		Type:            domain.NetworkRelationshipCandidateImport,
+		SourceKind:      "discovered",
+		SourceID:        item.ResourceID.String(),
+		TargetKind:      "pool",
+		TargetID:        fmt.Sprintf("%d", *targetPoolID),
+		Confidence:      0.75,
+		Reason:          "discovery import candidate",
+		Evidence:        discoveryRelationshipEvidence(res, "proposed_action="+item.ProposedAction, "candidate_pool_id="+fmt.Sprintf("%d", *targetPoolID), strings.Join(item.Evidence, "; ")),
+		ResolutionState: "open",
+	})
+}
+
+func (d *DiscoveryServer) persistDiscoveryRelationship(ctx context.Context, in domain.CreateNetworkRelationship) {
+	if d.networkStore == nil {
+		return
+	}
+	if _, err := d.networkStore.UpsertNetworkRelationship(ctx, in); err != nil {
+		d.srv.logger.WarnContext(ctx, "record discovery network relationship failed",
+			"type", in.Type,
+			"source_kind", in.SourceKind,
+			"source_id", in.SourceID,
+			"target_kind", in.TargetKind,
+			"target_id", in.TargetID,
+			"error", err,
+		)
+	}
+}
+
+func discoveryRelationshipEvidence(res domain.DiscoveredResource, values ...string) []string {
+	evidence := []string{
+		"provider=" + res.Provider,
+		"region=" + res.Region,
+		"resource_id=" + res.ResourceID,
+		"resource_type=" + string(res.ResourceType),
+	}
+	if res.CIDR != "" {
+		evidence = append(evidence, "cidr="+res.CIDR)
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			evidence = append(evidence, value)
+		}
+	}
+	return evidence
 }
 
 func discoveryImportApplyPreviewSummary(preview domain.DiscoveryImportPreviewResponse) domain.DiscoveryImportApplySummary {
