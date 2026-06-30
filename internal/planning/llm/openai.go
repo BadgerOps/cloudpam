@@ -25,12 +25,14 @@ func NewOpenAIProvider(cfg Config) *OpenAIProvider {
 	}
 }
 
-func (p *OpenAIProvider) Name() string     { return "openai" }
-func (p *OpenAIProvider) Available() bool   { return p.cfg.APIKey != "" }
+func (p *OpenAIProvider) Name() string { return "openai" }
+func (p *OpenAIProvider) Available() bool {
+	return strings.TrimSpace(p.cfg.APIKey) != "" || strings.TrimSpace(p.cfg.Endpoint) != ""
+}
 
 func (p *OpenAIProvider) baseURL() string {
-	if p.cfg.Endpoint != "" {
-		return strings.TrimRight(p.cfg.Endpoint, "/")
+	if endpoint := strings.TrimSpace(p.cfg.Endpoint); endpoint != "" {
+		return strings.TrimRight(endpoint, "/")
 	}
 	return "https://api.openai.com/v1"
 }
@@ -107,8 +109,8 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if p.cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	if apiKey := strings.TrimSpace(p.cfg.APIKey); apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	resp, err := p.client.Do(req)
@@ -179,8 +181,8 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
-	if p.cfg.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	if apiKey := strings.TrimSpace(p.cfg.APIKey); apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	resp, err := p.client.Do(req)

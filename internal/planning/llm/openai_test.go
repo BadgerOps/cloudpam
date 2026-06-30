@@ -92,6 +92,50 @@ func TestOpenAIProviderComplete(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderCompleteWithoutAPIKeyOmitsAuthorization(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth := r.Header.Get("Authorization"); auth != "" {
+			t.Errorf("expected no auth header, got %q", auth)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := openaiResponse{
+			Choices: []struct {
+				Message      openaiMessage `json:"message"`
+				FinishReason string        `json:"finish_reason"`
+			}{
+				{
+					Message:      openaiMessage{Role: "assistant", Content: "Hello authless!"},
+					FinishReason: "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	provider := NewOpenAIProvider(Config{
+		APIKey:   " \t",
+		Model:    "local-model",
+		Endpoint: " " + ts.URL + "/v1/ ",
+	})
+
+	if !provider.Available() {
+		t.Fatal("expected provider to be available with custom endpoint and no API key")
+	}
+
+	resp, err := provider.Complete(context.Background(), []Message{
+		{Role: "user", Content: "Hello"},
+	}, Options{})
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+
+	if resp.Content != "Hello authless!" {
+		t.Errorf("expected authless response, got %q", resp.Content)
+	}
+}
+
 func TestOpenAIProviderStreamComplete(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -140,6 +184,29 @@ func TestOpenAIProviderNotAvailable(t *testing.T) {
 	provider := NewOpenAIProvider(Config{})
 	if provider.Available() {
 		t.Error("expected provider to not be available with empty API key")
+	}
+
+	provider = NewOpenAIProvider(Config{APIKey: " \t", Endpoint: " \n"})
+	if provider.Available() {
+		t.Error("expected provider to not be available with whitespace-only config")
+	}
+}
+
+func TestOpenAIProviderAvailableWithAuthlessEndpoint(t *testing.T) {
+	provider := NewOpenAIProvider(Config{Endpoint: "http://127.0.0.1:11434/v1"})
+	if !provider.Available() {
+		t.Error("expected provider to be available with custom endpoint and no API key")
+	}
+}
+
+func TestOpenAIProviderBaseURLIgnoresWhitespaceEndpoint(t *testing.T) {
+	provider := NewOpenAIProvider(Config{
+		APIKey:   "test-key",
+		Endpoint: " \t",
+	})
+
+	if got := provider.baseURL(); got != "https://api.openai.com/v1" {
+		t.Errorf("expected default OpenAI base URL, got %q", got)
 	}
 }
 
