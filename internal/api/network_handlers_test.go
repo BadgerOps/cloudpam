@@ -748,6 +748,56 @@ func TestNetworkConflictLinkActionLinksExactPoolAndResolves(t *testing.T) {
 	assertNetworkConflictAuditAction(t, discSrv.srv, conflicts.Items[0].ID, "network_conflict.link")
 }
 
+func TestNetworkConflictLinkActionRejectsStaleResourceEvenWithOverride(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "prod-vpc", CIDR: "10.101.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	now := time.Now().UTC()
+	vpcID := uuid.New()
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   "vpc-stale-link",
+		Name:         "stale-vpc",
+		CIDR:         "10.101.0.0/16",
+		Status:       domain.DiscoveryStatusStale,
+		DiscoveredAt: now.Add(-2 * time.Hour),
+		LastSeenAt:   now.Add(-1 * time.Hour),
+	})
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=unlinked_exact_pool", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 {
+		t.Fatalf("expected one exact-pool conflict, got %+v", conflicts)
+	}
+
+	body := fmt.Sprintf(`{"discovered_id":"%s","pool_id":%d,"override":true}`, vpcID, pool.ID)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/link", conflicts.Items[0].ID), body, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "run discovery again") {
+		t.Fatalf("expected stale link error, got %s", rr.Body.String())
+	}
+	linked, err := ds.GetDiscoveredResource(t.Context(), vpcID)
+	if err != nil {
+		t.Fatalf("load stale resource: %v", err)
+	}
+	if linked.PoolID != nil {
+		t.Fatalf("stale resource should not be linked: %+v", linked)
+	}
+}
+
 func TestNetworkConflictLinkActionUpdatesExistingAssociation(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})

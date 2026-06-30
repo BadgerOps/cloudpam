@@ -397,10 +397,18 @@ export default function DiscoveryPage() {
   }
 
   async function handleLink(resource: DiscoveredResource) {
+    if (!isLinkableDiscoveryResource(resource)) {
+      showToast('Run discovery again before linking stale resources', 'error')
+      return
+    }
     setLinkingResource(resource)
   }
 
   async function handleApplyLink(resource: DiscoveredResource, poolId: number) {
+    if (!isLinkableDiscoveryResource(resource)) {
+      showToast('Run discovery again before linking stale resources', 'error')
+      return
+    }
     setLinkingLoading(true)
     try {
       await linkToPool(resource.id, poolId)
@@ -446,6 +454,10 @@ export default function DiscoveryPage() {
   }
 
   async function handleCreateAndLink(resource: DiscoveredResource, data: CreatePoolRequest) {
+    if (!isLinkableDiscoveryResource(resource)) {
+      showToast('Run discovery again before building from stale resources', 'error')
+      return
+    }
     setLinkingLoading(true)
     try {
       const pool = await createPool(data)
@@ -744,6 +756,10 @@ export default function DiscoveryPage() {
 
 function isSelectableDiscoveryResource(resource: DiscoveredResource) {
   return !resource.pool_id
+}
+
+function isLinkableDiscoveryResource(resource: DiscoveredResource) {
+  return isSelectableDiscoveryResource(resource) && resource.status === 'active'
 }
 
 type ResourceColumnKey =
@@ -2759,6 +2775,9 @@ export function ResourcesTab({
   )
   const selectableResources = resources.filter(isSelectableDiscoveryResource)
   const selectableVisibleIds = selectableResources.map((resource) => resource.id)
+  const selectedVisibleResources = resources.filter((resource) => selectedResourceIds.includes(resource.id))
+  const selectedStaleResources = selectedVisibleResources.filter((resource) => resource.status !== 'active')
+  const staleSelectionBlocksLink = selectedStaleResources.length > 0
   const selectedVisibleCount = selectableVisibleIds.filter((id) => selectedResourceIds.includes(id)).length
   const allVisibleSelected = selectableVisibleIds.length > 0 && selectedVisibleCount === selectableVisibleIds.length
   const someVisibleSelected = selectedVisibleCount > 0 && selectedVisibleCount < selectableVisibleIds.length
@@ -2897,12 +2916,18 @@ export function ResourcesTab({
           <button
             type="button"
             onClick={() => bulkLinkPool > 0 && onBulkLink(selectedResourceIds, bulkLinkPool)}
-            disabled={bulkLinking || selectedResourceIds.length === 0 || bulkLinkPool <= 0}
+            disabled={bulkLinking || selectedResourceIds.length === 0 || bulkLinkPool <= 0 || staleSelectionBlocksLink}
+            title={staleSelectionBlocksLink ? 'Stale resources require fresh discovery before linking' : undefined}
             className="inline-flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1.5 text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {bulkLinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
             Link selected
           </button>
+          {staleSelectionBlocksLink && (
+            <div className="basis-full text-xs text-yellow-700 dark:text-yellow-300">
+              {selectedStaleResources.length} stale selected; run discovery again before linking.
+            </div>
+          )}
         </div>
       </div>
 
@@ -2985,8 +3010,9 @@ export function ResourcesTab({
                     ) : (
                       <button
                         onClick={() => onLink(r)}
-                        title="Link to pool"
-                        className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
+                        disabled={!isLinkableDiscoveryResource(r)}
+                        title={isLinkableDiscoveryResource(r) ? 'Link to pool' : 'Stale resources require fresh discovery before linking'}
+                        className="p-1 text-gray-400 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-blue-400"
                       >
                         <Link2 className="w-4 h-4" />
                       </button>
@@ -3234,7 +3260,7 @@ function PoolLabel({ poolId, pools }: { poolId: number; pools: Pool[] }) {
   )
 }
 
-function ImportPreviewModal({
+export function ImportPreviewModal({
   preview,
   pools,
   loading,
@@ -3389,6 +3415,7 @@ function importActionLabel(item: DiscoveryImportPreviewItem) {
 }
 
 function issueLabel(issue: string) {
+  if (issue === 'stale_resource') return 'stale resource requires fresh discovery'
   return issue.replace(/_/g, ' ')
 }
 
@@ -3449,8 +3476,9 @@ function ResourceCard({
         ) : (
           <button
             onClick={() => onLink(resource)}
-            title="Link to pool"
-            className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-blue-50 hover:text-blue-600 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
+            disabled={!isLinkableDiscoveryResource(resource)}
+            title={isLinkableDiscoveryResource(resource) ? 'Link to pool' : 'Stale resources require fresh discovery before linking'}
+            className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-blue-50 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-blue-900/20 dark:hover:text-blue-400"
           >
             <Link2 className="h-4 w-4" />
           </button>
