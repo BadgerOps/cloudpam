@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/netip"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cloudpam/internal/domain"
 )
 
 type blockInfo struct {
@@ -24,6 +27,62 @@ type blockInfo struct {
 	ExistsElsewhereName string `json:"exists_elsewhere_name,omitempty"`
 }
 
+type blockAccountMeta struct {
+	Name        string
+	Platform    string
+	Tier        string
+	Environment string
+	Regions     []string
+}
+
+type blockAccountResolver struct {
+	load func(context.Context) ([]domain.Account, error)
+
+	loaded   bool
+	accounts map[int64]blockAccountMeta
+}
+
+func newBlockAccountResolver(load func(context.Context) ([]domain.Account, error)) *blockAccountResolver {
+	return &blockAccountResolver{load: load}
+}
+
+// metadata returns account metadata from a request-local cache. The resolver is
+// created inside each blocks request and discarded when the response is written,
+// so account creates, updates, and deletes are automatically visible on the next
+// request without explicit cross-request invalidation.
+func (r *blockAccountResolver) metadata(ctx context.Context, accountID int64) (blockAccountMeta, bool, error) {
+	if err := r.ensureLoaded(ctx); err != nil {
+		return blockAccountMeta{}, false, err
+	}
+	meta, ok := r.accounts[accountID]
+	if ok {
+		meta.Regions = append([]string(nil), meta.Regions...)
+	}
+	return meta, ok, nil
+}
+
+func (r *blockAccountResolver) ensureLoaded(ctx context.Context) error {
+	if r.loaded {
+		return nil
+	}
+	accs, err := r.load(ctx)
+	if err != nil {
+		return err
+	}
+	r.accounts = make(map[int64]blockAccountMeta, len(accs))
+	for _, a := range accs {
+		r.accounts[a.ID] = blockAccountMeta{
+			Name:        a.Name,
+			Platform:    a.Platform,
+			Tier:        a.Tier,
+			Environment: a.Environment,
+			Regions:     append([]string(nil), a.Regions...),
+		}
+	}
+	r.loaded = true
+	return nil
+}
+
 // GET /api/v1/blocks?accounts=1,2&pools=10,11
 // Returns all assigned blocks (sub-pools), optionally filtered by account IDs and parent pool IDs.
 func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
@@ -33,24 +92,7 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
-	accs, err := s.store.ListAccounts(ctx)
-	if err != nil {
-		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
-		return
-	}
-	// Build lookups
-	accName := map[int64]string{}
-	accMeta := map[int64]struct {
-		Platform, Tier, Environment string
-		Regions                     []string
-	}{}
-	for _, a := range accs {
-		accName[a.ID] = a.Name
-		accMeta[a.ID] = struct {
-			Platform, Tier, Environment string
-			Regions                     []string
-		}{Platform: a.Platform, Tier: a.Tier, Environment: a.Environment, Regions: a.Regions}
-	}
+	accountResolver := newBlockAccountResolver(s.store.ListAccounts)
 	poolName := map[int64]string{}
 	for _, p := range ps {
 		poolName[p.ID] = p.Name
@@ -157,10 +199,13 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 			r.ParentName = poolName[*p.ParentID]
 		}
 		if p.AccountID != nil {
-			if n, ok := accName[*p.AccountID]; ok {
-				r.AccountName = n
+			m, ok, err := accountResolver.metadata(ctx, *p.AccountID)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+				return
 			}
-			if m, ok := accMeta[*p.AccountID]; ok {
+			if ok {
+				r.AccountName = m.Name
 				r.AccountPlatform = m.Platform
 				r.AccountTier = m.Tier
 				r.AccountEnvironment = m.Environment
@@ -283,16 +328,7 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 			}
 		}
 	}
-	// Account id -> name map
-	accs, err := s.store.ListAccounts(ctx)
-	if err != nil {
-		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
-		return
-	}
-	accName := map[int64]string{}
-	for _, a := range accs {
-		accName[a.ID] = a.Name
-	}
+	accountResolver := newBlockAccountResolver(s.store.ListAccounts)
 	out := make([]blockInfo, 0, len(blocks))
 	for _, b := range blocks {
 		bi := blockInfo{CIDR: b, PrefixLen: npl, Hosts: hosts}
@@ -302,8 +338,13 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 			bi.AssignedName = info.name
 			if info.accountID != nil {
 				bi.AssignedAccountID = *info.accountID
-				if n, ok := accName[*info.accountID]; ok {
-					bi.AssignedAccountName = n
+				meta, ok, err := accountResolver.metadata(ctx, *info.accountID)
+				if err != nil {
+					s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
+					return
+				}
+				if ok {
+					bi.AssignedAccountName = meta.Name
 				}
 			}
 		} else {

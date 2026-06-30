@@ -37,6 +37,29 @@ func setupTestServer() (*Server, *storage.MemoryStore) {
 	return srv, st
 }
 
+type countingAccountStore struct {
+	*storage.MemoryStore
+	listAccountsCalls int
+}
+
+func (s *countingAccountStore) ListAccounts(ctx context.Context) ([]domain.Account, error) {
+	s.listAccountsCalls++
+	return s.MemoryStore.ListAccounts(ctx)
+}
+
+func setupCountingAccountServer() (*Server, *countingAccountStore) {
+	st := &countingAccountStore{MemoryStore: storage.NewMemoryStore()}
+	mux := stdhttp.NewServeMux()
+	logger := observability.NewLogger(observability.Config{
+		Level:  "info",
+		Format: "json",
+		Output: io.Discard,
+	})
+	srv := NewServer(mux, st, logger, nil, nil)
+	srv.registerUnprotectedTestRoutes()
+	return srv, st
+}
+
 func doJSON(t *testing.T, mux *stdhttp.ServeMux, method, path, body string, code int) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -419,6 +442,120 @@ func TestAnalytics_MetadataInBlocks(t *testing.T) {
 		if it.AccountID == nil || *it.AccountID != a1.ID {
 			t.Fatalf("filter mismatch: %+v", it)
 		}
+	}
+}
+
+func TestBlocksListCachesAccountMetadataPerRequest(t *testing.T) {
+	srv, st := setupCountingAccountServer()
+
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:111111111111","name":"Prod","platform":"aws","environment":"prd","regions":["us-east-1"]}`, stdhttp.StatusCreated)
+	var account struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &account); err != nil {
+		t.Fatalf("unmarshal account: %v", err)
+	}
+
+	rr = doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.60.0.0/16"}`, stdhttp.StatusCreated)
+	var root poolDTO
+	if err := json.Unmarshal(rr.Body.Bytes(), &root); err != nil {
+		t.Fatalf("unmarshal root: %v", err)
+	}
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"prod-a","cidr":"10.60.1.0/24","parent_id":`+strconv.FormatInt(root.ID, 10)+`,"account_id":`+strconv.FormatInt(account.ID, 10)+`}`, stdhttp.StatusCreated)
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"prod-b","cidr":"10.60.2.0/24","parent_id":`+strconv.FormatInt(root.ID, 10)+`,"account_id":`+strconv.FormatInt(account.ID, 10)+`}`, stdhttp.StatusCreated)
+
+	st.listAccountsCalls = 0
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/blocks?page_size=all", "", stdhttp.StatusOK)
+	var env struct {
+		Items []struct {
+			AccountID          *int64   `json:"account_id"`
+			AccountName        string   `json:"account_name"`
+			AccountPlatform    string   `json:"account_platform"`
+			AccountEnvironment string   `json:"account_environment"`
+			AccountRegions     []string `json:"account_regions"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal blocks: %v", err)
+	}
+	if st.listAccountsCalls != 1 {
+		t.Fatalf("ListAccounts calls = %d, want 1", st.listAccountsCalls)
+	}
+
+	var matchingRows int
+	for _, item := range env.Items {
+		if item.AccountID == nil || *item.AccountID != account.ID {
+			continue
+		}
+		matchingRows++
+		if item.AccountName != "Prod" || item.AccountPlatform != "aws" || item.AccountEnvironment != "prd" || len(item.AccountRegions) != 1 || item.AccountRegions[0] != "us-east-1" {
+			t.Fatalf("account metadata mismatch: %+v", item)
+		}
+	}
+	if matchingRows != 2 {
+		t.Fatalf("matching account rows = %d, want 2", matchingRows)
+	}
+
+	doJSON(t, srv.mux, stdhttp.MethodPatch, "/api/v1/accounts/"+strconv.FormatInt(account.ID, 10), `{"name":"Prod Renamed","platform":"aws","environment":"prd","regions":["us-west-2"]}`, stdhttp.StatusOK)
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/blocks?page_size=all", "", stdhttp.StatusOK)
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal blocks after account update: %v", err)
+	}
+	if st.listAccountsCalls != 2 {
+		t.Fatalf("ListAccounts calls after second request = %d, want 2", st.listAccountsCalls)
+	}
+	for _, item := range env.Items {
+		if item.AccountID != nil && *item.AccountID == account.ID && (item.AccountName != "Prod Renamed" || len(item.AccountRegions) != 1 || item.AccountRegions[0] != "us-west-2") {
+			t.Fatalf("stale account metadata after update: %+v", item)
+		}
+	}
+}
+
+func TestPoolBlocksCachesAccountMetadataPerRequest(t *testing.T) {
+	srv, st := setupCountingAccountServer()
+
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:222222222222","name":"Shared"}`, stdhttp.StatusCreated)
+	var account struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &account); err != nil {
+		t.Fatalf("unmarshal account: %v", err)
+	}
+	rr = doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"root","cidr":"10.61.0.0/22"}`, stdhttp.StatusCreated)
+	var root poolDTO
+	if err := json.Unmarshal(rr.Body.Bytes(), &root); err != nil {
+		t.Fatalf("unmarshal root: %v", err)
+	}
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"shared-a","cidr":"10.61.0.0/24","parent_id":`+strconv.FormatInt(root.ID, 10)+`,"account_id":`+strconv.FormatInt(account.ID, 10)+`}`, stdhttp.StatusCreated)
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"shared-b","cidr":"10.61.1.0/24","parent_id":`+strconv.FormatInt(root.ID, 10)+`,"account_id":`+strconv.FormatInt(account.ID, 10)+`}`, stdhttp.StatusCreated)
+
+	st.listAccountsCalls = 0
+	rr = doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/pools/"+strconv.FormatInt(root.ID, 10)+"/blocks?new_prefix_len=24&page_size=all", "", stdhttp.StatusOK)
+	var env struct {
+		Items []struct {
+			Used                bool   `json:"used"`
+			AssignedAccountID   int64  `json:"assigned_account_id"`
+			AssignedAccountName string `json:"assigned_account_name"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("unmarshal pool blocks: %v", err)
+	}
+	if st.listAccountsCalls != 1 {
+		t.Fatalf("ListAccounts calls = %d, want 1", st.listAccountsCalls)
+	}
+	var usedRows int
+	for _, item := range env.Items {
+		if !item.Used {
+			continue
+		}
+		usedRows++
+		if item.AssignedAccountID != account.ID || item.AssignedAccountName != "Shared" {
+			t.Fatalf("assigned account metadata mismatch: %+v", item)
+		}
+	}
+	if usedRows != 2 {
+		t.Fatalf("used rows = %d, want 2", usedRows)
 	}
 }
 

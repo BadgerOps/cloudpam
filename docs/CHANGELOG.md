@@ -10,6 +10,9 @@ patch or minor version entry for every user-facing change.
 
 ## [0.21.1] - 2026-06-30
 
+### Changed
+- Blocks listing now uses request-local account metadata caching so repeated account references do not trigger duplicate account lookups while account updates remain visible on the next request.
+
 ### Fixed
 - Authless OpenAI-compatible LLM endpoints configured with `CLOUDPAM_LLM_ENDPOINT` are now treated as available without requiring `CLOUDPAM_LLM_API_KEY`.
 - Whitespace-only `CLOUDPAM_LLM_ENDPOINT` values now fall back to the default OpenAI endpoint, and AI planning unavailable messages now mention the endpoint-based configuration path.
