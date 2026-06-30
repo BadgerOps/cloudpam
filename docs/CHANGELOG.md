@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.22.0] - 2026-06-30
+
+### Added
+- Address Pools create and edit forms now show inline validation and server errors consistently alongside error toasts.
+
 ## [0.21.1] - 2026-06-30
 
 ### Changed

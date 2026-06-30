@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Plus, Search, Trash2, ChevronRight, Pencil, X } from 'lucide-react'
 import { usePools } from '../hooks/usePools'
 import { useAccounts } from '../hooks/useAccounts'
@@ -9,6 +9,78 @@ import type { Pool, PoolWithStats, CreatePoolRequest, UpdatePoolRequest, PoolTyp
 import { formatHostCount, getHostCount, formatTimeAgo } from '../utils/format'
 import { get } from '../api/client'
 
+type PoolFormErrors = {
+  name?: string
+  cidr?: string
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback
+}
+
+function validatePoolName(name: string): string | undefined {
+  return name.trim() ? undefined : 'Name is required'
+}
+
+function validateIPv4CIDR(cidr: string): string | undefined {
+  const trimmed = cidr.trim()
+  if (!trimmed) return 'CIDR is required'
+
+  const parts = trimmed.split('/')
+  if (parts.length !== 2) return 'Enter an IPv4 CIDR such as 10.0.0.0/16'
+
+  const [addr, prefixText] = parts
+  const prefix = Number(prefixText)
+  if (!Number.isInteger(prefix) || prefix < 8 || prefix > 32) {
+    return 'Prefix length must be between 8 and 32'
+  }
+
+  const octets = addr.split('.')
+  if (octets.length !== 4) return 'Enter an IPv4 CIDR such as 10.0.0.0/16'
+  for (const octet of octets) {
+    if (!/^\d+$/.test(octet)) return 'CIDR must contain numeric IPv4 octets'
+    const value = Number(octet)
+    if (value < 0 || value > 255) return 'IPv4 octets must be between 0 and 255'
+  }
+
+  return undefined
+}
+
+function validateCreatePool(form: CreatePoolRequest): PoolFormErrors {
+  const errors: PoolFormErrors = {}
+  const nameError = validatePoolName(form.name)
+  const cidrError = validateIPv4CIDR(form.cidr)
+  if (nameError) errors.name = nameError
+  if (cidrError) errors.cidr = cidrError
+  return errors
+}
+
+function hasErrors(errors: PoolFormErrors): boolean {
+  return Object.values(errors).some(Boolean)
+}
+
+function fieldClass(hasError: boolean, extra = ''): string {
+  return [
+    'w-full px-3 py-1.5 border rounded text-sm dark:bg-gray-700 dark:text-gray-100',
+    hasError ? 'border-red-400 dark:border-red-600' : 'dark:border-gray-600',
+    extra,
+  ].filter(Boolean).join(' ')
+}
+
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null
+  return <p id={id} className="mt-1 text-xs text-red-600 dark:text-red-300">{message}</p>
+}
+
+function FormError({ message }: { message: string | null }) {
+  if (!message) return null
+  return (
+    <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm p-3 rounded" role="alert">
+      {message}
+    </div>
+  )
+}
+
 export default function PoolsPage() {
   const { pools, loading, error, fetchPools, fetchHierarchy, createPool, updatePool, deletePool } = usePools()
   const { accounts, fetchAccounts } = useAccounts()
@@ -18,6 +90,8 @@ export default function PoolsPage() {
   const [selectedPool, setSelectedPool] = useState<PoolWithStats | null>(null)
   const [editingPool, setEditingPool] = useState<Pool | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [createErrors, setCreateErrors] = useState<PoolFormErrors>({})
+  const [createFormError, setCreateFormError] = useState<string | null>(null)
 
   // Create form state
   const [form, setForm] = useState<CreatePoolRequest>({
@@ -38,17 +112,47 @@ export default function PoolsPage() {
       (p.description || '').toLowerCase().includes(q)
   })
 
-  async function handleCreate(e: React.FormEvent) {
+  function updateCreateField<K extends keyof CreatePoolRequest>(key: K, value: CreatePoolRequest[K]) {
+    setForm(prev => ({ ...prev, [key]: value }))
+    if (key === 'name' || key === 'cidr') {
+      setCreateErrors(prev => ({ ...prev, [key]: undefined }))
+    }
+    setCreateFormError(null)
+  }
+
+  function resetCreateForm() {
+    setShowCreate(false)
+    setForm({ name: '', cidr: '', type: 'subnet', status: 'active' })
+    setCreateErrors({})
+    setCreateFormError(null)
+  }
+
+  async function handleCreate(e: FormEvent) {
     e.preventDefault()
+    const errors = validateCreatePool(form)
+    setCreateErrors(errors)
+    setCreateFormError(null)
+    if (hasErrors(errors)) {
+      return
+    }
+
+    const payload: CreatePoolRequest = {
+      ...form,
+      name: form.name.trim(),
+      cidr: form.cidr.trim(),
+      description: form.description?.trim() || undefined,
+    }
+
     setSubmitting(true)
     try {
-      await createPool(form)
+      await createPool(payload)
       showToast('Pool created', 'success')
-      setShowCreate(false)
-      setForm({ name: '', cidr: '', type: 'subnet', status: 'active' })
+      resetCreateForm()
       fetchHierarchy()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to create pool', 'error')
+      const message = errorMessage(err, 'Failed to create pool')
+      setCreateFormError(message)
+      showToast(message, 'error')
     } finally {
       setSubmitting(false)
     }
@@ -102,34 +206,44 @@ export default function PoolsPage() {
 
         {/* Create form */}
         {showCreate && (
-          <form onSubmit={handleCreate} className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-4 mb-4 space-y-3">
+          <form onSubmit={handleCreate} noValidate className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-4 mb-4 space-y-3">
+            <FormError message={createFormError} />
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Name</label>
+                <label htmlFor="create-pool-name" className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Name</label>
                 <input
+                  id="create-pool-name"
                   required
                   value={form.name}
-                  onChange={e => setForm({ ...form, name: e.target.value })}
-                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                  onChange={e => updateCreateField('name', e.target.value)}
+                  className={fieldClass(Boolean(createErrors.name))}
                   placeholder="e.g., prod-us-east-1"
+                  aria-invalid={Boolean(createErrors.name)}
+                  aria-describedby={createErrors.name ? 'create-pool-name-error' : undefined}
                 />
+                <FieldError id="create-pool-name-error" message={createErrors.name} />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">CIDR</label>
+                <label htmlFor="create-pool-cidr" className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">CIDR</label>
                 <input
+                  id="create-pool-cidr"
                   required
                   value={form.cidr}
-                  onChange={e => setForm({ ...form, cidr: e.target.value })}
-                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm font-mono dark:bg-gray-700 dark:text-gray-100"
+                  onChange={e => updateCreateField('cidr', e.target.value)}
+                  className={fieldClass(Boolean(createErrors.cidr), 'font-mono')}
                   placeholder="e.g., 10.0.0.0/16"
+                  aria-invalid={Boolean(createErrors.cidr)}
+                  aria-describedby={createErrors.cidr ? 'create-pool-cidr-error' : undefined}
                 />
+                <FieldError id="create-pool-cidr-error" message={createErrors.cidr} />
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Type</label>
+                <label htmlFor="create-pool-type" className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Type</label>
                 <select
+                  id="create-pool-type"
                   value={form.type}
-                  onChange={e => setForm({ ...form, type: e.target.value as PoolType })}
-                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                  onChange={e => updateCreateField('type', e.target.value as PoolType)}
+                  className={fieldClass(false)}
                 >
                   <option value="supernet">Supernet</option>
                   <option value="region">Region</option>
@@ -139,11 +253,12 @@ export default function PoolsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Status</label>
+                <label htmlFor="create-pool-status" className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Status</label>
                 <select
+                  id="create-pool-status"
                   value={form.status}
-                  onChange={e => setForm({ ...form, status: e.target.value as PoolStatus })}
-                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                  onChange={e => updateCreateField('status', e.target.value as PoolStatus)}
+                  className={fieldClass(false)}
                 >
                   <option value="active">Active</option>
                   <option value="planned">Planned</option>
@@ -151,11 +266,12 @@ export default function PoolsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Account</label>
+                <label htmlFor="create-pool-account" className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Account</label>
                 <select
+                  id="create-pool-account"
                   value={form.account_id ?? ''}
-                  onChange={e => setForm({ ...form, account_id: e.target.value ? Number(e.target.value) : undefined })}
-                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                  onChange={e => updateCreateField('account_id', e.target.value ? Number(e.target.value) : undefined)}
+                  className={fieldClass(false)}
                 >
                   <option value="">None</option>
                   {accounts.map(a => (
@@ -164,11 +280,12 @@ export default function PoolsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Parent Pool</label>
+                <label htmlFor="create-pool-parent" className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Parent Pool</label>
                 <select
+                  id="create-pool-parent"
                   value={form.parent_id ?? ''}
-                  onChange={e => setForm({ ...form, parent_id: e.target.value ? Number(e.target.value) : undefined })}
-                  className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                  onChange={e => updateCreateField('parent_id', e.target.value ? Number(e.target.value) : undefined)}
+                  className={fieldClass(false)}
                 >
                   <option value="">None (root pool)</option>
                   {pools.map(p => (
@@ -178,11 +295,12 @@ export default function PoolsPage() {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Description</label>
+              <label htmlFor="create-pool-description" className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Description</label>
               <textarea
+                id="create-pool-description"
                 value={form.description || ''}
-                onChange={e => setForm({ ...form, description: e.target.value })}
-                className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                onChange={e => updateCreateField('description', e.target.value)}
+                className={fieldClass(false)}
                 rows={2}
                 placeholder="Optional description"
               />
@@ -197,7 +315,7 @@ export default function PoolsPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setShowCreate(false)}
+                onClick={resetCreateForm}
                 className="px-4 py-1.5 border dark:border-gray-600 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300"
               >
                 Cancel
@@ -327,10 +445,23 @@ function EditPoolModal({
   const [status, setStatus] = useState<PoolStatus>(pool.status)
   const [description, setDescription] = useState(pool.description || '')
   const [saving, setSaving] = useState(false)
+  const [errors, setErrors] = useState<PoolFormErrors>({})
+  const [formError, setFormError] = useState<string | null>(null)
+
+  function updateName(value: string) {
+    setName(value)
+    setErrors(prev => ({ ...prev, name: undefined }))
+    setFormError(null)
+  }
 
   async function handleSave() {
     const trimmedName = name.trim()
-    if (!trimmedName) return
+    const nameError = validatePoolName(trimmedName)
+    if (nameError) {
+      setErrors({ name: nameError })
+      setFormError(null)
+      return
+    }
 
     setSaving(true)
     try {
@@ -344,7 +475,9 @@ function EditPoolModal({
       showToast(`Updated ${updated.name}`, 'success')
       onSaved(updated)
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to update pool', 'error')
+      const message = errorMessage(err, 'Failed to update pool')
+      setFormError(message)
+      showToast(message, 'error')
     } finally {
       setSaving(false)
     }
@@ -360,22 +493,31 @@ function EditPoolModal({
           </button>
         </div>
         <div className="px-6 py-4 space-y-4">
+          <FormError message={formError} />
           <div className="text-sm text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-900 px-3 py-2 rounded">
             {pool.cidr}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
+            <label htmlFor="edit-pool-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name</label>
             <input
+              id="edit-pool-name"
               value={name}
-              onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
+              onChange={e => updateName(e.target.value)}
+              className={[
+                'w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100',
+                errors.name ? 'border-red-400 dark:border-red-600' : 'dark:border-gray-600',
+              ].join(' ')}
+              aria-invalid={Boolean(errors.name)}
+              aria-describedby={errors.name ? 'edit-pool-name-error' : undefined}
             />
+            <FieldError id="edit-pool-name-error" message={errors.name} />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Account</label>
+            <label htmlFor="edit-pool-account" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Account</label>
             <select
+              id="edit-pool-account"
               value={accountId}
-              onChange={e => setAccountId(e.target.value)}
+              onChange={e => { setAccountId(e.target.value); setFormError(null) }}
               className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
             >
               <option value="">None</option>
@@ -386,10 +528,11 @@ function EditPoolModal({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
+              <label htmlFor="edit-pool-type" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
               <select
+                id="edit-pool-type"
                 value={type}
-                onChange={e => setType(e.target.value as PoolType)}
+                onChange={e => { setType(e.target.value as PoolType); setFormError(null) }}
                 className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
               >
                 <option value="supernet">Supernet</option>
@@ -400,10 +543,11 @@ function EditPoolModal({
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
+              <label htmlFor="edit-pool-status" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Status</label>
               <select
+                id="edit-pool-status"
                 value={status}
-                onChange={e => setStatus(e.target.value as PoolStatus)}
+                onChange={e => { setStatus(e.target.value as PoolStatus); setFormError(null) }}
                 className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
               >
                 <option value="active">Active</option>
@@ -413,10 +557,11 @@ function EditPoolModal({
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+            <label htmlFor="edit-pool-description" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
             <textarea
+              id="edit-pool-description"
               value={description}
-              onChange={e => setDescription(e.target.value)}
+              onChange={e => { setDescription(e.target.value); setFormError(null) }}
               rows={3}
               className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
             />
@@ -432,7 +577,7 @@ function EditPoolModal({
           </button>
           <button
             onClick={handleSave}
-            disabled={saving || !name.trim()}
+            disabled={saving}
             className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Save'}
