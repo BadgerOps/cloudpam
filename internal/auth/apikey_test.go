@@ -789,3 +789,40 @@ func TestRequirePermission(t *testing.T) {
 		})
 	}
 }
+
+func TestRequirePermissionPreservesRolePrecedenceOverAPIKeyScopes(t *testing.T) {
+	t.Run("explicit viewer role is not widened by wildcard API key", func(t *testing.T) {
+		ctx := ContextWithRole(context.Background(), RoleViewer)
+		ctx = ContextWithAPIKey(ctx, &APIKey{Scopes: []string{"*"}})
+
+		err := RequirePermission(ctx, ResourceSettings, ActionWrite)
+		if err != ErrInsufficientScopes {
+			t.Fatalf("RequirePermission() error = %v, want %v", err, ErrInsufficientScopes)
+		}
+	})
+
+	t.Run("explicit admin role is not narrowed by limited API key", func(t *testing.T) {
+		ctx := ContextWithRole(context.Background(), RoleAdmin)
+		ctx = ContextWithAPIKey(ctx, &APIKey{Scopes: []string{"pools:read"}})
+
+		err := RequirePermission(ctx, ResourceSettings, ActionWrite)
+		if err != nil {
+			t.Fatalf("RequirePermission() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("session role is not widened by wildcard API key", func(t *testing.T) {
+		ctx := ContextWithSession(context.Background(), &Session{
+			ID:        "sess-precedence",
+			UserID:    "user-precedence",
+			Role:      RoleViewer,
+			ExpiresAt: time.Now().Add(time.Hour),
+		})
+		ctx = ContextWithAPIKey(ctx, &APIKey{Scopes: []string{"*"}})
+
+		err := RequirePermission(ctx, ResourceSettings, ActionWrite)
+		if err != ErrInsufficientScopes {
+			t.Fatalf("RequirePermission() error = %v, want %v", err, ErrInsufficientScopes)
+		}
+	})
+}

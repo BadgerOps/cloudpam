@@ -50,12 +50,12 @@ export default function App() {
                 <Route path="ai-planner" element={<AIPlannerPage />} />
                 <Route path="profile" element={<ProfilePage />} />
                 <Route path="changelog" element={<ChangelogPage />} />
-                <Route path="config/api-keys" element={<ApiKeysPage />} />
                 <Route element={<ProtectedRoute requiredAnyPermissions={['settings:read', 'users:list']} />}>
                   <Route path="identity" element={<IdentityPage />} />
                 </Route>
                 <Route element={<ProtectedRoute requiredPermission="settings:read" />}>
                   <Route path="config" element={<ConfigurationPage />} />
+                  <Route path="config/api-keys" element={<ApiKeysPage />} />
                   <Route path="config/log-destinations" element={<LogDestinationsPage />} />
                   <Route path="config/updates" element={<UpdatesPage />} />
                   <Route path="config/security" element={<SecuritySettingsPage />} />
