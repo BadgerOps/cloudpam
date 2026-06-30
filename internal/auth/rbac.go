@@ -225,10 +225,7 @@ func HasPermission(role Role, resource, action string) bool {
 	return HasPermissionContext(context.Background(), role, resource, action)
 }
 
-func HasPermissionContext(ctx context.Context, role Role, resource, action string) bool {
-	if key := APIKeyFromContext(ctx); key != nil && key.IsValid() {
-		return ScopesAllowPermission(key.Scopes, resource, action)
-	}
+func HasRolePermissionContext(ctx context.Context, role Role, resource, action string) bool {
 	if role == RoleNone {
 		return false
 	}
@@ -257,6 +254,19 @@ func HasPermissionContext(ctx context.Context, role Role, resource, action strin
 	return actionPerms[action] // Unknown action returns false (deny)
 }
 
+func HasPermissionContext(ctx context.Context, role Role, resource, action string) bool {
+	if RoleFromContext(ctx) != RoleNone {
+		return HasRolePermissionContext(ctx, role, resource, action)
+	}
+	if session := SessionFromContext(ctx); session != nil && session.IsValid() {
+		return HasRolePermissionContext(ctx, role, resource, action)
+	}
+	if key := APIKeyFromContext(ctx); key != nil && key.IsValid() {
+		return ScopesAllowPermission(key.Scopes, resource, action)
+	}
+	return HasRolePermissionContext(ctx, role, resource, action)
+}
+
 func SetRoleStoreProvider(provider RoleStore) {
 	roleProviderMu.Lock()
 	defer roleProviderMu.Unlock()
@@ -276,9 +286,19 @@ func GetPermissions(role Role) []Permission {
 }
 
 func GetPermissionsContext(ctx context.Context, role Role) []Permission {
+	if RoleFromContext(ctx) != RoleNone {
+		return GetRolePermissionsContext(ctx, role)
+	}
+	if session := SessionFromContext(ctx); session != nil && session.IsValid() {
+		return GetRolePermissionsContext(ctx, role)
+	}
 	if key := APIKeyFromContext(ctx); key != nil && key.IsValid() {
 		return PermissionsFromScopes(key.Scopes)
 	}
+	return GetRolePermissionsContext(ctx, role)
+}
+
+func GetRolePermissionsContext(ctx context.Context, role Role) []Permission {
 	if provider := currentRoleProvider(); provider != nil {
 		def, err := provider.GetRole(ctx, role)
 		if err == nil && def != nil {

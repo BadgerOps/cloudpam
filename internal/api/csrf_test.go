@@ -1,9 +1,13 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"cloudpam/internal/auth"
 )
 
 func TestCSRFMiddleware_GETSetsTokenCookie(t *testing.T) {
@@ -136,6 +140,92 @@ func TestCSRFMiddleware_POSTWithAPIKeyAndSessionRequiresCSRF(t *testing.T) {
 
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 when a bearer header is mixed with a session cookie and no CSRF token, got %d", rr.Code)
+	}
+}
+
+func TestCSRFMiddleware_ComposedAuthRejectsForgedAPIKeyHeaderWithSessionCookie(t *testing.T) {
+	keyStore := auth.NewMemoryKeyStore()
+	sessionStore := auth.NewMemorySessionStore()
+	userStore := auth.NewMemoryUserStore()
+	ctx := context.Background()
+
+	user := &auth.User{
+		ID:       "csrf-user",
+		Username: "csrf-user",
+		Role:     auth.RoleAdmin,
+		IsActive: true,
+	}
+	if err := userStore.Create(ctx, user); err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+
+	session := &auth.Session{
+		ID:        "csrf-session",
+		UserID:    user.ID,
+		Role:      auth.RoleAdmin,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	if err := sessionStore.Create(ctx, session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	wrapped := CSRFMiddleware()(DualAuthMiddleware(keyStore, sessionStore, userStore, true, newTestLogger())(
+		RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, newTestLogger())(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Fatal("handler should not be called without a CSRF token")
+			}),
+		),
+	))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pools", nil)
+	req.Header.Set("Authorization", "Bearer cpam_forgedkey123abc")
+	req.AddCookie(&http.Cookie{Name: "session", Value: session.ID})
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 before auth when a forged bearer header is mixed with a session cookie, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCSRFMiddleware_ComposedAuthAllowsValidAPIKeyWithoutCSRF(t *testing.T) {
+	keyStore := auth.NewMemoryKeyStore()
+	sessionStore := auth.NewMemorySessionStore()
+	userStore := auth.NewMemoryUserStore()
+	ctx := context.Background()
+
+	plaintext, apiKey, err := auth.GenerateAPIKey(auth.GenerateAPIKeyOptions{
+		Name:   "csrf-api-key",
+		Scopes: []string{"pools:write"},
+	})
+	if err != nil {
+		t.Fatalf("failed to generate API key: %v", err)
+	}
+	if err := keyStore.Create(ctx, apiKey); err != nil {
+		t.Fatalf("failed to store API key: %v", err)
+	}
+
+	var called bool
+	wrapped := CSRFMiddleware()(DualAuthMiddleware(keyStore, sessionStore, userStore, true, newTestLogger())(
+		RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, newTestLogger())(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.WriteHeader(http.StatusOK)
+			}),
+		),
+	))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pools", nil)
+	req.Header.Set("Authorization", "Bearer "+plaintext)
+	wrapped.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid API key without CSRF token, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !called {
+		t.Fatal("handler should have been called for valid API key")
 	}
 }
 

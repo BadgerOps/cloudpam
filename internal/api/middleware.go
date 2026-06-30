@@ -1004,8 +1004,10 @@ func RequirePermissionMiddleware(resource, action string, logger *slog.Logger) M
 				return
 			}
 
-			// Check permission
-			if !auth.HasPermissionContext(ctx, role, resource, action) {
+			// Check permission. RequirePermission preserves the auth source
+			// selected by GetEffectiveRole instead of letting lower-precedence
+			// API key scopes override an explicit/session role.
+			if err := auth.RequirePermission(ctx, resource, action); err != nil {
 				// Log authorization failure
 				attrs := appendRequestID(ctx, []any{
 					"method", r.Method,

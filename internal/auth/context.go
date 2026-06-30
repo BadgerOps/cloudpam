@@ -133,8 +133,28 @@ func GetEffectiveRole(ctx context.Context) Role {
 // RequirePermission checks if the context has permission for a resource action.
 // Returns nil if permitted, or ErrInsufficientScopes if not.
 func RequirePermission(ctx context.Context, resource, action string) error {
-	role := GetEffectiveRole(ctx)
-	if !HasPermissionContext(ctx, role, resource, action) {
+	if role := RoleFromContext(ctx); role != RoleNone {
+		if HasRolePermissionContext(ctx, role, resource, action) {
+			return nil
+		}
+		return ErrInsufficientScopes
+	}
+
+	if session := SessionFromContext(ctx); session != nil && session.IsValid() {
+		if HasRolePermissionContext(ctx, session.Role, resource, action) {
+			return nil
+		}
+		return ErrInsufficientScopes
+	}
+
+	if key := APIKeyFromContext(ctx); key != nil && key.IsValid() {
+		if ScopesAllowPermission(key.Scopes, resource, action) {
+			return nil
+		}
+		return ErrInsufficientScopes
+	}
+
+	if !HasRolePermissionContext(ctx, RoleNone, resource, action) {
 		return ErrInsufficientScopes
 	}
 	return nil
