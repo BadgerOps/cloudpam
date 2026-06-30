@@ -56,7 +56,7 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !a.aiSvc.Available() {
-		a.srv.writeErr(r.Context(), w, http.StatusServiceUnavailable, "ai planning not available", "set CLOUDPAM_LLM_API_KEY to enable")
+		a.srv.writeErr(r.Context(), w, http.StatusServiceUnavailable, "ai planning not available", "set CLOUDPAM_LLM_API_KEY or CLOUDPAM_LLM_ENDPOINT to enable")
 		return
 	}
 

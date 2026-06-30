@@ -12,6 +12,7 @@ patch or minor version entry for every user-facing change.
 
 ### Fixed
 - Authless OpenAI-compatible LLM endpoints configured with `CLOUDPAM_LLM_ENDPOINT` are now treated as available without requiring `CLOUDPAM_LLM_API_KEY`.
+- Whitespace-only `CLOUDPAM_LLM_ENDPOINT` values now fall back to the default OpenAI endpoint, and AI planning unavailable messages now mention the endpoint-based configuration path.
 
 ## [0.21.0] - 2026-06-29
 

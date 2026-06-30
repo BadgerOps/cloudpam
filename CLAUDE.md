@@ -433,9 +433,9 @@ When adding endpoints:
 - `CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS`: Comma-separated account IDs to skip
 
 ### AI Planning
-- `CLOUDPAM_LLM_API_KEY`: API key for OpenAI-compatible endpoint (empty = AI disabled)
+- `CLOUDPAM_LLM_API_KEY`: API key for OpenAI-compatible endpoint (optional when using an authless custom endpoint)
 - `CLOUDPAM_LLM_MODEL`: Model name (default: `gpt-4o`)
-- `CLOUDPAM_LLM_ENDPOINT`: Base URL override for Ollama/vLLM/Azure (empty = OpenAI default)
+- `CLOUDPAM_LLM_ENDPOINT`: Base URL override for Ollama/vLLM/Azure; with no API key, a non-empty endpoint enables authless custom-provider mode
 - `CLOUDPAM_LLM_MAX_TOKENS`: Max response tokens (default: `4096`)
 - `CLOUDPAM_LLM_TEMPERATURE`: Temperature (default: `0.7`)
 

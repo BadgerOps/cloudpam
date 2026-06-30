@@ -31,8 +31,8 @@ func (p *OpenAIProvider) Available() bool {
 }
 
 func (p *OpenAIProvider) baseURL() string {
-	if p.cfg.Endpoint != "" {
-		return strings.TrimRight(strings.TrimSpace(p.cfg.Endpoint), "/")
+	if endpoint := strings.TrimSpace(p.cfg.Endpoint); endpoint != "" {
+		return strings.TrimRight(endpoint, "/")
 	}
 	return "https://api.openai.com/v1"
 }

@@ -199,6 +199,17 @@ func TestOpenAIProviderAvailableWithAuthlessEndpoint(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderBaseURLIgnoresWhitespaceEndpoint(t *testing.T) {
+	provider := NewOpenAIProvider(Config{
+		APIKey:   "test-key",
+		Endpoint: " \t",
+	})
+
+	if got := provider.baseURL(); got != "https://api.openai.com/v1" {
+		t.Errorf("expected default OpenAI base URL, got %q", got)
+	}
+}
+
 func TestOpenAIProviderAPIError(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
