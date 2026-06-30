@@ -203,13 +203,11 @@ func main() {
 
 	// Initialize AI planning subsystem
 	llmCfg := llm.ConfigFromEnv()
-	var llmProvider llm.Provider
-	if llmCfg.APIKey != "" {
-		llmProvider = llm.NewOpenAIProvider(llmCfg)
+	llmProvider := llm.NewOpenAIProvider(llmCfg)
+	if llmProvider.Available() {
 		logger.Info("ai planning enabled", "model", llmCfg.Model, "endpoint", llmCfg.Endpoint)
 	} else {
-		llmProvider = llm.NewOpenAIProvider(llmCfg) // unconfigured; Available() returns false
-		logger.Info("ai planning disabled (set CLOUDPAM_LLM_API_KEY to enable)")
+		logger.Info("ai planning disabled (set CLOUDPAM_LLM_API_KEY or CLOUDPAM_LLM_ENDPOINT to enable)")
 	}
 	convStore := selectConversationStore(logger, store)
 	aiService := planning.NewAIPlanningService(analysisService, convStore, store, llmProvider)
