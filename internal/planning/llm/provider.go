@@ -13,9 +13,12 @@ type Message struct {
 }
 
 // Options configures a single LLM completion request.
+// Unset fields fall back to the provider's configured defaults.
 type Options struct {
-	MaxTokens   int64
-	Temperature float64
+	MaxTokens int64
+	// Temperature is a pointer so that an explicit 0 (fully deterministic
+	// sampling) is distinguishable from "not specified".
+	Temperature *float64
 }
 
 // Response is the result of a non-streaming completion.

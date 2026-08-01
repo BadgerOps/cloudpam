@@ -107,6 +107,9 @@ func (m *MemoryAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 	}
 
 	start := opts.Offset
+	if start < 0 {
+		start = 0
+	}
 	if start > len(filtered) {
 		start = len(filtered)
 	}

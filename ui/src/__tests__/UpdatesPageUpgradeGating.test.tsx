@@ -27,7 +27,7 @@ describe('UpdatesPage upgrade gating', () => {
   const showToast = vi.fn()
   const triggerUpgrade = vi.fn()
 
-  function setup(status: UpdateStatusResponse) {
+  function setup(status: UpdateStatusResponse, summaryOverrides: Record<string, unknown> = {}) {
     mockUseAuth.mockReturnValue({ role: 'admin' })
     mockUseToast.mockReturnValue({ showToast })
     mockUseUpdates.mockReturnValue({
@@ -35,6 +35,7 @@ describe('UpdatesPage upgrade gating', () => {
         current_version: '0.8.0',
         latest_version: '0.9.0',
         update_available: true,
+        ...summaryOverrides,
       },
       status,
       loadingSummary: false,
@@ -90,5 +91,28 @@ describe('UpdatesPage upgrade gating', () => {
     render(<UpdatesPage />)
 
     expect(screen.getByRole('button', { name: 'Upgrade to v0.9.0' })).toHaveProperty('disabled', true)
+  })
+
+  it('disables the upgrade button when the server reports upgrades are unsupported', () => {
+    setup({ status: 'idle' }, { upgrade_supported: false })
+
+    render(<UpdatesPage />)
+
+    const button = screen.getByRole('button', { name: 'Upgrade to v0.9.0' })
+    expect(button).toHaveProperty('disabled', true)
+    expect(button.getAttribute('title')).toBe('In-app upgrades are not supported by this deployment')
+
+    fireEvent.click(button)
+    expect(triggerUpgrade).not.toHaveBeenCalled()
+  })
+
+  it('enables the upgrade button when the server reports upgrades are supported', () => {
+    setup({ status: 'idle' }, { upgrade_supported: true })
+
+    render(<UpdatesPage />)
+
+    const button = screen.getByRole('button', { name: 'Upgrade to v0.9.0' })
+    expect(button).toHaveProperty('disabled', false)
+    expect(button.getAttribute('title')).toBeNull()
   })
 })

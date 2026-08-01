@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Validation error types for specific error handling.
@@ -354,7 +355,11 @@ func ValidateNameWithOptions(name string, opts NameOptions) error {
 		minLen = opts.MinLength
 	}
 
-	if len(name) > maxLen {
+	// Length limits are expressed in characters, so count runes rather than
+	// bytes; otherwise multi-byte names are rejected far below the limit.
+	nameLen := utf8.RuneCountInString(name)
+
+	if nameLen > maxLen {
 		return &NameError{
 			Name:   name,
 			Reason: fmt.Sprintf("exceeds maximum length of %d characters", maxLen),
@@ -362,7 +367,7 @@ func ValidateNameWithOptions(name string, opts NameOptions) error {
 		}
 	}
 
-	if len(name) < minLen {
+	if nameLen < minLen {
 		return &NameError{
 			Name:   name,
 			Reason: fmt.Sprintf("must be at least %d characters", minLen),

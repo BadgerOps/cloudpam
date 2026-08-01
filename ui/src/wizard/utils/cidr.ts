@@ -9,7 +9,9 @@ export function parse(cidr: string): ParsedCIDR {
   const [ip, prefix] = cidr.split('/')
   const octets = ip.split('.').map(Number)
   const prefixLen = parseInt(prefix)
-  const ipNum = (octets[0] << 24) + (octets[1] << 16) + (octets[2] << 8) + octets[3]
+  // `<< 24` yields a signed 32-bit result, so addresses above 127.255.255.255
+  // would come back negative. Coerce to unsigned.
+  const ipNum = (((octets[0] << 24) + (octets[1] << 16) + (octets[2] << 8) + octets[3]) >>> 0)
   return { ip, octets, prefixLen, ipNum }
 }
 

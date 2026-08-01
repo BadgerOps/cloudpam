@@ -232,6 +232,14 @@ func TestOpenAIProviderAPIError(t *testing.T) {
 }
 
 func TestConfigFromEnv(t *testing.T) {
+	// Clear the LLM environment so ambient values in the caller's shell cannot
+	// influence the defaults under test. t.Setenv restores the originals.
+	t.Setenv("CLOUDPAM_LLM_API_KEY", "")
+	t.Setenv("CLOUDPAM_LLM_MODEL", "")
+	t.Setenv("CLOUDPAM_LLM_ENDPOINT", "")
+	t.Setenv("CLOUDPAM_LLM_MAX_TOKENS", "")
+	t.Setenv("CLOUDPAM_LLM_TEMPERATURE", "")
+
 	// Test defaults
 	cfg := ConfigFromEnv()
 	if cfg.Model != "gpt-4o" {
@@ -242,5 +250,58 @@ func TestConfigFromEnv(t *testing.T) {
 	}
 	if cfg.Temperature != 0.7 {
 		t.Errorf("expected default temperature 0.7, got %f", cfg.Temperature)
+	}
+}
+
+// captureTemperature runs a single completion against a stub server and returns
+// the temperature that was actually sent on the wire.
+func captureTemperature(t *testing.T, cfg Config, opts Options) float64 {
+	t.Helper()
+
+	var got float64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req openaiRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		got = req.Temperature
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := openaiResponse{
+			Choices: []struct {
+				Message      openaiMessage `json:"message"`
+				FinishReason string        `json:"finish_reason"`
+			}{
+				{Message: openaiMessage{Role: "assistant", Content: "ok"}, FinishReason: "stop"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	cfg.Endpoint = ts.URL + "/v1"
+	provider := NewOpenAIProvider(cfg)
+	if _, err := provider.Complete(context.Background(), []Message{{Role: "user", Content: "Hi"}}, opts); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	return got
+}
+
+func TestOpenAIProviderTemperatureOverride(t *testing.T) {
+	cfg := Config{APIKey: "test-key", Model: "gpt-4o", MaxTokens: 1024, Temperature: 0.7}
+
+	zero := 0.0
+	if got := captureTemperature(t, cfg, Options{Temperature: &zero}); got != 0 {
+		t.Errorf("expected explicit temperature 0 to be sent, got %v", got)
+	}
+
+	custom := 0.25
+	if got := captureTemperature(t, cfg, Options{Temperature: &custom}); got != 0.25 {
+		t.Errorf("expected temperature 0.25, got %v", got)
+	}
+
+	if got := captureTemperature(t, cfg, Options{}); got != 0.7 {
+		t.Errorf("expected configured default temperature 0.7, got %v", got)
 	}
 }
