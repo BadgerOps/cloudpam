@@ -220,10 +220,10 @@ export default function BlocksPage() {
                 </th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">CIDR</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Parent</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Parent</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Account</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Tier</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">IPs</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Tier</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">IPs</th>
                 <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
               </tr>
             </thead>
@@ -242,12 +242,12 @@ export default function BlocksPage() {
                     </td>
                     <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{b.name}</td>
                     <td className="px-4 py-2 text-sm font-mono text-gray-600 dark:text-gray-300">{b.cidr}</td>
-                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{b.parent_name || '-'}</td>
+                    <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{b.parent_name || '-'}</td>
                     <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{b.account_name || '-'}</td>
-                    <td className="px-4 py-2">
+                    <td className="hidden md:table-cell px-4 py-2">
                       {b.account_tier && <StatusBadge label={b.account_tier} variant="tier" />}
                     </td>
-                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{formatHostCount(hostCount)}</td>
+                    <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{formatHostCount(hostCount)}</td>
                     <td className="px-4 py-2 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button

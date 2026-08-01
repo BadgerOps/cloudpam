@@ -165,9 +165,9 @@ export default function AccountsPage() {
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Key</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Provider</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Tier</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Regions</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Created</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Tier</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Regions</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Created</th>
                 <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
               </tr>
             </thead>
@@ -177,9 +177,9 @@ export default function AccountsPage() {
                   <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{a.name}</td>
                   <td className="px-4 py-2 text-sm font-mono text-gray-600 dark:text-gray-300">{a.key}</td>
                   <td className="px-4 py-2"><StatusBadge label={a.provider || 'other'} variant="provider" /></td>
-                  <td className="px-4 py-2">{a.tier && <StatusBadge label={a.tier} variant="tier" />}</td>
-                  <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{(a.regions || []).join(', ') || '-'}</td>
-                  <td className="px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(a.created_at)}</td>
+                  <td className="hidden md:table-cell px-4 py-2">{a.tier && <StatusBadge label={a.tier} variant="tier" />}</td>
+                  <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{(a.regions || []).join(', ') || '-'}</td>
+                  <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(a.created_at)}</td>
                   <td className="px-4 py-2 text-right">
                     <button
                       onClick={() => handleDelete(a.id, a.name)}

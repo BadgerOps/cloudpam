@@ -1545,12 +1545,12 @@ function NetworkFlatTable({
           <tr className="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-700 dark:bg-gray-900">
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Object</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">CIDR/IP</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Provider</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Account</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Region</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Provider</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Account</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Region</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">State</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Issues</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Relationships</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Relationships</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Actions</th>
           </tr>
         </thead>
@@ -1576,12 +1576,12 @@ function NetworkFlatTable({
                 </div>
               </td>
               <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{node.cidr || node.ip_address || '-'}</td>
-              <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{node.provider || '-'}</td>
-              <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{node.account_name || '-'}</td>
-              <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{node.region || '-'}</td>
+              <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{node.provider || '-'}</td>
+              <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{node.account_name || '-'}</td>
+              <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{node.region || '-'}</td>
               <td className="px-3 py-2"><StatusBadge label={node.state} /></td>
               <td className="px-3 py-2"><NetworkIssueBadges issues={node.issues ?? []} /></td>
-              <td className="px-3 py-2"><RelationshipBadges relationships={node.relationships ?? []} /></td>
+              <td className="hidden md:table-cell px-3 py-2"><RelationshipBadges relationships={node.relationships ?? []} /></td>
               <td className="px-3 py-2">
                 {(node.relationships?.length ?? 0) > 0 ? (
                   <button
@@ -1623,14 +1623,14 @@ function NetworkObjectTable({
           <tr className="border-b border-gray-200 bg-gray-50 text-left dark:border-gray-700 dark:bg-gray-900">
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Object</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">CIDR/IP</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Provider</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Account</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Region</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Provider</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Account</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Region</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">State</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Parent</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Parent</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Pool</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Source</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Updated</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Source</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Updated</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Actions</th>
           </tr>
         </thead>
@@ -1650,14 +1650,14 @@ function NetworkObjectTable({
                   <div className="text-xs text-gray-500 dark:text-gray-400">{object.object_type} · {object.provider_resource_id || `object:${object.id}`}</div>
                 </td>
                 <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{object.cidr || object.ip_address || '-'}</td>
-                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{object.provider || '-'}</td>
-                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{account?.name || object.account_id}</td>
-                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{object.region || '-'}</td>
+                <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{object.provider || '-'}</td>
+                <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{account?.name || object.account_id}</td>
+                <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{object.region || '-'}</td>
                 <td className="px-3 py-2"><StatusBadge label={object.state} /></td>
-                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{object.parent_object_id ?? '-'}</td>
+                <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{object.parent_object_id ?? '-'}</td>
                 <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{pool ? `${pool.name} (${pool.id})` : object.pool_id ?? '-'}</td>
-                <td className="px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">{object.source_discovered_id || '-'}</td>
-                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{formatTimeAgo(object.updated_at)}</td>
+                <td className="hidden md:table-cell px-3 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">{object.source_discovered_id || '-'}</td>
+                <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{formatTimeAgo(object.updated_at)}</td>
                 <td className="px-3 py-2">
                   <button
                     type="button"
@@ -1721,10 +1721,10 @@ export function NetworkRelationshipTable({
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Relationship</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Source</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Target</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Confidence</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Reason / Evidence</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Confidence</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Reason / Evidence</th>
             <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Resolution</th>
-            <th className="px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Updated</th>
+            <th className="hidden md:table-cell px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Updated</th>
           </tr>
         </thead>
         <tbody>
@@ -1752,8 +1752,8 @@ export function NetworkRelationshipTable({
                 <td className="px-3 py-2">
                   <EntityRef kind={relationship.target_kind} id={relationship.target_id} />
                 </td>
-                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{Math.round(relationship.confidence * 100)}%</td>
-                <td className="max-w-md px-3 py-2 text-gray-600 dark:text-gray-400">
+                <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{Math.round(relationship.confidence * 100)}%</td>
+                <td className="hidden md:table-cell max-w-md px-3 py-2 text-gray-600 dark:text-gray-400">
                   <div>{relationship.reason || '-'}</div>
                   {(relationship.evidence ?? []).length > 0 && (
                     <div className="mt-1 space-y-0.5 font-mono text-xs text-gray-500 dark:text-gray-500">
@@ -1796,7 +1796,7 @@ export function NetworkRelationshipTable({
                     <div className="mt-1 text-xs text-red-600 dark:text-red-400">{resolutionErrorByID[relationship.id]}</div>
                   )}
                 </td>
-                <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{formatTimeAgo(relationship.updated_at)}</td>
+                <td className="hidden md:table-cell px-3 py-2 text-gray-600 dark:text-gray-400">{formatTimeAgo(relationship.updated_at)}</td>
               </tr>
             )
           })}
@@ -3854,19 +3854,19 @@ function SyncTab({
             <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Started
             </th>
-            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+            <th className="hidden md:table-cell px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Source
             </th>
             <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Found
             </th>
-            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+            <th className="hidden md:table-cell px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Created
             </th>
-            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+            <th className="hidden md:table-cell px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Updated
             </th>
-            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+            <th className="hidden md:table-cell px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Stale
             </th>
             <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
@@ -3886,7 +3886,7 @@ function SyncTab({
               <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
                 {j.started_at ? formatTimeAgo(j.started_at) : '-'}
               </td>
-              <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+              <td className="hidden md:table-cell px-4 py-2 text-gray-600 dark:text-gray-400">
                 {j.source === 'agent' ? (
                   agents.find((agent) => agent.id === j.agent_id)?.name || 'agent'
                 ) : (
@@ -3896,13 +3896,13 @@ function SyncTab({
               <td className="px-4 py-2 text-gray-900 dark:text-gray-100">
                 {j.resources_found}
               </td>
-              <td className="px-4 py-2 text-green-600 dark:text-green-400">
+              <td className="hidden md:table-cell px-4 py-2 text-green-600 dark:text-green-400">
                 {j.resources_created}
               </td>
-              <td className="px-4 py-2 text-blue-600 dark:text-blue-400">
+              <td className="hidden md:table-cell px-4 py-2 text-blue-600 dark:text-blue-400">
                 {j.resources_updated}
               </td>
-              <td className="px-4 py-2 text-yellow-600 dark:text-yellow-400">
+              <td className="hidden md:table-cell px-4 py-2 text-yellow-600 dark:text-yellow-400">
                 {j.resources_deleted}
               </td>
               <td className="px-4 py-2 text-red-600 dark:text-red-400 text-xs max-w-xs truncate">
@@ -4028,13 +4028,13 @@ CLOUDPAM_ACCOUNT_ID=1 \\
             <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Status
             </th>
-            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+            <th className="hidden md:table-cell px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Version
             </th>
-            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+            <th className="hidden md:table-cell px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Hostname
             </th>
-            <th className="px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
+            <th className="hidden md:table-cell px-4 py-2 text-left text-gray-600 dark:text-gray-400 font-medium">
               Last Seen
             </th>
             <th className="px-4 py-2 text-right text-gray-600 dark:text-gray-400 font-medium">
@@ -4054,13 +4054,13 @@ CLOUDPAM_ACCOUNT_ID=1 \\
               <td className="px-4 py-2">
                 <AgentStatusBadge status={agent.status} />
               </td>
-              <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+              <td className="hidden md:table-cell px-4 py-2 text-gray-600 dark:text-gray-400">
                 {agent.version || 'unknown'}
               </td>
-              <td className="px-4 py-2 text-gray-600 dark:text-gray-400">
+              <td className="hidden md:table-cell px-4 py-2 text-gray-600 dark:text-gray-400">
                 {agent.hostname || '-'}
               </td>
-              <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+              <td className="hidden md:table-cell px-4 py-2 text-gray-500 dark:text-gray-400">
                 {formatTimeAgo(agent.last_seen_at)}
               </td>
               <td className="px-4 py-2 text-right">

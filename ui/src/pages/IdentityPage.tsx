@@ -610,8 +610,8 @@ export default function IdentityPage() {
                     <thead>
                       <tr className="border-b dark:border-gray-700">
                         <th className="text-left pb-3 font-medium text-gray-500 dark:text-gray-400">Provider</th>
-                        <th className="text-left pb-3 font-medium text-gray-500 dark:text-gray-400">Issuer</th>
-                        <th className="text-left pb-3 font-medium text-gray-500 dark:text-gray-400">Default Role</th>
+                        <th className="hidden md:table-cell text-left pb-3 font-medium text-gray-500 dark:text-gray-400">Issuer</th>
+                        <th className="hidden md:table-cell text-left pb-3 font-medium text-gray-500 dark:text-gray-400">Default Role</th>
                         <th className="text-left pb-3 font-medium text-gray-500 dark:text-gray-400">Status</th>
                         <th className="text-right pb-3 font-medium text-gray-500 dark:text-gray-400">Actions</th>
                       </tr>
@@ -625,8 +625,8 @@ export default function IdentityPage() {
                               {provider.auto_provision ? 'Auto-provisioning enabled' : 'Manual provisioning'}
                             </div>
                           </td>
-                          <td className="py-3 text-gray-600 dark:text-gray-400">{provider.issuer_url}</td>
-                          <td className="py-3 text-gray-600 dark:text-gray-400 uppercase">{provider.default_role}</td>
+                          <td className="hidden md:table-cell py-3 text-gray-600 dark:text-gray-400">{provider.issuer_url}</td>
+                          <td className="hidden md:table-cell py-3 text-gray-600 dark:text-gray-400 uppercase">{provider.default_role}</td>
                           <td className="py-3">
                             {provider.enabled ? (
                               <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300">
