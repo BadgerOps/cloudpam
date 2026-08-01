@@ -3,7 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "screenshots": "node scripts/capture_screenshots.js"
+    "screenshots": "node scripts/capture_screenshots.js",
+    "screenshots:discovery": "SCREENSHOT_ONLY=discovery node scripts/capture_screenshots.js"
   },
   "devDependencies": {
     "playwright": "^1.55.1"
