@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { User } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
-import { useUsers } from '../hooks/useUsers'
+import { useChangePassword } from '../hooks/useUsers'
 import { useToast } from '../hooks/useToast'
 
 export default function ProfilePage() {
   const { currentUser } = useAuth()
-  const { changePassword } = useUsers()
+  const changePassword = useChangePassword()
   const { showToast } = useToast()
 
   const [currentPw, setCurrentPw] = useState('')

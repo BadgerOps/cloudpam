@@ -4,6 +4,38 @@ import type { MeResponse } from '../api/types'
 const POLL_INTERVAL_MS = 60_000 // 60 seconds
 const LIFETIME_THRESHOLD = 0.2 // trigger refresh when 20% of lifetime remains
 
+export interface OIDCRefreshMessage {
+  type: 'oidc-refresh'
+  success: boolean
+}
+
+/**
+ * parseRefreshMessage validates an incoming postMessage before it is allowed to
+ * change session state.
+ *
+ * The silent re-auth callback is served by CloudPAM itself, so only same-origin
+ * messages posted by the hidden refresh iframe are trusted. Anything else — a
+ * parent frame, an opener, or another window that happens to hold a handle to
+ * this one — is ignored. Returns null when the message must not be acted on.
+ */
+export function parseRefreshMessage(
+  event: MessageEvent,
+  expectedOrigin: string,
+  expectedSource: MessageEventSource | null | undefined
+): OIDCRefreshMessage | null {
+  if (event.origin !== expectedOrigin) return null
+  // No refresh in flight means there is nothing legitimate to report.
+  if (!expectedSource || event.source !== expectedSource) return null
+
+  const data = event.data
+  if (!data || typeof data !== 'object') return null
+  const message = data as Partial<OIDCRefreshMessage>
+  if (message.type !== 'oidc-refresh') return null
+  if (typeof message.success !== 'boolean') return null
+
+  return { type: 'oidc-refresh', success: message.success }
+}
+
 /**
  * useSessionRefresh - Silent session re-authentication for OIDC users.
  *
@@ -29,27 +61,28 @@ export function useSessionRefresh() {
     }
 
     function handleMessage(event: MessageEvent) {
-      if (
-        event.data &&
-        typeof event.data === 'object' &&
-        event.data.type === 'oidc-refresh'
-      ) {
-        cleanup()
-        if (!event.data.success) {
-          // Notify the user that silent re-auth failed.
-          window.dispatchEvent(
-            new CustomEvent('toast', {
-              detail: {
-                type: 'warning',
-                message: 'Session expiring \u2014 please log in again',
-              },
-            })
-          )
-        }
-        // On success the session cookie was already refreshed by the
-        // callback handler. Reset so we can refresh again later.
-        refreshAttemptedRef.current = false
+      const message = parseRefreshMessage(
+        event,
+        window.location.origin,
+        iframeRef.current?.contentWindow
+      )
+      if (!message) return
+
+      cleanup()
+      if (!message.success) {
+        // Notify the user that silent re-auth failed.
+        window.dispatchEvent(
+          new CustomEvent('toast', {
+            detail: {
+              type: 'warning',
+              message: 'Session expiring \u2014 please log in again',
+            },
+          })
+        )
       }
+      // On success the session cookie was already refreshed by the
+      // callback handler. Reset so we can refresh again later.
+      refreshAttemptedRef.current = false
     }
 
     window.addEventListener('message', handleMessage)
