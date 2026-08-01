@@ -32,10 +32,10 @@ func mockOIDCServer(t *testing.T) (*httptest.Server, *rsa.PrivateKey) {
 
 	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		discovery := map[string]interface{}{
-			"issuer":                 srv.URL,
-			"authorization_endpoint": srv.URL + "/authorize",
-			"token_endpoint":         srv.URL + "/token",
-			"jwks_uri":               srv.URL + "/keys",
+			"issuer":                                srv.URL,
+			"authorization_endpoint":                srv.URL + "/authorize",
+			"token_endpoint":                        srv.URL + "/token",
+			"jwks_uri":                              srv.URL + "/keys",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 			"subject_types_supported":               []string{"public"},
 			"response_types_supported":              []string{"code"},

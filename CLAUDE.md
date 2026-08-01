@@ -115,7 +115,7 @@ just cover-threshold thr=80  # Check coverage meets threshold
 ### Linting & Formatting
 ```bash
 just fmt              # Format code with go fmt
-just lint             # Run golangci-lint v2.1.6 (same as CI)
+just lint             # Run golangci-lint v2.4.0 (same as CI)
 just tidy             # Run go mod tidy
 just install-hooks    # Install pre-commit hook (runs golangci-lint on staged Go files)
 ```
@@ -350,7 +350,10 @@ This project has a Nix flake (`flake.nix`). **Always use `nix develop`** to ente
 
 - Go 1.23+ required (toolchain 1.24.x)
 - Use `go fmt` and pass `golangci-lint` (see `.golangci.yml` for enabled linters)
-- Linters enabled: `govet`, `staticcheck`, `ineffassign`, `errcheck`, `gocritic`, `misspell`
+- Linters enabled: `govet`, `staticcheck`, `ineffassign`, `errcheck`, `gocritic`, `misspell`, `revive`
+- `revive` runs a deliberately narrow rule set (see `.golangci.yml`); rules are added
+  gradually, only once the whole tree is already clean under them
+- `gofmt` runs as a golangci-lint formatter, so formatting drift fails CI
 - Keep errors lowercase and actionable
 - Prefer small, focused files
 
@@ -529,7 +532,7 @@ GitHub Actions workflows in `.github/workflows/`:
   - Uploads coverage artifacts (coverage.out, coverage.txt, coverage.html)
 
 - **lint.yml**: Runs on main/master and PRs
-  - Uses golangci-lint-action v8 with golangci-lint v2.1.6
+  - Uses golangci-lint-action v8 with golangci-lint v2.4.0
   - 5-minute timeout
 
 - **release-builds.yml**: Triggered on release publish
@@ -546,8 +549,8 @@ GitHub Actions workflows in `.github/workflows/`:
   - Uploads build artifacts
 
 CI pins:
-- Go `1.24.x`
-- golangci-lint `v2.1.6`
+- Go `1.25.x`
+- golangci-lint `v2.4.0`
 
 ## Error Tracking with Sentry
 

@@ -59,7 +59,7 @@ lint:
       if command -v "$candidate" >/dev/null 2>&1; then LINT="$candidate"; break; fi
     done
     if [ -z "$LINT" ]; then
-      echo "golangci-lint not found. Install: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b \$(go env GOPATH)/bin v2.1.6"
+      echo "golangci-lint not found. Install: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b \$(go env GOPATH)/bin v2.4.0"
       exit 1
     fi
     echo "Using $($LINT --version 2>&1)"

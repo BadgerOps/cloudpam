@@ -8,8 +8,8 @@ import (
 type RecommendationType string
 
 const (
-	RecommendationTypeAllocation  RecommendationType = "allocation"
-	RecommendationTypeCompliance  RecommendationType = "compliance"
+	RecommendationTypeAllocation RecommendationType = "allocation"
+	RecommendationTypeCompliance RecommendationType = "compliance"
 	// Future types (stubbed):
 	// RecommendationTypeConsolidation RecommendationType = "consolidation"
 	// RecommendationTypeResize        RecommendationType = "resize"

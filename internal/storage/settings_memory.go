@@ -60,8 +60,8 @@ func (s *MemorySettingsStore) UpdateSecuritySettings(_ context.Context, settings
 func (s *MemorySettingsStore) GetNetworkSchemaPolicy(_ context.Context) (*domain.NetworkSchemaPolicy, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	copy := *s.networkSchemaPolicy
-	return domain.NormalizeNetworkSchemaPolicy(&copy), nil
+	dup := *s.networkSchemaPolicy
+	return domain.NormalizeNetworkSchemaPolicy(&dup), nil
 }
 
 func (s *MemorySettingsStore) UpdateNetworkSchemaPolicy(_ context.Context, policy *domain.NetworkSchemaPolicy) error {

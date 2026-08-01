@@ -12,3 +12,78 @@ linters:
     - errcheck
     - gocritic
     - misspell
+    - revive
+  settings:
+    revive:
+      severity: warning
+      # Gradual reintroduction (issue #21). Only the rules listed here run --
+      # revive's default set is NOT applied. Rules are added deliberately, each
+      # one clean across the tree at the time it was enabled. Candidates that
+      # were measured and deferred because they demand large mechanical churn:
+      # exported (153), unused-parameter (109), use-any (37), unused-receiver
+      # (27), unchecked-type-assertion (8), confusing-results (5),
+      # early-return (4).
+      rules:
+        # --- correctness / latent-bug classes ---
+        - name: atomic
+        - name: constant-logical-expr
+        - name: context-keys-type
+        - name: datarace
+        - name: defer
+        - name: duplicated-imports
+        - name: identical-branches
+        - name: modifies-value-receiver
+        - name: string-of-int
+        - name: struct-tag
+        - name: unreachable-code
+        - name: waitgroup-by-value
+        # --- error handling idioms ---
+        - name: error-return
+        - name: error-naming
+        - name: error-strings
+        - name: errorf
+        - name: if-return
+        - name: indent-error-flow
+        # --- API shape & naming idioms ---
+        - name: context-as-argument
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: var-declaration
+        - name: var-naming
+          # Identifier casing only. The package-name check would demand
+          # renaming internal/api, which is core API surface for the whole
+          # server package graph.
+          arguments:
+            - [] # allowlist
+            - [] # blocklist
+            - - skipPackageNameChecks: true
+        # --- small, mechanical style rules ---
+        - name: blank-imports
+        - name: bool-literal-in-expr
+        - name: dot-imports
+        - name: empty-block
+        - name: increment-decrement
+        - name: range
+        - name: superfluous-else
+        - name: useless-break
+  exclusions:
+    rules:
+      # These two rules only ever fire in test helpers today. Excluding tests
+      # keeps them as guardrails for production code without rewriting tests.
+      - path: _test\.go
+        linters:
+          - revive
+        text: "^(bool-literal-in-expr|context-as-argument):"
+      # GCP DTO structs mirror the Compute API JSON field names (IpCidrRange,
+      # IpVersion, PrivateIpGoogleAccess). They are fields of unexported types
+      # used only for json.Unmarshal; renaming them would churn tests for no
+      # behavioural gain.
+      - path: internal/discovery/gcp/collector\.go
+        linters:
+          - revive
+        text: "^var-naming:"
+
+formatters:
+  enable:
+    - gofmt
