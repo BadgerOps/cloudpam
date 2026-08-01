@@ -29,7 +29,7 @@ const SCOPE_LABELS: Record<string, string> = {
 }
 
 export default function ApiKeysPage() {
-  const { keys, loading, error, create, revoke } = useApiKeys()
+  const { keys, loading, error, canList, canCreate, canRevoke, create, revoke } = useApiKeys()
   const { settings } = useSecuritySettings()
   const [showCreate, setShowCreate] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
@@ -40,7 +40,7 @@ export default function ApiKeysPage() {
   const [createError, setCreateError] = useState('')
 
   async function createKey() {
-    if (!newKeyName.trim()) return
+    if (!canCreate || !newKeyName.trim()) return
     setCreateError('')
     try {
       const res = await create({
@@ -105,6 +105,18 @@ export default function ApiKeysPage() {
     return ['Active', 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400']
   }
 
+  if (!canList) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">API Keys</h1>
+        <div className="mt-4 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 px-4 py-3 rounded-lg border dark:border-gray-700">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          You do not have permission to view API keys — apikeys:list or apikeys:read is required.
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -114,13 +126,15 @@ export default function ApiKeysPage() {
             Manage API keys for programmatic access
           </p>
         </div>
-        <button
-          onClick={() => { setShowCreate(true); setCreatedKey(null) }}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-        >
-          <Plus className="w-4 h-4" />
-          Create Key
-        </button>
+        {canCreate && (
+          <button
+            onClick={() => { setShowCreate(true); setCreatedKey(null) }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+          >
+            <Plus className="w-4 h-4" />
+            Create Key
+          </button>
+        )}
       </div>
 
       {error && (
@@ -151,7 +165,7 @@ export default function ApiKeysPage() {
       )}
 
       {/* Create form */}
-      {showCreate && !createdKey && (
+      {showCreate && canCreate && !createdKey && (
         <div className="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow p-4 border dark:border-gray-700">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">New API Key</h3>
 
@@ -290,7 +304,7 @@ export default function ApiKeysPage() {
                     })()}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {!k.revoked && (
+                    {!k.revoked && canRevoke && (
                       <button
                         onClick={() => revoke(k.id)}
                         title="Revoke key"

@@ -8,6 +8,20 @@ import type {
   UsersListResponse,
 } from '../api/types'
 
+/**
+ * useChangePassword exposes only the self-service password change call.
+ *
+ * PATCH /api/v1/auth/users/{id}/password is allowed for the account owner,
+ * while listing users requires users:list. Screens that only change a password
+ * must not pull useUsers, or every visit fires a privileged list request that
+ * 403s for non-admins.
+ */
+export function useChangePassword() {
+  return useCallback(async (id: string, req: ChangePasswordRequest) => {
+    await patch(`/api/v1/auth/users/${id}/password`, req)
+  }, [])
+}
+
 export function useUsers() {
   const [users, setUsers] = useState<UserInfo[]>([])
   const [loading, setLoading] = useState(true)

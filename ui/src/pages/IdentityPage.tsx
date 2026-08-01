@@ -5,13 +5,18 @@ import { useToast } from '../hooks/useToast'
 import { useSecuritySettings } from '../hooks/useSettings'
 import { useOIDCAdmin } from '../hooks/useOIDCAdmin'
 import { permissionID, useRoles } from '../hooks/useRoles'
+import { useAuth } from '../hooks/useAuth'
 import type { OIDCProvider, OIDCProviderCreate, OIDCProviderUpdate } from '../hooks/useOIDCAdmin'
 import UsersAdminPanel from '../components/UsersAdminPanel'
 
+// Each tab is gated on the permission the API enforces for the data it renders:
+// OIDC provider admin and role admin are guarded by settings:read
+// (internal/api/oidc_handlers.go, internal/api/role_handlers.go), and the user
+// list is guarded by users:list (internal/api/user_handlers.go).
 const TABS = [
-  { id: 'providers', label: 'Providers' },
-  { id: 'users', label: 'Users' },
-  { id: 'rbac', label: 'RBAC' },
+  { id: 'providers', label: 'Providers', permission: 'settings:read' },
+  { id: 'users', label: 'Users', permission: 'users:list' },
+  { id: 'rbac', label: 'RBAC', permission: 'settings:read' },
 ] as const
 
 function roleLabel(role: string) {
@@ -200,6 +205,9 @@ function ProviderFormModal({ provider, onSave, onClose }: ProviderFormProps) {
 
 function RolesAdminPanel() {
   const { showToast } = useToast()
+  const { hasPermission } = useAuth()
+  // Role create/update/delete are guarded by settings:write.
+  const canEditRoles = hasPermission('settings:write')
   const { roles, permissions, loading, error, create, update, remove } = useRoles()
   const [selectedName, setSelectedName] = useState<string>('')
   const [creating, setCreating] = useState(false)
@@ -211,7 +219,7 @@ function RolesAdminPanel() {
 
   const selectedRole = roles.find(role => role.name === selectedName) ?? roles[0] ?? null
   const activeRole = creating ? null : selectedRole
-  const readOnly = activeRole?.is_builtin === true
+  const readOnly = !canEditRoles || activeRole?.is_builtin === true
 
   const groupedPermissions = useMemo(() => {
     const groups = new Map<string, typeof permissions>()
@@ -312,13 +320,15 @@ function RolesAdminPanel() {
             Build custom roles from the same permissions enforced by the API.
           </p>
         </div>
-        <button
-          onClick={startCreate}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-        >
-          <Plus className="w-4 h-4" />
-          Create Role
-        </button>
+        {canEditRoles && (
+          <button
+            onClick={startCreate}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+          >
+            <Plus className="w-4 h-4" />
+            Create Role
+          </button>
+        )}
       </div>
 
       {error && (
@@ -380,7 +390,9 @@ function RolesAdminPanel() {
 
             {readOnly && (
               <div className="mt-3 rounded-lg bg-gray-50 dark:bg-gray-900/40 px-3 py-2 text-sm text-gray-600 dark:text-gray-400">
-                Built-in roles are managed by CloudPAM and cannot be edited.
+                {canEditRoles
+                  ? 'Built-in roles are managed by CloudPAM and cannot be edited.'
+                  : 'Read-only \u2014 settings:write required to change roles.'}
               </div>
             )}
             {saveError && (
@@ -433,7 +445,7 @@ function RolesAdminPanel() {
                     Cancel
                   </button>
                 )}
-                {!creating && activeRole && !activeRole.is_builtin && (
+                {!creating && canEditRoles && activeRole && !activeRole.is_builtin && (
                   <button onClick={deleteRole} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30">
                     <Trash2 className="w-4 h-4" />
                     Delete
@@ -460,8 +472,8 @@ function RolesAdminPanel() {
 
 export default function IdentityPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const activeTab = (searchParams.get('tab') as typeof TABS[number]['id'] | null) ?? 'providers'
   const { showToast } = useToast()
+  const { hasPermission } = useAuth()
   const { settings, loading: settingsLoading, updateSettings } = useSecuritySettings()
   const oidcAdmin = useOIDCAdmin()
   const [editingProvider, setEditingProvider] = useState<OIDCProvider | null>(null)
@@ -470,10 +482,17 @@ export default function IdentityPage() {
   const [testingID, setTestingID] = useState<string | null>(null)
   const [testingMessage, setTestingMessage] = useState<string | null>(null)
 
-  const tabs = useMemo(() => TABS, [])
+  // Only offer tabs whose data the caller may actually read, and never leave the
+  // page pinned to a tab the URL asked for but the caller cannot see.
+  const tabs = useMemo(() => TABS.filter(tab => hasPermission(tab.permission)), [hasPermission])
+  const requestedTab = searchParams.get('tab') as typeof TABS[number]['id'] | null
+  const activeTab = tabs.some(tab => tab.id === requestedTab) ? requestedTab : tabs[0]?.id ?? null
+
+  // OIDC provider create/update/delete/test are guarded by settings:write.
+  const canEditProviders = hasPermission('settings:write')
 
   async function toggleLocalAuth() {
-    if (!settings) return
+    if (!settings || !canEditProviders) return
     try {
       await updateSettings({ ...settings, local_auth_enabled: !settings.local_auth_enabled })
       showToast(`Local authentication ${settings.local_auth_enabled ? 'disabled' : 'enabled'}`, 'success')
@@ -483,6 +502,7 @@ export default function IdentityPage() {
   }
 
   async function saveProvider(payload: OIDCProviderCreate | OIDCProviderUpdate) {
+    if (!canEditProviders) throw new Error('settings:write permission required to manage providers')
     if (editingProvider) {
       await oidcAdmin.updateProvider(editingProvider.id, payload)
       showToast('Provider updated', 'success')
@@ -495,13 +515,14 @@ export default function IdentityPage() {
   }
 
   async function deleteProvider() {
-    if (!deletingProvider) return
+    if (!deletingProvider || !canEditProviders) return
     await oidcAdmin.deleteProvider(deletingProvider.id)
     showToast('Provider deleted', 'success')
     setDeletingProvider(null)
   }
 
   async function testProvider(id: string) {
+    if (!canEditProviders) return
     try {
       setTestingID(id)
       const result = await oidcAdmin.testProvider(id)
@@ -524,6 +545,12 @@ export default function IdentityPage() {
           Authentication providers, local users, and built-in RBAC.
         </p>
       </div>
+
+      {tabs.length === 0 && (
+        <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-700 px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
+          You do not have permission to view identity settings.
+        </div>
+      )}
 
       <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700">
         {tabs.map(tab => (
@@ -554,13 +581,15 @@ export default function IdentityPage() {
                   Configure OIDC sign-in providers and local password access.
                 </p>
               </div>
-              <button
-                onClick={() => { setEditingProvider(null); setShowProviderForm(true) }}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-              >
-                <Plus className="w-4 h-4" />
-                Add Provider
-              </button>
+              {canEditProviders && (
+                <button
+                  onClick={() => { setEditingProvider(null); setShowProviderForm(true) }}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Provider
+                </button>
+              )}
             </div>
 
             <div className="mt-4 rounded-lg border border-gray-200 dark:border-gray-700 p-4 flex items-center justify-between gap-4">
@@ -572,7 +601,7 @@ export default function IdentityPage() {
               </div>
               <button
                 type="button"
-                disabled={settingsLoading || !settings}
+                disabled={settingsLoading || !settings || !canEditProviders}
                 onClick={toggleLocalAuth}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                   settings?.local_auth_enabled ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
@@ -641,6 +670,11 @@ export default function IdentityPage() {
                           </td>
                           <td className="py-3">
                             <div className="flex items-center justify-end gap-2">
+                              {!canEditProviders && (
+                                <span className="text-xs text-gray-400 dark:text-gray-500">Read-only</span>
+                              )}
+                              {canEditProviders && (
+                                <>
                               <button onClick={() => testProvider(provider.id)} className="p-2 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400" title="Test provider">
                                 {testingID === provider.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
                               </button>
@@ -650,6 +684,8 @@ export default function IdentityPage() {
                               <button onClick={() => setDeletingProvider(provider)} className="p-2 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400" title="Delete provider">
                                 <Trash2 className="w-4 h-4" />
                               </button>
+                                </>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -667,7 +703,7 @@ export default function IdentityPage() {
 
       {activeTab === 'rbac' && <RolesAdminPanel />}
 
-      {showProviderForm && (
+      {showProviderForm && canEditProviders && (
         <ProviderFormModal
           provider={editingProvider}
           onSave={saveProvider}
@@ -678,7 +714,7 @@ export default function IdentityPage() {
         />
       )}
 
-      {deletingProvider && (
+      {deletingProvider && canEditProviders && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={() => setDeletingProvider(null)}>
           <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 shadow-xl p-6" onClick={e => e.stopPropagation()}>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Delete Provider</h2>

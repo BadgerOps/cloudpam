@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -113,18 +114,15 @@ func (ds *DriftServer) handleList(w http.ResponseWriter, r *http.Request) {
 		BySeverity: map[string]int{},
 		ByType:     map[string]int{},
 	}
-	// Get all items for summary (unfiltered by page).
-	allItems, allTotal, _ := ds.driftStore.ListDriftItems(r.Context(), domain.DriftFilters{
-		AccountID: filters.AccountID,
-		Status:    filters.Status,
-		Page:      1,
-		PageSize:  10000,
-	})
-	summary.TotalDrifts = allTotal
-	for _, item := range allItems {
-		summary.BySeverity[string(item.Severity)]++
-		summary.ByType[string(item.Type)]++
+	// Summarise every matching item, not just the first page. A single
+	// oversized page silently drops anything past its limit, so walk the
+	// pages until the reported total is covered.
+	allTotal, err := ds.summarizeDrift(r.Context(), filters, &summary)
+	if err != nil {
+		ds.srv.writeStoreErr(r.Context(), w, err)
+		return
 	}
+	summary.TotalDrifts = allTotal
 
 	writeJSON(w, http.StatusOK, domain.DriftListResponse{
 		Items:    items,
@@ -133,6 +131,36 @@ func (ds *DriftServer) handleList(w http.ResponseWriter, r *http.Request) {
 		PageSize: pageSize,
 		Summary:  summary,
 	})
+}
+
+// summarizeDrift tallies severity and type counts across every drift item
+// matching the account/status filters, paging until the store's reported total
+// is covered. Returns the total number of matching items.
+func (ds *DriftServer) summarizeDrift(ctx context.Context, filters domain.DriftFilters, summary *domain.DriftSummary) (int, error) {
+	const pageSize = 1000
+
+	total := 0
+	seen := 0
+	for page := 1; ; page++ {
+		items, pageTotal, err := ds.driftStore.ListDriftItems(ctx, domain.DriftFilters{
+			AccountID: filters.AccountID,
+			Status:    filters.Status,
+			Page:      page,
+			PageSize:  pageSize,
+		})
+		if err != nil {
+			return 0, err
+		}
+		total = pageTotal
+		for _, item := range items {
+			summary.BySeverity[string(item.Severity)]++
+			summary.ByType[string(item.Type)]++
+		}
+		seen += len(items)
+		if len(items) == 0 || seen >= pageTotal {
+			return total, nil
+		}
+	}
 }
 
 // handleByID routes GET/POST for /api/v1/drift/{id} and sub-paths.
