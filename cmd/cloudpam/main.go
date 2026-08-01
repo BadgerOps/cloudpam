@@ -108,6 +108,29 @@ func main() {
 		logger.Info("metrics disabled")
 	}
 
+	// Initialize tracing. Opt-in: when disabled nothing is constructed and no
+	// tracing middleware enters the request path.
+	tracingCfg, tracingCfgErr := observability.TracingConfigFromEnv()
+	if tracingCfgErr != nil {
+		logger.Warn("tracing configuration problem; using default", "error", tracingCfgErr)
+	}
+	var tracerProvider *observability.TracerProvider
+	if tracingCfg.Enabled {
+		tp, err := observability.NewTracerProvider(tracingCfg, logger)
+		if err != nil {
+			logger.Error("tracing initialization failed; continuing without tracing", "error", err)
+		} else {
+			tracerProvider = tp
+			logger.Info("tracing enabled",
+				"endpoint", tracingCfg.Endpoint,
+				"sample_rate", tracingCfg.SampleRate,
+				"service", tracingCfg.ServiceName,
+			)
+		}
+	} else {
+		logger.Info("tracing disabled")
+	}
+
 	rateCfg := api.DefaultRateLimitConfig()
 	if rpsVal := strings.TrimSpace(os.Getenv("RATE_LIMIT_RPS")); rpsVal != "" {
 		if parsed, err := strconv.ParseFloat(rpsVal, 64); err != nil {
@@ -289,12 +312,17 @@ func main() {
 		}
 	}()
 
-	// Apply middleware stack (metrics, request ID, structured logging, rate limiting).
-	// Order: metrics (outermost) -> requestID -> logging -> rateLimiting (innermost before handler)
+	// Apply middleware stack (metrics, request ID, tracing, structured logging, rate limiting).
+	// Order: metrics (outermost) -> requestID -> tracing -> logging -> rateLimiting (innermost before handler)
+	// Tracing sits after requestID so the span can carry the request ID, and
+	// before logging so log records emitted downstream carry the trace ID.
+	// With tracing disabled TracingMiddleware returns the handler unchanged, so
+	// no wrapper is installed at all.
 	handler := api.ApplyMiddlewares(
 		mux,
 		observability.MetricsMiddleware(metrics),
 		api.RequestIDMiddleware(),
+		observability.TracingMiddleware(tracerProvider),
 		api.LoggingMiddleware(logger.Slog()),
 		api.CSRFMiddleware(),
 		api.RateLimitMiddleware(rateCfg, logger.Slog()),
@@ -347,6 +375,18 @@ func main() {
 		logger.Info("database connection closed")
 	}
 	closeIfPossible(logger, roleStore, "role store")
+
+	// Flush and stop the tracing pipeline (no-op when tracing is disabled).
+	if tracerProvider != nil {
+		logger.Info("flushing traces", "deadline", "5s")
+		traceCtx, traceCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := tracerProvider.Shutdown(traceCtx); err != nil {
+			// Losing buffered spans to an unresponsive collector must not hold
+			// up shutdown or be treated as an application failure.
+			logger.Warn("could not flush traces before shutdown; buffered spans were dropped", "error", err)
+		}
+		traceCancel()
+	}
 
 	// Flush Sentry events
 	if sentryEnabled {

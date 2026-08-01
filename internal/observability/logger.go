@@ -18,6 +18,10 @@ const (
 	requestIDKey contextKey = "requestID"
 	// componentKey is the context key for component names.
 	componentKey contextKey = "component"
+	// traceContextKey is the context key for trace/span identifiers.
+	// Only TracingMiddleware sets it, so with tracing disabled the lookup
+	// below always misses and no trace fields are emitted.
+	traceContextKey contextKey = "traceContext"
 )
 
 // Logger defines the interface for structured logging.
@@ -206,6 +210,12 @@ func appendContextFields(ctx context.Context, args []any) []any {
 	}
 	if component := ComponentFromContext(ctx); component != "" {
 		args = append(args, "component", component)
+	}
+	if ids := traceIDsFromContext(ctx); ids.traceID != "" {
+		args = append(args, "trace_id", ids.traceID)
+		if ids.spanID != "" {
+			args = append(args, "span_id", ids.spanID)
+		}
 	}
 	return args
 }
