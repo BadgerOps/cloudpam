@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"cloudpam/internal/discovery"
@@ -376,4 +377,138 @@ func (t *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		transport = http.DefaultTransport
 	}
 	return transport.RoundTrip(newReq)
+}
+
+func TestAddressCIDR(t *testing.T) {
+	tests := []struct {
+		name string
+		addr address
+		want string
+	}{
+		{name: "empty address", addr: address{}, want: ""},
+		{name: "ipv4 host", addr: address{Address: "35.192.0.1"}, want: "35.192.0.1/32"},
+		{name: "ipv6 host", addr: address{Address: "2600:1900:4000::1"}, want: "2600:1900:4000::1/128"},
+		{
+			name: "ipv6 with explicit prefix length",
+			addr: address{Address: "2600:1900:4000::", PrefixLength: 96},
+			want: "2600:1900:4000::/96",
+		},
+		{
+			name: "ipv4 with explicit prefix length",
+			addr: address{Address: "35.192.0.0", PrefixLength: 29},
+			want: "35.192.0.0/29",
+		},
+		{
+			name: "prefix length wider than family is ignored",
+			addr: address{Address: "35.192.0.1", PrefixLength: 64},
+			want: "35.192.0.1/32",
+		},
+		{name: "already a prefix", addr: address{Address: "2600:1900:4000::/64"}, want: "2600:1900:4000::/64"},
+		{name: "unparseable address", addr: address{Address: "not-an-ip"}, want: ""},
+		{name: "unparseable prefix", addr: address{Address: "not-an-ip/24"}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := addressCIDR(tt.addr); got != tt.want {
+				t.Errorf("addressCIDR(%+v) = %q, want %q", tt.addr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDiscover_IPv6ExternalAddress(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/compute/v1/projects/test-project/global/networks", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(networkList{}); err != nil {
+			t.Fatalf("encode network list: %v", err)
+		}
+	})
+	mux.HandleFunc("/compute/v1/projects/test-project/aggregated/subnetworks", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(aggregatedSubnetworkList{}); err != nil {
+			t.Fatalf("encode subnetwork list: %v", err)
+		}
+	})
+	mux.HandleFunc("/compute/v1/projects/test-project/aggregated/addresses", func(w http.ResponseWriter, r *http.Request) {
+		resp := aggregatedAddressList{Items: map[string]addressesScopedList{
+			"regions/us-central1": {Addresses: []address{{
+				ID:          555,
+				Name:        "v6-static-ip",
+				Address:     "2600:1900:4000::1",
+				AddressType: "EXTERNAL",
+				IpVersion:   "IPV6",
+			}}},
+		}}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Fatalf("encode address list: %v", err)
+		}
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	collector := NewWithHTTPClient(&http.Client{
+		Transport: &rewriteTransport{base: server.Client().Transport, baseURL: server.URL},
+	})
+
+	resources, err := collector.Discover(context.Background(), domain.Account{ID: 1, ExternalID: "test-project"})
+	if err != nil {
+		t.Fatalf("Discover() error: %v", err)
+	}
+	if len(resources) != 1 {
+		t.Fatalf("got %d resources, want 1", len(resources))
+	}
+	if got := resources[0].CIDR; got != "2600:1900:4000::1/128" {
+		t.Errorf("CIDR = %q, want 2600:1900:4000::1/128", got)
+	}
+}
+
+func TestDiscover_PropagatesEndpointFailures(t *testing.T) {
+	tests := []struct {
+		name    string
+		failing string
+		wantIn  string
+	}{
+		{name: "networks fail", failing: "/compute/v1/projects/test-project/global/networks", wantIn: "discover networks"},
+		{name: "subnetworks fail", failing: "/compute/v1/projects/test-project/aggregated/subnetworks", wantIn: "discover subnetworks"},
+		{name: "addresses fail", failing: "/compute/v1/projects/test-project/aggregated/addresses", wantIn: "discover addresses"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			for _, path := range []string{
+				"/compute/v1/projects/test-project/global/networks",
+				"/compute/v1/projects/test-project/aggregated/subnetworks",
+				"/compute/v1/projects/test-project/aggregated/addresses",
+			} {
+				if path == tt.failing {
+					mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+						http.Error(w, "permission denied", http.StatusForbidden)
+					})
+					continue
+				}
+				mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+					if _, err := w.Write([]byte(`{}`)); err != nil {
+						t.Errorf("write response: %v", err)
+					}
+				})
+			}
+
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			collector := NewWithHTTPClient(&http.Client{
+				Transport: &rewriteTransport{base: server.Client().Transport, baseURL: server.URL},
+			})
+
+			_, err := collector.Discover(context.Background(), domain.Account{ID: 1, ExternalID: "test-project"})
+			if err == nil {
+				t.Fatal("expected discovery error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.wantIn) {
+				t.Errorf("error %q does not mention %q", err.Error(), tt.wantIn)
+			}
+		})
+	}
 }

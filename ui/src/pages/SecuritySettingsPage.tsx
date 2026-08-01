@@ -4,6 +4,7 @@ import { Shield, Lock, Key, Globe, AlertCircle, Loader2, Fingerprint, UserCog } 
 import { useSecuritySettings } from '../hooks/useSettings'
 import type { SecuritySettings } from '../hooks/useSettings'
 import { useToast } from '../hooks/useToast'
+import { useAuth } from '../hooks/useAuth'
 
 const API_KEY_SCOPE_OPTIONS = [
   'pools:read', 'pools:write',
@@ -31,6 +32,10 @@ const API_KEY_SCOPE_OPTIONS_BY_ROLE: Record<string, string[]> = {
 export default function SecuritySettingsPage() {
   const { settings, loading, error, updateSettings } = useSecuritySettings()
   const { showToast } = useToast()
+  // PATCH /api/v1/settings/security requires settings:write; settings:read only
+  // grants the GET used to render this page.
+  const { hasPermission } = useAuth()
+  const canEdit = hasPermission('settings:write')
   const [form, setForm] = useState<SecuritySettings | null>(null)
   const [saving, setSaving] = useState(false)
   const [trustedProxiesText, setTrustedProxiesText] = useState('')
@@ -43,7 +48,7 @@ export default function SecuritySettingsPage() {
   }, [settings])
 
   async function handleSave() {
-    if (!form) return
+    if (!form || !canEdit) return
     setSaving(true)
     try {
       const proxies = trustedProxiesText
@@ -107,14 +112,20 @@ export default function SecuritySettingsPage() {
             Session, password, login protection, and network trust settings.
           </p>
         </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-          Save Settings
-        </button>
+        {canEdit ? (
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+          >
+            {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+            Save Settings
+          </button>
+        ) : (
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            Read-only — settings:write required to change security policy
+          </span>
+        )}
       </div>
 
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">

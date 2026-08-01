@@ -168,9 +168,16 @@ export function useAuthState(): AuthContextValue {
     clearAuth()
   }, [])
 
+  // When the server runs with authentication disabled there is no identity to
+  // derive permissions from and every API route is unguarded, so permission
+  // gates must not lock the UI down. Until /healthz has answered we do not know
+  // which mode we are in, so stay closed rather than opening by default.
+  const authRequired = !authChecked || authEnabled || localAuthEnabled
+
   const hasPermission = useCallback((permission: string) => {
+    if (!authRequired) return true
     return role === 'admin' || permissions.includes(permission)
-  }, [permissions, role])
+  }, [authRequired, permissions, role])
 
   return {
     keyName,

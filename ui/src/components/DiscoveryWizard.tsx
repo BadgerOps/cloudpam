@@ -3,6 +3,14 @@ import { X, Check, Copy, Download, ChevronLeft, ChevronRight, AlertTriangle, Loa
 import { useAgentProvisioning, useDiscoveryAgents } from '../hooks/useDiscovery'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
+import {
+  hclHeredocShellQuote,
+  hclIdent,
+  hclQuote,
+  safeFilename,
+  shellQuote,
+  yamlQuote,
+} from '../utils/escape'
 import type { Account, CreateAccountRequest, AgentProvisionResponse, DiscoveryAgent } from '../api/types'
 
 type ConfigTab = 'shell' | 'yaml' | 'terraform' | 'docker' | 'iam'
@@ -175,54 +183,55 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
 
   const orgRegions = orgRegionsInput.split(',').map(r => r.trim()).filter(Boolean)
   const orgExclude = orgExcludeInput.split(',').map(r => r.trim()).filter(Boolean)
+  const orgPrimaryRegion = orgRegions[0] ?? 'us-east-1'
 
   // Single-account configs
   const shellConfigSingle = `#!/bin/bash
-export CLOUDPAM_BOOTSTRAP_TOKEN="${token}"
+export CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)}
 export CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id"
 export CLOUDPAM_ACCOUNT_ID=${accountId}
-export CLOUDPAM_AWS_REGIONS="${accountRegions.join(',')}"
+export CLOUDPAM_AWS_REGIONS=${shellQuote(accountRegions.join(','))}
 ./cloudpam-agent`
 
-  const yamlConfigSingle = `server_url: "${serverUrl}"
-bootstrap_token: "${token}"
+  const yamlConfigSingle = `server_url: ${yamlQuote(serverUrl)}
+bootstrap_token: ${yamlQuote(token)}
 agent_id_file: "/var/lib/cloudpam-agent/agent-id"
 account_id: ${accountId}
-agent_name: "${agentNameFinal}"
+agent_name: ${yamlQuote(agentNameFinal)}
 sync_interval: "15m"
 heartbeat_interval: "1m"
-aws_regions: [${accountRegions.map(r => `"${r}"`).join(', ')}]`
+aws_regions: [${accountRegions.map(yamlQuote).join(', ')}]`
 
   // Org-mode configs
   const shellConfigOrg = `#!/bin/bash
-export CLOUDPAM_BOOTSTRAP_TOKEN="${token}"
+export CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)}
 export CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id"
 export CLOUDPAM_ACCOUNT_ID=${accountId}
-export AWS_REGION="${orgRegions[0] ?? 'us-east-1'}"
-export AWS_DEFAULT_REGION="${orgRegions[0] ?? 'us-east-1'}"
+export AWS_REGION=${shellQuote(orgPrimaryRegion)}
+export AWS_DEFAULT_REGION=${shellQuote(orgPrimaryRegion)}
 export CLOUDPAM_AWS_ORG_ENABLED=true
-export CLOUDPAM_AWS_ORG_ROLE_NAME="${orgRoleName}"${orgExternalId ? `
-export CLOUDPAM_AWS_ORG_EXTERNAL_ID="${orgExternalId}"` : ''}
-export CLOUDPAM_AWS_ORG_REGIONS="${orgRegions.join(',')}"${orgExclude.length > 0 ? `
-export CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS="${orgExclude.join(',')}"` : ''}
+export CLOUDPAM_AWS_ORG_ROLE_NAME=${shellQuote(orgRoleName)}${orgExternalId ? `
+export CLOUDPAM_AWS_ORG_EXTERNAL_ID=${shellQuote(orgExternalId)}` : ''}
+export CLOUDPAM_AWS_ORG_REGIONS=${shellQuote(orgRegions.join(','))}${orgExclude.length > 0 ? `
+export CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${shellQuote(orgExclude.join(','))}` : ''}
 ./cloudpam-agent`
 
-  const yamlConfigOrg = `server_url: "${serverUrl}"
-bootstrap_token: "${token}"
+  const yamlConfigOrg = `server_url: ${yamlQuote(serverUrl)}
+bootstrap_token: ${yamlQuote(token)}
 agent_id_file: "/var/lib/cloudpam-agent/agent-id"
 account_id: ${accountId}
-agent_name: "${agentNameFinal}"
+agent_name: ${yamlQuote(agentNameFinal)}
 sync_interval: "15m"
 heartbeat_interval: "1m"
 aws_org:
   enabled: true
-  role_name: "${orgRoleName}"${orgExternalId ? `
-  external_id: "${orgExternalId}"` : ''}
-  regions: [${orgRegions.map(r => `"${r}"`).join(', ')}]${orgExclude.length > 0 ? `
-  exclude_accounts: [${orgExclude.map(a => `"${a}"`).join(', ')}]` : ''}`
+  role_name: ${yamlQuote(orgRoleName)}${orgExternalId ? `
+  external_id: ${yamlQuote(orgExternalId)}` : ''}
+  regions: [${orgRegions.map(yamlQuote).join(', ')}]${orgExclude.length > 0 ? `
+  exclude_accounts: [${orgExclude.map(yamlQuote).join(', ')}]` : ''}`
 
   const terraformConfigSingle = `variable "cloudpam_bootstrap_token" {
-  default   = "${token}"
+  default   = ${hclQuote(token)}
   sensitive = true
 }
 
@@ -232,14 +241,14 @@ resource "null_resource" "cloudpam_agent" {
       CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
       CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
       CLOUDPAM_ACCOUNT_ID=${accountId} \\
-      CLOUDPAM_AWS_REGIONS=${accountRegions.join(',')} \\
+      CLOUDPAM_AWS_REGIONS=${hclHeredocShellQuote(accountRegions.join(','))} \\
       ./cloudpam-agent
     EOT
   }
 }`
 
   const terraformConfigOrg = `variable "cloudpam_bootstrap_token" {
-  default   = "${token}"
+  default   = ${hclQuote(token)}
   sensitive = true
 }
 
@@ -249,13 +258,13 @@ resource "null_resource" "cloudpam_agent" {
       CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
       CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
       CLOUDPAM_ACCOUNT_ID=${accountId} \\
-      AWS_REGION=${orgRegions[0] ?? 'us-east-1'} \\
-      AWS_DEFAULT_REGION=${orgRegions[0] ?? 'us-east-1'} \\
+      AWS_REGION=${hclHeredocShellQuote(orgPrimaryRegion)} \\
+      AWS_DEFAULT_REGION=${hclHeredocShellQuote(orgPrimaryRegion)} \\
       CLOUDPAM_AWS_ORG_ENABLED=true \\
-      CLOUDPAM_AWS_ORG_ROLE_NAME=${orgRoleName} \\${orgExternalId ? `
-      CLOUDPAM_AWS_ORG_EXTERNAL_ID=${orgExternalId} \\` : ''}
-      CLOUDPAM_AWS_ORG_REGIONS=${orgRegions.join(',')} \\${orgExclude.length > 0 ? `
-      CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${orgExclude.join(',')} \\` : ''}
+      CLOUDPAM_AWS_ORG_ROLE_NAME=${hclHeredocShellQuote(orgRoleName)} \\${orgExternalId ? `
+      CLOUDPAM_AWS_ORG_EXTERNAL_ID=${hclHeredocShellQuote(orgExternalId)} \\` : ''}
+      CLOUDPAM_AWS_ORG_REGIONS=${hclHeredocShellQuote(orgRegions.join(','))} \\${orgExclude.length > 0 ? `
+      CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${hclHeredocShellQuote(orgExclude.join(','))} \\` : ''}
       ./cloudpam-agent
     EOT
   }
@@ -264,26 +273,28 @@ resource "null_resource" "cloudpam_agent" {
   const dockerConfigSingle = `docker run -d \\
   --name cloudpam-agent \\
   -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\
-  -e CLOUDPAM_BOOTSTRAP_TOKEN="${token}" \\
+  -e CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)} \\
   -e CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id" \\
   -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
-  -e CLOUDPAM_AWS_REGIONS="${accountRegions.join(',')}" \\
+  -e CLOUDPAM_AWS_REGIONS=${shellQuote(accountRegions.join(','))} \\
   ghcr.io/badgerops/cloudpam/agent:latest`
 
   const dockerConfigOrg = `docker run -d \\
   --name cloudpam-agent \\
   -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\
-  -e CLOUDPAM_BOOTSTRAP_TOKEN="${token}" \\
+  -e CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)} \\
   -e CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id" \\
   -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
-  -e AWS_REGION="${orgRegions[0] ?? 'us-east-1'}" \\
-  -e AWS_DEFAULT_REGION="${orgRegions[0] ?? 'us-east-1'}" \\
+  -e AWS_REGION=${shellQuote(orgPrimaryRegion)} \\
+  -e AWS_DEFAULT_REGION=${shellQuote(orgPrimaryRegion)} \\
   -e CLOUDPAM_AWS_ORG_ENABLED=true \\
-  -e CLOUDPAM_AWS_ORG_ROLE_NAME="${orgRoleName}" \\${orgExternalId ? `
-  -e CLOUDPAM_AWS_ORG_EXTERNAL_ID="${orgExternalId}" \\` : ''}
-  -e CLOUDPAM_AWS_ORG_REGIONS="${orgRegions.join(',')}" \\${orgExclude.length > 0 ? `
-  -e CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS="${orgExclude.join(',')}" \\` : ''}
+  -e CLOUDPAM_AWS_ORG_ROLE_NAME=${shellQuote(orgRoleName)} \\${orgExternalId ? `
+  -e CLOUDPAM_AWS_ORG_EXTERNAL_ID=${shellQuote(orgExternalId)} \\` : ''}
+  -e CLOUDPAM_AWS_ORG_REGIONS=${shellQuote(orgRegions.join(','))} \\${orgExclude.length > 0 ? `
+  -e CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${shellQuote(orgExclude.join(','))} \\` : ''}
   ghcr.io/badgerops/cloudpam/agent:latest`
+
+  const orgRoleIdent = hclIdent(orgRoleName, 'cloudpam_discovery_role')
 
   const iamSetupContent = `# IAM Setup for AWS Organizations Discovery
 #
@@ -296,8 +307,8 @@ resource "null_resource" "cloudpam_agent" {
 # --- Member Account Role (Terraform) ---
 # Deploy to each member account:
 
-resource "aws_iam_role" "${orgRoleName}" {
-  name = "${orgRoleName}"
+resource "aws_iam_role" "${orgRoleIdent}" {
+  name = ${hclQuote(orgRoleName)}
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -305,13 +316,13 @@ resource "aws_iam_role" "${orgRoleName}" {
       Effect    = "Allow"
       Principal = { AWS = "arn:aws:iam::<MANAGEMENT_ACCOUNT_ID>:root" }
       Action    = "sts:AssumeRole"${orgExternalId ? `
-      Condition = { StringEquals = { "sts:ExternalId" = "${orgExternalId}" } }` : ''}
+      Condition = { StringEquals = { "sts:ExternalId" = ${hclQuote(orgExternalId)} } }` : ''}
     }]
   })
 }
 
 resource "aws_iam_role_policy" "discovery" {
-  role = aws_iam_role.${orgRoleName}.id
+  role = aws_iam_role.${orgRoleIdent}.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -342,7 +353,7 @@ resource "aws_iam_policy" "cloudpam_org" {
       {
         Effect   = "Allow"
         Action   = "sts:AssumeRole"
-        Resource = "arn:aws:iam::*:role/${orgRoleName}"
+        Resource = ${hclQuote(`arn:aws:iam::*:role/${orgRoleName}`)}
       }
     ]
   })
@@ -357,12 +368,14 @@ resource "aws_iam_policy" "cloudpam_org" {
     ? ['shell', 'yaml', 'terraform', 'docker', 'iam']
     : ['shell', 'yaml', 'terraform', 'docker']
 
+  const filenameStem = safeFilename(agentNameFinal)
+
   const configs: Record<ConfigTab, { content: string; filename: string; label: string }> = {
-    shell: { content: shellConfig, filename: `${agentNameFinal}.sh`, label: 'Shell' },
-    yaml: { content: yamlConfig, filename: `${agentNameFinal}.yaml`, label: 'YAML' },
-    terraform: { content: terraformConfig, filename: `${agentNameFinal}.tf`, label: 'Terraform' },
-    docker: { content: dockerConfig, filename: `${agentNameFinal}-docker.sh`, label: 'Docker' },
-    iam: { content: iamSetupContent, filename: `${agentNameFinal}-iam.tf`, label: 'IAM Setup' },
+    shell: { content: shellConfig, filename: `${filenameStem}.sh`, label: 'Shell' },
+    yaml: { content: yamlConfig, filename: `${filenameStem}.yaml`, label: 'YAML' },
+    terraform: { content: terraformConfig, filename: `${filenameStem}.tf`, label: 'Terraform' },
+    docker: { content: dockerConfig, filename: `${filenameStem}-docker.sh`, label: 'Docker' },
+    iam: { content: iamSetupContent, filename: `${filenameStem}-iam.tf`, label: 'IAM Setup' },
   }
 
   const canGoNext = (step === 1 && selectedAccountId !== null) ||

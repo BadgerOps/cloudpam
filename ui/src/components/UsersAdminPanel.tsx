@@ -3,6 +3,7 @@ import { Users, Plus, AlertCircle, UserCheck, UserX, LockOpen } from 'lucide-rea
 import { useUsers } from '../hooks/useUsers'
 import { useRoles } from '../hooks/useRoles'
 import { usePendingAction } from '../hooks/usePendingAction'
+import { useAuth } from '../hooks/useAuth'
 import type { CreateUserRequest, UserInfo } from '../api/types'
 
 interface UsersAdminPanelProps {
@@ -12,6 +13,13 @@ interface UsersAdminPanelProps {
 export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelProps) {
   const { users, loading, error, create, update, deactivate, unlock } = useUsers()
   const { roles } = useRoles()
+  // internal/api/user_handlers.go guards each verb separately: POST needs
+  // users:create, PATCH (role, reactivate, unlock) needs users:update, and
+  // DELETE (deactivate) needs users:delete. users:list only grants the listing.
+  const { hasPermission } = useAuth()
+  const canCreate = hasPermission('users:create')
+  const canUpdate = hasPermission('users:update')
+  const canDeactivate = hasPermission('users:delete')
   const roleOptions = roles.length > 0 ? roles : ['admin', 'operator', 'viewer', 'auditor'].map(name => ({ name, is_builtin: true }))
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState<CreateUserRequest>({
@@ -26,7 +34,7 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
   const [editRole, setEditRole] = useState('')
 
   async function createUser() {
-    if (!form.username.trim() || !form.password) return
+    if (!canCreate || !form.username.trim() || !form.password) return
     setCreateError('')
     try {
       await create(form)
@@ -41,6 +49,7 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
   const { pending: creating, run: handleCreate } = usePendingAction(createUser)
 
   async function handleRoleSave(id: string) {
+    if (!canUpdate) return
     try {
       await update(id, { role: editRole })
       setEditingId(null)
@@ -51,13 +60,16 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
 
   async function handleToggleActive(id: string, isActive: boolean) {
     if (isActive) {
+      if (!canDeactivate) return
       await deactivate(id)
     } else {
+      if (!canUpdate) return
       await update(id, { is_active: true })
     }
   }
 
   async function handleUnlock(id: string) {
+    if (!canUpdate) return
     await unlock(id)
   }
 
@@ -82,13 +94,15 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
               Manage local user accounts
             </p>
           </div>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-          >
-            <Plus className="w-4 h-4" />
-            Create User
-          </button>
+          {canCreate && (
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+            >
+              <Plus className="w-4 h-4" />
+              Create User
+            </button>
+          )}
         </div>
       )}
 
@@ -100,13 +114,15 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
               Manage local user accounts and access levels
             </p>
           </div>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-          >
-            <Plus className="w-4 h-4" />
-            Create User
-          </button>
+          {canCreate && (
+            <button
+              onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+            >
+              <Plus className="w-4 h-4" />
+              Create User
+            </button>
+          )}
         </div>
       )}
 
@@ -117,7 +133,7 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
         </div>
       )}
 
-      {showCreate && (
+      {showCreate && canCreate && (
         <div className="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow p-4 border dark:border-gray-700">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">New User</h3>
           <div className="grid grid-cols-2 gap-3">
@@ -236,7 +252,11 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                   </td>
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{u.email || '—'}</td>
                   <td className="px-4 py-3">
-                    {editingId === u.id ? (
+                    {!canUpdate ? (
+                      <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded text-xs font-medium uppercase">
+                        {u.role}
+                      </span>
+                    ) : editingId === u.id ? (
                       <div className="flex items-center gap-1">
                         <select
                           value={editRole}
@@ -288,7 +308,7 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{u.failed_login_attempts ?? 0}</td>
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(u.last_login_at)}</td>
                   <td className="px-4 py-3 text-right">
-                    {isLocked(u) && (
+                    {isLocked(u) && canUpdate && (
                       <button
                         onClick={() => handleUnlock(u.id)}
                         title="Unlock user"
@@ -297,13 +317,17 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                         <LockOpen className="w-4 h-4" />
                       </button>
                     )}
-                    <button
-                      onClick={() => handleToggleActive(u.id, u.is_active)}
-                      title={u.is_active ? 'Deactivate user' : 'Activate user'}
-                      className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                    >
-                      {u.is_active ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
-                    </button>
+                    {(u.is_active ? canDeactivate : canUpdate) ? (
+                      <button
+                        onClick={() => handleToggleActive(u.id, u.is_active)}
+                        title={u.is_active ? 'Deactivate user' : 'Activate user'}
+                        className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                      >
+                        {u.is_active ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-400 dark:text-gray-500">—</span>
+                    )}
                   </td>
                 </tr>
               ))

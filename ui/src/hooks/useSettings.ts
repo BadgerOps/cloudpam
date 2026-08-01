@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, patch } from '../api/client'
+import { useAuth } from './useAuth'
 
 export interface SecuritySettings {
   session_duration_hours: number
@@ -22,7 +23,20 @@ export function useSecuritySettings() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // GET /api/v1/settings/security requires settings:read and
+  // PATCH requires settings:write — mirror both here so the UI never issues a
+  // request it is not entitled to make.
+  const { hasPermission } = useAuth()
+  const canRead = hasPermission('settings:read')
+  const canEdit = hasPermission('settings:write')
+
   const fetchSettings = useCallback(async () => {
+    if (!canRead) {
+      setSettings(null)
+      setError(null)
+      setLoading(false)
+      return
+    }
     try {
       setLoading(true)
       const data = await get<SecuritySettings>('/api/v1/settings/security')
@@ -33,15 +47,18 @@ export function useSecuritySettings() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [canRead])
 
   const updateSettings = useCallback(async (updated: SecuritySettings) => {
+    if (!canEdit) {
+      throw new Error('settings:write permission required to change security settings')
+    }
     const data = await patch<SecuritySettings>('/api/v1/settings/security', updated)
     setSettings(data)
     return data
-  }, [])
+  }, [canEdit])
 
   useEffect(() => { fetchSettings() }, [fetchSettings])
 
-  return { settings, loading, error, updateSettings, refetch: fetchSettings }
+  return { settings, loading, error, canRead, canEdit, updateSettings, refetch: fetchSettings }
 }

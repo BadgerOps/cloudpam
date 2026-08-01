@@ -14,6 +14,13 @@ vi.mock('../hooks/useRoles', () => ({
   useRoles: () => mockUseRoles(),
 }))
 
+// The panel gates its mutating controls on RBAC permissions. These cases cover
+// duplicate-submit handling, not authorization, so grant everything here;
+// permission gating is covered by permissionGating.test.tsx.
+vi.mock('../hooks/useAuth', () => ({
+  useAuth: () => ({ hasPermission: () => true }),
+}))
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void

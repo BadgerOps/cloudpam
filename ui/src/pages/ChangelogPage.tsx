@@ -282,8 +282,6 @@ function ReleaseCard({
 }
 
 export default function ChangelogPage() {
-  // The /config/updates route is gated on settings:read, so the link must use
-  // the same check. Gating on role === 'admin' hid it from permitted operators.
   const { hasPermission } = useAuth()
   const [markdown, setMarkdown] = useState('')
   const [systemInfo, setSystemInfo] = useState<SystemInfoResponse | null>(null)
@@ -354,6 +352,7 @@ export default function ChangelogPage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
+            {/* /config/updates is guarded by settings:read, matching GET /api/v1/updates. */}
             {hasPermission('settings:read') ? (
               <Link
                 to="/config/updates"
