@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Key, Plus, Ban, Copy, Check, AlertCircle } from 'lucide-react'
 import { useApiKeys } from '../hooks/useApiKeys'
 import { useSecuritySettings } from '../hooks/useSettings'
+import { usePendingAction } from '../hooks/usePendingAction'
 import type { ApiKeyCreateResponse } from '../api/types'
 
 // Must match backend validScopes in auth_handlers.go createAPIKey
@@ -38,7 +39,7 @@ export default function ApiKeysPage() {
   const [copied, setCopied] = useState(false)
   const [createError, setCreateError] = useState('')
 
-  async function handleCreate() {
+  async function createKey() {
     if (!newKeyName.trim()) return
     setCreateError('')
     try {
@@ -55,6 +56,9 @@ export default function ApiKeysPage() {
       setCreateError(err instanceof Error ? err.message : 'Failed to create key')
     }
   }
+
+  // Gated so a second click before the request settles cannot mint a duplicate key
+  const { pending: creating, run: handleCreate } = usePendingAction(createKey)
 
   function toggleScope(scope: string) {
     if (scope === '*') {
@@ -207,11 +211,11 @@ export default function ApiKeysPage() {
 
             <div className="flex gap-2 pt-1">
               <button
-                onClick={handleCreate}
-                disabled={!newKeyName.trim()}
+                onClick={() => void handleCreate()}
+                disabled={creating || !newKeyName.trim()}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
-                Create
+                {creating ? 'Creating...' : 'Create'}
               </button>
               <button
                 onClick={() => setShowCreate(false)}

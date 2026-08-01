@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { get, post, del } from '../api/client'
+import { useLatestRequest } from './useLatestRequest'
 import type {
   DiscoveryResourcesResponse,
   DiscoveryAgent,
@@ -17,6 +18,7 @@ export function useDiscoveryResources() {
   const [data, setData] = useState<DiscoveryResourcesResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { begin, isCurrent } = useLatestRequest()
 
   const fetch = useCallback(
     async (
@@ -32,6 +34,7 @@ export function useDiscoveryResources() {
         page_size?: number
       },
     ) => {
+      const token = begin()
       setLoading(true)
       setError(null)
       try {
@@ -50,14 +53,16 @@ export function useDiscoveryResources() {
         const resp = await get<DiscoveryResourcesResponse>(
           `/api/v1/discovery/resources?${params}`,
         )
+        if (!isCurrent(token)) return
         setData(resp)
       } catch (err) {
+        if (!isCurrent(token)) return
         setError(err instanceof Error ? err.message : 'Failed to load resources')
       } finally {
         setLoading(false)
       }
     },
-    [],
+    [begin, isCurrent],
   )
 
   const linkToPool = useCallback(
@@ -80,21 +85,25 @@ export function useSyncJobs() {
   const [jobs, setJobs] = useState<SyncJob[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { begin, isCurrent } = useLatestRequest()
 
   const fetch = useCallback(async (accountId: number) => {
+    const token = begin()
     setLoading(true)
     setError(null)
     try {
       const resp = await get<SyncJobsResponse>(
         `/api/v1/discovery/sync?account_id=${accountId}`,
       )
+      if (!isCurrent(token)) return
       setJobs(resp.items)
     } catch (err) {
+      if (!isCurrent(token)) return
       setError(err instanceof Error ? err.message : 'Failed to load sync jobs')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [begin, isCurrent])
 
   const triggerSync = useCallback(async (options: {
     accountId?: number
@@ -191,8 +200,10 @@ export function useDiscoveryAgents() {
   const [agents, setAgents] = useState<DiscoveryAgent[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { begin, isCurrent } = useLatestRequest()
 
   const fetch = useCallback(async (accountId?: number) => {
+    const token = begin()
     setLoading(true)
     setError(null)
     try {
@@ -202,13 +213,15 @@ export function useDiscoveryAgents() {
       const resp = await get<DiscoveryAgentsResponse>(
         `/api/v1/discovery/agents${params ? '?' + params : ''}`,
       )
+      if (!isCurrent(token)) return
       setAgents(resp.items)
     } catch (err) {
+      if (!isCurrent(token)) return
       setError(err instanceof Error ? err.message : 'Failed to load agents')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [begin, isCurrent])
 
   const deleteAgent = useCallback(async (agentId: string) => {
     await del(`/api/v1/discovery/agents/${agentId}`)

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { get, post } from '../api/client'
+import { useLatestRequest } from './useLatestRequest'
 import type {
   DriftListResponse,
   RunDriftDetectionResponse,
@@ -10,6 +11,7 @@ export function useDrift() {
   const [data, setData] = useState<DriftListResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { begin, isCurrent } = useLatestRequest()
 
   const fetch = useCallback(
     async (filters?: {
@@ -20,6 +22,7 @@ export function useDrift() {
       page?: number
       page_size?: number
     }) => {
+      const token = begin()
       setLoading(true)
       setError(null)
       try {
@@ -35,8 +38,10 @@ export function useDrift() {
         const resp = await get<DriftListResponse>(
           `/api/v1/drift${qs ? '?' + qs : ''}`,
         )
+        if (!isCurrent(token)) return
         setData(resp)
       } catch (err) {
+        if (!isCurrent(token)) return
         setError(
           err instanceof Error ? err.message : 'Failed to load drift items',
         )
@@ -44,7 +49,7 @@ export function useDrift() {
         setLoading(false)
       }
     },
-    [],
+    [begin, isCurrent],
   )
 
   const detect = useCallback(

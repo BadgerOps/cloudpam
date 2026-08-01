@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import { useUpdates } from '../hooks/useUpdates'
+import { usePendingAction } from '../hooks/usePendingAction'
 import type { UpdateStatusResponse } from '../api/types'
 import { scheduleFrontendResetAfterUpgrade } from '../utils/upgradeReload'
 
@@ -206,7 +207,7 @@ export default function UpdatesPage() {
     showToast('Update metadata refreshed', 'success')
   }
 
-  async function handleUpgrade() {
+  async function requestUpgrade() {
     try {
       const response = await triggerUpgrade()
       setPendingTargetVersion(response.target_version)
@@ -215,6 +216,9 @@ export default function UpdatesPage() {
       showToast(err instanceof Error ? err.message : 'Failed to request upgrade', 'error')
     }
   }
+
+  // Gated so a second click cannot submit a duplicate upgrade request
+  const { pending: submittingUpgrade, run: handleUpgrade } = usePendingAction(requestUpgrade)
 
   if (role !== 'admin') {
     return (
@@ -239,7 +243,13 @@ export default function UpdatesPage() {
       ? status
       : { status: pendingTargetVersion ? 'upgrade_requested' : 'idle', target_version: pendingTargetVersion ?? undefined }
   const waitingForHost = pendingTargetVersion !== null && normalizeStatus(status?.status) === 'idle'
-  const canTriggerUpgrade = summary?.update_available === true && !actionLoading
+  // An upgrade that is already requested, queued, or rolling out must not be re-submitted
+  const upgradeInFlight =
+    submittingUpgrade ||
+    actionLoading ||
+    pendingTargetVersion !== null ||
+    isActiveUpgradeStatus(status?.status)
+  const canTriggerUpgrade = summary?.update_available === true && !upgradeInFlight
 
   return (
     <div className="p-6 space-y-6">
@@ -264,7 +274,7 @@ export default function UpdatesPage() {
             disabled={!canTriggerUpgrade}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-400"
           >
-            {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUpCircle className="w-4 h-4" />}
+            {upgradeInFlight ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUpCircle className="w-4 h-4" />}
             {summary?.update_available ? `Upgrade to ${formatVersion(summary.latest_version)}` : 'No update available'}
           </button>
         </div>
