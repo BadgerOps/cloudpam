@@ -201,11 +201,11 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
           <thead>
             <tr className="border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Username</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Email</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Email</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Role</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Status</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Failures</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Last Login</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Failures</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Last Login</th>
               <th className="text-right px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Actions</th>
             </tr>
           </thead>
@@ -234,7 +234,7 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.email || '—'}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{u.email || '—'}</td>
                   <td className="px-4 py-3">
                     {editingId === u.id ? (
                       <div className="flex items-center gap-1">
@@ -285,8 +285,8 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{u.failed_login_attempts ?? 0}</td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(u.last_login_at)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{u.failed_login_attempts ?? 0}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(u.last_login_at)}</td>
                   <td className="px-4 py-3 text-right">
                     {isLocked(u) && (
                       <button

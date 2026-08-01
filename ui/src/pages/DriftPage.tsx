@@ -168,12 +168,12 @@ export default function DriftPage() {
           <thead>
             <tr className="bg-gray-50 dark:bg-gray-900/50 text-left">
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Severity</th>
-              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Type</th>
+              <th className="hidden md:table-cell px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Type</th>
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Title</th>
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Resource CIDR</th>
-              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Pool CIDR</th>
+              <th className="hidden md:table-cell px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Pool CIDR</th>
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Status</th>
-              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Detected</th>
+              <th className="hidden md:table-cell px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Detected</th>
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Actions</th>
             </tr>
           </thead>
@@ -269,7 +269,7 @@ function DriftRow({
       <td className="px-4 py-3">
         <SeverityBadge severity={item.severity} />
       </td>
-      <td className="px-4 py-3">
+      <td className="hidden md:table-cell px-4 py-3">
         <TypeBadge type={item.type} />
       </td>
       <td className="px-4 py-3">
@@ -283,13 +283,13 @@ function DriftRow({
       <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
         {item.resource_cidr || '-'}
       </td>
-      <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
+      <td className="hidden md:table-cell px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">
         {item.pool_cidr || '-'}
       </td>
       <td className="px-4 py-3">
         <StatusBadge status={item.status} />
       </td>
-      <td className="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
+      <td className="hidden md:table-cell px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
         {formatTimeAgo(item.detected_at)}
       </td>
       <td className="px-4 py-3">

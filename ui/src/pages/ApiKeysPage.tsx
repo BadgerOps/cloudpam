@@ -235,10 +235,10 @@ export default function ApiKeysPage() {
             <tr className="border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Name</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Prefix</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Scopes</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Age</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Created</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Expires</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Scopes</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Age</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Created</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Expires</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Status</th>
               <th className="text-right px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Actions</th>
             </tr>
@@ -262,7 +262,7 @@ export default function ApiKeysPage() {
                 <tr key={k.id} className="border-b dark:border-gray-700 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-750">
                   <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{k.name}</td>
                   <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-400">{k.prefix}...</td>
-                  <td className="px-4 py-3">
+                  <td className="hidden md:table-cell px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {k.scopes.slice(0, 3).map(s => (
                         <span key={s} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded text-xs">
@@ -276,9 +276,9 @@ export default function ApiKeysPage() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatAge(k.age_days)}</td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.created_at)}</td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.expires_at)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatAge(k.age_days)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.created_at)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.expires_at)}</td>
                   <td className="px-4 py-3">
                     {(() => {
                       const [label, classes] = statusBadge(k)
