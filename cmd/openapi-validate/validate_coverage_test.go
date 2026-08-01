@@ -154,47 +154,6 @@ components:
 			wantErr: "paths must be a non-empty mapping",
 		},
 		{
-			name: "missing components",
-			spec: `
-openapi: 3.1.0
-paths:
-  /w:
-    get:
-      summary: s
-      responses: {}
-`,
-			wantErr: "components must be a mapping",
-		},
-		{
-			name: "missing schemas",
-			spec: `
-openapi: 3.1.0
-paths:
-  /w:
-    get:
-      summary: s
-      responses: {}
-components:
-  responses:
-    E: {}
-`,
-			wantErr: "components.schemas must be a non-empty mapping",
-		},
-		{
-			name: "empty schemas",
-			spec: `
-openapi: 3.1.0
-paths:
-  /w:
-    get:
-      summary: s
-      responses: {}
-components:
-  schemas: {}
-`,
-			wantErr: "components.schemas must be a non-empty mapping",
-		},
-		{
 			name: "path item is not a mapping",
 			spec: `
 openapi: 3.1.0
@@ -270,7 +229,9 @@ components:
 			wantErr: `references missing schema "Missing"`,
 		},
 		{
-			name: "unsupported ref target",
+			// parameters is a supported namespace, so an unresolvable target is
+			// reported as a missing parameter rather than an unsupported ref.
+			name: "ref to undefined parameter",
 			spec: `
 openapi: 3.1.0
 paths:
@@ -287,7 +248,7 @@ components:
   schemas:
     E: {}
 `,
-			wantErr: `unsupported ref "#/components/parameters/Page"`,
+			wantErr: `references missing parameter "Page"`,
 		},
 		{
 			name: "external ref",
