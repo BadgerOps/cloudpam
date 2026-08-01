@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiRequestError, del, get, post, postRaw } from '../api/client'
+import { ApiRequestError, del, get, post, postRaw, streamPost } from '../api/client'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -115,5 +115,114 @@ describe('postRaw', () => {
     const [, init] = fetchMock.mock.calls[0]
     expect(init.headers['Content-Type']).toBe('application/json')
     expect(init.body).toBe(JSON.stringify(csv))
+  })
+})
+
+function sseResponse(chunks: string[]) {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk))
+      }
+      controller.close()
+    },
+  })
+  return new Response(stream, {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  })
+}
+
+function collect() {
+  const deltas: string[] = []
+  let done = false
+  let error: Error | null = null
+  return {
+    deltas,
+    get done() { return done },
+    get error() { return error },
+    callbacks: {
+      onDelta: (d: string) => { deltas.push(d) },
+      onDone: () => { done = true },
+      onError: (e: Error) => { error = e },
+    },
+  }
+}
+
+describe('streamPost EOF handling', () => {
+  it('parses a final data line that arrives without a trailing newline', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'data: {"delta":"hello"}\n',
+      'data: {"delta":" world"}',
+    ])))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.deltas).toEqual(['hello', ' world'])
+    expect(sink.done).toBe(true)
+    expect(sink.error).toBeNull()
+  })
+
+  it('honours a terminating done event with no trailing newline', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'data: {"delta":"a"}\n',
+      'event: done',
+    ])))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.deltas).toEqual(['a'])
+    expect(sink.done).toBe(true)
+  })
+
+  it('reassembles a data line split across chunk boundaries', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'data: {"del',
+      'ta":"split"}\n',
+    ])))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.deltas).toEqual(['split'])
+    expect(sink.done).toBe(true)
+  })
+
+  it('emits a trailing multi-byte character flushed at EOF', async () => {
+    const encoder = new TextEncoder()
+    const full = encoder.encode('data: {"delta":"café"}')
+    // Split mid multi-byte sequence so the decoder must be flushed at EOF.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(full.slice(0, full.length - 1))
+        controller.enqueue(full.slice(full.length - 1))
+        controller.close()
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    })))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.deltas).toEqual(['café'])
+    expect(sink.done).toBe(true)
+  })
+
+  it('signals completion exactly once for a stream ending in a blank line', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'data: {"delta":"x"}\n\n',
+    ])))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.deltas).toEqual(['x'])
+    expect(sink.done).toBe(true)
   })
 })

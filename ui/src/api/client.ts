@@ -213,41 +213,48 @@ export async function streamPost(path: string, data: unknown, callbacks: SSECall
   const decoder = new TextDecoder()
   let buffer = ''
 
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+  // Returns true when the line signals end of stream.
+  function handleLine(line: string): boolean {
+    const trimmed = line.trim()
+    if (trimmed === '') return false
 
-      buffer += decoder.decode(value, { stream: true })
+    if (trimmed === 'event: done') return true
+
+    if (trimmed.startsWith('data: ')) {
+      const jsonStr = trimmed.slice(6)
+      if (jsonStr === '{}') return true
+      try {
+        const parsed = JSON.parse(jsonStr)
+        if (parsed.delta !== undefined) {
+          callbacks.onDelta(parsed.delta)
+        }
+      } catch {
+        // skip malformed JSON
+      }
+    }
+    return false
+  }
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+
+      // Flush the decoder at EOF so a trailing multi-byte character is emitted.
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true })
+
       const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
+      // Mid-stream the trailing fragment may be an incomplete line, so hold it
+      // back. At EOF nothing more is coming, so parse it as a final event.
+      buffer = done ? '' : lines.pop() ?? ''
 
       for (const line of lines) {
-        const trimmed = line.trim()
-        if (trimmed === '') continue
-
-        if (trimmed === 'event: done') {
-          // Read the next data line then finish
+        if (handleLine(line)) {
           callbacks.onDone()
           return
         }
-
-        if (trimmed.startsWith('data: ')) {
-          const jsonStr = trimmed.slice(6)
-          if (jsonStr === '{}') {
-            callbacks.onDone()
-            return
-          }
-          try {
-            const parsed = JSON.parse(jsonStr)
-            if (parsed.delta !== undefined) {
-              callbacks.onDelta(parsed.delta)
-            }
-          } catch {
-            // skip malformed JSON
-          }
-        }
       }
+
+      if (done) break
     }
     callbacks.onDone()
   } catch (err) {
