@@ -59,6 +59,7 @@ Recent planning session produced these design documents:
 | `docs/AUTH_FLOWS.md` | OAuth2/OIDC and API key authentication |
 | `docs/SMART_PLANNING.md` | Analysis engine and AI planning architecture |
 | `docs/OBSERVABILITY.md` | Logging, metrics, tracing, audit logging |
+| `docs/SIEM_INTEGRATION.md` | SIEM audit-event format, shipping transports, redaction |
 | `docs/API_EXAMPLES.md` | API usage examples |
 | `docs/DEPLOYMENT.md` | Kubernetes and cloud deployment guides |
 | `docs/DISCOVERY.md` | Cloud discovery setup, AWS config, API reference |

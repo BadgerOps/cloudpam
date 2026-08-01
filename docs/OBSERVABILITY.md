@@ -130,6 +130,10 @@ Use Vector or another collector when a deployment needs vendor APIs such as
 Splunk HEC or Datadog HTTP intake. That keeps credentials, buffering, and
 backpressure handling outside the CloudPAM process.
 
+See [SIEM Integration](SIEM_INTEGRATION.md) for the full design: the JSON and
+CEF format decisions, the planned webhook and file sinks, event taxonomy,
+delivery semantics, and redaction rules.
+
 ### 2.1 Why Vector?
 
 | Aspect | Vector | Fluentd |
