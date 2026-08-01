@@ -144,78 +144,112 @@ func displayRegion(region string) string {
 	return region
 }
 
-func (c *Collector) discoverVPCs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
-	out, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{})
-	if err != nil {
-		return nil, err
+// nextPageToken returns the token for the next page, or "" when the listing is
+// exhausted. A token identical to the current one is treated as exhausted so a
+// misbehaving endpoint cannot spin the caller forever.
+func nextPageToken(current, next *string) string {
+	token := aws.ToString(next)
+	if token == "" || token == aws.ToString(current) {
+		return ""
 	}
+	return token
+}
 
+func (c *Collector) discoverVPCs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
 	var resources []domain.DiscoveredResource
-	for _, vpc := range out.Vpcs {
-		name := extractTagName(vpc.Tags)
-		meta := map[string]string{
-			"state": string(vpc.State),
-		}
-		if vpc.IsDefault != nil && *vpc.IsDefault {
-			meta["is_default"] = "true"
+
+	var token *string
+	for {
+		out, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{NextToken: token})
+		if err != nil {
+			return nil, err
 		}
 
-		resources = append(resources, domain.DiscoveredResource{
-			ID:           uuid.New(),
-			AccountID:    account.ID,
-			Provider:     "aws",
-			Region:       region,
-			ResourceType: domain.ResourceTypeVPC,
-			ResourceID:   aws.ToString(vpc.VpcId),
-			Name:         name,
-			CIDR:         aws.ToString(vpc.CidrBlock),
-			Status:       domain.DiscoveryStatusActive,
-			Metadata:     meta,
-			DiscoveredAt: now,
-			LastSeenAt:   now,
-		})
+		for _, vpc := range out.Vpcs {
+			name := extractTagName(vpc.Tags)
+			meta := map[string]string{
+				"state": string(vpc.State),
+			}
+			if vpc.IsDefault != nil && *vpc.IsDefault {
+				meta["is_default"] = "true"
+			}
+
+			resources = append(resources, domain.DiscoveredResource{
+				ID:           uuid.New(),
+				AccountID:    account.ID,
+				Provider:     "aws",
+				Region:       region,
+				ResourceType: domain.ResourceTypeVPC,
+				ResourceID:   aws.ToString(vpc.VpcId),
+				Name:         name,
+				CIDR:         aws.ToString(vpc.CidrBlock),
+				Status:       domain.DiscoveryStatusActive,
+				Metadata:     meta,
+				DiscoveredAt: now,
+				LastSeenAt:   now,
+			})
+		}
+
+		next := nextPageToken(token, out.NextToken)
+		if next == "" {
+			break
+		}
+		token = aws.String(next)
 	}
 	return resources, nil
 }
 
 func (c *Collector) discoverSubnets(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
-	out, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{})
-	if err != nil {
-		return nil, err
-	}
-
 	var resources []domain.DiscoveredResource
-	for _, subnet := range out.Subnets {
-		name := extractTagName(subnet.Tags)
-		vpcID := aws.ToString(subnet.VpcId)
-		az := aws.ToString(subnet.AvailabilityZone)
-		meta := map[string]string{
-			"availability_zone": az,
-			"state":             string(subnet.State),
-		}
-		if subnet.AvailableIpAddressCount != nil {
-			meta["available_ips"] = fmt.Sprintf("%d", *subnet.AvailableIpAddressCount)
+
+	var token *string
+	for {
+		out, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{NextToken: token})
+		if err != nil {
+			return nil, err
 		}
 
-		resources = append(resources, domain.DiscoveredResource{
-			ID:               uuid.New(),
-			AccountID:        account.ID,
-			Provider:         "aws",
-			Region:           region,
-			ResourceType:     domain.ResourceTypeSubnet,
-			ResourceID:       aws.ToString(subnet.SubnetId),
-			Name:             name,
-			CIDR:             aws.ToString(subnet.CidrBlock),
-			ParentResourceID: &vpcID,
-			Status:           domain.DiscoveryStatusActive,
-			Metadata:         meta,
-			DiscoveredAt:     now,
-			LastSeenAt:       now,
-		})
+		for _, subnet := range out.Subnets {
+			name := extractTagName(subnet.Tags)
+			vpcID := aws.ToString(subnet.VpcId)
+			az := aws.ToString(subnet.AvailabilityZone)
+			meta := map[string]string{
+				"availability_zone": az,
+				"state":             string(subnet.State),
+			}
+			if subnet.AvailableIpAddressCount != nil {
+				meta["available_ips"] = fmt.Sprintf("%d", *subnet.AvailableIpAddressCount)
+			}
+
+			resources = append(resources, domain.DiscoveredResource{
+				ID:               uuid.New(),
+				AccountID:        account.ID,
+				Provider:         "aws",
+				Region:           region,
+				ResourceType:     domain.ResourceTypeSubnet,
+				ResourceID:       aws.ToString(subnet.SubnetId),
+				Name:             name,
+				CIDR:             aws.ToString(subnet.CidrBlock),
+				ParentResourceID: &vpcID,
+				Status:           domain.DiscoveryStatusActive,
+				Metadata:         meta,
+				DiscoveredAt:     now,
+				LastSeenAt:       now,
+			})
+		}
+
+		next := nextPageToken(token, out.NextToken)
+		if next == "" {
+			break
+		}
+		token = aws.String(next)
 	}
 	return resources, nil
 }
 
+// discoverElasticIPs issues a single DescribeAddresses call: unlike
+// DescribeVpcs and DescribeSubnets, the EC2 DescribeAddresses response carries
+// no NextToken and is not paginated.
 func (c *Collector) discoverElasticIPs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
 	out, err := client.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
 	if err != nil {

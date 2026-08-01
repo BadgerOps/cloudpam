@@ -217,10 +217,9 @@ func (s *Server) RegisterProtectedRoutes(keyStore auth.KeyStore, sessionStore au
 	poolsReadMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, slogger)
 	s.handleOpenAPIRoute("/api/v1/blocks", dualMW(poolsReadMW(http.HandlerFunc(s.handleBlocksList))))
 
-	// Export endpoint - requires pools:read and accounts:read
-	exportPermMW := RequireAnyPermissionMiddleware([]auth.Permission{
-		{Resource: auth.ResourcePools, Action: auth.ActionRead},
-	}, slogger)
+	// Export endpoint - permissions depend on the requested datasets:
+	// accounts data requires accounts:read, pool data requires pools:read.
+	exportPermMW := RequireExportPermissionsMiddleware(slogger)
 	s.handleOpenAPIRoute("/api/v1/export", dualMW(exportPermMW(http.HandlerFunc(s.handleExport))))
 
 	// Schema planner endpoints - require pools:create
