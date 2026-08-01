@@ -90,6 +90,30 @@ cover-threshold thr="0": ensure-cache
 tidy: ensure-cache
     {{go-env}} go mod tidy
 
+# Terraform provider (nested Go module in terraform-provider-cloudpam/)
+
+tf-provider-build: ensure-cache
+    cd terraform-provider-cloudpam && {{go-env}} go build -o terraform-provider-cloudpam .
+
+tf-provider-test: ensure-cache
+    cd terraform-provider-cloudpam && {{go-env}} go test ./...
+
+# Acceptance tests need a live CloudPAM server plus CLOUDPAM_ENDPOINT/CLOUDPAM_API_KEY.
+tf-provider-testacc: ensure-cache
+    cd terraform-provider-cloudpam && TF_ACC=1 {{go-env}} go test ./internal/provider/ -run TestAcc -v -timeout 20m
+
+# Install into the local Terraform plugin mirror; see docs/TERRAFORM_PROVIDER.md.
+tf-provider-install version="0.1.0": ensure-cache
+    #!/usr/bin/env bash
+    set -euo pipefail
+    os=$(go env GOOS)
+    arch=$(go env GOARCH)
+    dest="${HOME}/.terraform.d/plugins/registry.terraform.io/BadgerOps/cloudpam/{{version}}/${os}_${arch}"
+    mkdir -p "$dest"
+    cd terraform-provider-cloudpam
+    {{go-env}} go build -ldflags "-X main.version={{version}}" -o "${dest}/terraform-provider-cloudpam_v{{version}}" .
+    echo "installed to ${dest}"
+
 docker-build tag="cloudpam:latest":
     docker build -t {{tag}} .
 
