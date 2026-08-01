@@ -13,9 +13,39 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/observability"
 )
+
+// startEC2Span opens a client span around a group of EC2 API calls. With
+// tracing disabled the shared tracer is the OpenTelemetry no-op, so the cost is
+// an interface call against a network round trip.
+func startEC2Span(ctx context.Context, operation, region string) (context.Context, trace.Span) {
+	return observability.Tracer().Start(ctx, "aws.ec2."+operation,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("cloud.provider", "aws"),
+			attribute.String("cloud.region", displayRegion(region)),
+			attribute.String("rpc.service", "ec2"),
+			attribute.String("rpc.method", operation),
+		),
+	)
+}
+
+// endEC2Span records the outcome of an EC2 call group and closes the span.
+func endEC2Span(span trace.Span, resourceCount int, err error) {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	} else {
+		span.SetAttributes(attribute.Int("aws.resource_count", resourceCount))
+	}
+	span.End()
+}
 
 // Collector discovers AWS VPCs, subnets, and Elastic IPs.
 type Collector struct {
@@ -47,7 +77,17 @@ func (c *Collector) Provider() string { return "aws" }
 // Discover discovers VPCs, subnets, and Elastic IPs for the given account.
 // Authentication uses the default AWS credential chain (env vars, instance profile, etc.).
 // The account's Regions field determines which regions to query. If empty, uses default config region.
-func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]domain.DiscoveredResource, error) {
+func (c *Collector) Discover(ctx context.Context, account domain.Account) (resources []domain.DiscoveredResource, err error) {
+	ctx, span := observability.Tracer().Start(ctx, "aws.discover",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("cloud.provider", "aws"),
+			attribute.String("cloudpam.account.key", account.Key),
+			attribute.Int("cloud.region.count", len(account.Regions)),
+		),
+	)
+	defer func() { endEC2Span(span, len(resources), err) }()
+
 	regions := account.Regions
 	if len(regions) == 0 {
 		// If no regions specified, use default config (single region)
@@ -155,8 +195,9 @@ func nextPageToken(current, next *string) string {
 	return token
 }
 
-func (c *Collector) discoverVPCs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
-	var resources []domain.DiscoveredResource
+func (c *Collector) discoverVPCs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) (resources []domain.DiscoveredResource, err error) {
+	ctx, span := startEC2Span(ctx, "DescribeVpcs", region)
+	defer func() { endEC2Span(span, len(resources), err) }()
 
 	var token *string
 	for {
@@ -199,8 +240,9 @@ func (c *Collector) discoverVPCs(ctx context.Context, client ec2API, account dom
 	return resources, nil
 }
 
-func (c *Collector) discoverSubnets(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
-	var resources []domain.DiscoveredResource
+func (c *Collector) discoverSubnets(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) (resources []domain.DiscoveredResource, err error) {
+	ctx, span := startEC2Span(ctx, "DescribeSubnets", region)
+	defer func() { endEC2Span(span, len(resources), err) }()
 
 	var token *string
 	for {
@@ -250,13 +292,15 @@ func (c *Collector) discoverSubnets(ctx context.Context, client ec2API, account 
 // discoverElasticIPs issues a single DescribeAddresses call: unlike
 // DescribeVpcs and DescribeSubnets, the EC2 DescribeAddresses response carries
 // no NextToken and is not paginated.
-func (c *Collector) discoverElasticIPs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) ([]domain.DiscoveredResource, error) {
+func (c *Collector) discoverElasticIPs(ctx context.Context, client ec2API, account domain.Account, region string, now time.Time) (resources []domain.DiscoveredResource, err error) {
+	ctx, span := startEC2Span(ctx, "DescribeAddresses", region)
+	defer func() { endEC2Span(span, len(resources), err) }()
+
 	out, err := client.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
 	if err != nil {
 		return nil, err
 	}
 
-	var resources []domain.DiscoveredResource
 	for _, addr := range out.Addresses {
 		name := extractTagName(addr.Tags)
 		allocID := aws.ToString(addr.AllocationId)
