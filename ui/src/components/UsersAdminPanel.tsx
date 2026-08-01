@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Users, Plus, AlertCircle, UserCheck, UserX, LockOpen } from 'lucide-react'
 import { useUsers } from '../hooks/useUsers'
 import { useRoles } from '../hooks/useRoles'
+import { usePendingAction } from '../hooks/usePendingAction'
 import type { CreateUserRequest, UserInfo } from '../api/types'
 
 interface UsersAdminPanelProps {
@@ -24,7 +25,7 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editRole, setEditRole] = useState('')
 
-  async function handleCreate() {
+  async function createUser() {
     if (!form.username.trim() || !form.password) return
     setCreateError('')
     try {
@@ -35,6 +36,9 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
       setCreateError(err instanceof Error ? err.message : 'Failed to create user')
     }
   }
+
+  // Gated so a second click before the request settles cannot create a duplicate user
+  const { pending: creating, run: handleCreate } = usePendingAction(createUser)
 
   async function handleRoleSave(id: string) {
     try {
@@ -176,11 +180,11 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
 
           <div className="flex gap-2 pt-3">
             <button
-              onClick={handleCreate}
-              disabled={!form.username.trim() || !form.password}
+              onClick={() => void handleCreate()}
+              disabled={creating || !form.username.trim() || !form.password}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
             >
-              Create
+              {creating ? 'Creating...' : 'Create'}
             </button>
             <button
               onClick={() => setShowCreate(false)}

@@ -183,6 +183,17 @@ export default function DiscoveryPage() {
     loadResources()
   }, [loadResources])
 
+  // The scan poller outlives the render that started it, so it reads the
+  // current account/loader through refs instead of a stale closure.
+  const loadResourcesRef = useRef(loadResources)
+  const selectedAccountIdRef = useRef(selectedAccountId)
+  useEffect(() => {
+    loadResourcesRef.current = loadResources
+  }, [loadResources])
+  useEffect(() => {
+    selectedAccountIdRef.current = selectedAccountId
+  }, [selectedAccountId])
+
   useEffect(() => {
     setResourcePage(1)
   }, [selectedAccountId, statusFilter, typeFilter, linkedFilter, searchQuery, resourcePageSize])
@@ -251,8 +262,8 @@ export default function DiscoveryPage() {
       if (updatedJobs.length > 0) {
         setTrackedScanJobs((current) => mergeJobs(current, updatedJobs))
       }
-      if (selectedAccountId) {
-        fetchJobs(selectedAccountId)
+      if (selectedAccountIdRef.current) {
+        fetchJobs(selectedAccountIdRef.current)
       }
       if (pending.size === 0 || attempts >= 40) {
         if (scanPollRef.current) {
@@ -260,9 +271,9 @@ export default function DiscoveryPage() {
           scanPollRef.current = null
         }
         fetchAccounts()
-        loadResources()
-        if (selectedAccountId) {
-          fetchJobs(selectedAccountId)
+        loadResourcesRef.current()
+        if (selectedAccountIdRef.current) {
+          fetchJobs(selectedAccountIdRef.current)
         }
       }
     }, 3000)
