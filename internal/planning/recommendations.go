@@ -115,11 +115,11 @@ func (s *RecommendationService) Apply(ctx context.Context, id string, req domain
 		}
 		parentID := rec.PoolID
 		newPool, err := s.mainStore.CreatePool(ctx, domain.CreatePool{
-			Name:     name,
-			CIDR:     rec.SuggestedCIDR,
-			ParentID: &parentID,
+			Name:      name,
+			CIDR:      rec.SuggestedCIDR,
+			ParentID:  &parentID,
 			AccountID: req.AccountID,
-			Source:   domain.PoolSourceManual,
+			Source:    domain.PoolSourceManual,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create pool from recommendation: %w", err)

@@ -389,7 +389,9 @@ func TestAccountDelete_ForceTrue(t *testing.T) {
 
 	// Create account and pool referencing it
 	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:111111111111","name":"Prod"}`, stdhttp.StatusCreated)
-	var acc struct{ ID int64 `json:"id"` }
+	var acc struct {
+		ID int64 `json:"id"`
+	}
 	_ = json.NewDecoder(rr.Body).Decode(&acc)
 
 	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools",

@@ -207,4 +207,3 @@ func scanAPIKey(row pgx.Row) (*APIKey, error) {
 
 	return &k, nil
 }
-

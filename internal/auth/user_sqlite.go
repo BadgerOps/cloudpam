@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // CGO-less SQLite driver
 )
 
 // SQLiteUserStore is a SQLite-backed implementation of UserStore.

@@ -197,4 +197,3 @@ func TestSchemaApply_MethodNotAllowed(t *testing.T) {
 	srv, _ := setupTestServer()
 	doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/schema/apply", "", stdhttp.StatusMethodNotAllowed)
 }
-

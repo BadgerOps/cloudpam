@@ -18,17 +18,17 @@ type SearchRequest struct {
 
 // SearchResultItem is a single search result that may be a pool or an account.
 type SearchResultItem struct {
-	Type        string `json:"type"`                   // "pool" or "account"
-	ID          int64  `json:"id"`                     // entity ID
-	Name        string `json:"name"`                   // pool name or account name
-	CIDR        string `json:"cidr,omitempty"`         // pool CIDR
-	Description string `json:"description,omitempty"`  // pool or account description
-	Status      string `json:"status,omitempty"`       // pool status
-	PoolType    string `json:"pool_type,omitempty"`    // pool type (supernet, region, etc.)
-	AccountKey  string `json:"account_key,omitempty"`  // account key
-	Provider    string `json:"provider,omitempty"`     // account provider
-	ParentID    *int64 `json:"parent_id,omitempty"`    // pool parent ID
-	AccountID   *int64 `json:"account_id,omitempty"`   // pool account ID
+	Type        string `json:"type"`                  // "pool" or "account"
+	ID          int64  `json:"id"`                    // entity ID
+	Name        string `json:"name"`                  // pool name or account name
+	CIDR        string `json:"cidr,omitempty"`        // pool CIDR
+	Description string `json:"description,omitempty"` // pool or account description
+	Status      string `json:"status,omitempty"`      // pool status
+	PoolType    string `json:"pool_type,omitempty"`   // pool type (supernet, region, etc.)
+	AccountKey  string `json:"account_key,omitempty"` // account key
+	Provider    string `json:"provider,omitempty"`    // account provider
+	ParentID    *int64 `json:"parent_id,omitempty"`   // pool parent ID
+	AccountID   *int64 `json:"account_id,omitempty"`  // pool account ID
 }
 
 // SearchResponse is the paginated response for a search query.
