@@ -99,7 +99,7 @@ async function setupIfNeeded(context) {
     data: { username, password, email: `${username}@localhost` },
   });
   if (created.ok()) {
-    console.log(`Created first-boot admin ${username}`);
+    console.log('Created first-boot admin account');
   } else {
     console.warn(`Setup failed (${created.status()}): ${await created.text()}`);
   }
@@ -118,7 +118,7 @@ async function login(context) {
     console.warn(`Login failed (${res.status()}); continuing unauthenticated.`);
     return false;
   }
-  console.log(`Logged in as ${username}`);
+  console.log('Logged in for screenshot capture');
   return true;
 }
 
