@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { get, post } from '../api/client'
+import { useLatestRequest } from './useLatestRequest'
 import type {
   RecommendationsListResponse,
   GenerateRecommendationsResponse,
@@ -10,6 +11,7 @@ export function useRecommendations() {
   const [data, setData] = useState<RecommendationsListResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { begin, isCurrent } = useLatestRequest()
 
   const fetch = useCallback(
     async (filters?: {
@@ -20,6 +22,7 @@ export function useRecommendations() {
       page?: number
       page_size?: number
     }) => {
+      const token = begin()
       setLoading(true)
       setError(null)
       try {
@@ -36,8 +39,10 @@ export function useRecommendations() {
         const resp = await get<RecommendationsListResponse>(
           `/api/v1/recommendations${qs ? '?' + qs : ''}`,
         )
+        if (!isCurrent(token)) return
         setData(resp)
       } catch (err) {
+        if (!isCurrent(token)) return
         setError(
           err instanceof Error ? err.message : 'Failed to load recommendations',
         )
@@ -45,7 +50,7 @@ export function useRecommendations() {
         setLoading(false)
       }
     },
-    [],
+    [begin, isCurrent],
   )
 
   const generate = useCallback(
