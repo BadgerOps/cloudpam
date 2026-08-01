@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatHostCount,
+  formatTimeAgo,
   getHostCount,
   getPoolTypeColor,
   getUtilizationColor,
@@ -47,6 +48,35 @@ describe('getHostCount', () => {
 
   it('returns 0 for invalid CIDR', () => {
     expect(getHostCount('invalid')).toBe(0)
+  })
+
+  it('returns 0 for prefix lengths above /32', () => {
+    expect(getHostCount('10.0.0.0/33')).toBe(0)
+    expect(getHostCount('10.0.0.0/128')).toBe(0)
+  })
+
+  it('returns 0 for negative prefix lengths', () => {
+    expect(getHostCount('10.0.0.0/-1')).toBe(0)
+  })
+
+  it('computes /0 as the full IPv4 space', () => {
+    expect(getHostCount('0.0.0.0/0')).toBe(4294967296)
+  })
+})
+
+describe('formatTimeAgo', () => {
+  it('returns unknown for empty input', () => {
+    expect(formatTimeAgo('')).toBe('unknown')
+  })
+
+  it('returns unknown for an unparseable timestamp instead of NaN', () => {
+    expect(formatTimeAgo('not-a-date')).toBe('unknown')
+    expect(formatTimeAgo('2026-13-45T99:99:99Z')).toBe('unknown')
+  })
+
+  it('formats a recent timestamp', () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    expect(formatTimeAgo(oneHourAgo)).toBe('1 hour ago')
   })
 })
 

@@ -90,6 +90,13 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
     </div>
   )
 
+  // Both region-first and environment-first schemas allocate per region, so the
+  // regions list must stay visible (and counted) for both. account-first
+  // ignores regions entirely, so it must not silently inflate the estimate.
+  const usesRegions = strategy === 'region-first' || strategy === 'environment-first'
+  const regionCount = usesRegions ? dimensions.regions.length : 1
+  const accountAllocations = regionCount * dimensions.environments.length * dimensions.accountsPerEnv
+
   return (
     <div className="space-y-6">
       <div>
@@ -98,7 +105,7 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
       </div>
 
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-6 space-y-6">
-        {strategy === 'region-first' && renderDimensionList('Regions', 'regions', dimensions.regions, Globe)}
+        {usesRegions && renderDimensionList('Regions', 'regions', dimensions.regions, Globe)}
         {renderDimensionList('Environments', 'environments', dimensions.environments, Server)}
         {renderDimensionList('Account Tiers', 'accountTiers', dimensions.accountTiers, Building)}
 
@@ -145,16 +152,9 @@ export default function DimensionsStep({ dimensions, setDimensions, strategy }: 
             <p className="font-medium">Capacity Planning Tip</p>
             <p className="mt-1">
               Based on your inputs, you'll need approximately{' '}
-              <strong>
-                {dimensions.regions.length * dimensions.environments.length * dimensions.accountsPerEnv}
-              </strong>{' '}
+              <strong>{accountAllocations}</strong>{' '}
               account allocations. With {dimensions.growthYears}x growth buffer, plan for{' '}
-              <strong>
-                {dimensions.regions.length *
-                  dimensions.environments.length *
-                  dimensions.accountsPerEnv *
-                  dimensions.growthYears}
-              </strong>{' '}
+              <strong>{accountAllocations * dimensions.growthYears}</strong>{' '}
               total.
             </p>
           </div>

@@ -249,7 +249,10 @@ export default function UpdatesPage() {
     actionLoading ||
     pendingTargetVersion !== null ||
     isActiveUpgradeStatus(status?.status)
-  const canTriggerUpgrade = summary?.update_available === true && !upgradeInFlight
+  // The backend reports upgrade_supported=false when no control directory is
+  // configured; triggering then always fails, so do not offer the action.
+  const upgradeSupported = summary?.upgrade_supported !== false
+  const canTriggerUpgrade = summary?.update_available === true && upgradeSupported && !upgradeInFlight
 
   return (
     <div className="p-6 space-y-6">
@@ -272,6 +275,7 @@ export default function UpdatesPage() {
           <button
             onClick={() => void handleUpgrade()}
             disabled={!canTriggerUpgrade}
+            title={upgradeSupported ? undefined : 'In-app upgrades are not supported by this deployment'}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-400"
           >
             {upgradeInFlight ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUpCircle className="w-4 h-4" />}

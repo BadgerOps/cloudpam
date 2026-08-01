@@ -3,8 +3,10 @@ import type { HealthResponse, UserInfo, LoginResponse, MeResponse } from '../api
 
 // Non-sensitive display metadata persisted in localStorage for UX continuity.
 const AUTH_NAME_KEY = 'cloudpam_key_name'
-const AUTH_ROLE_KEY = 'cloudpam_role'
 const AUTH_TYPE_KEY = 'cloudpam_auth_type'
+// Legacy keys. Role and permissions are authorization inputs, so they are never
+// seeded from client-controlled storage; these are only cleared, never read.
+const AUTH_ROLE_KEY = 'cloudpam_role'
 const AUTH_PERMISSIONS_KEY = 'cloudpam_permissions'
 
 export interface AuthContextValue {
@@ -46,20 +48,16 @@ export function useAuth() {
 export function useAuthState(): AuthContextValue {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [keyName, setKeyName] = useState<string | null>(() => localStorage.getItem(AUTH_NAME_KEY))
-  const [role, setRole] = useState<string | null>(() => localStorage.getItem(AUTH_ROLE_KEY))
+  // Role and permissions start empty and are only ever populated from a server
+  // response (/api/v1/auth/me or a successful login). Seeding them from
+  // localStorage would let a client grant itself privileged UI by editing
+  // storage, and would survive a failed re-validation.
+  const [role, setRole] = useState<string | null>(null)
   const [authType, setAuthType] = useState<'session' | 'api_key' | null>(
     () => (localStorage.getItem(AUTH_TYPE_KEY) as 'session' | 'api_key') || null
   )
   const [currentUser, setCurrentUser] = useState<UserInfo | null>(null)
-  const [permissions, setPermissions] = useState<string[]>(() => {
-    const raw = localStorage.getItem(AUTH_PERMISSIONS_KEY)
-    if (!raw) return []
-    try {
-      return JSON.parse(raw)
-    } catch {
-      return []
-    }
-  })
+  const [permissions, setPermissions] = useState<string[]>([])
   const [authEnabled, setAuthEnabled] = useState(false)
   const [localAuthEnabled, setLocalAuthEnabled] = useState(false)
   const [needsSetup, setNeedsSetup] = useState(false)
@@ -89,9 +87,7 @@ export function useAuthState(): AuthContextValue {
           setRole(me.role)
           setAuthType(me.auth_type)
           setPermissions(me.permissions ?? [])
-          localStorage.setItem(AUTH_ROLE_KEY, me.role)
           localStorage.setItem(AUTH_TYPE_KEY, me.auth_type)
-          localStorage.setItem(AUTH_PERMISSIONS_KEY, JSON.stringify(me.permissions ?? []))
 
           if (me.auth_type === 'session' && me.user) {
             setCurrentUser(me.user)
@@ -121,8 +117,9 @@ export function useAuthState(): AuthContextValue {
     setCurrentUser(null)
     setPermissions([])
     localStorage.removeItem(AUTH_NAME_KEY)
-    localStorage.removeItem(AUTH_ROLE_KEY)
     localStorage.removeItem(AUTH_TYPE_KEY)
+    // Clear values written by older builds so they cannot linger.
+    localStorage.removeItem(AUTH_ROLE_KEY)
     localStorage.removeItem(AUTH_PERMISSIONS_KEY)
   }
 
@@ -156,9 +153,7 @@ export function useAuthState(): AuthContextValue {
     setAuthType('session')
 
     localStorage.setItem(AUTH_NAME_KEY, data.user.display_name || data.user.username)
-    localStorage.setItem(AUTH_ROLE_KEY, data.user.role)
     localStorage.setItem(AUTH_TYPE_KEY, 'session')
-    localStorage.setItem(AUTH_PERMISSIONS_KEY, JSON.stringify(data.permissions ?? []))
   }, [])
 
   const logout = useCallback(async () => {

@@ -21,6 +21,19 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
     }
   }, [open, setQuery])
 
+  // The footer advertises Esc, so honour it globally while the modal is open.
+  useEffect(() => {
+    if (!open) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
   function handleSelect(type: 'pool' | 'account') {
     navigate(type === 'pool' ? '/pools' : '/accounts')
     onClose()

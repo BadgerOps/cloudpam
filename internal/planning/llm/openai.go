@@ -81,9 +81,9 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 	if maxTokens == 0 {
 		maxTokens = p.cfg.MaxTokens
 	}
-	temp := opts.Temperature
-	if temp == 0 {
-		temp = p.cfg.Temperature
+	temp := p.cfg.Temperature
+	if opts.Temperature != nil {
+		temp = *opts.Temperature
 	}
 
 	oaiMsgs := make([]openaiMessage, len(messages))
@@ -152,9 +152,9 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 	if maxTokens == 0 {
 		maxTokens = p.cfg.MaxTokens
 	}
-	temp := opts.Temperature
-	if temp == 0 {
-		temp = p.cfg.Temperature
+	temp := p.cfg.Temperature
+	if opts.Temperature != nil {
+		temp = *opts.Temperature
 	}
 
 	oaiMsgs := make([]openaiMessage, len(messages))

@@ -204,3 +204,69 @@ func TestExchange_ValidCode(t *testing.T) {
 		t.Errorf("expected 2 groups, got %d", len(claims.Groups))
 	}
 }
+
+func TestNewProvider_CustomScopesAlwaysIncludeOpenID(t *testing.T) {
+	srv, _ := mockOIDCServer(t)
+	defer srv.Close()
+
+	tests := []struct {
+		name  string
+		given []string
+		want  []string
+	}{
+		{
+			name:  "defaults when unset",
+			given: nil,
+			want:  []string{"openid", "profile", "email"},
+		},
+		{
+			name:  "custom scopes missing openid",
+			given: []string{"profile", "groups"},
+			want:  []string{"openid", "profile", "groups"},
+		},
+		{
+			name:  "openid already present is not duplicated",
+			given: []string{"openid", "email"},
+			want:  []string{"openid", "email"},
+		},
+		{
+			name:  "blank and duplicate entries are dropped",
+			given: []string{" ", "profile", "profile", ""},
+			want:  []string{"openid", "profile"},
+		},
+		{
+			name:  "only blanks falls back to defaults",
+			given: []string{"", "   "},
+			want:  []string{"openid", "profile", "email"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prov, err := NewProvider(context.Background(), ProviderConfig{
+				IssuerURL:    srv.URL,
+				ClientID:     "test-client-id",
+				ClientSecret: "test-secret",
+				RedirectURL:  "http://localhost:8080/auth/callback",
+				Scopes:       tt.given,
+			})
+			if err != nil {
+				t.Fatalf("NewProvider: %v", err)
+			}
+
+			got := prov.Scopes()
+			if len(got) != len(tt.want) {
+				t.Fatalf("scopes = %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("scopes = %v, want %v", got, tt.want)
+				}
+			}
+
+			if !strings.Contains(prov.AuthCodeURL("state"), "openid") {
+				t.Errorf("AuthCodeURL missing openid scope: %s", prov.AuthCodeURL("state"))
+			}
+		})
+	}
+}

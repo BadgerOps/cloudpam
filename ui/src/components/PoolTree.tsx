@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronRight, ChevronDown } from 'lucide-react'
 import type { PoolWithStats } from '../api/types'
 import { formatHostCount, getPoolTypeColor, getUtilizationColor } from '../utils/format'
@@ -9,20 +9,31 @@ interface PoolTreeProps {
   onSelect: (pool: PoolWithStats) => void
 }
 
+// A bump-counted command so that every click of Expand/Collapse All reaches
+// every node, including ones the user has already toggled by hand.
+interface ExpandCommand {
+  expand: boolean
+  seq: number
+}
+
 export default function PoolTree({ nodes, selectedId, onSelect }: PoolTreeProps) {
-  const [expandAll, setExpandAll] = useState(false)
+  const [command, setCommand] = useState<ExpandCommand | null>(null)
+
+  function issue(expand: boolean) {
+    setCommand(prev => ({ expand, seq: (prev?.seq ?? 0) + 1 }))
+  }
 
   return (
     <div>
       <div className="flex gap-2 mb-3">
         <button
-          onClick={() => setExpandAll(true)}
+          onClick={() => issue(true)}
           className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
         >
           Expand All
         </button>
         <button
-          onClick={() => setExpandAll(false)}
+          onClick={() => issue(false)}
           className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
         >
           Collapse All
@@ -36,7 +47,7 @@ export default function PoolTree({ nodes, selectedId, onSelect }: PoolTreeProps)
             depth={0}
             selectedId={selectedId}
             onSelect={onSelect}
-            forceExpand={expandAll}
+            command={command}
           />
         ))}
       </div>
@@ -49,12 +60,20 @@ interface TreeNodeProps {
   depth: number
   selectedId?: number | null
   onSelect: (pool: PoolWithStats) => void
-  forceExpand: boolean
+  command: ExpandCommand | null
 }
 
-function TreeNode({ node, depth, selectedId, onSelect, forceExpand }: TreeNodeProps) {
+function TreeNode({ node, depth, selectedId, onSelect, command }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(depth < 1)
-  const isExpanded = forceExpand || expanded
+  const commandSeq = command?.seq ?? 0
+  const commandExpand = command?.expand ?? false
+
+  useEffect(() => {
+    if (commandSeq === 0) return
+    setExpanded(commandExpand)
+  }, [commandSeq, commandExpand])
+
+  const isExpanded = expanded
   const hasChildren = node.children && node.children.length > 0
   const isSelected = selectedId === node.id
 
@@ -105,7 +124,7 @@ function TreeNode({ node, depth, selectedId, onSelect, forceExpand }: TreeNodePr
               depth={depth + 1}
               selectedId={selectedId}
               onSelect={onSelect}
-              forceExpand={forceExpand}
+              command={command}
             />
           ))}
         </div>

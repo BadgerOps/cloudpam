@@ -16,6 +16,22 @@ describe('parse', () => {
     expect(result.prefixLen).toBe(24)
     expect(result.octets).toEqual([192, 168, 1, 0])
   })
+
+  it('returns an unsigned ipNum for high-bit addresses', () => {
+    // 172.16.0.0 stays positive, but anything above 127.255.255.255 sets the
+    // sign bit of the 32-bit shift result.
+    expect(parse('172.16.0.0/12').ipNum).toBe(0xac100000)
+    expect(parse('192.168.1.0/24').ipNum).toBe(0xc0a80100)
+    expect(parse('128.0.0.0/8').ipNum).toBe(0x80000000)
+    expect(parse('255.255.255.255/32').ipNum).toBe(0xffffffff)
+  })
+
+  it('round-trips high-bit addresses through toIp', () => {
+    for (const cidr of ['192.168.1.0/24', '224.0.0.0/4', '255.255.255.255/32']) {
+      const ip = cidr.split('/')[0]
+      expect(toIp(parse(cidr).ipNum)).toBe(ip)
+    }
+  })
 })
 
 describe('toIp', () => {
