@@ -15,6 +15,9 @@ import (
 // SQLiteAuditLogger is a SQLite-backed implementation of AuditLogger.
 type SQLiteAuditLogger struct {
 	db *sql.DB
+	// ownDB is true when this logger opened db itself and is therefore
+	// responsible for closing it.
+	ownDB bool
 }
 
 // NewSQLiteAuditLogger creates a new SQLite-backed audit logger.
@@ -28,16 +31,21 @@ func NewSQLiteAuditLogger(dsn string) (*SQLiteAuditLogger, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &SQLiteAuditLogger{db: db}, nil
+	return &SQLiteAuditLogger{db: db, ownDB: true}, nil
 }
 
 // NewSQLiteAuditLoggerFromDB creates a new SQLite-backed audit logger using an existing DB connection.
+// The handle stays owned by the caller: Close is a no-op for this logger.
 func NewSQLiteAuditLoggerFromDB(db *sql.DB) *SQLiteAuditLogger {
 	return &SQLiteAuditLogger{db: db}
 }
 
-// Close closes the database connection.
+// Close closes the database connection when this logger opened it.
+// Loggers built from a caller-owned handle leave it open.
 func (s *SQLiteAuditLogger) Close() error {
+	if !s.ownDB {
+		return nil
+	}
 	return s.db.Close()
 }
 

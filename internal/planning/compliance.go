@@ -166,24 +166,31 @@ func (s *AnalysisService) resolvePools(ctx context.Context, poolIDs []int64, inc
 	}
 
 	if includeChildren {
+		// Breadth-first descent so grandchildren and deeper levels are
+		// included, not just the immediate children. seen doubles as cycle
+		// protection for malformed hierarchies.
 		seen := map[int64]bool{}
+		queue := make([]int64, 0, len(pools))
 		for _, p := range pools {
 			seen[p.ID] = true
+			queue = append(queue, p.ID)
 		}
-		var extra []domain.Pool
-		for _, p := range pools {
-			children, err := s.store.GetPoolChildren(ctx, p.ID)
+		for len(queue) > 0 {
+			id := queue[0]
+			queue = queue[1:]
+			children, err := s.store.GetPoolChildren(ctx, id)
 			if err != nil {
 				continue
 			}
 			for _, c := range children {
-				if !seen[c.ID] {
-					seen[c.ID] = true
-					extra = append(extra, c)
+				if seen[c.ID] {
+					continue
 				}
+				seen[c.ID] = true
+				pools = append(pools, c)
+				queue = append(queue, c.ID)
 			}
 		}
-		pools = append(pools, extra...)
 	}
 
 	return pools, nil
