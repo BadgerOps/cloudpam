@@ -16,8 +16,26 @@ function getCSRFToken(): string | null {
   return match ? match[1] : null
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+interface RequestOptions extends Omit<RequestInit, 'headers'> {
+  headers?: Record<string, string>
+}
+
+// Successful responses are allowed to carry no payload (e.g. 204 No Content from
+// DELETE endpoints), and those statuses never have a readable body.
+function isNoContent(res: Response): boolean {
+  return res.status === 204 || res.status === 205 || res.headers.get('content-length') === '0'
+}
+
+async function readBody(res: Response): Promise<string> {
+  try {
+    return await res.text()
+  } catch {
+    return ''
+  }
+}
+
+async function request<T>(path: string, options?: RequestOptions): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', ...options?.headers }
 
   // Add CSRF token for state-changing requests
   if (options?.method && options.method !== 'GET' && options.method !== 'HEAD') {
@@ -29,8 +47,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   const res = await fetch(path, {
     credentials: 'same-origin',
-    headers,
     ...options,
+    headers,
   })
 
   // On 401, dispatch logout event so the auth context can clear state
@@ -38,14 +56,33 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     window.dispatchEvent(new CustomEvent('auth:logout'))
   }
 
+  // A successful response with no content is not an error; callers of these
+  // endpoints (e.g. del()) expect void.
+  if (res.ok && isNoContent(res)) {
+    return undefined as T
+  }
+
   const contentType = res.headers.get('content-type') || ''
+  const text = await readBody(res)
+
+  if (res.ok && text.trim() === '') {
+    return undefined as T
+  }
+
   if (!contentType.includes('application/json')) {
     throw new ApiRequestError(res.status, {
       error: `Unexpected response (${res.status}): server returned ${contentType || 'non-JSON'}`,
     })
   }
 
-  const body = await res.json()
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    throw new ApiRequestError(res.status, {
+      error: `Unexpected response (${res.status}): server returned malformed JSON`,
+    })
+  }
 
   if (!res.ok) {
     throw new ApiRequestError(res.status, body as ApiError)
@@ -58,6 +95,16 @@ export function post<T>(path: string, data: unknown): Promise<T> {
   return request<T>(path, {
     method: 'POST',
     body: JSON.stringify(data),
+  })
+}
+
+// postRaw sends the body verbatim (no JSON encoding) for endpoints that parse the
+// raw request body, such as the CSV import handlers.
+export function postRaw<T>(path: string, body: string, contentType = 'text/csv'): Promise<T> {
+  return request<T>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': contentType },
+    body,
   })
 }
 

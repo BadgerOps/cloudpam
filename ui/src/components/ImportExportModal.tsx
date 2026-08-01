@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { Download, Upload, X, FileText } from 'lucide-react'
 import { useToast } from '../hooks/useToast'
-import { post } from '../api/client'
+import { postRaw } from '../api/client'
 import type { ImportResult } from '../api/types'
 
 interface ImportExportModalProps {
@@ -76,7 +76,8 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
     setImportResult(null)
     try {
       const text = await importFile.text()
-      const result = await post<ImportResult>(`/api/v1/import/${importType}`, text)
+      // The server parses the request body as raw CSV, not JSON.
+      const result = await postRaw<ImportResult>(`/api/v1/import/${importType}`, text)
       setImportResult(result)
       showToast(`Imported ${result.created} ${importType}`, 'success')
     } catch (err) {
