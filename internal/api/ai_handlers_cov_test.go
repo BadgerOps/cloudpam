@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -454,5 +455,48 @@ func TestAIApplyPlanSkipsFailedAndOrphanedPoolsCov(t *testing.T) {
 	}
 	if len(pools) != 1 || pools[0].Name != "Fresh" {
 		t.Fatalf("expected only the healthy pool to be created, got %+v", pools)
+	}
+}
+
+// TestAIChatStreamsThroughMetricsMiddlewareCov exercises the chat handler the
+// way a real request reaches it: wrapped by the metrics middleware, which is
+// installed by default. The middleware's ResponseWriter wrapper previously
+// forwarded only Unwrap, so the handler's http.Flusher assertion failed and
+// every AI chat request returned 500 "streaming not supported". The other SSE
+// tests call the mux directly and so never saw it.
+func TestAIChatStreamsThroughMetricsMiddlewareCov(t *testing.T) {
+	provider := &stubLLMProviderCov{available: true, deltas: []string{"Here is ", "a plan."}, emitDone: true}
+	ai, _, convStore := setupAITestServerCov(t, provider)
+	conv := newConversationCov(t, convStore, "chat")
+
+	metrics := observability.NewMetrics(observability.MetricsConfig{Namespace: "test", Version: "test"})
+	handler := observability.MetricsMiddleware(metrics)(ai.srv.mux)
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/chat",
+		strings.NewReader(`{"session_id":"`+conv+`","message":"Plan a /16 for prod"}`))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+
+	body := rr.Body.String()
+	for _, want := range []string{`data: {"delta":"Here is "}`, `data: {"delta":"a plan."}`, "event: done"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("SSE body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "streaming not supported") {
+		t.Fatal("the metrics wrapper hid http.Flusher from the SSE handler")
+	}
+
+	// The stream was flushed rather than buffered until the handler returned.
+	if !rr.Flushed {
+		t.Error("SSE response was never flushed")
 	}
 }
