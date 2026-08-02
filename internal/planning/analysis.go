@@ -91,7 +91,7 @@ func (s *AnalysisService) Analyze(ctx context.Context, req AnalysisRequest) (*Ne
 				healthScore -= 5
 			case "info":
 				infoCount++
-				healthScore -= 1
+				healthScore--
 			}
 		}
 	}

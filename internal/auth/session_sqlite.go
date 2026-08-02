@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // CGO-less SQLite driver
 )
 
 // SQLiteSessionStore is a SQLite-backed implementation of SessionStore.
@@ -72,10 +72,10 @@ func (s *SQLiteSessionStore) Get(ctx context.Context, id string) (*Session, erro
 	}
 
 	var (
-		session                    Session
-		role                       string
-		createdAt, expiresAt       string
-		metadataJSON               string
+		session              Session
+		role                 string
+		createdAt, expiresAt string
+		metadataJSON         string
 	)
 
 	err := s.db.QueryRowContext(ctx, `

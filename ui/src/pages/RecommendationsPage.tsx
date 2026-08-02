@@ -117,12 +117,12 @@ export default function RecommendationsPage() {
           <thead>
             <tr className="bg-gray-50 dark:bg-gray-900/50 text-left">
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Priority</th>
-              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Type</th>
+              <th className="hidden md:table-cell px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Type</th>
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Title</th>
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Pool</th>
-              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Score</th>
+              <th className="hidden md:table-cell px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Score</th>
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Status</th>
-              <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Created</th>
+              <th className="hidden md:table-cell px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Created</th>
               <th className="px-4 py-3 font-medium text-gray-600 dark:text-gray-300">Actions</th>
             </tr>
           </thead>
@@ -241,7 +241,7 @@ function RecRow({
       <td className="px-4 py-3">
         <PriorityBadge priority={rec.priority} />
       </td>
-      <td className="px-4 py-3">
+      <td className="hidden md:table-cell px-4 py-3">
         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
           {rec.type}
         </span>
@@ -257,13 +257,13 @@ function RecRow({
       <td className="px-4 py-3 text-gray-700 dark:text-gray-300">
         {pool ? pool.name : `Pool #${rec.pool_id}`}
       </td>
-      <td className="px-4 py-3">
+      <td className="hidden md:table-cell px-4 py-3">
         <ScoreBadge score={rec.score} />
       </td>
       <td className="px-4 py-3">
         <StatusBadge status={rec.status} />
       </td>
-      <td className="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
+      <td className="hidden md:table-cell px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
         {formatTimeAgo(rec.created_at)}
       </td>
       <td className="px-4 py-3">

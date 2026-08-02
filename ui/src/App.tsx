@@ -55,6 +55,10 @@ export default function App() {
                 </Route>
                 <Route element={<ProtectedRoute requiredPermission="settings:read" />}>
                   <Route path="config" element={<ConfigurationPage />} />
+                  {/* config/api-keys additionally enforces the apikeys:*
+                      permissions inside ApiKeysPage: settings:read opens the
+                      configuration area, but GET /api/v1/auth/keys is guarded
+                      by apikeys:list or apikeys:read. */}
                   <Route path="config/api-keys" element={<ApiKeysPage />} />
                   <Route path="config/log-destinations" element={<LogDestinationsPage />} />
                   <Route path="config/updates" element={<UpdatesPage />} />

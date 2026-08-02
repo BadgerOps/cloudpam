@@ -136,12 +136,12 @@ func (s *SQLiteKeyStore) scanKeyList(rows *sql.Rows) ([]*APIKey, error) {
 	var keys []*APIKey
 	for rows.Next() {
 		var (
-			key                          APIKey
-			scopesJSON                   string
-			createdAt                    string
-			expiresAt, lastUsedAt        sql.NullString
-			revoked                      int
-			ownerID                      sql.NullString
+			key                   APIKey
+			scopesJSON            string
+			createdAt             string
+			expiresAt, lastUsedAt sql.NullString
+			revoked               int
+			ownerID               sql.NullString
 		)
 
 		if err := rows.Scan(&key.ID, &key.Prefix, &key.Name, &scopesJSON, &createdAt, &expiresAt, &lastUsedAt, &revoked, &ownerID); err != nil {
@@ -219,12 +219,12 @@ func (s *SQLiteKeyStore) Delete(ctx context.Context, id string) error {
 // Returns nil, nil if no row found.
 func (s *SQLiteKeyStore) scanKey(row *sql.Row) (*APIKey, error) {
 	var (
-		key                          APIKey
-		scopesJSON                   string
-		createdAt                    string
-		expiresAt, lastUsedAt        sql.NullString
-		revoked                      int
-		ownerID                      sql.NullString
+		key                   APIKey
+		scopesJSON            string
+		createdAt             string
+		expiresAt, lastUsedAt sql.NullString
+		revoked               int
+		ownerID               sql.NullString
 	)
 
 	err := row.Scan(&key.ID, &key.Prefix, &key.Name, &key.Hash, &key.Salt,
@@ -259,4 +259,3 @@ func (s *SQLiteKeyStore) scanKey(row *sql.Row) (*APIKey, error) {
 
 	return &key, nil
 }
-

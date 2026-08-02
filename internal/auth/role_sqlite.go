@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite" // CGO-less SQLite driver
 )
 
 type SQLiteRoleStore struct {

@@ -4,10 +4,10 @@ import { Search, LayoutGrid, Pencil, Trash2, X } from 'lucide-react'
 import { useBlocks } from '../hooks/useBlocks'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
-import { patch, del } from '../api/client'
+import { get, patch, del } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import { formatHostCount, getHostCount } from '../utils/format'
-import type { Block, PoolType, PoolStatus, UpdatePoolRequest } from '../api/types'
+import type { Block, Pool, PoolType, PoolStatus, UpdatePoolRequest } from '../api/types'
 
 export default function BlocksPage() {
   const navigate = useNavigate()
@@ -220,10 +220,10 @@ export default function BlocksPage() {
                 </th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">CIDR</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Parent</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Parent</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Account</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Tier</th>
-                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">IPs</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Tier</th>
+                <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">IPs</th>
                 <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
               </tr>
             </thead>
@@ -242,12 +242,12 @@ export default function BlocksPage() {
                     </td>
                     <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{b.name}</td>
                     <td className="px-4 py-2 text-sm font-mono text-gray-600 dark:text-gray-300">{b.cidr}</td>
-                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{b.parent_name || '-'}</td>
+                    <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{b.parent_name || '-'}</td>
                     <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{b.account_name || '-'}</td>
-                    <td className="px-4 py-2">
+                    <td className="hidden md:table-cell px-4 py-2">
                       {b.account_tier && <StatusBadge label={b.account_tier} variant="tier" />}
                     </td>
-                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{formatHostCount(hostCount)}</td>
+                    <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{formatHostCount(hostCount)}</td>
                     <td className="px-4 py-2 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button
@@ -330,8 +330,27 @@ function EditBlockModal({
   const [accountId, setAccountId] = useState<string>(block.account_id ? String(block.account_id) : '')
   const [type, setType] = useState(block.type || 'subnet')
   const [status, setStatus] = useState(block.status || 'active')
+  // The blocks list response does not carry description, so load it from the
+  // pool detail endpoint. Tracking the loaded value lets an edit back to empty
+  // be sent as a real clear instead of being treated as "unchanged".
   const [description, setDescription] = useState('')
+  const [loadedDescription, setLoadedDescription] = useState('')
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    get<Pool>(`/api/v1/pools/${block.id}`)
+      .then(pool => {
+        if (cancelled) return
+        const current = pool.description ?? ''
+        setDescription(current)
+        setLoadedDescription(current)
+      })
+      .catch(() => {
+        // Description is optional; leave the field blank if it cannot be loaded.
+      })
+    return () => { cancelled = true }
+  }, [block.id])
 
   async function handleSave() {
     setSaving(true)
@@ -343,7 +362,7 @@ function EditBlockModal({
       }
       if (type !== (block.type || 'subnet')) data.type = type as PoolType
       if (status !== (block.status || 'active')) data.status = status as PoolStatus
-      if (description) data.description = description
+      if (description !== loadedDescription) data.description = description
 
       await patch(`/api/v1/pools/${block.id}`, data)
       showToast(`Updated ${name}`, 'success')

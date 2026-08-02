@@ -5,9 +5,11 @@ package gcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -69,12 +71,13 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 	}
 
 	var all []domain.DiscoveredResource
+	var errs []error
 	now := time.Now().UTC()
 
 	// Discover VPC networks (global resource)
 	networks, err := discoverNetworks(ctx, client, account, project, now)
 	if err != nil {
-		fmt.Printf("failed to discover GCP networks for project %s: %v\n", project, err)
+		errs = append(errs, fmt.Errorf("discover networks for project %s: %w", project, err))
 	} else {
 		all = append(all, networks...)
 	}
@@ -82,7 +85,7 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 	// Discover subnetworks (regional, via aggregated list)
 	subnets, err := discoverSubnetworks(ctx, client, account, project, regionSet, now)
 	if err != nil {
-		fmt.Printf("failed to discover GCP subnetworks for project %s: %v\n", project, err)
+		errs = append(errs, fmt.Errorf("discover subnetworks for project %s: %w", project, err))
 	} else {
 		all = append(all, subnets...)
 	}
@@ -90,9 +93,15 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 	// Discover external addresses (regional, via aggregated list)
 	addrs, err := discoverAddresses(ctx, client, account, project, regionSet, now)
 	if err != nil {
-		fmt.Printf("failed to discover GCP addresses for project %s: %v\n", project, err)
+		errs = append(errs, fmt.Errorf("discover addresses for project %s: %w", project, err))
 	} else {
 		all = append(all, addrs...)
+	}
+
+	// Surface endpoint failures so the caller does not treat a partial
+	// discovery as a complete inventory (which would mark resources stale).
+	if len(errs) > 0 {
+		return all, errors.Join(errs...)
 	}
 
 	return all, nil
@@ -164,14 +173,15 @@ type addressesScopedList struct {
 }
 
 type address struct {
-	ID          uint64 `json:"id,string"`
-	Name        string `json:"name"`
-	Address     string `json:"address"`
-	AddressType string `json:"addressType"`
-	Status      string `json:"status"`
-	NetworkTier string `json:"networkTier"`
-	IpVersion   string `json:"ipVersion"`
-	Purpose     string `json:"purpose"`
+	ID           uint64 `json:"id,string"`
+	Name         string `json:"name"`
+	Address      string `json:"address"`
+	PrefixLength int    `json:"prefixLength"`
+	AddressType  string `json:"addressType"`
+	Status       string `json:"status"`
+	NetworkTier  string `json:"networkTier"`
+	IpVersion    string `json:"ipVersion"`
+	Purpose      string `json:"purpose"`
 }
 
 // --- Discovery functions ---
@@ -317,10 +327,7 @@ func discoverAddresses(ctx context.Context, client *http.Client, account domain.
 					continue
 				}
 
-				cidr := ""
-				if addr.Address != "" {
-					cidr = addr.Address + "/32"
-				}
+				cidr := addressCIDR(addr)
 
 				meta := map[string]string{
 					"status":       addr.Status,
@@ -360,6 +367,34 @@ func discoverAddresses(ctx context.Context, client *http.Client, account domain.
 	}
 
 	return resources, nil
+}
+
+// addressCIDR renders a GCP address as a CIDR prefix.
+// GCP reports IPv4 addresses as single hosts and IPv6 addresses either as a
+// bare address or with an explicit prefixLength, so the prefix length must be
+// derived from the address family rather than assumed to be /32.
+func addressCIDR(addr address) string {
+	raw := strings.TrimSpace(addr.Address)
+	if raw == "" {
+		return ""
+	}
+	if strings.Contains(raw, "/") {
+		// Already a prefix — normalize it, or drop it if unparseable.
+		prefix, err := netip.ParsePrefix(raw)
+		if err != nil {
+			return ""
+		}
+		return prefix.String()
+	}
+	ip, err := netip.ParseAddr(raw)
+	if err != nil {
+		return ""
+	}
+	bits := ip.BitLen()
+	if addr.PrefixLength > 0 && addr.PrefixLength <= bits {
+		bits = addr.PrefixLength
+	}
+	return netip.PrefixFrom(ip, bits).String()
 }
 
 // doGet performs a GET request and decodes the JSON response.

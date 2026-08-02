@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.23.0] - 2026-08-01
+
+### Added
+- Terraform provider for CloudPAM, covering `cloudpam_pool` and `cloudpam_account` resources, matching singular data sources, and `cloudpam_pools`/`cloudpam_accounts` list data sources. Ships as a separate Go module so its dependencies stay out of the server binary. See `docs/TERRAFORM_PROVIDER.md`.
+- Opt-in OpenTelemetry tracing around request handling and the LLM and AWS provider calls, configured with `CLOUDPAM_TRACING_ENABLED`, `CLOUDPAM_TRACING_ENDPOINT` and `CLOUDPAM_TRACING_SAMPLE_RATE`. Exports OTLP over HTTP. Disabled by default, and when disabled no middleware is installed at all. Trace and span IDs are added to log records when tracing is on.
+- Responsive layout for small screens: the sidebar collapses to an off-canvas drawer below the `md` breakpoint, secondary table columns are hidden, and modal panels go full screen. Desktop layout is unchanged.
+- SIEM integration design document at `docs/SIEM_INTEGRATION.md`, covering wire format, transports, event taxonomy, delivery semantics and redaction.
+- Screenshot coverage for the discovery import and merged network views, with `docs/SCREENSHOTS.md` describing how to regenerate them.
+
+### Changed
+- Go test coverage raised from 60.3% to 85.0%, concentrated in the storage, agent, AWS discovery, audit and planning packages.
+- `revive` is enabled with a narrow rule set, and `gofmt` is enforced as a formatter. Eighteen files that were not gofmt-clean have been formatted; those changes are whitespace only.
+
+### Fixed
+- CSV import from the UI now sends the file as a raw body instead of a JSON-encoded string, so importing accounts and pools works.
+- Successful `204 No Content` responses are no longer reported as errors, so deleting an account, API key or block no longer surfaces a spurious failure.
+- AWS discovery now pages through `DescribeVpcs` and `DescribeSubnets`, so accounts with more than one page of VPCs or subnets no longer silently lose resources or have valid resources marked stale.
+- Analysis and compliance now walk the full pool hierarchy instead of only immediate children, so deeper trees are no longer under-reported.
+- Overlapping requests can no longer commit stale results: search, drift, recommendations, accounts, discovery, schema conflict checks and AI planning all discard superseded responses.
+- Async action buttons no longer accept a second click while the first request is in flight. This includes Apply Plan, where a duplicate submission created duplicate pools.
+- An in-flight AI planning stream can no longer append to the wrong conversation after switching sessions.
+- The in-memory audit log no longer panics when given a negative pagination offset.
+- GCP discovery failures are reported as failures instead of success, and IPv6 external addresses are no longer recorded with an IPv4 `/32` prefix.
+- The OpenAPI validator accepts specs that define schemas inline, and resolves references into `responses`, `parameters`, `requestBodies`, `headers` and `securitySchemes`.
+- `SQLiteAuditLogger.Close` no longer closes a database handle it does not own.
+- Name length limits count characters instead of bytes, LLM temperature can be set to zero, block descriptions can be cleared, CIDR host counts reject impossible prefix lengths, invalid timestamps no longer render as `NaN`, Collapse All reaches initially expanded nodes, the search modal handles Escape, and the update banner survives unavailable browser storage.
+
+### Security
+- The export endpoint now requires `accounts:read` to export account data. It previously allowed any caller holding only `pools:read` to export accounts.
+- The OIDC session refresh handler validates the origin and shape of incoming `postMessage` events instead of trusting any sender.
+- Generated discovery deployment snippets escape user- and API-derived values per output format, so a crafted account name can no longer inject commands into copied shell, docker, YAML or Terraform.
+- Permission-gated surfaces now match the permissions their endpoints require, covering identity administration, user management, security settings, API keys and the updates link. The profile page no longer issues a privileged user-list request for every visitor.
+- The UI no longer trusts a persisted role from browser storage before the server confirms it.
+- CSV export escapes cell values and neutralizes leading `=`, `+`, `-` and `@`, so exported names cannot become spreadsheet formulas.
+- Security settings held in memory are copied at the store boundary instead of being shared with callers.
+
 ## [0.22.0] - 2026-06-30
 
 ### Added

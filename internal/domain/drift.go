@@ -10,11 +10,11 @@ import (
 type DriftType string
 
 const (
-	DriftTypeUnmanaged     DriftType = "unmanaged"
-	DriftTypeCIDRMismatch  DriftType = "cidr_mismatch"
-	DriftTypeOrphanedPool  DriftType = "orphaned_pool"
-	DriftTypeNameMismatch  DriftType = "name_mismatch"
-	DriftTypeAccountDrift  DriftType = "account_drift"
+	DriftTypeUnmanaged    DriftType = "unmanaged"
+	DriftTypeCIDRMismatch DriftType = "cidr_mismatch"
+	DriftTypeOrphanedPool DriftType = "orphaned_pool"
+	DriftTypeNameMismatch DriftType = "name_mismatch"
+	DriftTypeAccountDrift DriftType = "account_drift"
 )
 
 // DriftSeverity indicates urgency.

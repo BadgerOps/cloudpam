@@ -7,7 +7,38 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"cloudpam/internal/observability"
 )
+
+// startCompletionSpan opens a client span around a chat completion call. When
+// tracing is disabled the shared tracer is the OpenTelemetry no-op, so this is
+// an interface call against a network round trip.
+func (p *OpenAIProvider) startCompletionSpan(ctx context.Context, stream bool) (context.Context, trace.Span) {
+	return observability.Tracer().Start(ctx, "llm.chat.completions",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(
+			attribute.String("llm.provider", p.Name()),
+			attribute.String("llm.model", p.cfg.Model),
+			attribute.String("server.address", p.baseURL()),
+			attribute.Bool("llm.stream", stream),
+		),
+	)
+}
+
+// endSpanWithError records err on the span and closes it.
+func endSpanWithError(span trace.Span, err error) error {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
+	return err
+}
 
 // OpenAIProvider implements the Provider interface using the OpenAI-compatible
 // chat completions API. Works with OpenAI, Ollama, vLLM, Azure, and any
@@ -76,14 +107,17 @@ type openaiStreamChunk struct {
 	} `json:"choices"`
 }
 
-func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts Options) (*Response, error) {
+func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts Options) (out *Response, err error) {
+	ctx, span := p.startCompletionSpan(ctx, false)
+	defer func() { _ = endSpanWithError(span, err) }()
+
 	maxTokens := opts.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = p.cfg.MaxTokens
 	}
-	temp := opts.Temperature
-	if temp == 0 {
-		temp = p.cfg.Temperature
+	temp := p.cfg.Temperature
+	if opts.Temperature != nil {
+		temp = *opts.Temperature
 	}
 
 	oaiMsgs := make([]openaiMessage, len(messages))
@@ -118,6 +152,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -139,6 +174,11 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 		return nil, fmt.Errorf("no choices in response")
 	}
 
+	span.SetAttributes(
+		attribute.Int64("llm.usage.prompt_tokens", oaiResp.Usage.PromptTokens),
+		attribute.Int64("llm.usage.completion_tokens", oaiResp.Usage.CompletionTokens),
+	)
+
 	return &Response{
 		Content:      oaiResp.Choices[0].Message.Content,
 		FinishReason: oaiResp.Choices[0].FinishReason,
@@ -147,14 +187,24 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 	}, nil
 }
 
-func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message, opts Options) (<-chan StreamEvent, error) {
+func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message, opts Options) (events <-chan StreamEvent, err error) {
+	ctx, span := p.startCompletionSpan(ctx, true)
+	// The span stays open for the lifetime of the stream, so it is only ended
+	// here when the request never got that far.
+	streaming := false
+	defer func() {
+		if !streaming {
+			_ = endSpanWithError(span, err)
+		}
+	}()
+
 	maxTokens := opts.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = p.cfg.MaxTokens
 	}
-	temp := opts.Temperature
-	if temp == 0 {
-		temp = p.cfg.Temperature
+	temp := p.cfg.Temperature
+	if opts.Temperature != nil {
+		temp = *opts.Temperature
 	}
 
 	oaiMsgs := make([]openaiMessage, len(messages))
@@ -190,6 +240,7 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 
+	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
@@ -197,8 +248,10 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 	}
 
 	ch := make(chan StreamEvent, 64)
+	streaming = true
 	go func() {
 		defer close(ch)
+		defer span.End()
 		defer func() { _ = resp.Body.Close() }()
 		p.readSSEStream(resp.Body, ch)
 	}()

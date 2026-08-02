@@ -204,3 +204,61 @@ func TestDriftHandlers_GetByID(t *testing.T) {
 		t.Fatalf("expected ID %s, got %s", id, item.ID)
 	}
 }
+
+// TestDriftHandlers_SummaryCoversAllPages verifies that the summary tallies
+// every matching drift item rather than only the first page the store returns.
+func TestDriftHandlers_SummaryCoversAllPages(t *testing.T) {
+	mux, ms, _, driftStore := setupDriftTestServer()
+	ctx := context.Background()
+
+	acct, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:summary", Name: "Summary", Provider: "aws"})
+
+	// More items than a single summary page can hold.
+	const itemCount = 2500
+	now := time.Now().UTC()
+	for i := 0; i < itemCount; i++ {
+		severity := domain.DriftSeverityWarning
+		if i%2 == 1 {
+			severity = domain.DriftSeverityInfo
+		}
+		if err := driftStore.CreateDriftItem(ctx, domain.DriftItem{
+			ID:          uuid.New().String(),
+			AccountID:   acct.ID,
+			Type:        domain.DriftTypeUnmanaged,
+			Severity:    severity,
+			Status:      domain.DriftStatusOpen,
+			Title:       "unmanaged resource",
+			DetectedAt:  now.Add(time.Duration(i) * time.Millisecond),
+			UpdatedAt:   now,
+			Description: "synthetic",
+		}); err != nil {
+			t.Fatalf("create drift item %d: %v", i, err)
+		}
+	}
+
+	rr := doDriftJSON(t, mux, stdhttp.MethodGet, "/api/v1/drift?status=open&page_size=10", "", stdhttp.StatusOK)
+	var listResp domain.DriftListResponse
+	if err := json.NewDecoder(rr.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if listResp.Summary.TotalDrifts != itemCount {
+		t.Fatalf("expected total_drifts %d, got %d", itemCount, listResp.Summary.TotalDrifts)
+	}
+
+	tallied := 0
+	for _, count := range listResp.Summary.BySeverity {
+		tallied += count
+	}
+	if tallied != itemCount {
+		t.Fatalf("expected by_severity to tally %d items, got %d", itemCount, tallied)
+	}
+
+	tallied = 0
+	for _, count := range listResp.Summary.ByType {
+		tallied += count
+	}
+	if tallied != itemCount {
+		t.Fatalf("expected by_type to tally %d items, got %d", itemCount, tallied)
+	}
+}

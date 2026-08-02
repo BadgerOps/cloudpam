@@ -3,6 +3,7 @@ import { Network, ArrowLeft, ArrowRight, Save, CheckCircle } from 'lucide-react'
 import type { Blueprint } from './data/blueprints'
 import type { Dimensions } from './steps/DimensionsStep'
 import type { SchemaNode } from './utils/cidr'
+import { toCsv } from '../utils/csv'
 import TemplateStep from './steps/TemplateStep'
 import StrategyStep from './steps/StrategyStep'
 import DimensionsStep from './steps/DimensionsStep'
@@ -101,7 +102,7 @@ export default function SchemaPlanner() {
 
       if (format === 'csv') {
         const rows = flatten(generatedSchema, null)
-        const csv = ['name,cidr,type,parent_name', ...rows.map((r) => r.join(','))].join('\n')
+        const csv = toCsv(['name', 'cidr', 'type', 'parent_name'], rows)
         const blob = new Blob([csv], { type: 'text/csv' })
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')

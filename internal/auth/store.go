@@ -210,7 +210,7 @@ func copyAPIKey(key *APIKey) *APIKey {
 		return nil
 	}
 
-	copy := &APIKey{
+	dup := &APIKey{
 		ID:        key.ID,
 		Prefix:    key.Prefix,
 		Name:      key.Name,
@@ -220,31 +220,31 @@ func copyAPIKey(key *APIKey) *APIKey {
 	}
 
 	if key.Hash != nil {
-		copy.Hash = make([]byte, len(key.Hash))
-		copyBytes(copy.Hash, key.Hash)
+		dup.Hash = make([]byte, len(key.Hash))
+		copyBytes(dup.Hash, key.Hash)
 	}
 
 	if key.Salt != nil {
-		copy.Salt = make([]byte, len(key.Salt))
-		copyBytes(copy.Salt, key.Salt)
+		dup.Salt = make([]byte, len(key.Salt))
+		copyBytes(dup.Salt, key.Salt)
 	}
 
 	if key.Scopes != nil {
-		copy.Scopes = make([]string, len(key.Scopes))
-		copyStrings(copy.Scopes, key.Scopes)
+		dup.Scopes = make([]string, len(key.Scopes))
+		copyStrings(dup.Scopes, key.Scopes)
 	}
 
 	if key.ExpiresAt != nil {
 		t := *key.ExpiresAt
-		copy.ExpiresAt = &t
+		dup.ExpiresAt = &t
 	}
 
 	if key.LastUsedAt != nil {
 		t := *key.LastUsedAt
-		copy.LastUsedAt = &t
+		dup.LastUsedAt = &t
 	}
 
-	return copy
+	return dup
 }
 
 func copyBytes(dst, src []byte) {
