@@ -153,7 +153,12 @@ func NewMetrics(cfg MetricsConfig) *Metrics {
 }
 
 // RecordHTTPRequest records an HTTP request with its method, path, status code, and duration.
+// A nil receiver means metrics are disabled and the call is a no-op.
 func (m *Metrics) RecordHTTPRequest(method, path string, statusCode int, duration time.Duration) {
+	if m == nil {
+		return
+	}
+
 	// Normalize path to avoid high cardinality
 	normalizedPath := normalizePath(path)
 
@@ -181,22 +186,38 @@ func (m *Metrics) RecordHTTPRequest(method, path string, statusCode int, duratio
 }
 
 // RecordRateLimitAllowed increments the count of allowed requests.
+// A nil receiver means metrics are disabled and the call is a no-op.
 func (m *Metrics) RecordRateLimitAllowed() {
+	if m == nil {
+		return
+	}
 	m.rateLimitAllowed.Add(1)
 }
 
 // RecordRateLimitRejected increments the count of rejected requests.
+// A nil receiver means metrics are disabled and the call is a no-op.
 func (m *Metrics) RecordRateLimitRejected() {
+	if m == nil {
+		return
+	}
 	m.rateLimitRejected.Add(1)
 }
 
 // IncrementActiveConnections increments the active connection gauge.
+// A nil receiver means metrics are disabled and the call is a no-op.
 func (m *Metrics) IncrementActiveConnections() {
+	if m == nil {
+		return
+	}
 	m.activeConnections.Add(1)
 }
 
 // DecrementActiveConnections decrements the active connection gauge.
+// A nil receiver means metrics are disabled and the call is a no-op.
 func (m *Metrics) DecrementActiveConnections() {
+	if m == nil {
+		return
+	}
 	m.activeConnections.Add(-1)
 }
 
@@ -218,7 +239,14 @@ func normalizePath(path string) string {
 }
 
 // Handler returns an http.Handler that serves Prometheus-format metrics.
+// A nil receiver means metrics are disabled and the handler reports 404.
 func (m *Metrics) Handler() http.Handler {
+	if m == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "metrics disabled", http.StatusNotFound)
+		})
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -372,7 +400,8 @@ func RateLimitMetricsMiddleware(m *Metrics, rateLimitEnabled bool) func(http.Han
 }
 
 // NoopMetrics returns a Metrics instance that doesn't collect anything.
-// Useful for testing or when metrics are disabled.
+// Useful for testing or when MetricsConfig.Enabled is false. All Metrics
+// methods are nil-safe, so the result can be used like any other collector.
 func NoopMetrics() *Metrics {
 	return nil
 }

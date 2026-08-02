@@ -46,10 +46,10 @@ func setupOIDCTestEnv(t *testing.T) *testOIDCEnv {
 	idpMux := http.NewServeMux()
 	idpMux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		disc := map[string]interface{}{
-			"issuer":                 idpSrv.URL,
-			"authorization_endpoint": idpSrv.URL + "/authorize",
-			"token_endpoint":         idpSrv.URL + "/token",
-			"jwks_uri":               idpSrv.URL + "/keys",
+			"issuer":                                idpSrv.URL,
+			"authorization_endpoint":                idpSrv.URL + "/authorize",
+			"token_endpoint":                        idpSrv.URL + "/token",
+			"jwks_uri":                              idpSrv.URL + "/keys",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 			"subject_types_supported":               []string{"public"},
 			"response_types_supported":              []string{"code"},

@@ -130,6 +130,10 @@ Use Vector or another collector when a deployment needs vendor APIs such as
 Splunk HEC or Datadog HTTP intake. That keeps credentials, buffering, and
 backpressure handling outside the CloudPAM process.
 
+See [SIEM Integration](SIEM_INTEGRATION.md) for the full design: the JSON and
+CEF format decisions, the planned webhook and file sinks, event taxonomy,
+delivery semantics, and redaction rules.
+
 ### 2.1 Why Vector?
 
 | Aspect | Vector | Fluentd |
@@ -290,7 +294,51 @@ scrape_configs:
         replacement: $1
 ```
 
-## 4. Distributed Tracing with Jaeger
+## 4. Distributed Tracing with OpenTelemetry
+
+### 4.0 Implementation status
+
+Tracing is implemented in `internal/observability/tracing.go` and is **opt-in**:
+it is off unless `CLOUDPAM_TRACING_ENABLED=true`.
+
+```bash
+export CLOUDPAM_TRACING_ENABLED=true
+export CLOUDPAM_TRACING_ENDPOINT=http://otel-collector:4318   # OTLP/HTTP
+export CLOUDPAM_TRACING_SAMPLE_RATE=0.1
+```
+
+What is instrumented today:
+
+| Location | Span | Kind |
+|----------|------|------|
+| HTTP middleware (`TracingMiddleware`) | `{METHOD} {route}`, e.g. `GET /api/v1/pools/{id}` | server |
+| LLM provider (`internal/planning/llm`) | `llm.chat.completions` | client |
+| AWS collector (`internal/discovery/aws`) | `aws.discover`, `aws.ec2.DescribeVpcs`, `aws.ec2.DescribeSubnets`, `aws.ec2.DescribeAddresses` | client |
+
+Design notes:
+
+- **Zero cost when disabled.** `NewTracerProvider` returns a nil provider when
+  tracing is off, and `TracingMiddleware(nil)` returns the handler unchanged, so
+  no wrapper is installed in the request path. There is no per-request flag
+  check. Outbound instrumentation resolves to the OpenTelemetry no-op tracer.
+- **Export transport.** Spans are exported with OTLP over HTTP using the JSON
+  encoding. The official `otlptracehttp` exporter pulls in protobuf, gRPC and
+  grpc-gateway, which adds roughly 45 MB to the shipped binary for a feature
+  that is off by default; the in-tree encoder keeps the cost near 1 MB.
+- **Graceful degradation.** No connection is made at startup. An unreachable or
+  wedged collector produces export errors that are logged through the OTel error
+  handler; the server starts, serves and shuts down normally, losing only
+  buffered spans.
+- **Route cardinality.** Span names and `http.route` use the same numeric-ID
+  normalisation as the metrics subsystem, so `/api/v1/pools/42` becomes
+  `/api/v1/pools/{id}`.
+- **Exempt paths.** `/healthz`, `/readyz` and `/metrics` are not traced.
+- **Log correlation.** The middleware puts the trace and span IDs in the request
+  context and returns the trace ID in the `X-Trace-Id` response header. Records
+  written through `observability.Logger`'s `*Context` methods carry `trace_id`
+  and `span_id`.
+- **Shutdown.** `main.go` flushes and stops the tracer provider during graceful
+  shutdown with a 5-second budget.
 
 ### 4.1 Trace Propagation
 
@@ -308,33 +356,57 @@ CloudPAM uses W3C Trace Context for distributed tracing:
                                │
                                ▼
                       ┌─────────────────┐
-                      │     Jaeger      │
-                      │   Collector     │
+                      │  OTLP Collector │
+                      │   (HTTP :4318)  │
                       └─────────────────┘
 ```
 
+Incoming `traceparent` headers are honoured, so CloudPAM spans join a caller's
+trace rather than starting a new one.
+
 ### 4.2 Span Attributes
 
-Each span includes:
+Resource attributes on every span:
 
 | Attribute | Example |
 |-----------|---------|
 | `service.name` | cloudpam |
-| `service.version` | 1.0.0 |
-| `http.method` | POST |
-| `http.url` | /api/v1/pools |
-| `http.status_code` | 201 |
-| `db.system` | postgresql |
-| `db.statement` | INSERT INTO pools... |
-| `user.id` | usr_12345 |
+| `service.version` | v1.0.0 (from `APP_VERSION`) |
+
+Server spans (implemented):
+
+| Attribute | Example |
+|-----------|---------|
+| `http.request.method` | POST |
+| `http.route` | /api/v1/pools/{id} |
+| `url.path` | /api/v1/pools/42 |
+| `server.address` | cloudpam.example.com |
+| `user_agent.original` | curl/8.4.0 |
+| `http.response.status_code` | 201 |
+| `request.id` | 64b5659d-7a05-4366-885f-9d72471319e7 |
+
+Client spans (implemented): `llm.provider`, `llm.model`, `llm.stream`,
+`llm.usage.prompt_tokens`, `llm.usage.completion_tokens`, `cloud.provider`,
+`cloud.region`, `rpc.service`, `rpc.method`, `aws.resource_count`.
+
+Database spans (`db.system`, `db.statement`) and `user.id` are not instrumented
+yet.
 
 ### 4.3 Sampling Strategy
 
+Configured with `CLOUDPAM_TRACING_SAMPLE_RATE`, applied as a parent-based
+trace-ID ratio sampler: a sampled caller's trace is always followed, and root
+spans are sampled at the configured probability.
+
 | Environment | Strategy | Rate |
 |-------------|----------|------|
-| Development | Always sample | 100% |
-| Staging | Probabilistic | 10% |
-| Production | Probabilistic | 1% |
+| Development | Always sample | 100% (`1.0`, the default) |
+| Staging | Probabilistic | 10% (`0.1`) |
+| Production | Probabilistic | 1% (`0.01`) |
+
+The rate must be greater than 0 and at most 1. A rate of 0 is rejected at
+startup rather than silently sampling nothing — turn tracing off with
+`CLOUDPAM_TRACING_ENABLED=false` instead.
 
 ## 5. Audit Logging
 
@@ -434,9 +506,9 @@ See mockup: `cloudpam-audit-log.html`
 | `CLOUDPAM_LOG_SAMPLING_RATE` | 1.0 | Sampling rate for debug/info logs |
 | `CLOUDPAM_METRICS_ENABLED` | true | Enable Prometheus metrics |
 | `CLOUDPAM_METRICS_PORT` | 8889 | Metrics endpoint port |
-| `CLOUDPAM_TRACING_ENABLED` | true | Enable distributed tracing |
-| `CLOUDPAM_TRACING_ENDPOINT` | localhost:14250 | Jaeger collector endpoint |
-| `CLOUDPAM_TRACING_SAMPLE_RATE` | 0.01 | Trace sampling rate |
+| `CLOUDPAM_TRACING_ENABLED` | false | Enable OpenTelemetry tracing (opt-in) |
+| `CLOUDPAM_TRACING_ENDPOINT` | http://localhost:4318 | OTLP/HTTP collector base URL; `/v1/traces` is appended when the URL has no path |
+| `CLOUDPAM_TRACING_SAMPLE_RATE` | 1.0 | Head sampling probability, greater than 0 and at most 1 |
 
 ### 6.2 Vector Environment Variables
 

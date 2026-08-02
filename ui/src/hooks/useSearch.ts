@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { get } from '../api/client'
+import { useLatestRequest } from './useLatestRequest'
 import type { SearchResponse } from '../api/types'
 
 const DEBOUNCE_MS = 300
@@ -15,18 +16,18 @@ export function useSearch() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
+  const { begin, isCurrent } = useLatestRequest()
 
   const search = useCallback(async (q: string) => {
     if (!q.trim()) {
+      begin()
       setResults(null)
       setLoading(false)
       return
     }
 
-    // Cancel any in-flight request
-    abortRef.current?.abort()
-    abortRef.current = new AbortController()
+    // Supersede any in-flight request so its response cannot land last
+    const token = begin()
 
     setLoading(true)
     setError(null)
@@ -43,20 +44,22 @@ export function useSearch() {
       params.set('page_size', '20')
 
       const resp = await get<SearchResponse>(`/api/v1/search?${params}`)
+      if (!isCurrent(token)) return
       setResults(resp)
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
+      if (!isCurrent(token)) return
       setError(err instanceof Error ? err.message : 'Search failed')
       setResults(null)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [begin, isCurrent])
 
   useEffect(() => {
     if (timerRef.current) clearTimeout(timerRef.current)
 
     if (!query.trim()) {
+      begin()
       setResults(null)
       setLoading(false)
       return
@@ -68,7 +71,7 @@ export function useSearch() {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [query, search])
+  }, [query, search, begin])
 
   return { query, setQuery, results, loading, error }
 }

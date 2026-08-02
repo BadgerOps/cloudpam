@@ -131,9 +131,15 @@ type CreatePool struct {
 	Tags        map[string]string `json:"tags,omitempty"`
 }
 
-// UpdatePool is the input for updating a pool.
+// UpdatePool is the input for updating a pool. It is an already-resolved
+// command, not a wire type: the PATCH handler inspects key presence in the raw
+// request body and passes the resolved value in here.
 type UpdatePool struct {
-	Name        *string            `json:"name,omitempty"`
+	Name *string `json:"name,omitempty"`
+	// AccountID intentionally has no omitempty. Unlike the other fields, nil
+	// does not mean "leave unchanged" — every store writes it unconditionally,
+	// so nil clears the assignment. Omitting it from the marshaled form would
+	// make "clear the account" indistinguishable from "not specified".
 	AccountID   *int64             `json:"account_id"`
 	Type        *PoolType          `json:"type,omitempty"`
 	Status      *PoolStatus        `json:"status,omitempty"`

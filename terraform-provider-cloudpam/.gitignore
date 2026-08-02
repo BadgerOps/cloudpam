@@ -1,0 +1,8 @@
+# Built provider binary
+/terraform-provider-cloudpam
+
+# Terraform working files left behind by acceptance test runs
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup

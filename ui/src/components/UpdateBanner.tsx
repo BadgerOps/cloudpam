@@ -7,6 +7,24 @@ const POLL_INTERVAL_MS = 60 * 60 * 1000
 const STATUS_POLL_INTERVAL_MS = 5000
 const DISMISSED_VERSION_KEY = 'cloudpam_dismissed_update_version'
 
+// localStorage access throws in restricted contexts (Safari private browsing,
+// blocked cookies). Dismissal is a convenience, so degrade instead of crashing.
+function readDismissedVersion(): string | null {
+  try {
+    return localStorage.getItem(DISMISSED_VERSION_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeDismissedVersion(version: string) {
+  try {
+    localStorage.setItem(DISMISSED_VERSION_KEY, version)
+  } catch {
+    // Dismissal simply won't persist across reloads.
+  }
+}
+
 function renderNotes(notes: string) {
   return notes
     .split('\n')
@@ -37,7 +55,7 @@ export default function UpdateBanner() {
     async function poll(force = false) {
       try {
         const result = await checkForUpdates(force)
-        const dismissed = localStorage.getItem(DISMISSED_VERSION_KEY)
+        const dismissed = readDismissedVersion()
         if (result.update_available && dismissed !== result.latest_version) {
           setUpdateAvailable(true)
           setLatestVersion(result.latest_version)
@@ -149,7 +167,7 @@ export default function UpdateBanner() {
           {upgradeStep == null && latestVersion && (
             <button
               onClick={() => {
-                localStorage.setItem(DISMISSED_VERSION_KEY, latestVersion)
+                writeDismissedVersion(latestVersion)
                 setUpdateAvailable(false)
               }}
               className="px-3 py-1.5 text-sm rounded bg-white/15 hover:bg-white/20"

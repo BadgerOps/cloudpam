@@ -40,6 +40,39 @@ jobs:
       - name: Test with -race
         run: go test -race ./... -v
 
+  test-terraform-provider:
+    name: Terraform Provider Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Go
+        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version: '1.25.x'
+
+      - name: Cache Go build
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-tfprovider-${{ hashFiles('terraform-provider-cloudpam/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-tfprovider-
+            ${{ runner.os }}-go-
+
+      # terraform-provider-cloudpam is a separate Go module so its dependency
+      # tree stays out of the server binary. Root-level ./... does not reach it,
+      # so it needs its own build and test step.
+      - name: Build (Terraform provider)
+        run: cd terraform-provider-cloudpam && go build ./...
+
+      - name: Test (Terraform provider)
+        # Acceptance tests are gated behind TF_ACC and skip here.
+        run: cd terraform-provider-cloudpam && go test ./... -v
+
   test-sqlite:
     name: SQLite Tests (race)
     runs-on: ubuntu-latest

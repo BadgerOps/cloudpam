@@ -32,10 +32,10 @@ func mockOIDCServer(t *testing.T) (*httptest.Server, *rsa.PrivateKey) {
 
 	mux.HandleFunc("GET /.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		discovery := map[string]interface{}{
-			"issuer":                 srv.URL,
-			"authorization_endpoint": srv.URL + "/authorize",
-			"token_endpoint":         srv.URL + "/token",
-			"jwks_uri":               srv.URL + "/keys",
+			"issuer":                                srv.URL,
+			"authorization_endpoint":                srv.URL + "/authorize",
+			"token_endpoint":                        srv.URL + "/token",
+			"jwks_uri":                              srv.URL + "/keys",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 			"subject_types_supported":               []string{"public"},
 			"response_types_supported":              []string{"code"},
@@ -202,5 +202,71 @@ func TestExchange_ValidCode(t *testing.T) {
 	}
 	if len(claims.Groups) != 2 {
 		t.Errorf("expected 2 groups, got %d", len(claims.Groups))
+	}
+}
+
+func TestNewProvider_CustomScopesAlwaysIncludeOpenID(t *testing.T) {
+	srv, _ := mockOIDCServer(t)
+	defer srv.Close()
+
+	tests := []struct {
+		name  string
+		given []string
+		want  []string
+	}{
+		{
+			name:  "defaults when unset",
+			given: nil,
+			want:  []string{"openid", "profile", "email"},
+		},
+		{
+			name:  "custom scopes missing openid",
+			given: []string{"profile", "groups"},
+			want:  []string{"openid", "profile", "groups"},
+		},
+		{
+			name:  "openid already present is not duplicated",
+			given: []string{"openid", "email"},
+			want:  []string{"openid", "email"},
+		},
+		{
+			name:  "blank and duplicate entries are dropped",
+			given: []string{" ", "profile", "profile", ""},
+			want:  []string{"openid", "profile"},
+		},
+		{
+			name:  "only blanks falls back to defaults",
+			given: []string{"", "   "},
+			want:  []string{"openid", "profile", "email"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prov, err := NewProvider(context.Background(), ProviderConfig{
+				IssuerURL:    srv.URL,
+				ClientID:     "test-client-id",
+				ClientSecret: "test-secret",
+				RedirectURL:  "http://localhost:8080/auth/callback",
+				Scopes:       tt.given,
+			})
+			if err != nil {
+				t.Fatalf("NewProvider: %v", err)
+			}
+
+			got := prov.Scopes()
+			if len(got) != len(tt.want) {
+				t.Fatalf("scopes = %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("scopes = %v, want %v", got, tt.want)
+				}
+			}
+
+			if !strings.Contains(prov.AuthCodeURL("state"), "openid") {
+				t.Errorf("AuthCodeURL missing openid scope: %s", prov.AuthCodeURL("state"))
+			}
+		})
 	}
 }

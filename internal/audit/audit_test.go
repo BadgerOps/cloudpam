@@ -590,3 +590,50 @@ func TestWithMaxEvents(t *testing.T) {
 		})
 	}
 }
+
+func TestMemoryAuditLogger_List_NegativeOffset(t *testing.T) {
+	logger := NewMemoryAuditLogger()
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		event := &AuditEvent{
+			Actor:        "cpam_test",
+			ActorType:    ActorTypeAPIKey,
+			Action:       ActionCreate,
+			ResourceType: ResourcePool,
+			ResourceID:   string(rune('A' + i)),
+			StatusCode:   201,
+		}
+		if err := logger.Log(ctx, event); err != nil {
+			t.Fatalf("Log() error = %v", err)
+		}
+	}
+
+	// A negative offset must be clamped to the start of the result set rather
+	// than panicking on the underlying slice expression.
+	events, total, err := logger.List(ctx, ListOptions{Limit: 3, Offset: -10})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if total != 5 {
+		t.Errorf("expected total 5, got %d", total)
+	}
+	if len(events) != 3 {
+		t.Errorf("expected 3 events, got %d", len(events))
+	}
+}
+
+func TestMemoryAuditLogger_List_NegativeOffsetEmptyLog(t *testing.T) {
+	logger := NewMemoryAuditLogger()
+
+	events, total, err := logger.List(context.Background(), ListOptions{Offset: -1})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if total != 0 {
+		t.Errorf("expected total 0, got %d", total)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 events, got %d", len(events))
+	}
+}

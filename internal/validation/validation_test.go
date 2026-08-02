@@ -635,3 +635,63 @@ func BenchmarkValidateName(b *testing.B) {
 		_ = ValidateName("Production VPC")
 	}
 }
+
+func TestValidateNameCountsRunesNotBytes(t *testing.T) {
+	// Each of these characters is multi-byte in UTF-8, so a byte-based length
+	// check would reject a name that is well within the character limit.
+	tests := []struct {
+		name  string
+		value string
+		opts  NameOptions
+		valid bool
+	}{
+		{
+			name:  "non-ascii name at max length",
+			value: strings.Repeat("é", MaxNameLength),
+			opts:  NameOptions{},
+			valid: true,
+		},
+		{
+			name:  "non-ascii name one over max length",
+			value: strings.Repeat("é", MaxNameLength+1),
+			opts:  NameOptions{},
+			valid: false,
+		},
+		{
+			name:  "multibyte cjk at custom max length",
+			value: strings.Repeat("網", 10),
+			opts:  NameOptions{MaxLength: 10},
+			valid: true,
+		},
+		{
+			name:  "multibyte cjk over custom max length",
+			value: strings.Repeat("網", 11),
+			opts:  NameOptions{MaxLength: 10},
+			valid: false,
+		},
+		{
+			name:  "emoji satisfies min length",
+			value: "🚀🚀🚀",
+			opts:  NameOptions{MinLength: 3},
+			valid: true,
+		},
+		{
+			name:  "emoji below min length",
+			value: "🚀🚀",
+			opts:  NameOptions{MinLength: 3},
+			valid: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateNameWithOptions(tt.value, tt.opts)
+			if tt.valid && err != nil {
+				t.Errorf("ValidateNameWithOptions() unexpected error = %v", err)
+			}
+			if !tt.valid && err == nil {
+				t.Error("ValidateNameWithOptions() expected error, got nil")
+			}
+		})
+	}
+}

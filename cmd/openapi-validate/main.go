@@ -65,13 +65,13 @@ func validateSpec(data []byte) (int, int, error) {
 	if !ok || len(paths) == 0 {
 		return 0, 0, errors.New("paths must be a non-empty mapping")
 	}
-	components, ok := spec["components"].(map[string]any)
-	if !ok {
-		return 0, 0, errors.New("components must be a mapping")
-	}
-	schemas, ok := components["schemas"].(map[string]any)
-	if !ok || len(schemas) == 0 {
-		return 0, 0, errors.New("components.schemas must be a non-empty mapping")
+	// components is optional: a spec may define every schema inline.
+	components := map[string]any{}
+	if raw, present := spec["components"]; present {
+		components, ok = raw.(map[string]any)
+		if !ok {
+			return 0, 0, errors.New("components must be a mapping")
+		}
 	}
 
 	for path, rawPathItem := range paths {
@@ -97,21 +97,45 @@ func validateSpec(data []byte) (int, int, error) {
 				return 0, 0, fmt.Errorf("%s %s missing responses", method, path)
 			}
 			for _, ref := range collectRefs(operation) {
-				name, ok := strings.CutPrefix(ref, "#/components/schemas/")
-				if ok {
-					if _, exists := schemas[name]; !exists {
-						return 0, 0, fmt.Errorf("%s %s references missing schema %q", method, path, name)
-					}
-					continue
+				if err := checkComponentRef(components, method, path, ref); err != nil {
+					return 0, 0, err
 				}
-				if _, ok := strings.CutPrefix(ref, "#/components/responses/"); ok {
-					continue
-				}
-				return 0, 0, fmt.Errorf("%s %s has unsupported ref %q", method, path, ref)
 			}
 		}
 	}
 	return len(paths), len(components), nil
+}
+
+// componentNamespaces maps each supported components subsection to the noun used
+// when reporting a reference to something it does not define.
+var componentNamespaces = []struct {
+	name string
+	noun string
+}{
+	{name: "schemas", noun: "schema"},
+	{name: "responses", noun: "response"},
+	{name: "parameters", noun: "parameter"},
+	{name: "requestBodies", noun: "request body"},
+	{name: "headers", noun: "header"},
+	{name: "securitySchemes", noun: "security scheme"},
+}
+
+// checkComponentRef resolves a local component reference against the spec's own
+// components section. External and unknown-namespace refs are rejected, since
+// this validator only reasons about a single self-contained document.
+func checkComponentRef(components map[string]any, method, path, ref string) error {
+	for _, ns := range componentNamespaces {
+		name, ok := strings.CutPrefix(ref, "#/components/"+ns.name+"/")
+		if !ok {
+			continue
+		}
+		defined, _ := components[ns.name].(map[string]any)
+		if _, exists := defined[name]; !exists {
+			return fmt.Errorf("%s %s references missing %s %q", method, path, ns.noun, name)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s %s has unsupported ref %q", method, path, ref)
 }
 
 func collectRefs(raw any) []string {

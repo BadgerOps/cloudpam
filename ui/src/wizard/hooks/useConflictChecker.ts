@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { post } from '../../api/client'
+import { useLatestRequest } from '../../hooks/useLatestRequest'
 import type { SchemaPoolEntry, SchemaCheckRequest, SchemaCheckResponse, SchemaConflict } from '../../api/types'
 import type { SchemaNode } from '../utils/cidr'
 
@@ -22,10 +23,12 @@ export function useConflictChecker(schema: SchemaNode | null, enabled: boolean) 
   const [conflicts, setConflicts] = useState<SchemaConflict[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const { begin, isCurrent } = useLatestRequest()
 
   const check = useCallback(async () => {
     if (!schema || !enabled) return
 
+    const token = begin()
     setLoading(true)
     setError(null)
 
@@ -33,14 +36,16 @@ export function useConflictChecker(schema: SchemaNode | null, enabled: boolean) 
       const pools = flattenSchema(schema)
       const req: SchemaCheckRequest = { pools }
       const res = await post<SchemaCheckResponse>('/api/v1/schema/check', req)
+      if (!isCurrent(token)) return
       setConflicts(res.conflicts ?? [])
     } catch (err) {
+      if (!isCurrent(token)) return
       setError(err instanceof Error ? err.message : 'Failed to check conflicts')
       setConflicts([])
     } finally {
       setLoading(false)
     }
-  }, [schema, enabled])
+  }, [schema, enabled, begin, isCurrent])
 
   useEffect(() => {
     check()

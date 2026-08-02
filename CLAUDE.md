@@ -59,6 +59,7 @@ Recent planning session produced these design documents:
 | `docs/AUTH_FLOWS.md` | OAuth2/OIDC and API key authentication |
 | `docs/SMART_PLANNING.md` | Analysis engine and AI planning architecture |
 | `docs/OBSERVABILITY.md` | Logging, metrics, tracing, audit logging |
+| `docs/SIEM_INTEGRATION.md` | SIEM audit-event format, shipping transports, redaction |
 | `docs/API_EXAMPLES.md` | API usage examples |
 | `docs/DEPLOYMENT.md` | Kubernetes and cloud deployment guides |
 | `docs/DISCOVERY.md` | Cloud discovery setup, AWS config, API reference |
@@ -114,7 +115,7 @@ just cover-threshold thr=80  # Check coverage meets threshold
 ### Linting & Formatting
 ```bash
 just fmt              # Format code with go fmt
-just lint             # Run golangci-lint v2.1.6 (same as CI)
+just lint             # Run golangci-lint v2.4.0 (same as CI)
 just tidy             # Run go mod tidy
 just install-hooks    # Install pre-commit hook (runs golangci-lint on staged Go files)
 ```
@@ -228,7 +229,7 @@ The storage layer uses build tags to switch between implementations:
 | `internal/auth` | Authentication, RBAC, users, sessions | Implemented |
 | `internal/audit` | Audit logging | Implemented |
 | `internal/discovery` | Cloud resource discovery (Collector, SyncService, AWS Org) | Implemented (AWS single + org) |
-| `internal/observability` | Logging, metrics, tracing | Implemented |
+| `internal/observability` | Logging, metrics, OpenTelemetry tracing (opt-in, OTLP/HTTP) | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
 | `internal/planning/llm` | LLM provider abstraction (OpenAI-compatible) | Implemented (Phase 4) |
@@ -295,7 +296,7 @@ The storage layer uses build tags to switch between implementations:
   - `/openapi` - interactive Scalar API reference
   - `/openapi.yaml` - raw OpenAPI spec generated from registered routes
   - `/` - serves unified React SPA via `handleSPA()` with client-side routing fallback
-- **Middleware**: `LoggingMiddleware`, `CSRFMiddleware`, `RateLimitMiddleware`, `RequestIDMiddleware`, `DualAuthMiddleware` (session + API key), `LoginRateLimitMiddleware`
+- **Middleware**: `LoggingMiddleware`, `CSRFMiddleware`, `RateLimitMiddleware`, `RequestIDMiddleware`, `DualAuthMiddleware` (session + API key), `LoginRateLimitMiddleware`, `observability.MetricsMiddleware`, `observability.TracingMiddleware` (installed only when tracing is enabled)
 - **Error handling**: uses `apiError` struct with `error` and `detail` fields; 5xx errors are reported to Sentry
 
 ### Graceful Shutdown
@@ -305,6 +306,7 @@ The server (`cmd/cloudpam/main.go`) implements graceful shutdown:
 - Listens for `SIGINT` and `SIGTERM` signals
 - Initiates graceful HTTP server shutdown with 15-second timeout
 - Closes the storage backend via `store.Close()` to release database connections
+- Flushes and stops the tracer provider (5-second budget; no-op when tracing is disabled)
 - Flushes Sentry events before exit
 - Logs shutdown progress at each stage
 
@@ -348,7 +350,10 @@ This project has a Nix flake (`flake.nix`). **Always use `nix develop`** to ente
 
 - Go 1.23+ required (toolchain 1.24.x)
 - Use `go fmt` and pass `golangci-lint` (see `.golangci.yml` for enabled linters)
-- Linters enabled: `govet`, `staticcheck`, `ineffassign`, `errcheck`, `gocritic`, `misspell`
+- Linters enabled: `govet`, `staticcheck`, `ineffassign`, `errcheck`, `gocritic`, `misspell`, `revive`
+- `revive` runs a deliberately narrow rule set (see `.golangci.yml`); rules are added
+  gradually, only once the whole tree is already clean under them
+- `gofmt` runs as a golangci-lint formatter, so formatting drift fails CI
 - Keep errors lowercase and actionable
 - Prefer small, focused files
 
@@ -416,7 +421,10 @@ When adding endpoints:
 - `CLOUDPAM_LOG_LEVEL`: Log level - debug, info, warn, error (default: `info`)
 - `CLOUDPAM_LOG_FORMAT`: Log format - json, text (default: `json`)
 - `CLOUDPAM_METRICS_ENABLED`: Enable Prometheus metrics (default: `true`)
-- `APP_VERSION`: version stamp for migrations and Sentry release tracking
+- `CLOUDPAM_TRACING_ENABLED`: Enable OpenTelemetry tracing (default: `false`; tracing is opt-in)
+- `CLOUDPAM_TRACING_ENDPOINT`: OTLP/HTTP collector base URL (default: `http://localhost:4318`; `/v1/traces` is appended when the URL has no path)
+- `CLOUDPAM_TRACING_SAMPLE_RATE`: Head sampling probability, greater than `0` and at most `1` (default: `1.0`)
+- `APP_VERSION`: version stamp for migrations, Sentry release tracking, and the `service.version` trace resource attribute
 - `SENTRY_DSN`: Sentry DSN for backend error tracking (optional)
 - `SENTRY_FRONTEND_DSN`: Sentry DSN for frontend error tracking (optional)
 - `SENTRY_ENVIRONMENT`: Sentry environment name (default: `production`)
@@ -438,11 +446,6 @@ When adding endpoints:
 - `CLOUDPAM_LLM_ENDPOINT`: Base URL override for Ollama/vLLM/Azure; with no API key, a non-empty endpoint enables authless custom-provider mode
 - `CLOUDPAM_LLM_MAX_TOKENS`: Max response tokens (default: `4096`)
 - `CLOUDPAM_LLM_TEMPERATURE`: Temperature (default: `0.7`)
-
-### Planned
-- `CLOUDPAM_TRACING_ENABLED`: Enable distributed tracing
-- `CLOUDPAM_TRACING_ENDPOINT`: Jaeger collector endpoint
-- `CLOUDPAM_TRACING_SAMPLE_RATE`: Trace sampling rate
 
 ## API Contract
 
@@ -529,7 +532,7 @@ GitHub Actions workflows in `.github/workflows/`:
   - Uploads coverage artifacts (coverage.out, coverage.txt, coverage.html)
 
 - **lint.yml**: Runs on main/master and PRs
-  - Uses golangci-lint-action v8 with golangci-lint v2.1.6
+  - Uses golangci-lint-action v8 with golangci-lint v2.4.0
   - 5-minute timeout
 
 - **release-builds.yml**: Triggered on release publish
@@ -546,8 +549,8 @@ GitHub Actions workflows in `.github/workflows/`:
   - Uploads build artifacts
 
 CI pins:
-- Go `1.24.x`
-- golangci-lint `v2.1.6`
+- Go `1.25.x`
+- golangci-lint `v2.4.0`
 
 ## Error Tracking with Sentry
 

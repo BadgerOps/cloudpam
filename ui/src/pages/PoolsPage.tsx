@@ -356,10 +356,10 @@ export default function PoolsPage() {
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">CIDR</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
+                  <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Type</th>
                   <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">IPs</th>
-                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Created</th>
+                  <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">IPs</th>
+                  <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Created</th>
                   <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
                 </tr>
               </thead>
@@ -368,10 +368,10 @@ export default function PoolsPage() {
                   <tr key={p.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{p.name}</td>
                     <td className="px-4 py-2 text-sm font-mono text-gray-600 dark:text-gray-300">{p.cidr}</td>
-                    <td className="px-4 py-2"><StatusBadge label={p.type} variant="type" /></td>
+                    <td className="hidden md:table-cell px-4 py-2"><StatusBadge label={p.type} variant="type" /></td>
                     <td className="px-4 py-2"><StatusBadge label={p.status} /></td>
-                    <td className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{formatHostCount(getHostCount(p.cidr))}</td>
-                    <td className="px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(p.created_at)}</td>
+                    <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{formatHostCount(getHostCount(p.cidr))}</td>
+                    <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(p.created_at)}</td>
                     <td className="px-4 py-2 text-right">
                       <button
                         onClick={() => setEditingPool(p)}

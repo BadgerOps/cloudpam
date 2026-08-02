@@ -24,10 +24,10 @@ type MemoryAuditLogger struct {
 type MemoryAuditLoggerOption func(*MemoryAuditLogger)
 
 // WithMaxEvents sets the maximum number of events to store.
-func WithMaxEvents(max int) MemoryAuditLoggerOption {
+func WithMaxEvents(n int) MemoryAuditLoggerOption {
 	return func(m *MemoryAuditLogger) {
-		if max > 0 {
-			m.maxEvents = max
+		if n > 0 {
+			m.maxEvents = n
 		}
 	}
 }
@@ -107,6 +107,9 @@ func (m *MemoryAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 	}
 
 	start := opts.Offset
+	if start < 0 {
+		start = 0
+	}
 	if start > len(filtered) {
 		start = len(filtered)
 	}
@@ -166,14 +169,14 @@ func copyEvent(e *AuditEvent) *AuditEvent {
 	if e == nil {
 		return nil
 	}
-	copy := *e
+	dup := *e
 	if e.Changes != nil {
-		copy.Changes = &Changes{
+		dup.Changes = &Changes{
 			Before: copyMap(e.Changes.Before),
 			After:  copyMap(e.Changes.After),
 		}
 	}
-	return &copy
+	return &dup
 }
 
 // copyMap creates a shallow copy of a map.
@@ -181,9 +184,9 @@ func copyMap(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
 	}
-	copy := make(map[string]any, len(m))
+	dup := make(map[string]any, len(m))
 	for k, v := range m {
-		copy[k] = v
+		dup[k] = v
 	}
-	return copy
+	return dup
 }

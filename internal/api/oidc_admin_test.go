@@ -121,9 +121,9 @@ func TestOIDCAdmin_CreateProvider_MissingFields(t *testing.T) {
 	os := setupOIDCAdminTestEnv(t)
 
 	tests := []struct {
-		name     string
-		body     map[string]interface{}
-		wantErr  string
+		name    string
+		body    map[string]interface{}
+		wantErr string
 	}{
 		{
 			name:    "missing name",

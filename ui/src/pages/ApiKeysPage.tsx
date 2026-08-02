@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Key, Plus, Ban, Copy, Check, AlertCircle } from 'lucide-react'
 import { useApiKeys } from '../hooks/useApiKeys'
 import { useSecuritySettings } from '../hooks/useSettings'
+import { usePendingAction } from '../hooks/usePendingAction'
 import type { ApiKeyCreateResponse } from '../api/types'
 
 // Must match backend validScopes in auth_handlers.go createAPIKey
@@ -28,7 +29,7 @@ const SCOPE_LABELS: Record<string, string> = {
 }
 
 export default function ApiKeysPage() {
-  const { keys, loading, error, create, revoke } = useApiKeys()
+  const { keys, loading, error, canList, canCreate, canRevoke, create, revoke } = useApiKeys()
   const { settings } = useSecuritySettings()
   const [showCreate, setShowCreate] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
@@ -38,8 +39,8 @@ export default function ApiKeysPage() {
   const [copied, setCopied] = useState(false)
   const [createError, setCreateError] = useState('')
 
-  async function handleCreate() {
-    if (!newKeyName.trim()) return
+  async function createKey() {
+    if (!canCreate || !newKeyName.trim()) return
     setCreateError('')
     try {
       const res = await create({
@@ -55,6 +56,9 @@ export default function ApiKeysPage() {
       setCreateError(err instanceof Error ? err.message : 'Failed to create key')
     }
   }
+
+  // Gated so a second click before the request settles cannot mint a duplicate key
+  const { pending: creating, run: handleCreate } = usePendingAction(createKey)
 
   function toggleScope(scope: string) {
     if (scope === '*') {
@@ -101,6 +105,18 @@ export default function ApiKeysPage() {
     return ['Active', 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400']
   }
 
+  if (!canList) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">API Keys</h1>
+        <div className="mt-4 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 px-4 py-3 rounded-lg border dark:border-gray-700">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          You do not have permission to view API keys — apikeys:list or apikeys:read is required.
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
@@ -110,13 +126,15 @@ export default function ApiKeysPage() {
             Manage API keys for programmatic access
           </p>
         </div>
-        <button
-          onClick={() => { setShowCreate(true); setCreatedKey(null) }}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-        >
-          <Plus className="w-4 h-4" />
-          Create Key
-        </button>
+        {canCreate && (
+          <button
+            onClick={() => { setShowCreate(true); setCreatedKey(null) }}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
+          >
+            <Plus className="w-4 h-4" />
+            Create Key
+          </button>
+        )}
       </div>
 
       {error && (
@@ -147,7 +165,7 @@ export default function ApiKeysPage() {
       )}
 
       {/* Create form */}
-      {showCreate && !createdKey && (
+      {showCreate && canCreate && !createdKey && (
         <div className="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow p-4 border dark:border-gray-700">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">New API Key</h3>
 
@@ -207,11 +225,11 @@ export default function ApiKeysPage() {
 
             <div className="flex gap-2 pt-1">
               <button
-                onClick={handleCreate}
-                disabled={!newKeyName.trim()}
+                onClick={() => void handleCreate()}
+                disabled={creating || !newKeyName.trim()}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
-                Create
+                {creating ? 'Creating...' : 'Create'}
               </button>
               <button
                 onClick={() => setShowCreate(false)}
@@ -231,10 +249,10 @@ export default function ApiKeysPage() {
             <tr className="border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Name</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Prefix</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Scopes</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Age</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Created</th>
-              <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Expires</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Scopes</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Age</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Created</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Expires</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Status</th>
               <th className="text-right px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Actions</th>
             </tr>
@@ -258,7 +276,7 @@ export default function ApiKeysPage() {
                 <tr key={k.id} className="border-b dark:border-gray-700 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-750">
                   <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{k.name}</td>
                   <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-400">{k.prefix}...</td>
-                  <td className="px-4 py-3">
+                  <td className="hidden md:table-cell px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {k.scopes.slice(0, 3).map(s => (
                         <span key={s} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded text-xs">
@@ -272,9 +290,9 @@ export default function ApiKeysPage() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatAge(k.age_days)}</td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.created_at)}</td>
-                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.expires_at)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatAge(k.age_days)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.created_at)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.expires_at)}</td>
                   <td className="px-4 py-3">
                     {(() => {
                       const [label, classes] = statusBadge(k)
@@ -286,7 +304,7 @@ export default function ApiKeysPage() {
                     })()}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {!k.revoked && (
+                    {!k.revoked && canRevoke && (
                       <button
                         onClick={() => revoke(k.id)}
                         title="Revoke key"

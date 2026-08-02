@@ -21,6 +21,19 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
     }
   }, [open, setQuery])
 
+  // The footer advertises Esc, so honour it globally while the modal is open.
+  useEffect(() => {
+    if (!open) return
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
   function handleSelect(type: 'pool' | 'account') {
     navigate(type === 'pool' ? '/pools' : '/accounts')
     onClose()
@@ -34,11 +47,12 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/40"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-0 md:pt-[15vh] bg-black/40"
       onClick={onClose}
     >
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-2xl overflow-hidden"
+        data-testid="search-panel"
+        className="bg-white dark:bg-gray-800 shadow-2xl w-full h-full overflow-hidden md:h-auto md:max-w-2xl md:rounded-xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Search input */}
@@ -59,7 +73,7 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
         </div>
 
         {/* Results */}
-        <div className="max-h-[50vh] overflow-auto">
+        <div className="max-h-[calc(100%-3.5rem)] md:max-h-[50vh] overflow-auto">
           {!query.trim() ? (
             <div className="p-6 text-center text-sm text-gray-400 dark:text-gray-500">
               Search by name, CIDR, or IP address...

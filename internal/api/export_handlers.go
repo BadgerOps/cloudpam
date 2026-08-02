@@ -5,18 +5,95 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 )
 
+// parseExportDatasets returns the set of known datasets named by the datasets
+// query parameter. Unknown names are ignored.
+func parseExportDatasets(datasetsQ string) map[string]bool {
+	want := map[string]bool{}
+	for _, d := range strings.Split(datasetsQ, ",") {
+		d = strings.TrimSpace(strings.ToLower(d))
+		if d == "accounts" || d == "pools" || d == "blocks" {
+			want[d] = true
+		}
+	}
+	return want
+}
+
+// exportRequiredResources returns the RBAC resources the caller must be able to
+// read for the requested datasets. It mirrors the data handleExport loads: the
+// accounts dataset emits account records, the pools dataset emits pool records,
+// and the blocks dataset emits pool records enriched with account metadata, so
+// it requires both.
+func exportRequiredResources(want map[string]bool) []string {
+	var resources []string
+	if want["accounts"] || want["blocks"] {
+		resources = append(resources, auth.ResourceAccounts)
+	}
+	if want["pools"] || want["blocks"] {
+		resources = append(resources, auth.ResourcePools)
+	}
+	return resources
+}
+
+// RequireExportPermissionsMiddleware enforces per-dataset read permissions for
+// the export endpoint. A caller holding only pools:read must not be able to
+// export account data, so each requested dataset is checked against the
+// resource that actually backs it. Must be used after an auth middleware.
+func RequireExportPermissionsMiddleware(logger *slog.Logger) Middleware {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+
+			if auth.GetEffectiveRole(ctx) == auth.RoleNone {
+				writeJSON(w, http.StatusUnauthorized, apiError{Error: "unauthorized"})
+				return
+			}
+
+			want := parseExportDatasets(r.URL.Query().Get("datasets"))
+			for _, resource := range exportRequiredResources(want) {
+				if err := auth.RequirePermission(ctx, resource, auth.ActionRead); err == nil {
+					continue
+				}
+
+				attrs := appendRequestID(ctx, []any{
+					"method", r.Method,
+					"path", r.URL.Path,
+					"required_resource", resource,
+					"required_action", auth.ActionRead,
+				})
+				if key := auth.APIKeyFromContext(ctx); key != nil {
+					attrs = append(attrs, "api_key_id", key.ID)
+					attrs = append(attrs, "api_key_prefix", key.Prefix)
+				}
+				logger.WarnContext(ctx, "authorization denied", attrs...)
+
+				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // GET /api/v1/export?datasets=accounts,pools,blocks&accounts_fields=...&pools_fields=...&blocks_fields=...&accounts=1,2&pools=3,4
 // Returns a ZIP archive containing separate CSV files per selected dataset.
+// Per-dataset RBAC is enforced by RequireExportPermissionsMiddleware.
 func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
@@ -29,13 +106,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "datasets is required", "")
 		return
 	}
-	want := map[string]bool{}
-	for _, d := range strings.Split(datasetsQ, ",") {
-		d = strings.TrimSpace(strings.ToLower(d))
-		if d == "accounts" || d == "pools" || d == "blocks" {
-			want[d] = true
-		}
-	}
+	want := parseExportDatasets(datasetsQ)
 	if len(want) == 0 {
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "no valid datasets requested", "")
 		return

@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { Download, Upload, X, FileText } from 'lucide-react'
 import { useToast } from '../hooks/useToast'
-import { post } from '../api/client'
+import { postRaw } from '../api/client'
 import type { ImportResult } from '../api/types'
 
 interface ImportExportModalProps {
@@ -76,7 +76,8 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
     setImportResult(null)
     try {
       const text = await importFile.text()
-      const result = await post<ImportResult>(`/api/v1/import/${importType}`, text)
+      // The server parses the request body as raw CSV, not JSON.
+      const result = await postRaw<ImportResult>(`/api/v1/import/${importType}`, text)
       setImportResult(result)
       showToast(`Imported ${result.created} ${importType}`, 'success')
     } catch (err) {
@@ -89,7 +90,8 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
       <div
-        className="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-4xl max-h-[85vh] overflow-auto"
+        data-testid="import-export-panel"
+        className="bg-white dark:bg-gray-800 shadow-xl w-full h-full max-h-full overflow-auto md:h-auto md:max-h-[85vh] md:max-w-4xl md:rounded-xl"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -100,7 +102,7 @@ export default function ImportExportModal({ open, onClose }: ImportExportModalPr
           </button>
         </div>
 
-        <div className="grid grid-cols-2 divide-x dark:divide-gray-700">
+        <div className="grid grid-cols-1 divide-y md:grid-cols-2 md:divide-y-0 md:divide-x dark:divide-gray-700">
           {/* Export */}
           <div className="p-6">
             <h3 className="flex items-center gap-2 font-semibold text-gray-900 dark:text-gray-100 mb-4">

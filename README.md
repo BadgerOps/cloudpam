@@ -82,6 +82,7 @@ See the [Deployment Guide](docs/DEPLOYMENT.md) for production setup.
 | [Authentication Flows](docs/AUTH_FLOWS.md) | Session, API key, and RBAC flows |
 | [Smart Planning Architecture](docs/SMART_PLANNING.md) | Analysis engine and AI planning design |
 | [Observability Architecture](docs/OBSERVABILITY.md) | Logging, metrics, tracing, audit |
+| [SIEM Integration](docs/SIEM_INTEGRATION.md) | Audit-event format, shipping transports, redaction |
 | [Implementation Roadmap](docs/IMPLEMENTATION_ROADMAP.md) | Historical phased roadmap with a current status refresh |
 | [Code Review](docs/REVIEW.md) | Code review with prioritized issues |
 | [Discovery Agent Plan](docs/DISCOVERY_AGENT_PLAN.md) | Standalone discovery agent architecture |

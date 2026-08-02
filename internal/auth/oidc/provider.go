@@ -3,6 +3,7 @@ package oidc
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
@@ -31,10 +32,7 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		return nil, fmt.Errorf("oidc discovery: %w", err)
 	}
 
-	scopes := cfg.Scopes
-	if len(scopes) == 0 {
-		scopes = []string{gooidc.ScopeOpenID, "profile", "email"}
-	}
+	scopes := normalizeScopes(cfg.Scopes)
 
 	oauth2Cfg := oauth2.Config{
 		ClientID:     cfg.ClientID,
@@ -53,6 +51,46 @@ func NewProvider(ctx context.Context, cfg ProviderConfig) (*Provider, error) {
 		verifier:     verifier,
 		oauth2Config: oauth2Cfg,
 	}, nil
+}
+
+// normalizeScopes trims and de-duplicates the configured scopes and guarantees
+// that "openid" is requested. Without it the IdP performs a plain OAuth2
+// authorization and returns no id_token, which makes Exchange fail.
+func normalizeScopes(scopes []string) []string {
+	if len(scopes) == 0 {
+		return []string{gooidc.ScopeOpenID, "profile", "email"}
+	}
+
+	out := make([]string, 0, len(scopes)+1)
+	seen := make(map[string]struct{}, len(scopes)+1)
+	hasOpenID := false
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			continue
+		}
+		if _, dup := seen[scope]; dup {
+			continue
+		}
+		seen[scope] = struct{}{}
+		if scope == gooidc.ScopeOpenID {
+			hasOpenID = true
+		}
+		out = append(out, scope)
+	}
+
+	if len(out) == 0 {
+		return []string{gooidc.ScopeOpenID, "profile", "email"}
+	}
+	if !hasOpenID {
+		out = append([]string{gooidc.ScopeOpenID}, out...)
+	}
+	return out
+}
+
+// Scopes returns the normalized scopes that will be requested at the IdP.
+func (p *Provider) Scopes() []string {
+	return append([]string(nil), p.oauth2Config.Scopes...)
 }
 
 // AuthCodeURL generates the IdP redirect URL with the given state and options.

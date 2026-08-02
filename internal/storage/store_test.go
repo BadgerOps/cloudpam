@@ -1187,8 +1187,8 @@ func TestSentinelErrors_CalculatePoolUtilizationNotFound(t *testing.T) {
 // TestWrapIfConflict tests the WrapIfConflict helper function.
 func TestWrapIfConflict(t *testing.T) {
 	tests := []struct {
-		name       string
-		err        error
+		name         string
+		err          error
 		wantConflict bool
 	}{
 		{"nil error", nil, false},

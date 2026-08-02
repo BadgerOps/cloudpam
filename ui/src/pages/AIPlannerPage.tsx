@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { Bot, Plus, Trash2, Send, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
 import { useAIPlanner } from '../hooks/useAIPlanner'
+import { usePendingAction } from '../hooks/usePendingAction'
 import { extractPlan } from '../utils/planParser'
 import type { GeneratedPlan } from '../api/types'
 import { useToast } from '../hooks/useToast'
@@ -12,6 +13,7 @@ export default function AIPlannerPage() {
     streaming,
     streamingText,
     loading,
+    applying,
     error,
     fetchSessions,
     createSession,
@@ -48,7 +50,7 @@ export default function AIPlannerPage() {
     }
   }
 
-  async function handleApplyPlan(plan: GeneratedPlan) {
+  async function handleApplyPlan(plan: GeneratedPlan): Promise<void> {
     const res = await applyPlan(plan)
     if (res) {
       showToast(`Created ${res.created} pools`, 'success')
@@ -128,6 +130,7 @@ export default function AIPlannerPage() {
                   key={msg.id}
                   role={msg.role}
                   content={msg.content}
+                  applyPending={applying}
                   onApplyPlan={handleApplyPlan}
                 />
               ))}
@@ -137,6 +140,7 @@ export default function AIPlannerPage() {
                   role="assistant"
                   content={streamingText}
                   isStreaming
+                  applyPending={applying}
                   onApplyPlan={handleApplyPlan}
                 />
               )}
@@ -191,21 +195,24 @@ interface MessageBubbleProps {
   role: string
   content: string
   isStreaming?: boolean
-  onApplyPlan: (plan: GeneratedPlan) => void
+  /** True while any plan on the page is being applied */
+  applyPending?: boolean
+  onApplyPlan: (plan: GeneratedPlan) => Promise<void>
 }
 
-function MessageBubble({ role, content, isStreaming, onApplyPlan }: MessageBubbleProps) {
-  const [applying, setApplying] = useState(false)
-
+function MessageBubble({ role, content, isStreaming, applyPending, onApplyPlan }: MessageBubbleProps) {
   const isUser = role === 'user'
   const plan = !isStreaming ? extractPlan(content) : null
 
-  async function handleApply() {
-    if (!plan || applying) return
-    setApplying(true)
-    onApplyPlan(plan)
-    // The parent will handle the result; we just show "applying" state
-    setApplying(false)
+  // Applying twice would create duplicate pools, so the button stays disabled
+  // until the request settles (including on failure).
+  const { pending: applying, run: runApply } = usePendingAction(onApplyPlan)
+
+  function handleApply() {
+    if (!plan) return
+    void runApply(plan).catch(() => {
+      // Failures are surfaced by the planner hook; the button re-enables either way
+    })
   }
 
   return (
@@ -236,7 +243,7 @@ function MessageBubble({ role, content, isStreaming, onApplyPlan }: MessageBubbl
             </div>
             <button
               onClick={handleApply}
-              disabled={applying}
+              disabled={applying || applyPending}
               className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50"
             >
               {applying ? (

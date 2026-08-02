@@ -7,13 +7,16 @@ export function formatHostCount(count: number): string {
 export function getHostCount(cidr: string): number {
   if (!cidr) return 0
   const prefix = parseInt(cidr.split('/')[1], 10)
-  if (isNaN(prefix)) return 0
+  // Only IPv4 prefix lengths are meaningful here; anything else would produce
+  // a fractional or absurdly large host count.
+  if (isNaN(prefix) || prefix < 0 || prefix > 32) return 0
   return Math.pow(2, 32 - prefix)
 }
 
 export function formatTimeAgo(timestamp: string): string {
   if (!timestamp) return 'unknown'
   const date = new Date(timestamp)
+  if (isNaN(date.getTime())) return 'unknown'
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffMins = Math.floor(diffMs / 60000)
