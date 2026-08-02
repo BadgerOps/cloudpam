@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.23.1] - 2026-08-02
+
+### Changed
+- Bumped `golang.org/x/crypto` from 0.51.0 to 0.52.0 (server module) and `golang.org/x/net` from 0.54.0 to 0.55.0 (Terraform provider module). Both are indirect-facing upgrades with no API changes for CloudPAM: the server uses only `argon2` and `bcrypt` from `x/crypto`, and the provider module does not import `x/net` directly. Regression tests pin the argon2id digest and verify a bcrypt hash written before the upgrade, so a future bump that changed either KDF's output — which would lock out every existing user and API key — fails the build instead of production.
+- `GET /api/v1/pools/{id}/blocks` now rejects an unpaginated expansion of more than 65536 blocks with `400` instead of materialising the whole list. An explicit `page_size` above that limit is clamped to it. The reported `total` is unchanged, so clients can still see the full block count and page through it. **Behaviour change:** a client that omitted `page_size` (or passed `page_size=all`) against a wide pool now needs to paginate — for example `10.0.0.0/8` split into `/30`s, which previously allocated over four million strings per request.
+- The Prometheus `cloudpam_http_request_duration_seconds_sum` and `_count` series are now cumulative counters. They previously derived from the 1000-sample quantile window and so decreased whenever the window evicted samples, which made `rate()` over them meaningless. Quantiles still come from the sliding window. **Behaviour change:** absolute values of these two series will be higher than before on a long-running process; recording rules built on `rate()` or `increase()` become correct rather than needing adjustment.
+
+### Fixed
+- AI chat streaming no longer fails with "streaming not supported" when metrics are enabled (the default). The metrics middleware wrapped the `ResponseWriter` without forwarding `http.Flusher`, so the SSE handler's type assertion failed on every request. The wrapper now forwards `Flush`, `Hijack` and `ReadFrom`, and the SSE handler flushes through `http.ResponseController` rather than a direct type assertion.
+- `SQLiteAuditLogger.GetByResource` now filters by `resource_id` in SQL. It previously fetched the newest 1000 events of the resource *type* and filtered in Go, so a resource with few events returned nothing once a busier resource of the same type filled the page. `audit.ListOptions` gains a `ResourceID` field, honoured by the in-memory, SQLite and PostgreSQL backends.
+- The in-memory stores now deep-copy nested maps and slices at the store boundary. A caller mutating a returned `Pool.Tags`, `Account.Regions`, `DiscoveredResource.Metadata`, `Recommendation.Metadata`, `DriftItem.Details` or a conversation's message slice was editing stored state directly, without the store's lock.
+- Audit log pagination keeps the active filters. Next/Previous re-requested the page with no filters at all, silently dropping back to the unfiltered log.
+- The header search field no longer opens the search modal twice per mouse click (it fired on both focus and click), and is now activated by Enter or Space for keyboard users.
+- Ctrl/Cmd+K no longer opens the global search modal while the user is typing in a text input, textarea or contenteditable, where it is a text-editing shortcut.
+- The Schema Planner's "Export Terraform" button emits real `cloudpam_pool` resources for the CloudPAM Terraform provider, with parent/child links as resource references. It previously wrote a `# TODO: Implement Terraform export` placeholder.
+- A failing upgrade status poll on the Configuration page no longer leaves the UI stuck on "Upgrading…" forever. Transient failures are tolerated while the server restarts; three consecutive failures stop the poll and report the loss of contact.
+- The discovery wizard no longer shows the organization IAM snippet after switching back to single-account mode; the rendered tab is derived from the tabs actually on offer.
+- A failed roles fetch in the user administration panel is now surfaced. It silently fell back to the built-in role list, hiding every configured custom role behind a dropdown that looked complete.
+- First-boot setup derives the default email from the trimmed username, so `POST /api/v1/auth/setup` with `" root "` no longer creates the admin account with the address `" root @localhost"`. (#244)
+- The OpenAPI validator caps the spec it reads at 32MB across the file, stdin and HTTP paths instead of reading an arbitrarily large input into memory.
+- `DashboardPage` imports `ReactNode` explicitly instead of referencing the `React` UMD global namespace.
+
 ## [0.23.0] - 2026-08-01
 
 ### Added

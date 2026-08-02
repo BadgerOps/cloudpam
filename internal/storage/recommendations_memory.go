@@ -25,7 +25,7 @@ func NewMemoryRecommendationStore(store *MemoryStore) *MemoryRecommendationStore
 func (m *MemoryRecommendationStore) CreateRecommendation(_ context.Context, rec domain.Recommendation) error {
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
-	m.recs[rec.ID] = rec
+	m.recs[rec.ID] = cloneRecommendation(rec)
 	return nil
 }
 
@@ -37,7 +37,8 @@ func (m *MemoryRecommendationStore) GetRecommendation(_ context.Context, id stri
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return &r, nil
+	cloned := cloneRecommendation(r)
+	return &cloned, nil
 }
 
 func (m *MemoryRecommendationStore) ListRecommendations(_ context.Context, filters domain.RecommendationFilters) ([]domain.Recommendation, int, error) {
@@ -85,7 +86,7 @@ func (m *MemoryRecommendationStore) ListRecommendations(_ context.Context, filte
 		end = total
 	}
 
-	return filtered[start:end], total, nil
+	return cloneRecommendations(filtered[start:end]), total, nil
 }
 
 func (m *MemoryRecommendationStore) UpdateRecommendationStatus(_ context.Context, id string, status domain.RecommendationStatus, dismissReason string, appliedPoolID *int64) error {

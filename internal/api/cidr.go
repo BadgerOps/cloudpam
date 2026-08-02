@@ -49,6 +49,12 @@ func prefixesOverlapIPv4(a, b netip.Prefix) bool {
 	return aEndU >= bStart && bEndU >= aStart
 }
 
+// MaxSubnetExpansion bounds how many candidate blocks a single request may
+// materialise. It caps both an explicit page_size and an unpaginated
+// ("page_size=all") expansion; the reported total is unaffected, so callers can
+// still see how many blocks exist and page through them.
+const MaxSubnetExpansion = 65536
+
 func computeSubnetsIPv4Window(parentCIDR string, newPrefixLen int, offset, limit int) ([]string, uint64, int, error) {
 	pp, err := netip.ParsePrefix(parentCIDR)
 	if err != nil {
@@ -73,11 +79,21 @@ func computeSubnetsIPv4Window(parentCIDR string, newPrefixLen int, offset, limit
 		if offset > count {
 			offset = count
 		}
+		if limit > MaxSubnetExpansion {
+			limit = MaxSubnetExpansion
+		}
 		start = offset
 		end = offset + limit
 		if end > count {
 			end = count
 		}
+	} else if count > MaxSubnetExpansion {
+		// An unpaginated request for a wide parent would materialise millions of
+		// strings from a single unauthenticated-cost query. Make the caller
+		// paginate instead of allocating it.
+		return nil, 0, 0, fmt.Errorf(
+			"expanding %s into /%d yields %d blocks, above the %d limit: request a page with page_size",
+			parentCIDR, newPrefixLen, count, MaxSubnetExpansion)
 	}
 	res := make([]string, 0, end-start)
 	for i := start; i < end; i++ {

@@ -115,3 +115,64 @@ describe('UsersAdminPanel', () => {
     expect(create).toHaveBeenCalledTimes(1)
   })
 })
+
+// Regression: a failed roles fetch fell back to the built-in role list with no
+// indication, so an operator saw a plausible-looking dropdown that silently
+// omitted every custom role they had configured.
+describe('UsersAdminPanel role loading failures', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseUsers.mockReturnValue({
+      users: [],
+      loading: false,
+      error: null,
+      create: vi.fn(),
+      update: vi.fn(),
+      deactivate: vi.fn(),
+      unlock: vi.fn(),
+    })
+  })
+
+  it('surfaces the error when roles cannot be loaded', () => {
+    mockUseRoles.mockReturnValue({ roles: [], error: 'Failed to load roles' })
+
+    render(<UsersAdminPanel />)
+
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('Could not load roles')
+    expect(alert.textContent).toContain('Failed to load roles')
+    expect(alert.textContent).toContain('built-in roles only')
+  })
+
+  it('still offers the built-in roles so the form stays usable', () => {
+    mockUseRoles.mockReturnValue({ roles: [], error: 'boom' })
+
+    render(<UsersAdminPanel />)
+    fireEvent.click(screen.getByRole('button', { name: 'Create User' }))
+
+    const values = screen.getAllByRole('option').map(o => (o as HTMLOptionElement).value)
+    expect(values).toContain('admin')
+    expect(values).toContain('viewer')
+  })
+
+  it('shows no warning while roles are still loading', () => {
+    mockUseRoles.mockReturnValue({ roles: [], error: null })
+
+    render(<UsersAdminPanel />)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('shows no warning once roles load successfully', () => {
+    mockUseRoles.mockReturnValue({
+      roles: [{ name: 'custom-auditor', is_builtin: false }],
+      error: null,
+    })
+
+    render(<UsersAdminPanel />)
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create User' }))
+    const values = screen.getAllByRole('option').map(o => (o as HTMLOptionElement).value)
+    expect(values).toContain('custom-auditor')
+  })
+})

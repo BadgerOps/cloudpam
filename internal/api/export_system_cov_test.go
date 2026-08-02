@@ -447,14 +447,37 @@ func TestSetupCov(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit email is preserved", func(t *testing.T) {
+	// Regression for #244: the default email was built from the raw username
+	// while the stored username was trimmed, embedding whitespace inside the
+	// address of the most privileged account on the system.
+	t.Run("default email is derived from the trimmed username", func(t *testing.T) {
 		srv, _ := setupTestServer()
 		srv.SetNeedsSetup(true)
 		userStore := auth.NewMemoryUserStore()
 		srv.SetUserStore(userStore)
 
 		assertStatusCov(t, doReqCov(t, srv.mux, http.MethodPost, "/api/v1/auth/setup",
-			`{"username":"root","password":"Str0ngPassw0rd!x","email":"ops@example.test"}`), http.StatusCreated)
+			`{"username":" root ","password":"Str0ngPassw0rd!x"}`), http.StatusCreated)
+		created, err := userStore.GetByUsername(t.Context(), "root")
+		if err != nil || created == nil {
+			t.Fatalf("admin user not created: %v", err)
+		}
+		if created.Email != "root@localhost" {
+			t.Fatalf("email = %q, want %q with no embedded whitespace", created.Email, "root@localhost")
+		}
+		if created.DisplayName != "root" {
+			t.Fatalf("display name = %q, want the trimmed username", created.DisplayName)
+		}
+	})
+
+	t.Run("explicit email is trimmed and preserved", func(t *testing.T) {
+		srv, _ := setupTestServer()
+		srv.SetNeedsSetup(true)
+		userStore := auth.NewMemoryUserStore()
+		srv.SetUserStore(userStore)
+
+		assertStatusCov(t, doReqCov(t, srv.mux, http.MethodPost, "/api/v1/auth/setup",
+			`{"username":"root","password":"Str0ngPassw0rd!x","email":"  ops@example.test  "}`), http.StatusCreated)
 		created, err := userStore.GetByUsername(t.Context(), "root")
 		if err != nil || created == nil {
 			t.Fatalf("admin user not created: %v", err)

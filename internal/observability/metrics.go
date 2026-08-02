@@ -2,8 +2,11 @@
 package observability
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -72,11 +75,16 @@ type Metrics struct {
 }
 
 // durationCollector collects duration samples for quantile computation.
-// It keeps a sliding window of samples.
+// It keeps a sliding window of samples for quantiles, but tracks the observed
+// sum and count separately and cumulatively: Prometheus treats
+// <name>_sum and <name>_count as counters, and a rate() over a series that
+// drops back down when the window evicts samples produces garbage.
 type durationCollector struct {
-	mu      sync.Mutex
-	samples []float64
-	maxSize int
+	mu            sync.Mutex
+	samples       []float64
+	maxSize       int
+	observedSum   float64
+	observedCount int64
 }
 
 func newDurationCollector(maxSize int) *durationCollector {
@@ -91,6 +99,12 @@ func (d *durationCollector) add(duration time.Duration) {
 	defer d.mu.Unlock()
 
 	seconds := duration.Seconds()
+
+	// Cumulative totals are never reduced, even when the quantile window
+	// evicts the sample they came from.
+	d.observedSum += seconds
+	d.observedCount++
+
 	if len(d.samples) >= d.maxSize {
 		// Remove oldest sample (simple ring buffer behavior)
 		copy(d.samples, d.samples[1:])
@@ -129,14 +143,19 @@ func (d *durationCollector) sum() float64 {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	var total float64
-	for _, s := range d.samples {
-		total += s
-	}
-	return total
+	return d.observedSum
 }
 
-func (d *durationCollector) count() int {
+// count returns the total number of observations ever recorded, not the size of
+// the quantile window.
+func (d *durationCollector) count() int64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.observedCount
+}
+
+// windowSize reports how many samples the quantile window currently holds.
+func (d *durationCollector) windowSize() int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return len(d.samples)
@@ -373,6 +392,34 @@ func (w *metricsResponseWriter) WriteHeader(code int) {
 // http.ResponseController and other wrapping utilities.
 func (w *metricsResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
+}
+
+// Flush forwards to the underlying writer so handlers that type-assert to
+// http.Flusher — server-sent events in particular — keep streaming when this
+// middleware is installed. Unwrap alone only helps callers that go through
+// http.ResponseController.
+func (w *metricsResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack forwards to the underlying writer so protocol upgrades still work.
+func (w *metricsResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	return h.Hijack()
+}
+
+// ReadFrom forwards to the underlying writer's io.ReaderFrom implementation so
+// large responses keep their sendfile fast path.
+func (w *metricsResponseWriter) ReadFrom(src io.Reader) (int64, error) {
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	return io.Copy(w.ResponseWriter, src)
 }
 
 // RateLimitMetricsMiddleware returns middleware that records rate limit metrics.

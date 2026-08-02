@@ -67,8 +67,34 @@ export default function ConfigurationPage() {
       setUpgradeRunning(true)
       setUpgradeMessage('Starting upgrade...')
       await triggerUpgrade()
+      // A rejected status poll used to escape as an unhandled rejection,
+      // leaving the UI pinned on "Upgrade in progress..." forever. Transient
+      // failures are tolerated (the server is restarting, after all), but a
+      // sustained outage stops the poll and hands control back to the user.
+      let consecutiveFailures = 0
+      const maxConsecutiveFailures = 3
+
       pollRef.current = window.setInterval(async () => {
-        const status = await getUpgradeStatus()
+        let status
+        try {
+          status = await getUpgradeStatus()
+        } catch (err) {
+          consecutiveFailures++
+          if (consecutiveFailures >= maxConsecutiveFailures) {
+            if (pollRef.current) window.clearInterval(pollRef.current)
+            setUpgradeRunning(false)
+            setUpgradeMessage(
+              err instanceof Error
+                ? `Lost contact with the server while upgrading: ${err.message}`
+                : 'Lost contact with the server while upgrading',
+            )
+          } else {
+            setUpgradeMessage('Waiting for the server to come back...')
+          }
+          return
+        }
+
+        consecutiveFailures = 0
         if (status.status === 'running') {
           setUpgradeMessage(status.message || 'Upgrade in progress...')
         } else if (status.status === 'completed') {

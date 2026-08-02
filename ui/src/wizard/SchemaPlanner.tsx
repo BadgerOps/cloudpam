@@ -4,6 +4,7 @@ import type { Blueprint } from './data/blueprints'
 import type { Dimensions } from './steps/DimensionsStep'
 import type { SchemaNode } from './utils/cidr'
 import { toCsv } from '../utils/csv'
+import { schemaToTerraform } from './utils/terraform'
 import TemplateStep from './steps/TemplateStep'
 import StrategyStep from './steps/StrategyStep'
 import DimensionsStep from './steps/DimensionsStep'
@@ -111,8 +112,7 @@ export default function SchemaPlanner() {
         a.click()
         URL.revokeObjectURL(url)
       } else {
-        // Terraform placeholder
-        const tf = `# CloudPAM Schema - Terraform Export\n# Generated ${new Date().toISOString()}\n# TODO: Implement Terraform export`
+        const tf = schemaToTerraform(generatedSchema, new Date().toISOString())
         const blob = new Blob([tf], { type: 'text/plain' })
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')

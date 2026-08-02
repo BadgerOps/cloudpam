@@ -110,6 +110,10 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 		where += " AND resource_type = ?"
 		args = append(args, opts.ResourceType)
 	}
+	if opts.ResourceID != "" {
+		where += " AND resource_id = ?"
+		args = append(args, opts.ResourceID)
+	}
 	if opts.Since != nil {
 		where += " AND timestamp >= ?"
 		args = append(args, opts.Since.Format(time.RFC3339Nano))
@@ -173,20 +177,16 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 
 // GetByResource retrieves audit events for a specific resource.
 func (s *SQLiteAuditLogger) GetByResource(ctx context.Context, resourceType, resourceID string) ([]*AuditEvent, error) {
+	// The resource_id filter is applied in SQL: filtering in Go after a capped
+	// List would silently drop matches once the resource type accumulates more
+	// than a page of events.
 	events, _, err := s.List(ctx, ListOptions{
 		ResourceType: resourceType,
+		ResourceID:   resourceID,
 		Limit:        1000,
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	// Filter by resource ID
-	var filtered []*AuditEvent
-	for _, e := range events {
-		if e.ResourceID == resourceID {
-			filtered = append(filtered, e)
-		}
-	}
-	return filtered, nil
+	return events, nil
 }

@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -392,18 +393,55 @@ func TestDurationCollectorMaxSize(t *testing.T) {
 	d.add(100 * time.Millisecond)
 	d.add(200 * time.Millisecond)
 	d.add(300 * time.Millisecond)
-	d.add(400 * time.Millisecond) // Should push out 100ms
+	d.add(400 * time.Millisecond) // Should push 100ms out of the quantile window
 
-	// Count should be capped at max size
-	if d.count() != 3 {
-		t.Errorf("expected count 3, got %d", d.count())
+	// The quantile window is capped at max size...
+	if got := d.windowSize(); got != 3 {
+		t.Errorf("expected quantile window 3, got %d", got)
 	}
 
-	// First sample should have been removed
-	// So samples should be [200ms, 300ms, 400ms]
+	// ...but sum and count are Prometheus counters and must reflect every
+	// observation ever made, including the evicted one.
+	if d.count() != 4 {
+		t.Errorf("expected cumulative count 4, got %d", d.count())
+	}
 	sum := d.sum()
-	if sum < 0.85 || sum > 0.95 {
-		t.Errorf("expected sum around 0.9s (200+300+400ms), got %f", sum)
+	if sum < 0.95 || sum > 1.05 {
+		t.Errorf("expected cumulative sum around 1.0s (100+200+300+400ms), got %f", sum)
+	}
+
+	// Quantiles still come from the retained window: 100ms was evicted, so the
+	// minimum retained sample is 200ms.
+	if p := d.quantile(0); p < 0.19 || p > 0.21 {
+		t.Errorf("expected p0 around 0.2s from the retained window, got %f", p)
+	}
+}
+
+// TestDurationCollectorTotalsAreMonotonic pins the counter semantics that
+// Prometheus requires: _sum and _count must never decrease, even once the
+// quantile window starts evicting samples.
+func TestDurationCollectorTotalsAreMonotonic(t *testing.T) {
+	d := newDurationCollector(4)
+
+	prevSum, prevCount := 0.0, int64(0)
+	for i := 1; i <= 20; i++ {
+		d.add(time.Duration(i) * time.Millisecond)
+
+		sum, count := d.sum(), d.count()
+		if sum < prevSum {
+			t.Fatalf("observation %d: sum decreased from %f to %f", i, prevSum, sum)
+		}
+		if count < prevCount {
+			t.Fatalf("observation %d: count decreased from %d to %d", i, prevCount, count)
+		}
+		if count != int64(i) {
+			t.Fatalf("observation %d: count = %d, want %d", i, count, i)
+		}
+		prevSum, prevCount = sum, count
+	}
+
+	if got := d.windowSize(); got != 4 {
+		t.Errorf("quantile window = %d, want it capped at 4", got)
 	}
 }
 
@@ -560,5 +598,80 @@ func TestMetricsConcurrentAccess(t *testing.T) {
 	}
 	if m.activeConnections.Load() != 0 {
 		t.Errorf("expected 0 active connections, got %d", m.activeConnections.Load())
+	}
+}
+
+// TestMetricsMiddlewarePreservesFlusher covers the failure that made AI chat
+// streaming return "streaming not supported" whenever metrics were enabled: the
+// wrapper hid http.Flusher from the handler underneath it.
+func TestMetricsMiddlewarePreservesFlusher(t *testing.T) {
+	m := NewMetrics(MetricsConfig{Namespace: "test", Version: "1.0.0"})
+
+	var sawFlusher, flushWorked bool
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, sawFlusher = w.(http.Flusher)
+
+		// http.ResponseController is the other supported path and must work too.
+		if err := http.NewResponseController(w).Flush(); err == nil {
+			flushWorked = true
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := MetricsMiddleware(m)(inner)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/ai/chat", nil))
+
+	if !sawFlusher {
+		t.Error("handler could not type-assert the wrapped writer to http.Flusher")
+	}
+	if !flushWorked {
+		t.Error("http.ResponseController.Flush failed through the metrics wrapper")
+	}
+}
+
+// TestMetricsResponseWriterForwardsFlushToUnderlying verifies Flush is not just
+// present but actually reaches the wrapped writer.
+func TestMetricsResponseWriterForwardsFlushToUnderlying(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &metricsResponseWriter{ResponseWriter: rr, statusCode: http.StatusOK}
+
+	if _, err := w.Write([]byte("chunk")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	w.Flush()
+
+	if !rr.Flushed {
+		t.Error("Flush did not reach the underlying ResponseWriter")
+	}
+	if rr.Body.String() != "chunk" {
+		t.Errorf("body = %q, want %q", rr.Body.String(), "chunk")
+	}
+}
+
+// TestMetricsResponseWriterHijackUnsupported checks the Hijack path degrades to
+// the documented error instead of panicking on a non-hijackable writer.
+func TestMetricsResponseWriterHijackUnsupported(t *testing.T) {
+	w := &metricsResponseWriter{ResponseWriter: httptest.NewRecorder(), statusCode: http.StatusOK}
+
+	if _, _, err := w.Hijack(); !errors.Is(err, http.ErrNotSupported) {
+		t.Errorf("Hijack error = %v, want http.ErrNotSupported", err)
+	}
+}
+
+// TestMetricsResponseWriterReadFrom checks the io.ReaderFrom fast path copies
+// the full payload through the wrapper.
+func TestMetricsResponseWriterReadFrom(t *testing.T) {
+	rr := httptest.NewRecorder()
+	w := &metricsResponseWriter{ResponseWriter: rr, statusCode: http.StatusOK}
+
+	n, err := w.ReadFrom(strings.NewReader("streamed payload"))
+	if err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	if n != int64(len("streamed payload")) {
+		t.Errorf("copied %d bytes, want %d", n, len("streamed payload"))
+	}
+	if rr.Body.String() != "streamed payload" {
+		t.Errorf("body = %q", rr.Body.String())
 	}
 }

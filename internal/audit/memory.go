@@ -155,6 +155,9 @@ func matchesFilters(e *AuditEvent, opts ListOptions) bool {
 	if opts.ResourceType != "" && e.ResourceType != opts.ResourceType {
 		return false
 	}
+	if opts.ResourceID != "" && e.ResourceID != opts.ResourceID {
+		return false
+	}
 	if opts.Since != nil && e.Timestamp.Before(*opts.Since) {
 		return false
 	}

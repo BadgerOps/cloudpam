@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -221,5 +223,50 @@ components: "nope"
 	_, _, err := validateSpec([]byte(spec))
 	if err == nil || !strings.Contains(err.Error(), "components must be a mapping") {
 		t.Fatalf("expected components mapping error, got %v", err)
+	}
+}
+
+// TestReadSpecRejectsOversizedFile checks a regular file above the limit is
+// rejected on its stat size, before it is read into memory.
+func TestReadSpecRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "huge.yaml")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Sparse file: allocates no real blocks but reports an oversized length.
+	if err := f.Truncate(MaxSpecBytes + 1); err != nil {
+		t.Fatalf("truncate: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if _, err := readSpec(path); err == nil {
+		t.Fatal("expected an error for a file above the spec size limit")
+	} else if !strings.Contains(err.Error(), "limit") {
+		t.Errorf("error should mention the limit, got: %v", err)
+	}
+}
+
+// TestReadLimitedRejectsOversizedStream covers the stdin and HTTP paths, where
+// no size is known up front.
+func TestReadLimitedRejectsOversizedStream(t *testing.T) {
+	src := strings.NewReader(strings.Repeat("a", int(MaxSpecBytes)+1))
+	if _, err := readLimited(src, "stdin"); err == nil {
+		t.Fatal("expected an error for a stream above the spec size limit")
+	}
+}
+
+// TestReadLimitedAcceptsNormalSpec is the happy path: a spec-sized payload is
+// returned whole, not truncated.
+func TestReadLimitedAcceptsNormalSpec(t *testing.T) {
+	payload := strings.Repeat("b", 4096)
+	got, err := readLimited(strings.NewReader(payload), "stdin")
+	if err != nil {
+		t.Fatalf("readLimited: %v", err)
+	}
+	if string(got) != payload {
+		t.Errorf("payload was altered: got %d bytes, want %d", len(got), len(payload))
 	}
 }

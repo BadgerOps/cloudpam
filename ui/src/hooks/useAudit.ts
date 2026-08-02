@@ -1,8 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { get } from '../api/client'
 import type { AuditEvent, AuditListResponse } from '../api/types'
 
 const PAGE_SIZE = 25
+
+interface AuditQuery {
+  limit: number
+  action?: string
+  resourceType?: string
+}
 
 export function useAudit() {
   const [events, setEvents] = useState<AuditEvent[]>([])
@@ -11,12 +17,18 @@ export function useAudit() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Paging used to re-request page N with no filters at all, so stepping
+  // through a filtered log silently fell back to the unfiltered result set.
+  // The last query is remembered here and reused by nextPage/prevPage.
+  const lastQuery = useRef<AuditQuery>({ limit: PAGE_SIZE })
+
   const fetchEvents = useCallback(async (
     pageOffset = 0,
     limit = PAGE_SIZE,
     action?: string,
     resourceType?: string,
   ) => {
+    lastQuery.current = { limit, action, resourceType }
     setLoading(true)
     setError(null)
     try {
@@ -36,17 +48,22 @@ export function useAudit() {
     }
   }, [])
 
+  const goToOffset = useCallback((pageOffset: number) => {
+    const { limit, action, resourceType } = lastQuery.current
+    return fetchEvents(pageOffset, limit, action, resourceType)
+  }, [fetchEvents])
+
   const nextPage = useCallback(() => {
-    if (offset + PAGE_SIZE < total) {
-      fetchEvents(offset + PAGE_SIZE)
+    if (offset + lastQuery.current.limit < total) {
+      goToOffset(offset + lastQuery.current.limit)
     }
-  }, [offset, total, fetchEvents])
+  }, [offset, total, goToOffset])
 
   const prevPage = useCallback(() => {
     if (offset > 0) {
-      fetchEvents(Math.max(0, offset - PAGE_SIZE))
+      goToOffset(Math.max(0, offset - lastQuery.current.limit))
     }
-  }, [offset, fetchEvents])
+  }, [offset, goToOffset])
 
   return { events, total, offset, loading, error, fetchEvents, nextPage, prevPage, pageSize: PAGE_SIZE }
 }

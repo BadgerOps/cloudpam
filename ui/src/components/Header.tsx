@@ -51,11 +51,22 @@ export default function Header({ onSearchClick, onMenuClick, sidebarOpen }: Head
         </button>
         <div className="relative w-full md:w-96">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 dark:text-gray-500" />
+          {/* A read-only trigger, not a real field. It used to fire on both
+              click and focus, so a single mouse click opened the modal twice
+              (focus precedes click). Pointer activation goes through onClick;
+              keyboard users activate it with Enter or Space. */}
           <input
             type="text"
             readOnly
+            role="button"
+            aria-label="Search pools, CIDRs, accounts"
             onClick={onSearchClick}
-            onFocus={onSearchClick}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onSearchClick()
+              }
+            }}
             placeholder="Search pools, CIDRs, accounts..."
             className="w-full pl-10 pr-16 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:border-gray-400 dark:hover:border-gray-500 cursor-pointer outline-none dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
           />
