@@ -65,7 +65,7 @@ func (m *MemoryStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
 		if p.DeletedAt != nil {
 			continue
 		}
-		out = append(out, p)
+		out = append(out, clonePool(p))
 	}
 	return out, nil
 }
@@ -118,7 +118,7 @@ func (m *MemoryStore) CreatePool(ctx context.Context, in domain.CreatePool) (dom
 		UpdatedAt:   now,
 	}
 	m.pools[id] = p
-	return p, nil
+	return clonePool(p), nil
 }
 
 func (m *MemoryStore) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error) {
@@ -128,7 +128,7 @@ func (m *MemoryStore) GetPool(ctx context.Context, id int64) (domain.Pool, bool,
 	if ok && p.DeletedAt != nil {
 		return domain.Pool{}, false, nil
 	}
-	return p, ok, nil
+	return clonePool(p), ok, nil
 }
 
 func (m *MemoryStore) UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error) {
@@ -140,7 +140,7 @@ func (m *MemoryStore) UpdatePoolAccount(ctx context.Context, id int64, accountID
 	}
 	p.AccountID = accountID
 	m.pools[id] = p
-	return p, true, nil
+	return clonePool(p), true, nil
 }
 
 func (m *MemoryStore) UpdatePoolMeta(ctx context.Context, id int64, name *string, accountID *int64) (domain.Pool, bool, error) {
@@ -157,7 +157,7 @@ func (m *MemoryStore) UpdatePoolMeta(ctx context.Context, id int64, name *string
 	p.AccountID = accountID
 	p.UpdatedAt = time.Now().UTC()
 	m.pools[id] = p
-	return p, true, nil
+	return clonePool(p), true, nil
 }
 
 // UpdatePool updates pool metadata with support for new fields.
@@ -195,7 +195,7 @@ func (m *MemoryStore) UpdatePool(ctx context.Context, id int64, update domain.Up
 	}
 	p.UpdatedAt = time.Now().UTC()
 	m.pools[id] = p
-	return p, true, nil
+	return clonePool(p), true, nil
 }
 
 func (m *MemoryStore) DeletePool(ctx context.Context, id int64) (bool, error) {
@@ -262,7 +262,7 @@ func (m *MemoryStore) ListAccounts(ctx context.Context) ([]domain.Account, error
 		if a.DeletedAt != nil {
 			continue
 		}
-		out = append(out, a)
+		out = append(out, cloneAccount(a))
 	}
 	return out, nil
 }
@@ -291,7 +291,7 @@ func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount
 		UpdatedAt:   now,
 	}
 	m.accounts[id] = a
-	return a, nil
+	return cloneAccount(a), nil
 }
 
 func (m *MemoryStore) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
@@ -316,7 +316,7 @@ func (m *MemoryStore) UpdateAccount(ctx context.Context, id int64, update domain
 	}
 	a.UpdatedAt = time.Now().UTC()
 	m.accounts[id] = a
-	return a, true, nil
+	return cloneAccount(a), true, nil
 }
 
 func (m *MemoryStore) DeleteAccount(ctx context.Context, id int64) (bool, error) {
@@ -393,7 +393,7 @@ func (m *MemoryStore) GetAccount(ctx context.Context, id int64) (domain.Account,
 	if ok && a.DeletedAt != nil {
 		return domain.Account{}, false, nil
 	}
-	return a, ok, nil
+	return cloneAccount(a), ok, nil
 }
 
 // GetAccountByKey retrieves an account by its unique key.
@@ -402,7 +402,8 @@ func (m *MemoryStore) GetAccountByKey(ctx context.Context, key string) (*domain.
 	defer m.mu.RUnlock()
 	for _, a := range m.accounts {
 		if a.Key == key && a.DeletedAt == nil {
-			return &a, nil
+			cloned := cloneAccount(a)
+			return &cloned, nil
 		}
 	}
 	return nil, ErrNotFound
@@ -492,7 +493,7 @@ func (m *MemoryStore) GetPoolChildren(ctx context.Context, parentID int64) ([]do
 			continue
 		}
 		if p.ParentID != nil && *p.ParentID == parentID {
-			children = append(children, p)
+			children = append(children, clonePool(p))
 		}
 	}
 	return children, nil

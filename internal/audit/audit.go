@@ -36,8 +36,12 @@ type ListOptions struct {
 	Actor        string
 	Action       string
 	ResourceType string
-	Since        *time.Time
-	Until        *time.Time
+	// ResourceID narrows results to a single resource. Backends must apply it
+	// alongside the other filters, before the row limit, so that a resource
+	// with few events is not hidden behind a page of same-type events.
+	ResourceID string
+	Since      *time.Time
+	Until      *time.Time
 }
 
 // AuditLogger defines the interface for audit logging operations.

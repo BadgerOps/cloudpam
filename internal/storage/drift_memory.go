@@ -25,7 +25,7 @@ func NewMemoryDriftStore(store *MemoryStore) *MemoryDriftStore {
 func (m *MemoryDriftStore) CreateDriftItem(_ context.Context, item domain.DriftItem) error {
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
-	m.drifts[item.ID] = item
+	m.drifts[item.ID] = cloneDriftItem(item)
 	return nil
 }
 
@@ -37,7 +37,8 @@ func (m *MemoryDriftStore) GetDriftItem(_ context.Context, id string) (*domain.D
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return &d, nil
+	cloned := cloneDriftItem(d)
+	return &cloned, nil
 }
 
 func (m *MemoryDriftStore) ListDriftItems(_ context.Context, filters domain.DriftFilters) ([]domain.DriftItem, int, error) {
@@ -84,7 +85,7 @@ func (m *MemoryDriftStore) ListDriftItems(_ context.Context, filters domain.Drif
 		end = total
 	}
 
-	return filtered[start:end], total, nil
+	return cloneDriftItems(filtered[start:end]), total, nil
 }
 
 func (m *MemoryDriftStore) UpdateDriftStatus(_ context.Context, id string, status domain.DriftStatus, ignoreReason string) error {

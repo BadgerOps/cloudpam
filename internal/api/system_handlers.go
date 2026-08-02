@@ -243,7 +243,11 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.TrimSpace(req.Username) == "" {
+	// Trim once, up front: every field derived from the username (including the
+	// default email address) must be built from the same trimmed value that
+	// gets stored, otherwise whitespace leaks into the derived fields.
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "username is required", "")
 		return
 	}
@@ -266,17 +270,17 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := req.Email
+	email := strings.TrimSpace(req.Email)
 	if email == "" {
-		email = req.Username + "@localhost"
+		email = username + "@localhost"
 	}
 
 	now := time.Now().UTC()
 	user := &auth.User{
 		ID:           uuid.New().String(),
-		Username:     strings.TrimSpace(req.Username),
+		Username:     username,
 		Email:        email,
-		DisplayName:  strings.TrimSpace(req.Username),
+		DisplayName:  username,
 		Role:         auth.RoleAdmin,
 		PasswordHash: hash,
 		IsActive:     true,

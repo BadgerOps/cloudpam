@@ -91,21 +91,23 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 	rc := http.NewResponseController(w)
 	_ = rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		a.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "streaming not supported", "")
+	// Flush through the ResponseController rather than a direct type assertion:
+	// middleware wraps the ResponseWriter, and a wrapper that only forwards
+	// Unwrap would fail a plain w.(http.Flusher) assertion and kill streaming.
+	if err := rc.Flush(); err != nil {
+		a.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "streaming not supported", err.Error())
 		return
 	}
 
 	for evt := range eventCh {
 		if evt.Done {
 			_, _ = fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-			flusher.Flush()
+			_ = rc.Flush()
 			break
 		}
 		data, _ := json.Marshal(map[string]string{"delta": evt.Delta})
 		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
-		flusher.Flush()
+		_ = rc.Flush()
 	}
 }
 

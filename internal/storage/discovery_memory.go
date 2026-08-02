@@ -93,7 +93,7 @@ func (m *MemoryDiscoveryStore) ListDiscoveredResources(_ context.Context, accoun
 		end = total
 	}
 
-	return filtered[start:end], total, nil
+	return cloneDiscoveredResources(filtered[start:end]), total, nil
 }
 
 func (m *MemoryDiscoveryStore) GetDiscoveredResource(_ context.Context, id uuid.UUID) (*domain.DiscoveredResource, error) {
@@ -104,7 +104,8 @@ func (m *MemoryDiscoveryStore) GetDiscoveredResource(_ context.Context, id uuid.
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return &r, nil
+	cloned := cloneDiscoveredResource(r)
+	return &cloned, nil
 }
 
 func (m *MemoryDiscoveryStore) UpsertDiscoveredResource(_ context.Context, res domain.DiscoveredResource) error {
@@ -122,7 +123,7 @@ func (m *MemoryDiscoveryStore) UpsertDiscoveredResource(_ context.Context, res d
 			if res.DiscoveredAt.IsZero() {
 				res.DiscoveredAt = existing.DiscoveredAt
 			}
-			m.resources[id] = res
+			m.resources[id] = cloneDiscoveredResource(res)
 			return nil
 		}
 	}
@@ -131,7 +132,7 @@ func (m *MemoryDiscoveryStore) UpsertDiscoveredResource(_ context.Context, res d
 	if res.ID == uuid.Nil {
 		res.ID = uuid.New()
 	}
-	m.resources[res.ID] = res
+	m.resources[res.ID] = cloneDiscoveredResource(res)
 	return nil
 }
 

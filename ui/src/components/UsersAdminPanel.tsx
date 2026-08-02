@@ -12,7 +12,7 @@ interface UsersAdminPanelProps {
 
 export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelProps) {
   const { users, loading, error, create, update, deactivate, unlock } = useUsers()
-  const { roles } = useRoles()
+  const { roles, error: rolesError } = useRoles()
   // internal/api/user_handlers.go guards each verb separately: POST needs
   // users:create, PATCH (role, reactivate, unlock) needs users:update, and
   // DELETE (deactivate) needs users:delete. users:list only grants the listing.
@@ -20,7 +20,12 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
   const canCreate = hasPermission('users:create')
   const canUpdate = hasPermission('users:update')
   const canDeactivate = hasPermission('users:delete')
+  // Falling back to the built-in roles keeps the form usable when the roles
+  // API fails, but the failure itself must be visible: silently offering only
+  // built-ins hides any custom role the operator has configured, and assigning
+  // from that list looks like it worked.
   const roleOptions = roles.length > 0 ? roles : ['admin', 'operator', 'viewer', 'auditor'].map(name => ({ name, is_builtin: true }))
+  const usingFallbackRoles = roles.length === 0 && Boolean(rolesError)
   const [showCreate, setShowCreate] = useState(false)
   const [form, setForm] = useState<CreateUserRequest>({
     username: '',
@@ -130,6 +135,16 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
         <div className="mb-4 flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-4 py-3 rounded-lg">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
           {error}
+        </div>
+      )}
+
+      {usingFallbackRoles && (
+        <div
+          role="alert"
+          className="mb-4 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 rounded-lg"
+        >
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          Could not load roles ({rolesError}). Showing built-in roles only; custom roles are unavailable.
         </div>
       )}
 

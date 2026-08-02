@@ -103,6 +103,11 @@ func (s *PostgresAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Au
 		args = append(args, opts.ResourceType)
 		argIdx++
 	}
+	if opts.ResourceID != "" {
+		where += " AND resource_id = $" + itoa(argIdx)
+		args = append(args, opts.ResourceID)
+		argIdx++
+	}
 	if opts.Since != nil {
 		where += " AND timestamp >= $" + itoa(argIdx)
 		args = append(args, *opts.Since)

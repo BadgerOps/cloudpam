@@ -25,8 +25,22 @@ export default function Layout() {
   }, [pathname])
 
   useEffect(() => {
+    // Ctrl/Cmd+K is a text-editing shortcut in several environments (on macOS
+    // it kills to end of line), so the global search shortcut must not swallow
+    // it while the user is typing into a form control.
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) return false
+      if (target.isContentEditable) return true
+      const tag = target.tagName
+      if (tag === 'TEXTAREA' || tag === 'SELECT') return true
+      // The header's search trigger is a read-only input acting as a button,
+      // so it should still open the modal.
+      return tag === 'INPUT' && !(target as HTMLInputElement).readOnly
+    }
+
     const handleKeydown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        if (isEditableTarget(e.target)) return
         e.preventDefault()
         setSearchOpen(true)
       }

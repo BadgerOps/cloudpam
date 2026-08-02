@@ -48,7 +48,9 @@ func (m *MemoryConversationStore) GetConversation(_ context.Context, id string) 
 
 	return &domain.ConversationWithMessages{
 		Conversation: conv,
-		Messages:     msgs,
+		// The caller must not be handed the store's own message slice: an
+		// append that fits in its capacity would overwrite stored history.
+		Messages: cloneConversationMessages(msgs),
 	}, nil
 }
 

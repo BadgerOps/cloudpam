@@ -13,8 +13,18 @@ import {
 } from '../utils/escape'
 import type { Account, CreateAccountRequest, AgentProvisionResponse, DiscoveryAgent } from '../api/types'
 
-type ConfigTab = 'shell' | 'yaml' | 'terraform' | 'docker' | 'iam'
+export type ConfigTab = 'shell' | 'yaml' | 'terraform' | 'docker' | 'iam'
 type DiscoveryMode = 'single' | 'organization'
+
+/**
+ * Resolves which config tab to render. The selection is kept in state, but the
+ * set of available tabs depends on the discovery mode ('iam' is org-only), so a
+ * stale selection must fall back instead of rendering a tab the strip no longer
+ * offers.
+ */
+export function resolveConfigTab(selected: ConfigTab, available: ConfigTab[]): ConfigTab {
+  return available.includes(selected) ? selected : available[0]
+}
 
 interface DiscoveryWizardProps {
   accounts: Account[]
@@ -368,6 +378,11 @@ resource "aws_iam_policy" "cloudpam_org" {
     ? ['shell', 'yaml', 'terraform', 'docker', 'iam']
     : ['shell', 'yaml', 'terraform', 'docker']
 
+  // The selected tab is derived rather than trusted: 'iam' only exists in org
+  // mode, so switching back to single-account mode would otherwise keep
+  // rendering the org IAM snippet under a tab strip that no longer offers it.
+  const activeConfigTab = resolveConfigTab(configTab, availableTabs)
+
   const filenameStem = safeFilename(agentNameFinal)
 
   const configs: Record<ConfigTab, { content: string; filename: string; label: string }> = {
@@ -691,7 +706,7 @@ resource "aws_iam_policy" "cloudpam_org" {
                     key={tab}
                     onClick={() => setConfigTab(tab)}
                     className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${
-                      configTab === tab
+                      activeConfigTab === tab
                         ? 'border-blue-600 text-blue-600 dark:text-blue-400'
                         : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
                     }`}
@@ -704,18 +719,18 @@ resource "aws_iam_policy" "cloudpam_org" {
               {/* Config content */}
               <div className="relative">
                 <pre className="bg-gray-50 dark:bg-gray-900 border dark:border-gray-700 rounded-lg p-4 text-sm font-mono text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre">
-                  {configs[configTab].content}
+                  {configs[activeConfigTab].content}
                 </pre>
                 <div className="absolute top-2 right-2 flex gap-1">
                   <button
-                    onClick={() => copyToClipboard(configs[configTab].content)}
+                    onClick={() => copyToClipboard(configs[activeConfigTab].content)}
                     title="Copy to clipboard"
                     className="p-1.5 bg-white dark:bg-gray-800 border dark:border-gray-600 rounded text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shadow-sm"
                   >
                     <Copy className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => downloadFile(configs[configTab].content, configs[configTab].filename)}
+                    onClick={() => downloadFile(configs[activeConfigTab].content, configs[activeConfigTab].filename)}
                     title="Download file"
                     className="p-1.5 bg-white dark:bg-gray-800 border dark:border-gray-600 rounded text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shadow-sm"
                   >

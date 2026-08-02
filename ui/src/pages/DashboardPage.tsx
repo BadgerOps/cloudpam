@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Server, Cpu, Cloud, AlertTriangle } from 'lucide-react'
 import { usePools } from '../hooks/usePools'
@@ -212,7 +213,7 @@ export default function DashboardPage() {
 }
 
 function StatsCard({ icon, label, value, sub }: {
-  icon: React.ReactNode
+  icon: ReactNode
   label: string
   value: string
   sub?: string

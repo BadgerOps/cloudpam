@@ -14,6 +14,11 @@ import (
 
 const specURLTimeout = 15 * time.Second
 
+// MaxSpecBytes caps how much of a spec is read into memory. The generated
+// CloudPAM spec is well under a megabyte; 32MB leaves ample headroom while
+// keeping a piped or fetched stream from exhausting memory.
+const MaxSpecBytes int64 = 32 << 20
+
 func main() {
 	source := "-"
 	if len(os.Args) > 1 {
@@ -33,10 +38,24 @@ func main() {
 	fmt.Printf("OpenAPI spec OK (%d paths, %d component groups).\n", paths, componentGroups)
 }
 
+// readLimited reads at most MaxSpecBytes and reports an error rather than
+// silently truncating, so a malformed or hostile source cannot be validated as
+// a shorter document than it really is.
+func readLimited(r io.Reader, what string) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, MaxSpecBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > MaxSpecBytes {
+		return nil, fmt.Errorf("%s exceeds the %d byte spec limit", what, MaxSpecBytes)
+	}
+	return data, nil
+}
+
 func readSpec(source string) ([]byte, error) {
 	switch {
 	case source == "-":
-		return io.ReadAll(os.Stdin)
+		return readLimited(os.Stdin, "stdin")
 	case strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://"):
 		client := http.Client{Timeout: specURLTimeout}
 		resp, err := client.Get(source)
@@ -47,9 +66,18 @@ func readSpec(source string) ([]byte, error) {
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
 			return nil, fmt.Errorf("GET %s returned %s", source, resp.Status)
 		}
-		return io.ReadAll(resp.Body)
+		return readLimited(resp.Body, "response body")
 	default:
-		return os.ReadFile(source)
+		// Reject an oversized file by its stat size before reading it in.
+		if info, err := os.Stat(source); err == nil && info.Mode().IsRegular() && info.Size() > MaxSpecBytes {
+			return nil, fmt.Errorf("%s is %d bytes, above the %d byte spec limit", source, info.Size(), MaxSpecBytes)
+		}
+		f, err := os.Open(source)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = f.Close() }()
+		return readLimited(f, source)
 	}
 }
 
