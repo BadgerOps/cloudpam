@@ -10,6 +10,7 @@ import {
   getStatusBadgeClass,
   getActionBadgeClass,
 } from '../utils/format'
+import { POOL_TYPES, UNKNOWN_POOL_TYPE_DOT } from '../utils/poolTypes'
 
 describe('formatHostCount', () => {
   it('returns raw number for small counts', () => {
@@ -85,6 +86,19 @@ describe('color helpers', () => {
     expect(getPoolTypeColor('supernet')).toBe('bg-purple-500')
     expect(getPoolTypeColor('vpc')).toBe('bg-amber-500')
     expect(getPoolTypeColor('unknown')).toBe('bg-gray-400')
+  })
+
+  it('getPoolTypeColor agrees with POOL_TYPES for every known type', () => {
+    for (const t of POOL_TYPES) {
+      expect(getPoolTypeColor(t.id)).toBe(t.dot)
+    }
+  })
+
+  it('getPoolTypeColor gives subnet its own hue, not grey', () => {
+    // Regression: the wizard used to grey out subnets, which collided with
+    // the unknown-type fallback.
+    expect(getPoolTypeColor('subnet')).toBe('bg-orange-500')
+    expect(getPoolTypeColor('subnet')).not.toBe(UNKNOWN_POOL_TYPE_DOT)
   })
 
   it('getUtilizationColor returns red for high utilization', () => {

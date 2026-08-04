@@ -1,3 +1,5 @@
+import { poolTypeDot } from './poolTypes'
+
 export function formatHostCount(count: number): string {
   if (count >= 1000000) return (count / 1000000).toFixed(1) + 'M'
   if (count >= 1000) return (count / 1000).toFixed(1) + 'K'
@@ -29,16 +31,7 @@ export function formatTimeAgo(timestamp: string): string {
 }
 
 export function getPoolTypeColor(type: string): string {
-  const colors: Record<string, string> = {
-    supernet: 'bg-purple-500',
-    root: 'bg-purple-500',
-    region: 'bg-blue-500',
-    environment: 'bg-green-500',
-    vpc: 'bg-amber-500',
-    subnet: 'bg-orange-500',
-    account: 'bg-amber-500',
-  }
-  return colors[type] || 'bg-gray-400'
+  return poolTypeDot(type)
 }
 
 export function getUtilizationColor(util: number): string {
