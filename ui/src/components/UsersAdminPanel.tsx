@@ -256,7 +256,7 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
               </tr>
             ) : (
               users.map(u => (
-                <tr key={u.id} className="border-b dark:border-gray-700 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-750">
+                <tr key={u.id} className="border-b dark:border-gray-700 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-700">
                   <td className="px-4 py-3">
                     <div>
                       <span className="font-medium text-gray-900 dark:text-white">{u.username}</span>

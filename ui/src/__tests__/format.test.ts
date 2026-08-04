@@ -10,6 +10,7 @@ import {
   getStatusBadgeClass,
   getActionBadgeClass,
 } from '../utils/format'
+import { POOL_TYPES, UNKNOWN_POOL_TYPE_DOT } from '../utils/poolTypes'
 
 describe('formatHostCount', () => {
   it('returns raw number for small counts', () => {
@@ -87,6 +88,19 @@ describe('color helpers', () => {
     expect(getPoolTypeColor('unknown')).toBe('bg-gray-400')
   })
 
+  it('getPoolTypeColor agrees with POOL_TYPES for every known type', () => {
+    for (const t of POOL_TYPES) {
+      expect(getPoolTypeColor(t.id)).toBe(t.dot)
+    }
+  })
+
+  it('getPoolTypeColor gives subnet its own hue, not grey', () => {
+    // Regression: the wizard used to grey out subnets, which collided with
+    // the unknown-type fallback.
+    expect(getPoolTypeColor('subnet')).toBe('bg-orange-500')
+    expect(getPoolTypeColor('subnet')).not.toBe(UNKNOWN_POOL_TYPE_DOT)
+  })
+
   it('getUtilizationColor returns red for high utilization', () => {
     expect(getUtilizationColor(90)).toBe('bg-red-500')
     expect(getUtilizationColor(70)).toBe('bg-amber-500')
@@ -113,5 +127,20 @@ describe('color helpers', () => {
     expect(getActionBadgeClass('create')).toContain('green')
     expect(getActionBadgeClass('update')).toContain('blue')
     expect(getActionBadgeClass('delete')).toContain('red')
+  })
+
+  it('getStatusBadgeClass colors account lifecycle states distinctly', () => {
+    expect(getStatusBadgeClass('locked')).toContain('amber')
+    expect(getStatusBadgeClass('disabled')).toContain('red')
+    expect(getStatusBadgeClass('revoked')).toContain('red')
+    expect(getStatusBadgeClass('idle')).toContain('amber')
+  })
+
+  it('getStatusBadgeClass no longer greys out known account states', () => {
+    // Regression: a locked account and a planned pool rendered identically.
+    const grey = getStatusBadgeClass('some-unknown-status')
+    for (const s of ['locked', 'disabled', 'revoked', 'idle']) {
+      expect(getStatusBadgeClass(s)).not.toBe(grey)
+    }
   })
 })

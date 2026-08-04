@@ -135,6 +135,11 @@ checked properly, so don't "fix" the conventions file for them:
 - **The self-link and `ui/types/` are both gitignored/ephemeral.** A fresh clone
   needs `npm ci`, then the `ln -sfn`, then `cfg.buildCmd`. Forgetting either is
   the most likely first failure.
+- **`.design-sync/node_modules` is also a gitignored symlink** (`-> ../.ds-sync/node_modules`,
+  per `.gitignore:77`) and just as easy to forget on a fresh clone. Without it the
+  converter can't resolve its own dependencies and fails with a misleading `ts-morph`
+  resolution error that looks like a config problem, not a missing link. Recreate it
+  the same way as the `cloudpam-ui` self-link, before running `cfg.buildCmd`.
 - **`cssEntry` is a copy, not a live file.** If someone runs the converter
   without `buildCmd`, `ui/.ds-css/compiled.css` is stale (or absent) and the
   cards render against old CSS. When in doubt, re-run `buildCmd`.

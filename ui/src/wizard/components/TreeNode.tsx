@@ -2,14 +2,7 @@ import { useState } from 'react'
 import { ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react'
 import type { SchemaNode } from '../utils/cidr'
 import { usableHosts, formatHostCount } from '../utils/cidr'
-
-const TYPE_COLORS: Record<string, string> = {
-  supernet: 'bg-purple-500',
-  region: 'bg-blue-500',
-  environment: 'bg-green-500',
-  vpc: 'bg-amber-500',
-  subnet: 'bg-gray-400 dark:bg-gray-500',
-}
+import { getPoolTypeColor } from '../../utils/format'
 
 interface Props {
   node: SchemaNode
@@ -27,7 +20,7 @@ export default function TreeNode({ node, depth = 0, defaultExpanded }: Props) {
       <div
         className={`flex items-center gap-2 py-1.5 px-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer ${
           node.conflict ? 'bg-red-50 dark:bg-red-900/30 hover:bg-red-100 dark:hover:bg-red-900/50' : ''
-        }`}
+        } ${node.type === 'subnet' ? 'opacity-50' : ''}`}
         style={{ paddingLeft: `${depth * 20 + 8}px` }}
         onClick={() => hasChildren && setExpanded(!expanded)}
       >
@@ -41,7 +34,7 @@ export default function TreeNode({ node, depth = 0, defaultExpanded }: Props) {
           <div className="w-4" />
         )}
 
-        <div className={`w-2 h-2 rounded-full ${TYPE_COLORS[node.type] ?? 'bg-gray-400 dark:bg-gray-500'}`} />
+        <div className={`w-2 h-2 rounded-full ${getPoolTypeColor(node.type)}`} />
 
         <span className="font-medium text-gray-900 dark:text-gray-100">{node.name}</span>
         <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded font-mono text-gray-600 dark:text-gray-300">

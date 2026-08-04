@@ -89,12 +89,13 @@ There are no brand webfonts — type is the system stack (`--font-sans`), with
 
 ## Product idiom
 
-- CIDRs render monospace next to a colored type dot. `getPoolTypeColor` drives
-  it: supernet/root=`bg-purple-500`, region=`bg-blue-500`,
-  environment=`bg-green-500`, vpc/account=`bg-amber-500`,
-  subnet=`bg-orange-500`, unknown=`bg-gray-400`. (The Schema Wizard's `TreeNode`
-  keeps its own near-identical map that greys out subnets — match whichever
-  surface you're building alongside.)
+- CIDRs render monospace next to a colored type dot. `POOL_TYPES` in
+  `src/utils/poolTypes.ts` is the single source: supernet=`bg-purple-500`,
+  region=`bg-blue-500`, environment=`bg-green-500`, vpc=`bg-amber-500`,
+  subnet=`bg-orange-500`. Grey (`bg-gray-400`) is reserved for an unrecognised
+  type and must never be used for a known one. `getPoolTypeColor` and the Schema
+  Wizard's `TreeNode` both read that map, so every surface agrees; `TreeNode`
+  dims a subnet row with `opacity-50` rather than changing its hue.
 - Utilization is a bar plus a percentage; it turns red as a pool fills.
 - `StatusBadge` is the one labeling primitive — `variant` picks the vocabulary
   (`status` / `provider` / `tier` / `action` / `type`), so use it instead of

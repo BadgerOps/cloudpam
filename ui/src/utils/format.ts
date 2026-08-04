@@ -1,3 +1,5 @@
+import { poolTypeDot } from './poolTypes'
+
 export function formatHostCount(count: number): string {
   if (count >= 1000000) return (count / 1000000).toFixed(1) + 'M'
   if (count >= 1000) return (count / 1000).toFixed(1) + 'K'
@@ -29,16 +31,7 @@ export function formatTimeAgo(timestamp: string): string {
 }
 
 export function getPoolTypeColor(type: string): string {
-  const colors: Record<string, string> = {
-    supernet: 'bg-purple-500',
-    root: 'bg-purple-500',
-    region: 'bg-blue-500',
-    environment: 'bg-green-500',
-    vpc: 'bg-amber-500',
-    subnet: 'bg-orange-500',
-    account: 'bg-amber-500',
-  }
-  return colors[type] || 'bg-gray-400'
+  return poolTypeDot(type)
 }
 
 export function getUtilizationColor(util: number): string {
@@ -77,6 +70,13 @@ export function getStatusBadgeClass(status: string): string {
     running: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
     pending: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
     failed: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    // locked/disabled/revoked/idle: account & key lifecycle vocabulary. 'idle' here
+    // is NOT the self-upgrade "idle" (UpdatesPage) — that's the normal at-rest
+    // state, where this amber would misread as attention-needed.
+    locked: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
+    disabled: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    revoked: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    idle: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
   }
   return classes[status] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
 }

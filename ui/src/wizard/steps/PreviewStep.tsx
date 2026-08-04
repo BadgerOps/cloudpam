@@ -3,6 +3,7 @@ import type { SchemaNode } from '../utils/cidr'
 import { hostCount, formatHostCount, countLeafNodes } from '../utils/cidr'
 import type { SchemaConflict } from '../../api/types'
 import TreeNode from '../components/TreeNode'
+import { POOL_TYPES } from '../../utils/poolTypes'
 
 interface Props {
   schema: SchemaNode
@@ -78,11 +79,12 @@ export default function PreviewStep({ schema, conflicts, conflictsLoading, confl
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between">
           <h3 className="font-medium text-gray-900 dark:text-gray-100">Address Space Hierarchy</h3>
-          <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-purple-500" /> Root</span>
-            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-blue-500" /> Region</span>
-            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-green-500" /> Environment</span>
-            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-amber-500" /> Account</span>
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+            {POOL_TYPES.map((t) => (
+              <span key={t.id} className="flex items-center gap-1">
+                <div className={`w-2 h-2 rounded-full ${t.dot}`} /> {t.label}
+              </span>
+            ))}
           </div>
         </div>
         <div className="p-4 max-h-96 overflow-auto font-mono text-sm">
