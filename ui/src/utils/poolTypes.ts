@@ -25,8 +25,8 @@ export const POOL_TYPES: readonly PoolTypeMeta[] = [
   { id: 'subnet', label: 'Subnet', dot: 'bg-orange-500' },
 ]
 
-const BY_ID = new Map(POOL_TYPES.map((t) => [t.id, t]))
+const BY_ID = new Map<string, PoolTypeMeta>(POOL_TYPES.map((t) => [t.id, t]))
 
 export function poolTypeDot(type: string): string {
-  return BY_ID.get(type as PoolType)?.dot ?? UNKNOWN_POOL_TYPE_DOT
+  return BY_ID.get(type)?.dot ?? UNKNOWN_POOL_TYPE_DOT
 }

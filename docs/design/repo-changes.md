@@ -276,6 +276,21 @@ Until this lands, the Users pane in the template renders those three states with
 literal styles matching these exact values — swap them back to `<StatusBadge>` after the
 sync.
 
+**Correction to the spec:** the claim above that these four fall through to grey "in the
+live UI" is false — verified during the final review of Plan A. `getStatusBadgeClass` has
+exactly one call site, `StatusBadge.tsx:32` (the `variant === 'status'` default case), and
+nothing in the app currently passes it `locked`/`disabled`/`revoked`/`idle`. The surfaces
+that actually render these statuses today hand-roll their own pills instead of going
+through `StatusBadge`: `UsersAdminPanel.tsx:309-321` (Locked/Active/Disabled) and
+`ApiKeysPage.tsx:91-106` (Revoked/Expired/Expiring/No expiry/Active). So there is no live
+defect to fix — the four entries are still correct to add (Plan C routes these surfaces
+through `StatusBadge`), just pre-wiring rather than a fix. One follow-on detail for that
+port: the hand-rolled pills use `dark:bg-amber-900/30`, while `getStatusBadgeClass` (in
+`ui/src/utils/format.ts` — the `badges.ts` path above is stale; see the correction note in
+`docs/superpowers/plans/2026-08-04-pool-type-color-and-status-badges.md`) uses
+`dark:bg-amber-900` with no opacity suffix, so swapping them in is a visible color delta,
+not a no-op.
+
 ---
 
 ## 4. Extract the config primitives

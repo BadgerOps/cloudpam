@@ -13,8 +13,8 @@ const schema: SchemaNode = {
 }
 
 describe('PreviewStep legend', () => {
-  it('lists every legend-visible pool type', () => {
-    render(
+  it('lists every legend-visible pool type with its assigned color', () => {
+    const { container } = render(
       <PreviewStep
         schema={schema}
         conflicts={[]}
@@ -25,6 +25,7 @@ describe('PreviewStep legend', () => {
     )
     for (const t of POOL_TYPES) {
       expect(screen.getByText(t.label)).toBeTruthy()
+      expect(container.querySelector('.' + t.dot)).toBeTruthy()
     }
   })
 

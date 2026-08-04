@@ -79,7 +79,7 @@ export default function PreviewStep({ schema, conflicts, conflictsLoading, confl
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-50 dark:bg-gray-800 px-4 py-3 border-b dark:border-gray-700 flex items-center justify-between">
           <h3 className="font-medium text-gray-900 dark:text-gray-100">Address Space Hierarchy</h3>
-          <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
             {POOL_TYPES.map((t) => (
               <span key={t.id} className="flex items-center gap-1">
                 <div className={`w-2 h-2 rounded-full ${t.dot}`} /> {t.label}
