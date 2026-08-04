@@ -22,7 +22,7 @@ export default function StatusBadge({ label, variant = 'status' }: StatusBadgePr
     case 'type': {
       const dot = getPoolTypeColor(label)
       return (
-        <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600">
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
           <span className={`w-2 h-2 rounded-full ${dot}`} />
           {label}
         </span>
