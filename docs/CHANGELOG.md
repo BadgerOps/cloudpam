@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.23.2] - 2026-08-04
+
+### Changed
+- Pool-type colour now has a single source of truth. `ui/src/utils/poolTypes.ts` owns the id → label → dot mapping for the five types the API accepts (`supernet`, `region`, `environment`, `vpc`, `subnet`), and `getPoolTypeColor`, the pool tree, the Schema Planner legend and every pool-type dropdown read from it. Previously `getPoolTypeColor` and a private `TYPE_COLORS` map inside the wizard's `TreeNode` each kept their own literal table, so the same pool could render purple in the pool tree and grey in the Schema Planner. Adding a sixth type to `internal/domain/types.go` is now one frontend edit instead of six.
+- The four pool-type `<select>` lists (create pool, edit pool, edit block, and create-pool-from-discovered-resource) are generated from that constant rather than restating the five types by hand. **Behaviour change:** the discovery resource-link dialog listed its types narrowest-first (VPC → Supernet) and now uses the same broad-to-narrow order as everywhere else. The pre-selected value is still derived from the discovered resource, so only the ordering moves.
+- `getStatusBadgeClass` recognises `locked`, `disabled`, `revoked` and `idle`, which previously fell through to the grey default. **This is vocabulary, not a visible fix:** no surface currently passes those statuses through `StatusBadge`. The account and API-key tables render their own hand-rolled pills (`UsersAdminPanel`, `ApiKeysPage`), and routing them through the shared badge is separate work. Note for whoever does it: the hand-rolled pills use `dark:bg-amber-900/30` where `getStatusBadgeClass` uses `dark:bg-amber-900`, so the swap is a visible delta rather than a no-op.
+- The six oldest screenshots under `photos/` are stored as Git LFS objects. `.gitattributes` has always declared `photos/**/*.png` as LFS-tracked, but those six predated it and were committed as plain git blobs, so git compared a clean-filter pointer against a raw blob and reported all six as modified in **every** clean checkout — enough to block a rebase, and enough to make `git add -A` silently replace the screenshots with 131-byte pointers. Re-added through the filter with byte-identical content. History is deliberately not rewritten, so the repository does not shrink.
+
+### Fixed
+- The Schema Planner legend listed *Root* and *Account* and omitted *Supernet* and *Subnet*. Neither `root` nor `account` is a pool type — the first is a node id in the schema generator, the second a search-result kind — so the legend named two things the system cannot produce while hiding two it can. It now renders all five real types.
+- Subnets in the Schema Planner tree are de-emphasised by dimming the row instead of recolouring their dot grey. Grey had come to mean both "subnet" and "unrecognised type", so an unknown type was indistinguishable from a known one; it now means only the latter.
+- The users and API keys tables had no dark-mode row hover at all. Both used `dark:hover:bg-gray-750`, and `gray-750` is not a Tailwind colour, so the class compiled to nothing.
+- Pool-type labels rendered by `StatusBadge` are legible in dark mode. The type variant set `text-gray-600` with no `dark:` pairing, so the label sat at low contrast on a dark surface while the coloured dot beside it stayed vivid.
+
 ## [0.23.1] - 2026-08-02
 
 ### Changed
