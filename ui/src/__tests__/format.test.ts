@@ -128,4 +128,19 @@ describe('color helpers', () => {
     expect(getActionBadgeClass('update')).toContain('blue')
     expect(getActionBadgeClass('delete')).toContain('red')
   })
+
+  it('getStatusBadgeClass colors account lifecycle states distinctly', () => {
+    expect(getStatusBadgeClass('locked')).toContain('amber')
+    expect(getStatusBadgeClass('disabled')).toContain('red')
+    expect(getStatusBadgeClass('revoked')).toContain('red')
+    expect(getStatusBadgeClass('idle')).toContain('amber')
+  })
+
+  it('getStatusBadgeClass no longer greys out known account states', () => {
+    // Regression: a locked account and a planned pool rendered identically.
+    const grey = getStatusBadgeClass('some-unknown-status')
+    for (const s of ['locked', 'disabled', 'revoked', 'idle']) {
+      expect(getStatusBadgeClass(s)).not.toBe(grey)
+    }
+  })
 })

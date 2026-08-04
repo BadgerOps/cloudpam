@@ -70,6 +70,10 @@ export function getStatusBadgeClass(status: string): string {
     running: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300',
     pending: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
     failed: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    locked: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
+    disabled: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    revoked: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    idle: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
   }
   return classes[status] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
 }
