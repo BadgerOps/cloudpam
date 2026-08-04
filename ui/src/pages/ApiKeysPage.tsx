@@ -273,7 +273,7 @@ export default function ApiKeysPage() {
               </tr>
             ) : (
               keys.map(k => (
-                <tr key={k.id} className="border-b dark:border-gray-700 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-750">
+                <tr key={k.id} className="border-b dark:border-gray-700 last:border-0 hover:bg-gray-50 dark:hover:bg-gray-700">
                   <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{k.name}</td>
                   <td className="px-4 py-3 font-mono text-gray-600 dark:text-gray-400">{k.prefix}...</td>
                   <td className="hidden md:table-cell px-4 py-3">
