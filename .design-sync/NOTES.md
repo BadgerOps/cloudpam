@@ -103,6 +103,24 @@ All six `[GRID_OVERFLOW]` warns were resolved via `cfg.overrides` (`cardMode`
 ImportExportModal, SearchModal; `column` for the wide SchemaPlanner and
 TreeNode). A re-sync should see **zero** warns — anything new is genuinely new.
 
+## Conventions-header validation
+
+Re-validating `conventions.md` against a fresh build flags **`MemoryRouter`** as
+"not a component and not a bundle export". That is expected and correct as
+written: it ships inside the bundle (used internally by `DSPreviewProvider`) but
+is deliberately *not* on `window.CloudPAM`, and the header only mentions it
+descriptively. Don't "fix" it by exporting it. A `---` hit for a token is just a
+markdown table separator.
+
+**Known false positives in any naive validator** — all three verify fine when
+checked properly, so don't "fix" the conventions file for them:
+
+| Flag | Why it's spurious |
+|---|---|
+| `MemoryRouter` | in the bundle, intentionally not an export (above) |
+| `---` | a markdown table separator, not a `--token` |
+| `gap-1.5` | Tailwind escapes the dot, so it ships as `.gap-1\.5`; a `includes("." + cls)` check misses it. Any arbitrary-value or decimal class (`h-[28rem]`, `gap-1.5`) has the same problem — match against the escaped form. |
+
 ## Deliberately not covered
 
 - `SearchModal` results require typing (300ms debounce) — not statically

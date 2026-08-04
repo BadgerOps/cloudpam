@@ -233,7 +233,7 @@ The storage layer uses build tags to switch between implementations:
 |---------|---------|--------|
 | `internal/auth` | Authentication, RBAC, users, sessions | Implemented |
 | `internal/audit` | Audit logging | Implemented |
-| `internal/discovery` | Cloud resource discovery (Collector, SyncService, AWS Org) | Implemented (AWS single + org) |
+| `internal/discovery` | Cloud resource discovery (Collector, SyncService, AWS Org, GCP, drift) | Implemented (AWS single + org, GCP; **no Azure collector**) |
 | `internal/observability` | Logging, metrics, OpenTelemetry tracing (opt-in, OTLP/HTTP) | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
@@ -679,6 +679,12 @@ cloudpam/
 │   │   ├── settings_memory.go   # In-memory SettingsStore
 │   │   ├── oidc.go              # OIDCProviderStore interface
 │   │   ├── oidc_memory.go       # In-memory OIDCProviderStore
+│   │   ├── drift.go / drift_memory.go             # DriftStore
+│   │   ├── network.go / network_memory.go         # NetworkObject + relationship store
+│   │   ├── conversations.go / conversations_memory.go # AI planning sessions
+│   │   ├── utilization.go / utilization_memory.go # Pool utilization
+│   │   ├── clone.go        # Deep-copy helpers
+│   │   ├── interfaces.go   # Shared store interfaces
 │   │   ├── errors.go       # Sentinel errors (ErrNotFound, etc.)
 │   │   ├── sqlite/         # SQLite implementation
 │   │   │   ├── sqlite.go
@@ -692,6 +698,9 @@ cloudpam/
 │   │       └── migrator.go
 │   ├── discovery/          # Cloud resource discovery
 │   │   ├── collector.go    # Collector interface + SyncService
+│   │   ├── drift.go        # Drift detection (discovered vs managed)
+│   │   ├── gcp/            # GCP collector
+│   │   │   └── collector.go
 │   │   └── aws/            # AWS collector (VPCs, subnets, EIPs)
 │   │       ├── collector.go
 │   │       ├── org.go          # ListOrgAccounts (AWS Organizations)
@@ -710,6 +719,7 @@ cloudpam/
 │   ├── audit/              # Audit logging
 │   ├── cidr/               # Reusable CIDR math utilities
 │   ├── validation/         # Input validation
+│   ├── testutil/           # Shared test helpers
 │   ├── planning/           # Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations)
 │   │   └── llm/            # LLM provider abstraction (OpenAI-compatible)
 │   ├── observability/      # Logging, metrics, tracing
@@ -788,9 +798,13 @@ See `IMPLEMENTATION_ROADMAP.md` for the detailed 20-week plan. Summary:
 ### Remaining Work
 
 **Phase 2 gaps (Cloud Integration):**
-- GCP discovery collector
-- Azure discovery collector
+- ~~GCP discovery collector~~ ✅ implemented (`internal/discovery/gcp/collector.go`, wired in `cmd/cloudpam/main.go`)
+- Azure discovery collector — **still missing** (`internal/discovery/` has `aws/` and `gcp/` only)
 - ~~Drift detection (discovered vs managed state)~~ ✅ implemented (`internal/api/drift_handlers.go`, migration `0018`, `DriftPage`)
+
+**IPv4 only.** `internal/validation/validation.go` exports `ErrIPv6NotSupported` and
+rejects any non-`Is4()` prefix; `internal/cidr/` and `internal/api/cidr.go` assume IPv4
+throughout. Dual-stack IPAM is a substantial unbuilt workstream, not a config flag.
 
 **Phase 5 (Enterprise):**
 - Multi-tenancy enforcement (schema exists, not enforced)
