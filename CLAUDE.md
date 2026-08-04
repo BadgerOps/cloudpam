@@ -17,7 +17,12 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 The project is in **Phase 5** of a 5-phase, 20-week roadmap. See `IMPLEMENTATION_ROADMAP.md` for the complete plan.
 
-**Current State** (Sprint 20 complete):
+**Current State** (Sprint 20 complete; further work has landed since — drift detection, network objects/relationships, custom roles, and self-upgrade are all implemented and are NOT reflected in the sprint numbering below):
+- Self-upgrade: release check, in-place upgrade, progress polling (`update_handlers.go`, `UpdatesPage`)
+- Network objects & relationships with conflict detection (`network_handlers.go`, migration `0021`)
+- Custom roles + permission catalog (`role_handlers.go`, migration `0020`)
+- Drift detection: discovered vs managed state (`drift_handlers.go`, migration `0018`)
+- Account lockout (migration `0019`)
 - SSO/OIDC: generic OIDC provider integration, JIT user provisioning, role mapping, silent session re-auth, client secret encryption, local auth toggle, provider management UI (Sprint 20)
 - Auth hardening: auth-always default, CSRF protection, password policy (NIST 800-63B), session limits, login rate limiting, trusted proxies, security settings UI, API key scope elevation prevention (Sprint 19)
 - AI Planning: LLM-powered conversational planning with SSE streaming, plan generation and apply (Sprints 17-18)
@@ -213,7 +218,7 @@ The storage layer uses build tags to switch between implementations:
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
-  - Current migrations: `0001_init.sql` through `0017_oidc_providers.sql`
+  - Current migrations: `0001_init.sql` through `0021_network_objects_relationships.sql` (21 files; new work starts at `0022`)
 
 - **PostgreSQL Support** (`-tags postgres`)
   - Production-grade database with native CIDR operations
@@ -228,7 +233,7 @@ The storage layer uses build tags to switch between implementations:
 |---------|---------|--------|
 | `internal/auth` | Authentication, RBAC, users, sessions | Implemented |
 | `internal/audit` | Audit logging | Implemented |
-| `internal/discovery` | Cloud resource discovery (Collector, SyncService, AWS Org) | Implemented (AWS single + org) |
+| `internal/discovery` | Cloud resource discovery (Collector, SyncService, AWS Org, GCP, drift) | Implemented (AWS single + org, GCP; **no Azure collector**) |
 | `internal/observability` | Logging, metrics, OpenTelemetry tracing (opt-in, OTLP/HTTP) | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
@@ -270,6 +275,21 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/settings/oidc/providers` - OIDC provider admin CRUD (GET/POST)
   - `/api/v1/settings/oidc/providers/{id}` - OIDC provider admin (GET/PATCH/DELETE)
   - `/api/v1/settings/oidc/providers/{id}/test` - test OIDC provider connection (POST)
+  - `/api/v1/auth/roles` - list/create custom roles (GET/POST)
+  - `/api/v1/auth/roles/{name}` - role get/update/delete (GET/PATCH/DELETE)
+  - `/api/v1/auth/permissions` - permission catalog (GET)
+  - `/api/v1/drift` - list drift items (GET)
+  - `/api/v1/drift/detect` - run drift detection (POST)
+  - `/api/v1/drift/{id}` - drift item detail + resolution (GET/POST)
+  - `/api/v1/network/flat` - flat network view (GET)
+  - `/api/v1/network/hierarchy` - hierarchical network view (GET)
+  - `/api/v1/network/merged` - merged managed + discovered view (GET)
+  - `/api/v1/network/conflicts` - overlapping-CIDR conflicts (GET)
+  - `/api/v1/network/objects` - network object CRUD (GET/POST/PATCH)
+  - `/api/v1/network/relationships` - relationship CRUD (GET/POST)
+  - `/api/v1/updates` - check for a new release (GET)
+  - `/api/v1/updates/upgrade` - trigger self-upgrade (POST)
+  - `/api/v1/updates/status` - upgrade progress (GET), acknowledge (POST `/ack`)
   - `/api/v1/search` - unified search with CIDR containment queries
   - `/api/v1/discovery/resources` - list discovered cloud resources (filterable)
   - `/api/v1/discovery/resources/{id}` - get single discovered resource
@@ -388,11 +408,11 @@ When adding endpoints:
 ### Frontend Development
 
 - Unified React/Vite/TypeScript SPA in `ui/` directory
-- Uses `react-router-dom` for client-side routing with 7 page routes
+- Uses `react-router-dom` for client-side routing (21 page components in `ui/src/pages/`)
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` (usePools, useAccounts, useBlocks, useAudit, useDiscovery, useAuth, useToast, useRecommendations, useOIDCProviders, useOIDCAdmin, useSessionRefresh)
+- API hooks in `ui/src/hooks/` — 23 hooks: useAIPlanner, useAccounts, useApiKeys, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useNetwork, useOIDCAdmin, useOIDCProviders, usePendingAction, usePools, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)
@@ -638,6 +658,13 @@ cloudpam/
 │   │   ├── recommendation_handlers.go # Recommendation API (generate, apply, dismiss)
 │   │   ├── ai_handlers.go       # AI Planning API (chat, sessions, plan apply)
 │   │   ├── oidc_handlers.go     # OIDC login/callback/refresh + admin CRUD
+│   │   ├── role_handlers.go       # Custom roles + permission catalog
+│   │   ├── drift_handlers.go      # Drift detection (discovered vs managed)
+│   │   ├── network_handlers.go    # Network objects, relationships, conflicts
+│   │   ├── update_handlers.go     # Release check + self-upgrade
+│   │   ├── analysis_handlers.go   # Analysis engine API
+│   │   ├── search_handlers.go     # Unified search
+│   │   └── bootstrap_handlers.go  # First-boot setup
 │   │   ├── middleware.go   # Middleware (logging, auth, rate limit, trusted proxies)
 │   │   ├── context.go      # Request context helpers
 │   │   ├── cidr.go         # IPv4 CIDR validation utilities
@@ -652,6 +679,12 @@ cloudpam/
 │   │   ├── settings_memory.go   # In-memory SettingsStore
 │   │   ├── oidc.go              # OIDCProviderStore interface
 │   │   ├── oidc_memory.go       # In-memory OIDCProviderStore
+│   │   ├── drift.go / drift_memory.go             # DriftStore
+│   │   ├── network.go / network_memory.go         # NetworkObject + relationship store
+│   │   ├── conversations.go / conversations_memory.go # AI planning sessions
+│   │   ├── utilization.go / utilization_memory.go # Pool utilization
+│   │   ├── clone.go        # Deep-copy helpers
+│   │   ├── interfaces.go   # Shared store interfaces
 │   │   ├── errors.go       # Sentinel errors (ErrNotFound, etc.)
 │   │   ├── sqlite/         # SQLite implementation
 │   │   │   ├── sqlite.go
@@ -665,6 +698,9 @@ cloudpam/
 │   │       └── migrator.go
 │   ├── discovery/          # Cloud resource discovery
 │   │   ├── collector.go    # Collector interface + SyncService
+│   │   ├── drift.go        # Drift detection (discovered vs managed)
+│   │   ├── gcp/            # GCP collector
+│   │   │   └── collector.go
 │   │   └── aws/            # AWS collector (VPCs, subnets, EIPs)
 │   │       ├── collector.go
 │   │       ├── org.go          # ListOrgAccounts (AWS Organizations)
@@ -683,17 +719,22 @@ cloudpam/
 │   ├── audit/              # Audit logging
 │   ├── cidr/               # Reusable CIDR math utilities
 │   ├── validation/         # Input validation
+│   ├── testutil/           # Shared test helpers
 │   ├── planning/           # Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations)
 │   │   └── llm/            # LLM provider abstraction (OpenAI-compatible)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0017)
+├── migrations/             # SQL migrations (0001-0021)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
 │   ├── ...
 │   ├── 0008_discovered_resources.sql  # Discovery tables
 │   ├── 0017_oidc_providers.sql        # OIDC providers + user OIDC columns
+│   ├── 0018_drift_items.sql           # Drift detection items
+│   ├── 0019_account_lockout.sql       # Account lockout state
+│   ├── 0020_rbac_permission_catalog.sql # Custom roles + permission catalog
+│   ├── 0021_network_objects_relationships.sql # Network objects + relationships
 │   └── postgres/           # PostgreSQL migrations
 ├── deploy/                 # Deployment configurations
 │   ├── terraform/aws-org-discovery/  # AWS Organizations discovery IAM
@@ -757,9 +798,13 @@ See `IMPLEMENTATION_ROADMAP.md` for the detailed 20-week plan. Summary:
 ### Remaining Work
 
 **Phase 2 gaps (Cloud Integration):**
-- GCP discovery collector
-- Azure discovery collector
-- Drift detection (discovered vs managed state)
+- ~~GCP discovery collector~~ ✅ implemented (`internal/discovery/gcp/collector.go`, wired in `cmd/cloudpam/main.go`)
+- Azure discovery collector — **still missing** (`internal/discovery/` has `aws/` and `gcp/` only)
+- ~~Drift detection (discovered vs managed state)~~ ✅ implemented (`internal/api/drift_handlers.go`, migration `0018`, `DriftPage`)
+
+**IPv4 only.** `internal/validation/validation.go` exports `ErrIPv6NotSupported` and
+rejects any non-`Is4()` prefix; `internal/cidr/` and `internal/api/cidr.go` assume IPv4
+throughout. Dual-stack IPAM is a substantial unbuilt workstream, not a config flag.
 
 **Phase 5 (Enterprise):**
 - Multi-tenancy enforcement (schema exists, not enforced)
@@ -771,7 +816,7 @@ See `IMPLEMENTATION_ROADMAP.md` for the detailed 20-week plan. Summary:
 
 When implementing new features, follow this order:
 1. Open GitHub issues (check `gh issue list`)
-2. Phase 2 gaps (GCP/Azure discovery, drift detection)
+2. Phase 2 gaps (GCP/Azure discovery)
 3. Phase 5 enterprise features (multi-tenancy, SSO)
 
 ## Additional Documentation
