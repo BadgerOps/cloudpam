@@ -7,6 +7,7 @@ import PoolDetailPanel from '../components/PoolDetailPanel'
 import StatusBadge from '../components/StatusBadge'
 import type { Pool, PoolWithStats, CreatePoolRequest, UpdatePoolRequest, PoolType, PoolStatus } from '../api/types'
 import { formatHostCount, getHostCount, formatTimeAgo } from '../utils/format'
+import { POOL_TYPES } from '../utils/poolTypes'
 import { get } from '../api/client'
 
 type PoolFormErrors = {
@@ -245,11 +246,7 @@ export default function PoolsPage() {
                   onChange={e => updateCreateField('type', e.target.value as PoolType)}
                   className={fieldClass(false)}
                 >
-                  <option value="supernet">Supernet</option>
-                  <option value="region">Region</option>
-                  <option value="environment">Environment</option>
-                  <option value="vpc">VPC</option>
-                  <option value="subnet">Subnet</option>
+                  {POOL_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
                 </select>
               </div>
               <div>
@@ -535,11 +532,7 @@ function EditPoolModal({
                 onChange={e => { setType(e.target.value as PoolType); setFormError(null) }}
                 className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
               >
-                <option value="supernet">Supernet</option>
-                <option value="region">Region</option>
-                <option value="environment">Environment</option>
-                <option value="vpc">VPC</option>
-                <option value="subnet">Subnet</option>
+                {POOL_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
             </div>
             <div>
