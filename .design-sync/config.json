@@ -1,0 +1,53 @@
+{
+  "projectId": "3bcc26aa-5738-4d21-af57-ba0b81e8d1cc",
+  "shape": "package",
+  "pkg": "cloudpam-ui",
+  "globalName": "CloudPAM",
+  "buildCmd": "npm run build && mkdir -p .ds-css && cp ../web/dist/assets/index-*.css .ds-css/compiled.css && npx tsc -p tsconfig.dts.json",
+  "srcDir": "src",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": ".ds-css/compiled.css",
+  "docsDir": "../../../.design-sync/docs",
+  "readmeHeader": ".design-sync/conventions.md",
+  "extraEntries": ["../../../.design-sync/preview-provider.tsx"],
+  "provider": {
+    "component": "DSPreviewProvider"
+  },
+  "overrides": {
+    "Sidebar": {
+      "viewport": "900x1080"
+    },
+    "ToastContainer": {
+      "cardMode": "single",
+      "primaryStory": "Stacked"
+    },
+    "DiscoveryWizard": {
+      "cardMode": "single",
+      "primaryStory": "AccountSelection"
+    },
+    "ImportExportModal": {
+      "cardMode": "single",
+      "primaryStory": "Open"
+    },
+    "SearchModal": {
+      "cardMode": "single",
+      "primaryStory": "Open"
+    },
+    "SchemaPlanner": {
+      "cardMode": "column"
+    },
+    "TreeNode": {
+      "cardMode": "column"
+    }
+  },
+  "dtsPropsFor": {
+    "TemplateStep": "selectedBlueprint: Blueprint | null; setSelectedBlueprint: (bp: Blueprint) => void; customCidr: string; setCustomCidr: (cidr: string) => void;",
+    "DimensionsStep": "dimensions: { regions: string[]; environments: string[]; accountTiers: string[]; accountsPerEnv: number; growthYears: number }; setDimensions: React.Dispatch<React.SetStateAction<{ regions: string[]; environments: string[]; accountTiers: string[]; accountsPerEnv: number; growthYears: number }>>; strategy: string;",
+    "StrategyStep": "strategy: string; setStrategy: (s: string) => void;",
+    "PreviewStep": "schema: SchemaNode; conflicts: SchemaConflict[]; conflictsLoading: boolean; conflictsError: string | null; onExport: (format: 'csv' | 'terraform') => void;",
+    "TreeNode": "node: SchemaNode; depth?: number; defaultExpanded?: Set<string>;"
+  },
+  "libOverrides": {
+    "source-kit.mjs": "components are all `export default function <Name>`, which `export * from` drops from the synth entry"
+  }
+}
