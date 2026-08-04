@@ -95,7 +95,10 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
         root.children.push(envNode)
       })
     } else {
-      // account-first
+      // account-first. Each block is one account's allocation, so the names say
+      // "account" while the type says 'vpc': 'account' is a search-result kind,
+      // not a pool type, and only POOL_TYPES ids render with a colour. The
+      // region-first branch above does the same thing with tier-based names.
       const accountBlocks = subdivide(rootCidr, 16)
       const totalAccounts = dimensions.environments.length * dimensions.accountsPerEnv
       for (let ai = 0; ai < Math.min(totalAccounts, accountBlocks.length); ai++) {

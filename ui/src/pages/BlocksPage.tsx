@@ -7,6 +7,7 @@ import { useToast } from '../hooks/useToast'
 import { get, patch, del } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import { formatHostCount, getHostCount } from '../utils/format'
+import { POOL_TYPES } from '../utils/poolTypes'
 import type { Block, Pool, PoolType, PoolStatus, UpdatePoolRequest } from '../api/types'
 
 export default function BlocksPage() {
@@ -410,17 +411,14 @@ function EditBlockModal({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
+              <label htmlFor="edit-block-type" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
               <select
+                id="edit-block-type"
                 value={type}
                 onChange={e => setType(e.target.value)}
                 className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
               >
-                <option value="supernet">Supernet</option>
-                <option value="region">Region</option>
-                <option value="environment">Environment</option>
-                <option value="vpc">VPC</option>
-                <option value="subnet">Subnet</option>
+                {POOL_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
               </select>
             </div>
             <div>

@@ -138,13 +138,16 @@ them in the meantime.
 
 ## Git LFS
 
-`.gitattributes` declares `photos/**/*.png` as LFS-tracked, but the PNGs currently in
-history were committed as plain git blobs and never migrated (`git lfs ls-files` returns
-nothing). Two consequences:
+`.gitattributes` declares `photos/**/*.png` as LFS-tracked, and every PNG under `photos/`
+now is one — `git lfs ls-files` lists all of them.
 
-- Every file under `photos/` shows as modified in a clean checkout, because git runs the
-  LFS clean filter over the working file and compares a pointer against a raw blob.
-- Newly added PNGs *are* stored as LFS pointers, so `photos/` ends up half-LFS.
+Six of them (`accounts`, `analytics`, `blocks`, `bulk-actions-pools`, `pools`,
+`visualization`) predate that and had been committed as plain git blobs, which left
+`photos/` half-LFS and made those six show as modified in every clean checkout: git ran
+the LFS clean filter over the working file and compared the resulting pointer against a
+raw blob. They were re-added through the filter, so the pointers and the pixels are
+unchanged — the same bytes, stored the way `.gitattributes` always said they were.
 
-Migrating the existing files (`git lfs migrate import --include='photos/**/*.png'`) or
-dropping the LFS rules would fix this; it is out of scope for screenshot changes.
+History was deliberately **not** rewritten. `git lfs migrate import` would have rewritten
+every commit that touched `photos/`, which is not worth it for a fixed working tree; the
+original blobs stay reachable in old commits, so the repository does not shrink.

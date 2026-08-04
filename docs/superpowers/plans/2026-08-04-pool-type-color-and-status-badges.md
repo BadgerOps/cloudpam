@@ -607,7 +607,9 @@ nix develop --command node .ds-sync/resync.mjs --config .design-sync/config.json
   --remote .design-sync/.cache/remote-sync.json
 ```
 
-Expected: the verdict JSON lists `TreeNode` and `PoolTree` under `verification.changed` (their render hashes moved), with `upload.any: true`.
+Expected: `ok: true` with `upload.any: true` (`bundle`, `styling` and `aux` all true), and `verification.changed` **empty**.
+
+> **Correction (recorded after running it).** This step originally expected `TreeNode` and `PoolTree` under `verification.changed`. That cannot happen: `renderHashFor` hashes only a component's own preview artifacts (`_preview/<Name>.js`, its `.css`, and the component's `.html` card). An app-source change lands in the shared `_ds_bundle.js` / `_ds_bundle.css`, which move `styleSha` and the bundle hash instead — the upload partition, not the per-component render hash. So an app-source-only re-sync uploads real changes while reporting no changed components, and `pendingGrade` stays empty because grades follow sources that did not move. An empty `changed` list here is success, not a failed sync.
 
 - [ ] **Step 3: Re-grade the changed previews**
 

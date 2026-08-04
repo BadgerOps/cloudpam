@@ -3,6 +3,7 @@ import { renderHook } from '@testing-library/react'
 import { useSchemaGenerator } from '../wizard/hooks/useSchemaGenerator'
 import type { Blueprint } from '../wizard/data/blueprints'
 import type { Dimensions } from '../wizard/steps/DimensionsStep'
+import { POOL_TYPES } from '../utils/poolTypes'
 
 const baseDimensions: Dimensions = {
   regions: ['us-east-1', 'us-west-2'],
@@ -136,4 +137,33 @@ describe('useSchemaGenerator', () => {
     const unique = new Set(cidrs)
     expect(unique.size).toBe(cidrs.length)
   })
+
+  it.each(['region-first', 'account-first'])(
+    'only emits real pool types in the %s strategy',
+    (strategy) => {
+      // The wizard models a per-account allocation as type 'vpc', because
+      // 'account' is a search-result kind and not a pool type -- the Schema
+      // Planner legend renders from POOL_TYPES, so a node carrying anything
+      // outside it would render as an unrecognised grey dot.
+      const { result } = renderHook(() =>
+        useSchemaGenerator({
+          selectedBlueprint: enterpriseBlueprint,
+          customCidr: '',
+          strategy,
+          dimensions: baseDimensions,
+        }),
+      )
+
+      const valid = new Set(POOL_TYPES.map((t) => t.id))
+      const seen: string[] = []
+      const collect = (node: typeof result.current) => {
+        seen.push(node.type)
+        node.children.forEach(collect)
+      }
+      collect(result.current)
+
+      expect(seen.length).toBeGreaterThan(1)
+      expect(seen.filter((t) => !valid.has(t as never))).toEqual([])
+    },
+  )
 })

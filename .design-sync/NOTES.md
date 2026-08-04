@@ -63,6 +63,15 @@ the hash-named `web/dist/assets/index-*.css`. Consequences:
   constraint is documented for the design agent in `conventions.md`.
 - No webfonts ship — type is the system stack, which is why there's no
   `[FONT_MISSING]`.
+- **`resync.mjs` does not run `buildCmd`, and reports `build: ok` anyway.** Its
+  build stage is `package-build` (the converter's own bundling). If
+  `ui/.ds-css/compiled.css` is missing, `package-build` falls back to a 73-byte
+  `/* @ds-css-runtime: no extracted CSS */` stub and the verdict still comes
+  back `ok: true` with every stage green — so an unstyled design system uploads
+  cleanly with nothing to warn you. **Run `buildCmd` yourself first** (the plan's
+  Task 7 Step 1 exists for this), then sanity-check
+  `ls -l ds-bundle/_ds_bundle.css`: real output is ~90 KB, and it should contain
+  a class you know you just changed.
 
 ## Preview provider
 

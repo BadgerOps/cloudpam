@@ -32,6 +32,7 @@ import { useToast } from '../hooks/useToast'
 import StatusBadge from '../components/StatusBadge'
 import DiscoveryWizard from '../components/DiscoveryWizard'
 import { formatTimeAgo } from '../utils/format'
+import { POOL_TYPES } from '../utils/poolTypes'
 import type {
   Account,
   CreatePoolRequest,
@@ -3696,11 +3697,7 @@ function ResourceLinkModal({
                     onChange={(e) => setPoolType(e.target.value as CreatePoolRequest['type'])}
                     className="w-full rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                   >
-                    <option value="vpc">VPC</option>
-                    <option value="subnet">Subnet</option>
-                    <option value="environment">Environment</option>
-                    <option value="region">Region</option>
-                    <option value="supernet">Supernet</option>
+                    {POOL_TYPES.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
                   </select>
                 </label>
                 <label className="block">
