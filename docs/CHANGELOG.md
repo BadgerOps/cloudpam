@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.23.3] - 2026-10-04
+
+### Security
+- Bumped `google.golang.org/grpc` from 1.82.1 to 1.83.2 in the Terraform provider module, resolving GHSA-2v4p-qf9q-27wj (crash on requests missing both `:authority` and `Host`), GHSA-vp52-pcj8-j9qc (memory exhaustion via HTTP/2 DATA frame fragmentation) and GHSA-qc2q-p7wx-3px3 (xDS RBAC header-matching bypass). The provider pulls gRPC in indirectly through the Terraform plugin SDK; the bump also carries the transitive `golang.org/x/crypto` 0.55.0, `golang.org/x/net` 0.58.0 and related `golang.org/x/*` updates.
+- Bumped `react-router` and `react-router-dom` from 7.16.0 to 7.18.4 in the UI lockfile, resolving the open react-router advisories fixed through 7.18.2.
+- Bumped `go.opentelemetry.io/otel`, `otel/sdk`, `otel/trace` and `otel/metric` from 1.44.0 to 1.45.0 in the server module, resolving the open `otel/sdk` advisory.
+- Bumped `vitest` and `@vitest/mocker` to 4.1.11 in the UI lockfile, resolving GHSA-82fw-gwwq-j7x9 (path traversal in the mocker redirect). Development-only: neither package ships in the built UI.
+
 ## [0.23.2] - 2026-08-04
 
 ### Changed
