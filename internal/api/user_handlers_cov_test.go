@@ -426,6 +426,39 @@ func TestChangePasswordCov(t *testing.T) {
 			t.Fatalf("admin-set password not stored: %v", err)
 		}
 	})
+
+	t.Run("oidc user cannot be given a local password", func(t *testing.T) {
+		sso := newUserCov(t, userStore, "u3", "jane", auth.RoleViewer, "Str0ngPassw0rd!x")
+		sso.AuthProvider = "oidc"
+		sso.OIDCIssuer = "https://idp.example.test/realms/corp"
+		if err := userStore.Update(t.Context(), sso); err != nil {
+			t.Fatalf("update user: %v", err)
+		}
+		cases := []struct {
+			name      string
+			body      string
+			principal *auth.User
+			role      auth.Role
+		}{
+			{"self with the right current password", `{"current_password":"Str0ngPassw0rd!x","new_password":"Bypass-The-IdP-123!"}`, sso, auth.RoleViewer},
+			{"admin", `{"new_password":"Bypass-The-IdP-123!"}`, nil, auth.RoleAdmin},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				rr := assertStatusCov(t, doUserReqCov(t, us, http.MethodPatch, path(sso.ID), tc.body, tc.principal, tc.role), http.StatusBadRequest)
+				if e := decodeErrCov(t, rr); e.Error != "password is managed by the identity provider" {
+					t.Fatalf("error = %q", e.Error)
+				}
+				stored, err := userStore.GetByID(t.Context(), sso.ID)
+				if err != nil {
+					t.Fatalf("get user: %v", err)
+				}
+				if err := auth.VerifyPassword("Bypass-The-IdP-123!", stored.PasswordHash); err == nil {
+					t.Fatal("a local password was stored on an oidc account")
+				}
+			})
+		}
+	})
 }
 
 // --- revoke sessions / unlock ---
