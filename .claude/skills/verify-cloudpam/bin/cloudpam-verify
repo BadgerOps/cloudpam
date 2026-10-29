@@ -2,7 +2,7 @@
 # cloudpam-verify: launch, inspect, drive and tear down a disposable CloudPAM instance.
 #
 #   cloudpam-verify launch                      build UI + sqlite server, start on a free port, setup admin, login, seed
-#   cloudpam-verify doctor                      read-only: is the current run worth driving?
+#   cloudpam-verify doctor                      health check: is the current run worth driving?
 #   cloudpam-verify api [--save NAME] METHOD PATH [JSON]
 #                                               authenticated request (session cookie + CSRF); prints status and body
 #   cloudpam-verify browser JOURNEY.cjs [--label NAME]
@@ -28,7 +28,6 @@ VERIFY_OIDC_KEY="000000000000000000000000000000000000000000000000000000000000000
 log() { printf '[cloudpam-verify] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
-# Run a command inside the repo's Nix dev shell (CLAUDE.md: always use nix develop).
 nixrun() {
   if [ -n "${IN_NIX_SHELL:-}" ]; then
     bash -c "$1"
@@ -78,7 +77,6 @@ csrf_token() {
   awk '$6=="csrf_token"{print $7}' "$COOKIES" 2>/dev/null | tail -n1
 }
 
-# http METHOD PATH [JSON] -> sets HTTP_STATUS and HTTP_BODY, using the run's cookie jar + CSRF header.
 http() {
   local method="$1" path="$2" body="${3:-}"
   local tmp; tmp="$(mktemp)"
@@ -96,12 +94,19 @@ http() {
   HTTP_STATUS="$(curl "${args[@]}" "$BASE_URL$path" || echo 000)"
   HTTP_BODY="$(cat "$tmp")"
   rm -f "$tmp"
+  # The server keeps 10 sessions per user and evicts the oldest; after ten browser logins that is this curl session.
+  if [ "$HTTP_STATUS" = 401 ] && [ "$path" != /api/v1/auth/login ] && [ -z "${HTTP_RELOGIN:-}" ]; then
+    log "curl session evicted (401); logging in again"
+    HTTP_RELOGIN=1 http POST /api/v1/auth/login "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}"
+    if [ "$HTTP_STATUS" = 200 ]; then HTTP_RELOGIN=1 http "$method" "$path" "$body"; fi
+  fi
 }
 
 cmd_launch() {
   local pinned="${CLOUDPAM_VERIFY_RUN_ID:-}"
   RUN_ID="${CLOUDPAM_VERIFY_RUN_ID:-$(date +%Y%m%d-%H%M%S)-$$}"
   export CLOUDPAM_VERIFY_RUN_ID="$RUN_ID"
+  USERNAME="$VERIFY_USERNAME" PASSWORD="$VERIFY_PASSWORD"
   resolve_run
   [ -f "$ENV_FILE" ] && die "run $RUN_ID already launched; cleanup first or choose another CLOUDPAM_VERIFY_RUN_ID"
   mkdir -p "$STATE" "$EVIDENCE"
@@ -130,11 +135,10 @@ cmd_launch() {
 
   PORT="$(free_port)" || die "no free port in 18080-18179"
   BASE_URL="http://127.0.0.1:$PORT"
-  log "starting $BASE_URL (sqlite db: $STATE/cloudpam.db, SQLITE_MAX_OPEN_CONNS=${CLOUDPAM_VERIFY_SQLITE_CONNS:-4}; the default of 1 deadlocks /api/v1/pools/hierarchy)"
+  log "starting $BASE_URL (sqlite db: $STATE/cloudpam.db)"
   (
     cd "$STATE"
     SQLITE_DSN="file:$STATE/cloudpam.db?cache=shared&_fk=1" \
-    SQLITE_MAX_OPEN_CONNS="${CLOUDPAM_VERIFY_SQLITE_CONNS:-4}" \
     RATE_LIMIT_RPS=0 \
     CLOUDPAM_LOG_LEVEL=info CLOUDPAM_LOG_FORMAT=json \
     CLOUDPAM_OIDC_ENCRYPTION_KEY="$VERIFY_OIDC_KEY" \
@@ -214,12 +218,12 @@ cmd_doctor() {
   CHECK="session valid for $USERNAME (GET /api/v1/auth/me)"
   check bash -c "[ '$HTTP_STATUS' = 200 ] && echo '$HTTP_BODY' | grep -q '\"username\":\"$USERNAME\"'"
 
-  CHECK="/api/v1/pools/hierarchy answers within 5s (deadlocks under SQLITE_MAX_OPEN_CONNS=1)"
+  CHECK="/api/v1/pools/hierarchy answers within 5s (Address Pools page data; guards the nested-query hang fixed in #261)"
   check bash -c "curl -sf -m 5 -o /dev/null -b '$COOKIES' '$BASE_URL/api/v1/pools/hierarchy'"
 
   http GET /api/v1/pools
-  CHECK="baseline seed present (Corp Supernet)"
-  check bash -c "echo '$HTTP_BODY' | grep -q 'Corp Supernet'"
+  CHECK="baseline seed present (Corp Supernet and its child Prod East VPC)"
+  check bash -c "echo '$HTTP_BODY' | grep -q 'Corp Supernet' && echo '$HTTP_BODY' | grep -q 'Prod East VPC'"
 
   CHECK="binary built from current HEAD ($GIT_REV)"
   check [ "$(git -C "$REPO_ROOT" rev-parse --short HEAD)" = "$GIT_REV" ]
@@ -289,5 +293,5 @@ case "${1:-}" in
   browser) shift; cmd_browser "$@" ;;
   env)     shift; cmd_env "$@" ;;
   cleanup) shift; cmd_cleanup "$@" ;;
-  *) sed -n '2,20p' "$0"; exit 2 ;;
+  *) sed -n '2,/^set /{/^#/p}' "$0"; exit 2 ;;
 esac

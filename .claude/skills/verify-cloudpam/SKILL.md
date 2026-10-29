@@ -12,7 +12,7 @@ CloudPAM's primary surface is the React SPA served by the Go binary at `/`, back
 ├── SKILL.md                  this file
 ├── bin/cloudpam-verify       launch | doctor | api | browser | env | cleanup
 ├── bin/journey.cjs           Playwright runner used by `browser` (login, api, shot, aria helpers)
-├── journeys/create-pool.cjs  proven journey; copy it as the template for new ones
+├── journeys/                 proven journeys, one per feature file (create-pool.cjs is the fullest template)
 └── features/                 the verification map (README.md index + one file per feature)
 ```
 
@@ -29,7 +29,7 @@ What it does, in order (about 1-2 minutes cold, under 30 seconds when `ui/node_m
 1. Builds the SPA (`cd ui && npm ci && npm run build` → `web/dist/`, embedded via `go:embed`). Skip with `CLOUDPAM_VERIFY_SKIP_UI=1` only when you know `web/dist/assets` is current.
 2. Installs Playwright + Chromium from the repo-root `package.json` (idempotent).
 3. Builds the server with `-tags sqlite` and `CGO_ENABLED=0` (the release configuration) into the run's state dir.
-4. Picks a free port in 18080-18179 and starts the binary with a fresh SQLite file (`SQLITE_DSN=file:<state>/cloudpam.db`), `RATE_LIMIT_RPS=0`, JSON logs, and `APP_VERSION=cloudpam-verify-<git short rev>-<run id>` (the server trims a leading `v`, so the stamp must not start with one). Migrations `0001`..`0021` apply on startup. Launch also sets `SQLITE_MAX_OPEN_CONNS=4` (override with `CLOUDPAM_VERIFY_SQLITE_CONNS`): this is a deliberate deviation from the product default of `1`, because with one connection `GET /api/v1/pools/hierarchy` deadlocks as soon as any pool has a child (`calculatePoolStats` in `internal/storage/sqlite/sqlite.go` runs a nested query while an outer result set is open). The Address Pools page calls that endpoint, so the default config cannot be driven. Set `CLOUDPAM_VERIFY_SQLITE_CONNS=1` to reproduce the hang; remove the override once the store is fixed.
+4. Picks a free port in 18080-18179 and starts the binary with a fresh SQLite file (`SQLITE_DSN=file:<state>/cloudpam.db`), `RATE_LIMIT_RPS=0`, JSON logs, and `APP_VERSION=cloudpam-verify-<git short rev>-<run id>` (the server trims a leading `v`, so the stamp must not start with one). Migrations `0001`..`0021` apply on startup. Everything else, including `SQLITE_MAX_OPEN_CONNS=1`, is the product default.
 5. Waits for `GET /readyz` (database health), then runs first-boot setup (`POST /api/v1/auth/setup`), logs in with curl (cookie jar in state), and seeds `Corp Supernet` 10.0.0.0/8, child `Prod East VPC` 10.20.0.0/16, and account `prod-platform`.
 6. Writes `<run>/state/env` and prints the run id. Ready means `GET /api/v1/auth/me` returns 200 for the seeded admin, not merely that the port answers.
 
@@ -43,7 +43,7 @@ Credentials: `verify-admin` / `VerifyDev12345!` (`CLOUDPAM_VERIFY_USERNAME` / `C
 .claude/skills/verify-cloudpam/bin/cloudpam-verify doctor
 ```
 
-Read-only. Run it first whenever anything looks off. It checks: the recorded pid is alive and its command line is this run's binary; `/healthz` reports `status ok`, `needs_setup false`, and `version` equal to the run's `APP_VERSION` (that is how you know the port is ours and not another CloudPAM); `/readyz` is 200; the curl session still resolves to `verify-admin`; `/api/v1/pools/hierarchy` answers within 5 seconds (the deadlock probe); the seed pools exist; and the binary was built from the current `HEAD`. Exit code 0 means drive it; anything else means `cleanup` and `launch` again.
+Read-only, except that it logs the curl session in again if the server evicted it. Run it first whenever anything looks off. It checks: the recorded pid is alive and its command line is this run's binary; `/healthz` reports `status ok`, `needs_setup false`, and `version` equal to the run's `APP_VERSION` (that is how you know the port is ours and not another CloudPAM); `/readyz` is 200; the curl session still resolves to `verify-admin` (logging in again once if the server evicted it); `/api/v1/pools/hierarchy` answers within 5 seconds with a child pool present (the Address Pools page's data, and the request that hung before #261); the seed pools exist; and the binary was built from the current `HEAD`. Exit code 0 means drive it; anything else means `cleanup` and `launch` again.
 
 ## Drive
 
@@ -56,7 +56,7 @@ Two recipes, both authenticated as the seeded admin.
 .claude/skills/verify-cloudpam/bin/cloudpam-verify api --save pool-create POST /api/v1/pools '{"name":"verify-x","cidr":"10.31.0.0/16","parent_id":1}'
 ```
 
-Prints the status line then the body; non-2xx exits 1. `--save NAME` also writes `evidence/api/NAME.txt`.
+Prints the status line then the body; non-2xx exits 1, which is the expected exit for a refusal you are proving. `--save NAME` also writes `evidence/api/NAME.txt`. The server keeps 10 sessions per user and evicts the oldest, so after ten browser logins in one run the curl session is gone; the helper then logs `curl session evicted (401); logging in again` and retries once.
 
 **Browser** (headless Chromium through Playwright):
 
@@ -64,7 +64,7 @@ Prints the status line then the body; non-2xx exits 1. `--save NAME` also writes
 .claude/skills/verify-cloudpam/bin/cloudpam-verify browser .claude/skills/verify-cloudpam/journeys/create-pool.cjs
 ```
 
-A journey is a CommonJS module exporting `async ({ page, context, baseURL, username, password, login, api, shot, aria, note, evidenceDir }) => {}`. `login()` drives the real `/login` form and waits for the `Main navigation` landmark. `api()` sends requests through the browser's session with CSRF handled. `shot(name)` and `aria(name)` write `evidence/<label>/name.png` and `name.aria.txt`. `note()` appends to `evidence/<label>/journey.log`. `confirm()` dialogs are auto-accepted and logged. A thrown error fails the run (exit 1) and leaves `failure.png`.
+A journey is a CommonJS module exporting `async ({ page, context, baseURL, username, password, login, api, shot, aria, note, evidenceDir }) => {}`. `login()` drives the real `/login` form and waits for the `Main navigation` landmark; if the server answers `too many login attempts` (5 logins per minute per IP), it waits 60 seconds and retries once. Call it once per browser context. `api()` sends requests through the browser's session with CSRF handled. `shot(name)` and `aria(name)` write `evidence/<label>/name.png` and `name.aria.txt`. `note()` appends to `evidence/<label>/journey.log`. `confirm()` dialogs are auto-accepted and logged. A thrown error fails the run (exit 1) and leaves `failure.png`.
 
 Stable handles in this app: sidebar links by role `link` and name (`Address Pools`, `Cloud Accounts`, `Discovery`, ...); page `heading`s with the same names; the Pools create form fields by `getByLabel` (`Name`, `CIDR`, `Type`, `Status`, `Account`, `Parent Pool`, `Description`); buttons by name (`New Pool`, `Create Pool`, `Sign In`); toasts by text (`Pool created`, `Account created`). The login and account forms have labels without `htmlFor`, so use the placeholders named in their feature files. Prefer these over CSS classes, which are Tailwind utilities and change freely.
 
@@ -91,7 +91,7 @@ Sends SIGTERM only to the pid recorded in `state/server.pid`, and only if that p
 
 - `bin/cloudpam-verify` (bash, executable): subcommands above; `cloudpam-verify` with no arguments prints usage.
 - `bin/journey.cjs` (node, run via `cloudpam-verify browser`): the Playwright runner. Do not call it directly; `browser` sets the env it reads.
-- `journeys/create-pool.cjs`: the proven journey for `features/create-pool.md`. New journeys go next to it, named after their feature file.
+- `journeys/<feature>.cjs`: the proven journey for `features/<feature>.md` (`login`, `create-pool`, `create-account`, `search`). New journeys go next to them, named after their feature file.
 
 ## Maintenance
 

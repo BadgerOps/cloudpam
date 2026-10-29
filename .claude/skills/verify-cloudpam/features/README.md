@@ -7,7 +7,6 @@ This directory is the maintained source for verifying the user-facing behavior o
 - `cloudpam-verify launch` has started a disposable instance (SQLite build, fresh database, migrations applied) on `http://127.0.0.1:<PORT>` with `PORT` in 18080-18179. `cloudpam-verify env` prints `BASE_URL`, credentials, and paths.
 - The admin is `verify-admin` / `VerifyDev12345!` (override with `CLOUDPAM_VERIFY_USERNAME` / `CLOUDPAM_VERIFY_PASSWORD` before launch).
 - Seed data: pool `Corp Supernet` (`10.0.0.0/8`, type supernet), child pool `Prod East VPC` (`10.20.0.0/16`), account `prod-platform` (key `aws:111111111111`, provider aws).
-- The server runs with `SQLITE_MAX_OPEN_CONNS=4` (see `../SKILL.md`, Launch) so the hierarchy endpoint does not deadlock.
 - `cloudpam-verify doctor` passes every check.
 - Never drive an instance that this run did not start. `doctor` proves the port is ours by matching `/healthz` `version` to the run's `APP_VERSION`.
 
@@ -41,9 +40,9 @@ Keep implementation details out of the map. Name only user paths, stable handles
 
 ## Features
 
-- [Sign in](./login.md) covers first-boot setup, the login form, rejected credentials, and the session landing in the app shell.
-- [Create a pool](./create-pool.md) covers the Address Pools form, parent selection, overlap refusal, API creation, and audit side effects. Proven journey: `journeys/create-pool.cjs`.
-- [Create a cloud account](./create-account.md) covers the Cloud Accounts form, duplicate-key refusal, and API creation.
-- [Search](./search.md) covers the header search box, CIDR containment lookups, and the search API.
+- [Sign in](./login.md) covers first-boot setup, the login form, rejected credentials, and the session landing in the app shell. Proven journey: `journeys/login.cjs`.
+- [Create a pool](./create-pool.md) covers the Address Pools form, parent selection, overlap and duplicate refusal, API creation, and audit side effects. Proven journey: `journeys/create-pool.cjs`.
+- [Create a cloud account](./create-account.md) covers the Cloud Accounts form, duplicate-key refusal, API creation, and deletion. Proven journey: `journeys/create-account.cjs`.
+- [Search](./search.md) covers the header search box, CIDR containment lookups, and the search API. Proven journey: `journeys/search.cjs` (its last step fails at e0818fd on a product bug; see the feature file).
 
-Not yet mapped (routes exist in the sidebar, no recipe here): Allocated Blocks, Discovery, Drift Detection, Audit Log, Schema Planner, Recommendations, AI Planner, API Keys, Identity, Configuration, Log Destinations. A proof that needs one of these starts by adding its feature file.
+Not yet mapped (the sidebar reaches them, no recipe here): Dashboard, Allocated Blocks, Discovery, Drift Detection, Audit Log, Schema Planner, Recommendations, AI Planner, API Keys, Release Notes (and the update banner), Identity, Configuration, Log Destinations, and the `Import/Export` button. A proof that needs one of these starts by adding its feature file.

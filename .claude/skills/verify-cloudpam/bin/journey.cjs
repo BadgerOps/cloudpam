@@ -44,12 +44,21 @@ async function main() {
   const aria = async (name) => { const file = path.join(evidenceDir, `${name}.aria.txt`); fs.writeFileSync(file, await page.locator('body').ariaSnapshot()); note(`aria ${file}`); return file; };
 
   const login = async () => {
-    await page.goto('/login', { waitUntil: 'domcontentloaded' });
-    // The login inputs have no label association; placeholder + autocomplete are the stable handles.
-    await page.getByPlaceholder('admin').fill(env.USERNAME);
-    await page.locator('input[autocomplete="current-password"]').fill(env.PASSWORD);
-    await page.getByRole('button', { name: 'Sign In' }).click();
-    await page.getByRole('navigation', { name: 'Main navigation' }).waitFor({ timeout: 15000 });
+    const nav = page.getByRole('navigation', { name: 'Main navigation' });
+    for (let attempt = 1; ; attempt++) {
+      await page.goto('/login', { waitUntil: 'domcontentloaded' });
+      // The login inputs have no label association; placeholder + autocomplete are the stable handles.
+      await page.getByPlaceholder('admin').fill(env.USERNAME);
+      await page.locator('input[autocomplete="current-password"]').fill(env.PASSWORD);
+      await page.getByRole('button', { name: 'Sign In' }).click();
+      const limited = page.getByText('too many login attempts');
+      await nav.or(limited).first().waitFor({ timeout: 15000 });
+      if (await nav.isVisible()) break;
+      if (attempt > 1) throw new Error('login still rate limited after waiting 60s');
+      // The server allows 5 logins per minute per IP (one more every 12s), whatever RATE_LIMIT_RPS says.
+      note('login rate limited (429 too many login attempts); waiting 60s, the Retry-After');
+      await page.waitForTimeout(60000);
+    }
     note(`logged in as ${env.USERNAME} at ${page.url()}`);
   };
 

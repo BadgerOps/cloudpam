@@ -20,19 +20,20 @@ Create a cloud account registers a provider account (AWS account, GCP project, a
 Preconditions:
 
 - Baseline seed present: account `prod-platform` with key `aws:111111111111`.
-- No account with key `aws:<ts>` exists.
+- No account with key `aws:<id>` exists, where `<id>` is the last 12 digits of `Date.now()`.
 
 - **Open form.** After `login()`, click `getByRole('link', { name: 'Cloud Accounts' })`, wait for `getByRole('heading', { name: 'Cloud Accounts' })`, click `getByRole('button', { name: 'New Account' })`. A form with placeholders `e.g., aws:123456789012` (key) and `e.g., Production AWS` (name) appears.
-- **Create.** `getByPlaceholder('e.g., aws:123456789012').fill('aws:<ts>')`, `getByPlaceholder('e.g., Production AWS').fill('verify-acct-<ts>')`, click `getByRole('button', { name: 'Create Account' })`. Toast `Account created` appears and the list shows `verify-acct-<ts>`.
-- **Confirm persistence.** `api('GET', '/api/v1/accounts')` returns `200` and includes an account with `key` `aws:<ts>`.
-- **Reject duplicate.** Run `cloudpam-verify api POST /api/v1/accounts '{"key":"aws:111111111111","name":"dup","provider":"aws"}'`. Status `400` with body `{"error":"conflict: constraint failed: UNIQUE constraint failed: accounts.key (2067)"}` (confirmed on SQLite; the in-memory store words it differently).
+- **Create.** `getByPlaceholder('e.g., aws:123456789012').fill('aws:<id>')`, `getByPlaceholder('e.g., Production AWS').fill('verify-acct-<id>')`, click `getByRole('button', { name: 'Create Account' })`. Toast `Account created` appears, the form closes, and the table has a row for `verify-acct-<id>`.
+- **Confirm persistence.** `api('GET', '/api/v1/accounts')` returns `200` and includes an account with `key` `aws:<id>`.
+- **Reject duplicate.** Open the form, fill key `aws:111111111111` and name `dup`, click `Create Account`. An error toast `account key already exists` appears and the form stays open (`Cancel` closes it). From a terminal, `cloudpam-verify api POST /api/v1/accounts '{"key":"aws:111111111111","name":"dup","provider":"aws"}'` returns `409` with body `{"error":"account key already exists","detail":"aws:111111111111"}` on every store; the helper exits 1, as it does for any non-2xx.
 - **API entry.** Run `cloudpam-verify api --save account-create POST /api/v1/accounts '{"key":"gcp:verify-<ts>","name":"verify-gcp-<ts>","provider":"gcp"}'`. Status `201`; body has the new `id` and `key`.
-- **Delete.** In the row for `verify-acct-<ts>`, click the delete control; the `confirm()` dialog is auto-accepted by the journey runner. Toast `Account deleted` appears and `GET /api/v1/accounts` no longer includes the key.
-- **Proof.** `shot('account-created')` and `aria('account-created')` with the new row visible, plus the saved API responses.
+- **Delete.** In `getByRole('row', { name: /verify-acct-<id>/ })`, click `getByRole('button', { name: 'Delete' })`; the `confirm()` dialog `Delete account "verify-acct-<id>"?` is auto-accepted by the journey runner. Toast `Account deleted` appears, the row goes, and `GET /api/v1/accounts` no longer includes the key.
+- **Proof.** `shot('02-account-created')` and `aria('02-account-created')` with the new row visible, plus the saved API responses. The proven journey is `journeys/create-account.cjs`.
 
 ## Gotchas
 
 - The account form labels are not associated with their inputs; use the placeholders above, not `getByLabel`.
-- `key` must be unique and is validated like a name; spaces or very long keys return `400`. A reused key also returns `400`, not `409`, and the message is the raw database constraint text; assert on `UNIQUE constraint failed: accounts.key`, not on the status alone.
-- Deleting an account that still owns pools needs `?force=true` on the API; the UI dialog will surface the refusal as an error toast.
-- This feature has no proven journey yet; the first run should save one to `journeys/create-account.cjs`.
+- `key` is `provider:id` with a lowercase provider from `aws`, `gcp`, `azure`, `onprem`. An `aws` id is exactly 12 digits, a `gcp` id matches `^[a-z][a-z0-9-]{4,28}[a-z0-9]$`, an `azure` id is a UUID, and an `onprem` id is up to 64 letters, digits, `-` or `_`. The whole key is at most 100 characters. A bad key returns `400` `invalid account key "<key>": <reason>`, so `aws:<Date.now()>` (13 digits) fails.
+- A reused key returns `409` `account key already exists`. On SQLite a soft-deleted account still holds its key (issue #268).
+- Deleting an account that still owns pools needs `?force=true` on the API. The UI never sends it: after the `confirm()`, an error toast `account in use by pools: conflict` appears and the row stays.
+- Toasts disappear after 3 seconds; wait for them right after the click.
