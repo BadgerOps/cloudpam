@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.23.4] - 2026-10-29
+
+### Fixed
+- `POST /api/v1/pools` and `POST /api/v1/schema/apply` (with `skip_conflicts:false`) now serialize their list, overlap check and insert behind one in-process guard, so two concurrent requests for overlapping CIDRs under the same parent can no longer both succeed. Nothing was held between the check and the insert before, so both requests returned `201` and the store kept two overlapping siblings. The in-memory store also rejects an exact duplicate `(parent, cidr)`, which it used to accept, and a duplicate now returns `409 Conflict` on every backend. The guard is per process: replicas sharing one PostgreSQL database are not serialized against each other.
+- SQLite no longer deadlocks on `GET /api/v1/pools/hierarchy`, `GET /api/v1/pools/{id}/stats` and `GET /api/v1/pools?include_stats=true` once a pool has children, or on `PATCH /api/v1/accounts/{id}`. The stats code issued a nested query while a result set was still open, which blocks forever under the default `SQLITE_MAX_OPEN_CONNS=1`, and the Address Pools page sat on "Loading pools..." as a result. Stats are now computed from one load of the pool list, and the account update no longer holds a row open across its write.
+- `POST /api/v1/accounts` with a key that already exists returns `409 Conflict` with `account key already exists`. SQLite returned `400` with the raw `UNIQUE constraint failed: accounts.key` text, and the in-memory store created the duplicate.
+
+### Security
+- Bumped `github.com/go-jose/go-jose/v4` from 4.1.4 to 4.1.6, resolving GHSA-mgcc-cww5-fp2q: JWK parsing now caps RSA moduli at 4096 bits. The library is a runtime dependency of `go-oidc`; CloudPAM's own code calls it only from the OIDC test fixtures.
+- Bumped `source-map-js` from 1.2.1 to 1.2.2 in the UI lockfile, resolving CVE-2026-93749 (denial of service from malicious indexed source maps). Build-time only; it does not ship in the built UI.
+
+### Changed
+- Bumped `vite` from 8.0.16 to 8.3.5 (development dependency, bug-fix releases only). The embedded SPA builds and the create-pool browser journey passes on the new version.
+
 ## [0.23.3] - 2026-10-04
 
 ### Security
