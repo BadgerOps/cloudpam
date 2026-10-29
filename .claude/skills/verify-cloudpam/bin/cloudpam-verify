@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+# cloudpam-verify: launch, inspect, drive and tear down a disposable CloudPAM instance.
+#
+#   cloudpam-verify launch                      build UI + sqlite server, start on a free port, setup admin, login, seed
+#   cloudpam-verify doctor                      read-only: is the current run worth driving?
+#   cloudpam-verify api [--save NAME] METHOD PATH [JSON]
+#                                               authenticated request (session cookie + CSRF); prints status and body
+#   cloudpam-verify browser JOURNEY.cjs [--label NAME]
+#                                               run a Playwright journey against the instance (see bin/journey.cjs)
+#   cloudpam-verify env                         print the run's env file (BASE_URL, PORT, PID, credentials, paths)
+#   cloudpam-verify cleanup                     kill only the server this run started, delete state, keep evidence
+#
+# Runs live under <repo>/tmp/cloudpam-verify/<RUN_ID>/ (tmp/ is gitignored):
+#   state/     binary, sqlite db, server.log, server.pid, cookies.txt, env   (deleted by cleanup)
+#   evidence/  screenshots, aria snapshots, api responses, journey logs      (kept by cleanup)
+# Set CLOUDPAM_VERIFY_RUN_ID to pin a run; otherwise launch mints one and records it in tmp/cloudpam-verify/current.
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$SKILL_DIR/../../.." && pwd)"
+RUNS_DIR="$REPO_ROOT/tmp/cloudpam-verify"
+
+VERIFY_USERNAME="${CLOUDPAM_VERIFY_USERNAME:-verify-admin}"
+VERIFY_PASSWORD="${CLOUDPAM_VERIFY_PASSWORD:-VerifyDev12345!}"
+# Fixed dev-only key so the server does not log an auto-generated-key warning on every launch.
+VERIFY_OIDC_KEY="0000000000000000000000000000000000000000000000000000000000000001"
+
+log() { printf '[cloudpam-verify] %s\n' "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+
+# Run a command inside the repo's Nix dev shell (CLAUDE.md: always use nix develop).
+nixrun() {
+  if [ -n "${IN_NIX_SHELL:-}" ]; then
+    bash -c "$1"
+  else
+    nix develop "$REPO_ROOT" --command bash -c "$1"
+  fi
+}
+
+resolve_run() {
+  RUN_ID="${CLOUDPAM_VERIFY_RUN_ID:-}"
+  if [ -z "$RUN_ID" ] && [ -f "$RUNS_DIR/current" ]; then
+    RUN_ID="$(cat "$RUNS_DIR/current")"
+  fi
+  if [ -z "$RUN_ID" ]; then
+    local leftovers; leftovers="$(ls -d "$RUNS_DIR"/*/state 2>/dev/null | xargs -r -n1 dirname | xargs -r -n1 basename | tr '\n' ' ')"
+    [ -n "$leftovers" ] && log "runs with live state (set CLOUDPAM_VERIFY_RUN_ID to pick one): $leftovers"
+    die "no run selected: run 'cloudpam-verify launch' or set CLOUDPAM_VERIFY_RUN_ID"
+  fi
+  RUN_DIR="$RUNS_DIR/$RUN_ID"
+  STATE="$RUN_DIR/state"
+  EVIDENCE="$RUN_DIR/evidence"
+  ENV_FILE="$STATE/env"
+  COOKIES="$STATE/cookies.txt"
+}
+
+load_env() {
+  resolve_run
+  [ -f "$ENV_FILE" ] || die "no env file at $ENV_FILE (run not launched, or already cleaned up)"
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+}
+
+free_port() {
+  nixrun "node -e '
+    const net = require(\"net\");
+    (async () => {
+      for (let p = 18080; p < 18180; p++) {
+        const ok = await new Promise(r => { const s = net.createServer(); s.once(\"error\", () => r(false)); s.listen(p, \"127.0.0.1\", () => s.close(() => r(true))); });
+        if (ok) { console.log(p); return; }
+      }
+      process.exit(1);
+    })();'" | grep -E '^[0-9]+$' | tail -n1
+}
+
+csrf_token() {
+  # Netscape cookie jar: domain flag path secure expiry name value
+  awk '$6=="csrf_token"{print $7}' "$COOKIES" 2>/dev/null | tail -n1
+}
+
+# http METHOD PATH [JSON] -> sets HTTP_STATUS and HTTP_BODY, using the run's cookie jar + CSRF header.
+http() {
+  local method="$1" path="$2" body="${3:-}"
+  local tmp; tmp="$(mktemp)"
+  local args=(-sS -o "$tmp" -w '%{http_code}' -b "$COOKIES" -c "$COOKIES" -X "$method" -H 'Accept: application/json')
+  case "$method" in
+    GET|HEAD|OPTIONS) ;;
+    *)
+      if [ -z "$(csrf_token)" ]; then
+        curl -sS -o /dev/null -b "$COOKIES" -c "$COOKIES" "$BASE_URL/api/v1/pools" || true
+      fi
+      args+=(-H "X-CSRF-Token: $(csrf_token)" -H 'Content-Type: application/json')
+      [ -n "$body" ] && args+=(--data "$body")
+      ;;
+  esac
+  HTTP_STATUS="$(curl "${args[@]}" "$BASE_URL$path" || echo 000)"
+  HTTP_BODY="$(cat "$tmp")"
+  rm -f "$tmp"
+}
+
+cmd_launch() {
+  local pinned="${CLOUDPAM_VERIFY_RUN_ID:-}"
+  RUN_ID="${CLOUDPAM_VERIFY_RUN_ID:-$(date +%Y%m%d-%H%M%S)-$$}"
+  export CLOUDPAM_VERIFY_RUN_ID="$RUN_ID"
+  resolve_run
+  [ -f "$ENV_FILE" ] && die "run $RUN_ID already launched; cleanup first or choose another CLOUDPAM_VERIFY_RUN_ID"
+  mkdir -p "$STATE" "$EVIDENCE"
+  # A pinned run id is a side-by-side run; leave `current` pointing at the unpinned one.
+  [ -n "$pinned" ] || echo "$RUN_ID" > "$RUNS_DIR/current"
+  log "run $RUN_ID -> $RUN_DIR"
+
+  if [ "${CLOUDPAM_VERIFY_SKIP_UI:-0}" != "1" ]; then
+    log "building UI (ui/ -> web/dist, embedded into the binary)"
+    nixrun "cd '$REPO_ROOT/ui' && ([ -d node_modules ] || npm ci --no-audit --no-fund) && npm run build" >"$STATE/ui-build.log" 2>&1 \
+      || { tail -n 40 "$STATE/ui-build.log" >&2; die "ui build failed (see $STATE/ui-build.log)"; }
+  else
+    [ -d "$REPO_ROOT/web/dist/assets" ] || die "CLOUDPAM_VERIFY_SKIP_UI=1 but web/dist/assets is missing"
+    log "skipping UI build (CLOUDPAM_VERIFY_SKIP_UI=1); embedded assets may be stale"
+  fi
+
+  log "installing Playwright + chromium (repo-root package.json)"
+  nixrun "cd '$REPO_ROOT' && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && npx playwright install chromium" >"$STATE/playwright-install.log" 2>&1 \
+    || { tail -n 40 "$STATE/playwright-install.log" >&2; die "playwright install failed"; }
+
+  GIT_REV="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
+  APP_VERSION="cloudpam-verify-$GIT_REV-$RUN_ID"
+  log "building server (-tags sqlite, CGO_ENABLED=0)"
+  nixrun "cd '$REPO_ROOT' && mkdir -p tmp/go-cache && GOCACHE='$REPO_ROOT/tmp/go-cache' CGO_ENABLED=0 go build -tags sqlite -ldflags '-X main.version=$APP_VERSION' -o '$STATE/cloudpam' ./cmd/cloudpam" \
+    || die "go build failed"
+
+  PORT="$(free_port)" || die "no free port in 18080-18179"
+  BASE_URL="http://127.0.0.1:$PORT"
+  log "starting $BASE_URL (sqlite db: $STATE/cloudpam.db, SQLITE_MAX_OPEN_CONNS=${CLOUDPAM_VERIFY_SQLITE_CONNS:-4}; the default of 1 deadlocks /api/v1/pools/hierarchy)"
+  (
+    cd "$STATE"
+    SQLITE_DSN="file:$STATE/cloudpam.db?cache=shared&_fk=1" \
+    SQLITE_MAX_OPEN_CONNS="${CLOUDPAM_VERIFY_SQLITE_CONNS:-4}" \
+    RATE_LIMIT_RPS=0 \
+    CLOUDPAM_LOG_LEVEL=info CLOUDPAM_LOG_FORMAT=json \
+    CLOUDPAM_OIDC_ENCRYPTION_KEY="$VERIFY_OIDC_KEY" \
+    APP_VERSION="$APP_VERSION" \
+    nohup "$STATE/cloudpam" -addr "127.0.0.1:$PORT" >"$STATE/server.log" 2>&1 &
+    echo $! > "$STATE/server.pid"
+  )
+  PID="$(cat "$STATE/server.pid")"
+
+  cat > "$ENV_FILE" <<ENV
+RUN_ID='$RUN_ID'
+RUN_DIR='$RUN_DIR'
+STATE='$STATE'
+EVIDENCE='$EVIDENCE'
+BASE_URL='$BASE_URL'
+PORT='$PORT'
+PID='$PID'
+APP_VERSION='$APP_VERSION'
+GIT_REV='$GIT_REV'
+USERNAME='$VERIFY_USERNAME'
+PASSWORD='$VERIFY_PASSWORD'
+COOKIES='$COOKIES'
+ENV
+
+  log "waiting for /readyz"
+  local i
+  for i in $(seq 1 120); do
+    if curl -sf -o /dev/null "$BASE_URL/readyz"; then break; fi
+    kill -0 "$PID" 2>/dev/null || { tail -n 30 "$STATE/server.log" >&2; die "server exited during startup"; }
+    sleep 0.5
+  done
+  curl -sf -o /dev/null "$BASE_URL/readyz" || { tail -n 30 "$STATE/server.log" >&2; die "server never became ready"; }
+
+  : > "$COOKIES"
+  http GET /healthz
+  if echo "$HTTP_BODY" | grep -q '"needs_setup":true'; then
+    log "first-boot setup: creating admin '$VERIFY_USERNAME'"
+    http POST /api/v1/auth/setup "{\"username\":\"$VERIFY_USERNAME\",\"password\":\"$VERIFY_PASSWORD\",\"email\":\"$VERIFY_USERNAME@localhost\"}"
+    [ "$HTTP_STATUS" = "201" ] || [ "$HTTP_STATUS" = "200" ] || die "setup failed ($HTTP_STATUS): $HTTP_BODY"
+  fi
+  http POST /api/v1/auth/login "{\"username\":\"$VERIFY_USERNAME\",\"password\":\"$VERIFY_PASSWORD\"}"
+  [ "$HTTP_STATUS" = "200" ] || die "login failed ($HTTP_STATUS): $HTTP_BODY"
+
+  log "seeding baseline data"
+  http POST /api/v1/pools '{"name":"Corp Supernet","cidr":"10.0.0.0/8","type":"supernet"}'
+  [ "$HTTP_STATUS" = "201" ] || die "seed Corp Supernet failed ($HTTP_STATUS): $HTTP_BODY"
+  local parent_id; parent_id="$(echo "$HTTP_BODY" | grep -o '"id":[0-9]*' | head -n1 | cut -d: -f2)"
+  http POST /api/v1/pools "{\"name\":\"Prod East VPC\",\"cidr\":\"10.20.0.0/16\",\"parent_id\":$parent_id}"
+  [ "$HTTP_STATUS" = "201" ] || die "seed Prod East VPC failed ($HTTP_STATUS): $HTTP_BODY"
+  http POST /api/v1/accounts '{"key":"aws:111111111111","name":"prod-platform","provider":"aws"}'
+  [ "$HTTP_STATUS" = "201" ] || die "seed account failed ($HTTP_STATUS): $HTTP_BODY"
+
+  http GET /api/v1/auth/me
+  [ "$HTTP_STATUS" = "200" ] || die "auth/me failed after login ($HTTP_STATUS)"
+  log "ready: $BASE_URL as $VERIFY_USERNAME (pid $PID, version $APP_VERSION)"
+  log "evidence dir: $EVIDENCE"
+  echo "$RUN_ID"
+}
+
+cmd_doctor() {
+  load_env
+  local fail=0
+  check() { if "$@"; then log "PASS $CHECK"; else log "FAIL $CHECK"; fail=1; fi; }
+
+  CHECK="pid $PID alive and is $STATE/cloudpam"
+  check bash -c "kill -0 '$PID' 2>/dev/null && tr '\0' ' ' < /proc/$PID/cmdline | grep -q '$STATE/cloudpam'"
+
+  http GET /healthz
+  CHECK="/healthz status ok, version $APP_VERSION (port is ours), needs_setup false"
+  check bash -c "echo '$HTTP_BODY' | grep -q '\"status\":\"ok\"' && echo '$HTTP_BODY' | grep -q '\"version\":\"$APP_VERSION\"' && echo '$HTTP_BODY' | grep -q '\"needs_setup\":false'"
+
+  http GET /readyz
+  CHECK="/readyz 200 (database reachable)"
+  check [ "$HTTP_STATUS" = "200" ]
+
+  http GET /api/v1/auth/me
+  CHECK="session valid for $USERNAME (GET /api/v1/auth/me)"
+  check bash -c "[ '$HTTP_STATUS' = 200 ] && echo '$HTTP_BODY' | grep -q '\"username\":\"$USERNAME\"'"
+
+  CHECK="/api/v1/pools/hierarchy answers within 5s (deadlocks under SQLITE_MAX_OPEN_CONNS=1)"
+  check bash -c "curl -sf -m 5 -o /dev/null -b '$COOKIES' '$BASE_URL/api/v1/pools/hierarchy'"
+
+  http GET /api/v1/pools
+  CHECK="baseline seed present (Corp Supernet)"
+  check bash -c "echo '$HTTP_BODY' | grep -q 'Corp Supernet'"
+
+  CHECK="binary built from current HEAD ($GIT_REV)"
+  check [ "$(git -C "$REPO_ROOT" rev-parse --short HEAD)" = "$GIT_REV" ]
+
+  if [ "$fail" = 0 ]; then log "doctor: OK ($BASE_URL, evidence $EVIDENCE)"; else log "doctor: NOT healthy; cleanup and relaunch"; fi
+  return $fail
+}
+
+cmd_api() {
+  load_env
+  local save=""
+  if [ "${1:-}" = "--save" ]; then save="$2"; shift 2; fi
+  [ $# -ge 2 ] || die "usage: cloudpam-verify api [--save NAME] METHOD PATH [JSON]"
+  http "$1" "$2" "${3:-}"
+  echo "$HTTP_STATUS"
+  echo "$HTTP_BODY"
+  if [ -n "$save" ]; then
+    mkdir -p "$EVIDENCE/api"
+    printf '%s %s\nstatus: %s\n%s\n' "$1" "$2" "$HTTP_STATUS" "$HTTP_BODY" > "$EVIDENCE/api/$save.txt"
+    log "saved $EVIDENCE/api/$save.txt"
+  fi
+  case "$HTTP_STATUS" in 2*) return 0;; *) return 1;; esac
+}
+
+cmd_browser() {
+  load_env
+  local journey="${1:-}"; [ -n "$journey" ] || die "usage: cloudpam-verify browser JOURNEY.cjs [--label NAME]"
+  shift
+  local label; label="$(basename "$journey" .cjs)"
+  if [ "${1:-}" = "--label" ]; then label="$2"; fi
+  journey="$(cd "$(dirname "$journey")" && pwd)/$(basename "$journey")"
+  [ -f "$journey" ] || die "journey not found: $journey"
+  # Playwright's Chromium links against host libraries; the Nix shell's ldd cannot see /usr/lib,
+  # so its host-requirements check reports every library missing. Launch works; skip the check.
+  nixrun "cd '$REPO_ROOT' && PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 CLOUDPAM_VERIFY_ENV='$ENV_FILE' CLOUDPAM_VERIFY_LABEL='$label' node '$SKILL_DIR/bin/journey.cjs' '$journey'"
+}
+
+cmd_env() { load_env; cat "$ENV_FILE"; }
+
+cmd_cleanup() {
+  resolve_run
+  if [ -f "$STATE/server.pid" ]; then
+    local pid; pid="$(cat "$STATE/server.pid")"
+    if kill -0 "$pid" 2>/dev/null && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "$STATE/cloudpam"; then
+      log "stopping pid $pid (SIGTERM, graceful shutdown)"
+      kill -TERM "$pid" || true
+      local i; for i in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+      kill -0 "$pid" 2>/dev/null && { log "still alive, SIGKILL"; kill -KILL "$pid" || true; }
+    else
+      log "pid $pid is not our server (already gone or reused); not killing anything"
+    fi
+  fi
+  if [ -d "$STATE" ]; then
+    [ -f "$STATE/server.log" ] && cp "$STATE/server.log" "$EVIDENCE/server.log" 2>/dev/null || true
+    rm -rf "$STATE"
+    log "removed $STATE"
+  fi
+  [ -f "$RUNS_DIR/current" ] && [ "$(cat "$RUNS_DIR/current")" = "$RUN_ID" ] && rm -f "$RUNS_DIR/current"
+  log "kept evidence: $EVIDENCE"
+  ls -1 "$EVIDENCE" 2>/dev/null >&2 || true
+}
+
+case "${1:-}" in
+  launch)  shift; cmd_launch "$@" ;;
+  doctor)  shift; cmd_doctor "$@" ;;
+  api)     shift; cmd_api "$@" ;;
+  browser) shift; cmd_browser "$@" ;;
+  env)     shift; cmd_env "$@" ;;
+  cleanup) shift; cmd_cleanup "$@" ;;
+  *) sed -n '2,20p' "$0"; exit 2 ;;
+esac

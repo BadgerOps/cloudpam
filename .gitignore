@@ -64,7 +64,7 @@ result-*
 .direnv/
 
 # Claude Code local config
-.claude/
+.claude/*
 *.tsbuildinfo
 .codex
 PROMPTING.txt
@@ -77,3 +77,7 @@ ds-bundle/
 .design-sync/node_modules
 ui/.ds-css/
 ui/types/
+
+# Project-local agent skills are shared; the rest of .claude/ stays local
+!.claude/skills/
+!.claude/skills/**/bin/
