@@ -62,6 +62,7 @@ func resetDB(t *testing.T) {
 		"pool_utilization_cache",
 		"network_relationships",
 		"network_objects",
+		"recommendations",
 		"drift_items",
 		"sync_jobs",
 		"discovered_resources",
