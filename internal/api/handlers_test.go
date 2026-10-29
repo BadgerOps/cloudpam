@@ -1653,3 +1653,26 @@ func TestListPoolsWithStats(t *testing.T) {
 		t.Error("root pool not found")
 	}
 }
+
+func TestCreateAccount_DuplicateKeyReturnsConflict(t *testing.T) {
+	srv, _ := setupTestServer()
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:111111111111","name":"First"}`, stdhttp.StatusCreated)
+	doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/accounts", `{"key":"aws:111111111111","name":"Second"}`, stdhttp.StatusConflict)
+
+	rr := doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/accounts", "", stdhttp.StatusOK)
+	var accs []struct {
+		Key string `json:"key"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &accs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	n := 0
+	for _, a := range accs {
+		if a.Key == "aws:111111111111" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("expected key listed once, got %d", n)
+	}
+}

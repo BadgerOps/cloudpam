@@ -1213,3 +1213,20 @@ func TestWrapIfConflict(t *testing.T) {
 		})
 	}
 }
+
+func TestMemoryStore_CreateAccount_DuplicateKeyIsConflict(t *testing.T) {
+	ctx := context.Background()
+	m := NewMemoryStore()
+
+	if _, err := m.CreateAccount(ctx, domain.CreateAccount{Key: "aws:123", Name: "Prod"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	_, err := m.CreateAccount(ctx, domain.CreateAccount{Key: "aws:123", Name: "Prod again"})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+	accs, _ := m.ListAccounts(ctx)
+	if len(accs) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accs))
+	}
+}
