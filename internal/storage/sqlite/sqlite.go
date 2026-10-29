@@ -591,20 +591,15 @@ func (s *Store) GetAccountByKey(ctx context.Context, key string) (*domain.Accoun
 }
 
 func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
-	// Fetch current (non-deleted)
-	rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=? AND deleted_at IS NULL`, id)
-	if err != nil {
-		return domain.Account{}, false, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return domain.Account{}, false, nil
-	}
+	row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=? AND deleted_at IS NULL`, id)
 	var a domain.Account
 	var ts string
 	var provider, extid, desc, platform, tier, env sql.NullString
 	var regions, updatedAt sql.NullString
-	if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
+	if err := row.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Account{}, false, nil
+		}
 		return domain.Account{}, false, err
 	}
 	if provider.Valid {
@@ -735,89 +730,48 @@ func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error
 
 // GetPoolWithStats returns a pool with its computed statistics.
 func (s *Store) GetPoolWithStats(ctx context.Context, id int64) (*domain.PoolWithStats, error) {
-	p, ok, err := s.GetPool(ctx, id)
+	ix, err := s.loadPoolIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
+	p, ok := ix.byID[id]
 	if !ok {
 		return nil, fmt.Errorf("pool not found: %w", storage.ErrNotFound)
 	}
-	stats, err := s.calculatePoolStats(ctx, p)
-	if err != nil {
-		return nil, err
-	}
-	return &domain.PoolWithStats{
-		Pool:  p,
-		Stats: *stats,
-	}, nil
+	return &domain.PoolWithStats{Pool: p, Stats: ix.stats(p)}, nil
 }
 
 // GetPoolHierarchy returns the pool hierarchy tree starting from rootID.
 // If rootID is nil, returns all top-level pools with their children.
 func (s *Store) GetPoolHierarchy(ctx context.Context, rootID *int64) ([]domain.PoolWithStats, error) {
-	// Load all pools
-	pools, err := s.ListPools(ctx)
+	ix, err := s.loadPoolIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build maps for quick lookup
-	poolMap := make(map[int64]domain.Pool)
-	childrenMap := make(map[int64][]int64)
-	for _, p := range pools {
-		poolMap[p.ID] = p
-		if p.ParentID != nil {
-			childrenMap[*p.ParentID] = append(childrenMap[*p.ParentID], p.ID)
+	var buildTree func(p domain.Pool) domain.PoolWithStats
+	buildTree = func(p domain.Pool) domain.PoolWithStats {
+		node := domain.PoolWithStats{Pool: p, Stats: ix.stats(p)}
+		for _, child := range ix.children[p.ID] {
+			node.Children = append(node.Children, buildTree(child))
 		}
+		return node
 	}
 
-	// Recursive function to build tree
-	var buildTree func(pid int64) (domain.PoolWithStats, error)
-	buildTree = func(pid int64) (domain.PoolWithStats, error) {
-		p := poolMap[pid]
-		stats, err := s.calculatePoolStats(ctx, p)
-		if err != nil {
-			return domain.PoolWithStats{}, err
+	if rootID != nil {
+		root, ok := ix.byID[*rootID]
+		if !ok {
+			return nil, fmt.Errorf("root pool not found: %w", storage.ErrNotFound)
 		}
-		result := domain.PoolWithStats{
-			Pool:  p,
-			Stats: *stats,
-		}
-		for _, childID := range childrenMap[pid] {
-			child, err := buildTree(childID)
-			if err != nil {
-				return domain.PoolWithStats{}, err
-			}
-			result.Children = append(result.Children, child)
-		}
-		return result, nil
+		return []domain.PoolWithStats{buildTree(root)}, nil
 	}
 
 	var result []domain.PoolWithStats
-
-	if rootID != nil {
-		// Return subtree from specific root
-		if _, ok := poolMap[*rootID]; !ok {
-			return nil, fmt.Errorf("root pool not found: %w", storage.ErrNotFound)
-		}
-		tree, err := buildTree(*rootID)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, tree)
-	} else {
-		// Return all top-level pools (no parent)
-		for _, p := range pools {
-			if p.ParentID == nil {
-				tree, err := buildTree(p.ID)
-				if err != nil {
-					return nil, err
-				}
-				result = append(result, tree)
-			}
+	for _, p := range ix.pools {
+		if p.ParentID == nil {
+			result = append(result, buildTree(p))
 		}
 	}
-
 	return result, nil
 }
 
@@ -891,22 +845,55 @@ func (s *Store) GetPoolChildren(ctx context.Context, parentID int64) ([]domain.P
 
 // CalculatePoolUtilization calculates statistics for a pool.
 func (s *Store) CalculatePoolUtilization(ctx context.Context, id int64) (*domain.PoolStats, error) {
-	p, ok, err := s.GetPool(ctx, id)
+	ix, err := s.loadPoolIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
+	p, ok := ix.byID[id]
 	if !ok {
 		return nil, fmt.Errorf("pool not found: %w", storage.ErrNotFound)
 	}
-	return s.calculatePoolStats(ctx, p)
+	st := ix.stats(p)
+	return &st, nil
 }
 
-// calculatePoolStats calculates stats for a pool.
-func (s *Store) calculatePoolStats(ctx context.Context, p domain.Pool) (*domain.PoolStats, error) {
-	// Parse the pool's CIDR to get total IPs
+type poolIndex struct {
+	pools    []domain.Pool
+	byID     map[int64]domain.Pool
+	children map[int64][]domain.Pool
+}
+
+func (s *Store) loadPoolIndex(ctx context.Context) (poolIndex, error) {
+	pools, err := s.ListPools(ctx)
+	if err != nil {
+		return poolIndex{}, err
+	}
+	ix := poolIndex{
+		pools:    pools,
+		byID:     make(map[int64]domain.Pool, len(pools)),
+		children: make(map[int64][]domain.Pool),
+	}
+	for _, p := range pools {
+		ix.byID[p.ID] = p
+		if p.ParentID != nil {
+			ix.children[*p.ParentID] = append(ix.children[*p.ParentID], p)
+		}
+	}
+	return ix, nil
+}
+
+func (ix poolIndex) descendantCount(id int64) int {
+	count := 0
+	for _, child := range ix.children[id] {
+		count += 1 + ix.descendantCount(child.ID)
+	}
+	return count
+}
+
+func (ix poolIndex) stats(p domain.Pool) domain.PoolStats {
 	prefix, err := netip.ParsePrefix(p.CIDR)
 	if err != nil {
-		return &domain.PoolStats{}, nil
+		return domain.PoolStats{}
 	}
 
 	var totalIPs int64
@@ -922,24 +909,9 @@ func (s *Store) calculatePoolStats(ctx context.Context, p domain.Pool) (*domain.
 		}
 	}
 
-	// Get direct children (non-deleted)
-	rows, err := s.db.QueryContext(ctx, `SELECT cidr FROM pools WHERE parent_id=? AND deleted_at IS NULL`, p.ID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var directChildren int
 	var usedIPs int64
-	for rows.Next() {
-		var childCIDR string
-		if err := rows.Scan(&childCIDR); err != nil {
-			return nil, err
-		}
-		directChildren++
-
-		// Calculate used IPs from child's CIDR
-		childPrefix, err := netip.ParsePrefix(childCIDR)
+	for _, child := range ix.children[p.ID] {
+		childPrefix, err := netip.ParsePrefix(child.CIDR)
 		if err != nil {
 			continue
 		}
@@ -947,54 +919,20 @@ func (s *Store) calculatePoolStats(ctx context.Context, p domain.Pool) (*domain.
 			usedIPs += int64(1) << (32 - childPrefix.Bits())
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
 
-	// Count all descendants recursively
-	var totalChildCount int
-	var countDescendants func(parentID int64) (int, error)
-	countDescendants = func(parentID int64) (int, error) {
-		var count int
-		childRows, err := s.db.QueryContext(ctx, `SELECT id FROM pools WHERE parent_id=? AND deleted_at IS NULL`, parentID)
-		if err != nil {
-			return 0, err
-		}
-		defer childRows.Close()
-		for childRows.Next() {
-			var childID int64
-			if err := childRows.Scan(&childID); err != nil {
-				return 0, err
-			}
-			count++
-			subCount, err := countDescendants(childID)
-			if err != nil {
-				return 0, err
-			}
-			count += subCount
-		}
-		return count, childRows.Err()
-	}
-
-	totalChildCount, err = countDescendants(p.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Calculate utilization percentage
 	var utilization float64
 	if totalIPs > 0 {
 		utilization = float64(usedIPs) / float64(totalIPs) * 100
 	}
 
-	return &domain.PoolStats{
+	return domain.PoolStats{
 		TotalIPs:       totalIPs,
 		UsedIPs:        usedIPs,
 		AvailableIPs:   totalIPs - usedIPs,
 		Utilization:    utilization,
-		ChildCount:     totalChildCount,
-		DirectChildren: directChildren,
-	}, nil
+		ChildCount:     ix.descendantCount(p.ID),
+		DirectChildren: len(ix.children[p.ID]),
+	}
 }
 
 // Search performs a paginated search across pools and accounts.
