@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -205,39 +206,8 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// If skip_conflicts is false, run conflict check first
-	if !req.SkipConflicts {
-		existing, err := s.store.ListPools(ctx)
-		if err != nil {
-			s.writeErr(ctx, w, http.StatusInternalServerError, "failed to list existing pools", err.Error())
-			return
-		}
-		for _, proposed := range req.Pools {
-			pp, err := netip.ParsePrefix(proposed.CIDR)
-			if err != nil {
-				continue
-			}
-			for _, ex := range existing {
-				ep, err := netip.ParsePrefix(ex.CIDR)
-				if err != nil {
-					continue
-				}
-				if prefixesOverlapIPv4(pp, ep) {
-					s.writeErr(ctx, w, http.StatusConflict,
-						fmt.Sprintf("pool %q (%s) overlaps with existing pool %q (%s)", proposed.Name, proposed.CIDR, ex.Name, ex.CIDR),
-						"set skip_conflicts to true to bypass this check")
-					return
-				}
-			}
-		}
-	}
-
-	// Create pools in order (the request must be topologically sorted)
-	refToID := make(map[string]int64)
-	var created, skipped int
 	var errs []string
-	var rootPoolID int64
-
+	batch := make([]poolPlacement, 0, len(req.Pools))
 	for _, p := range req.Pools {
 		poolType := domain.PoolType(p.Type)
 		if poolType == "" {
@@ -247,8 +217,7 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 			errs = append(errs, fmt.Sprintf("pool %q: invalid type %q, using subnet", p.Ref, p.Type))
 			poolType = domain.PoolTypeSubnet
 		}
-
-		cp := domain.CreatePool{
+		batch = append(batch, poolPlacement{Ref: p.Ref, ParentRef: p.ParentRef, In: domain.CreatePool{
 			Name:        p.Name,
 			CIDR:        p.CIDR,
 			Type:        poolType,
@@ -256,33 +225,40 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 			Source:      domain.PoolSourceManual,
 			Description: "Created by Schema Planner",
 			Tags:        tags,
-		}
+		}})
+	}
 
-		// Resolve parent ref
-		if p.ParentRef != "" {
-			parentID, ok := refToID[p.ParentRef]
-			if !ok {
-				errs = append(errs, fmt.Sprintf("pool %q: parent_ref %q not yet created", p.Ref, p.ParentRef))
-				skipped++
-				continue
-			}
-			cp.ParentID = &parentID
-		}
+	policy := anyLivePool
+	if req.SkipConflicts {
+		policy = overlapAllowed
+	}
+	placed, err := s.placePools(ctx, policy, batch)
+	var overlap *placementConflict
+	if errors.As(err, &overlap) {
+		s.writeErr(ctx, w, http.StatusConflict, overlap.Error(), "set skip_conflicts to true to bypass this check")
+		return
+	}
+	if err != nil {
+		s.writeErr(ctx, w, http.StatusInternalServerError, "failed to list existing pools", err.Error())
+		return
+	}
 
-		pool, err := s.store.CreatePool(ctx, cp)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("pool %q: %v", p.Ref, err))
+	refToID := make(map[string]int64)
+	var created, skipped int
+	var rootPoolID int64
+	for i, r := range placed {
+		p := req.Pools[i]
+		if r.Err != nil {
+			errs = append(errs, fmt.Sprintf("pool %q: %v", p.Ref, r.Err))
 			skipped++
 			continue
 		}
-
-		refToID[p.Ref] = pool.ID
+		refToID[p.Ref] = r.Pool.ID
 		if p.ParentRef == "" {
-			rootPoolID = pool.ID
+			rootPoolID = r.Pool.ID
 		}
 		created++
-
-		s.logAudit(ctx, "create", "pool", fmt.Sprintf("%d", pool.ID), pool.Name, http.StatusCreated)
+		s.logAudit(ctx, "create", "pool", fmt.Sprintf("%d", r.Pool.ID), r.Pool.Name, http.StatusCreated)
 	}
 
 	resp := schemaApplyResponse{

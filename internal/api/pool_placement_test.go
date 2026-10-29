@@ -178,3 +178,51 @@ func TestSchemaApply_OverlappingSiblingsInOneBatch(t *testing.T) {
 		t.Fatalf("skip_conflicts:true: want 3 created, got %+v", resp)
 	}
 }
+
+func TestCheckPlacement(t *testing.T) {
+	rootID, aID := int64(1), int64(2)
+	live := []domain.Pool{
+		{ID: 1, Name: "root", CIDR: "10.0.0.0/8"},
+		{ID: 2, Name: "a", CIDR: "10.1.0.0/16", ParentID: &rootID},
+		{ID: 3, Name: "deep", CIDR: "10.1.1.0/24", ParentID: &aID},
+	}
+	one := func(cidr string, parent *int64) []poolPlacement {
+		return []poolPlacement{{In: domain.CreatePool{Name: "new", CIDR: cidr, ParentID: parent}}}
+	}
+	cases := []struct {
+		name   string
+		policy overlapPolicy
+		batch  []poolPlacement
+		with   string
+	}{
+		{"sibling overlap", siblingsOnly, one("10.1.0.0/17", &rootID), "a"},
+		{"disjoint sibling", siblingsOnly, one("10.2.0.0/16", &rootID), ""},
+		{"identical sibling is left to the store", siblingsOnly, one("10.1.0.0/16", &rootID), ""},
+		{"pools under other parents are ignored", siblingsOnly, one("10.1.2.0/24", &aID), ""},
+		{"top level", siblingsOnly, one("10.0.0.0/9", nil), "root"},
+		{"any live pool, other parent", anyLivePool, one("10.1.1.0/25", nil), "root"},
+		{"any live pool, identical", anyLivePool, one("10.0.0.0/8", nil), "root"},
+		{"batch siblings overlap", anyLivePool, []poolPlacement{
+			{Ref: "r", In: domain.CreatePool{Name: "r", CIDR: "192.168.0.0/16"}},
+			{Ref: "x", ParentRef: "r", In: domain.CreatePool{Name: "x", CIDR: "192.168.0.0/24"}},
+			{Ref: "y", ParentRef: "r", In: domain.CreatePool{Name: "y", CIDR: "192.168.0.0/25"}},
+		}, "x"},
+		{"batch parent and child do not conflict", anyLivePool, []poolPlacement{
+			{Ref: "r", In: domain.CreatePool{Name: "r", CIDR: "192.168.0.0/16"}},
+			{Ref: "x", ParentRef: "r", In: domain.CreatePool{Name: "x", CIDR: "192.168.0.0/24"}},
+		}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := checkPlacement(tc.policy, live, tc.batch)
+			switch {
+			case tc.with == "" && c != nil:
+				t.Fatalf("want no conflict, got %v", c)
+			case tc.with != "" && c == nil:
+				t.Fatalf("want a conflict with %q, got none", tc.with)
+			case tc.with != "" && c.With.Name != tc.with:
+				t.Fatalf("want a conflict with %q, got %v", tc.with, c)
+			}
+		})
+	}
+}
