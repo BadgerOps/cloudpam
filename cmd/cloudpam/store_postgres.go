@@ -111,48 +111,29 @@ func selectSessionStore(logger observability.Logger) auth.SessionStore {
 	return ss
 }
 
-// selectDiscoveryStore returns a PostgreSQL-backed discovery store if the main store implements it.
-func selectDiscoveryStore(logger observability.Logger, mainStore storage.Store) storage.DiscoveryStore {
-	if ds, ok := mainStore.(storage.DiscoveryStore); ok {
-		return ds
-	}
-	logger.Warn("main store does not implement DiscoveryStore; using in-memory fallback")
-	return storage.NewMemoryDiscoveryStore(storage.NewMemoryStore())
+// selectDiscoveryStore returns the PostgreSQL store, which implements DiscoveryStore.
+func selectDiscoveryStore(_ observability.Logger, mainStore storage.Store) storage.DiscoveryStore {
+	return mainStore.(*pgstore.Store)
 }
 
-// selectRecommendationStore returns a PostgreSQL-backed recommendation store if the main store supports it.
-func selectRecommendationStore(logger observability.Logger, mainStore storage.Store) storage.RecommendationStore {
-	if rs, ok := mainStore.(storage.RecommendationStore); ok {
-		return rs
-	}
-	logger.Warn("main store does not implement RecommendationStore; using in-memory fallback")
-	return storage.NewMemoryRecommendationStore(storage.NewMemoryStore())
+// selectRecommendationStore returns the PostgreSQL store, which implements RecommendationStore.
+func selectRecommendationStore(_ observability.Logger, mainStore storage.Store) storage.RecommendationStore {
+	return mainStore.(*pgstore.Store)
 }
 
-// selectConversationStore returns a PostgreSQL-backed conversation store if the main store supports it.
-func selectConversationStore(logger observability.Logger, mainStore storage.Store) storage.ConversationStore {
-	if cs, ok := mainStore.(storage.ConversationStore); ok {
-		return cs
-	}
-	logger.Warn("main store does not implement ConversationStore; using in-memory fallback")
-	return storage.NewMemoryConversationStore(storage.NewMemoryStore())
+// selectConversationStore returns the PostgreSQL store, which implements ConversationStore.
+func selectConversationStore(_ observability.Logger, mainStore storage.Store) storage.ConversationStore {
+	return mainStore.(*pgstore.Store)
 }
 
-// selectDriftStore returns a PostgreSQL-backed drift store if the main store supports it.
-func selectDriftStore(logger observability.Logger, mainStore storage.Store) storage.DriftStore {
-	if ds, ok := mainStore.(storage.DriftStore); ok {
-		return ds
-	}
-	logger.Warn("main store does not implement DriftStore; using in-memory fallback")
-	return storage.NewMemoryDriftStore(storage.NewMemoryStore())
+// selectDriftStore returns the PostgreSQL store, which implements DriftStore.
+func selectDriftStore(_ observability.Logger, mainStore storage.Store) storage.DriftStore {
+	return mainStore.(*pgstore.Store)
 }
 
-func selectNetworkStore(logger observability.Logger, mainStore storage.Store) storage.NetworkStore {
-	if ns, ok := mainStore.(storage.NetworkStore); ok {
-		return ns
-	}
-	logger.Warn("main store does not implement NetworkStore; using in-memory fallback")
-	return storage.NewMemoryNetworkStore(storage.NewMemoryStore())
+// selectNetworkStore returns the PostgreSQL store, which implements NetworkStore.
+func selectNetworkStore(_ observability.Logger, mainStore storage.Store) storage.NetworkStore {
+	return mainStore.(*pgstore.Store)
 }
 
 // sqliteStatus is a no-op for postgres builds.
