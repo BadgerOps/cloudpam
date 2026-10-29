@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 	"cloudpam/internal/validation"
 )
 
@@ -274,6 +276,10 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 			"error", err.Error(),
 		})
 		s.logger.WarnContext(ctx, "accounts:create storage error", fields...)
+		if errors.Is(err, storage.ErrConflict) {
+			s.writeErr(r.Context(), w, http.StatusConflict, "account key already exists", in.Key)
+			return
+		}
 		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 		return
 	}
