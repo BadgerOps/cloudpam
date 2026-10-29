@@ -327,6 +327,8 @@ export interface UserInfo {
   last_failed_login_at?: string | null
   locked_at?: string | null
   lockout_until?: string | null
+  auth_provider?: 'local' | 'oidc'
+  oidc_issuer?: string
 }
 
 export interface LoginRequest {
