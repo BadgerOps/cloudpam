@@ -808,7 +808,11 @@ func TestNetworkConflictLinkActionUpdatesExistingAssociation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create old pool: %v", err)
 	}
-	newPool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "new-vpc", CIDR: "10.105.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID})
+	region, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "region", CIDR: "10.104.0.0/14", Type: domain.PoolTypeRegion})
+	if err != nil {
+		t.Fatalf("create region pool: %v", err)
+	}
+	newPool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "new-vpc", CIDR: "10.105.0.0/16", Type: domain.PoolTypeVPC, AccountID: &account.ID, ParentID: &region.ID})
 	if err != nil {
 		t.Fatalf("create new pool: %v", err)
 	}

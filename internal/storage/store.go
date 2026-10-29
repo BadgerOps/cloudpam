@@ -76,6 +76,13 @@ func (m *MemoryStore) CreatePool(ctx context.Context, in domain.CreatePool) (dom
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, p := range m.pools {
+		sameParent := p.ParentID == nil && in.ParentID == nil ||
+			p.ParentID != nil && in.ParentID != nil && *p.ParentID == *in.ParentID
+		if sameParent && p.CIDR == in.CIDR && p.DeletedAt == nil {
+			return domain.Pool{}, fmt.Errorf("pool %q already exists under this parent: %w", in.CIDR, ErrConflict)
+		}
+	}
 	id := m.next
 	m.next++
 	now := time.Now().UTC()
