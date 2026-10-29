@@ -4,15 +4,17 @@
 #   .claude/skills/verify-pool-overlap/run.sh [--out DIR]
 #
 # Runs TLC (pinned through the repo's own nixpkgs rev from flake.lock) on:
-#   race.cfg          code as of the sync commit    expected: VIOLATED (finding F1)
-#   atomic.cfg        proposed fix                  expected: HOLDS
-#   memstore-dup.cfg  in-memory store, same CIDR    expected: VIOLATED (finding F2)
+#   one-process.cfg    the code, one server process          expected: HOLDS
+#   duplicate.cfg      the code, same CIDR twice             expected: HOLDS
+#   multi-process.cfg  the code, three processes, one DB     expected: VIOLATED (limitation L1)
 #
 # Exit codes:
-#   0  every run matched the expectation recorded in SKILL.md (findings still stand)
-#   3  race.cfg now HOLDS: the finding is fixed, or the model no longer describes the code.
-#      Re-read createPool before celebrating, then update SKILL.md.
-#   1  a run did not match any expectation, or TLC itself failed (model error, missing tool)
+#   0  every run matched SKILL.md and the covered code is unchanged since the sync commit
+#   4  every run matched, but covered code in the working tree differs from the sync commit, or that
+#      commit is not in this clone: the pass may describe code that no longer exists. Re-read the
+#      changed code, update the model, then the sync commit.
+#   3  multi-process.cfg now HOLDS: a cross-process guard landed, or the model lost the ability to fail.
+#   1  any other mismatch (a rule broken on one process is a bug candidate), or TLC itself failed
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,23 +23,24 @@ OUT="$HERE/out"
 if [ "${1:-}" = "--out" ]; then OUT="$2"; fi
 mkdir -p "$OUT"
 
-# Same nixpkgs the flake pins, so everyone gets the same TLC (2.19 / tlaplus 1.7.4 at the sync commit).
 REV="$(sed -n '/"nixpkgs": {/,/}/p' "$REPO/flake.lock" | grep '"rev"' | head -1 | sed 's/.*"rev": "\([^"]*\)".*/\1/')"
 if [ -z "$REV" ]; then echo "could not read nixpkgs rev from $REPO/flake.lock" >&2; exit 1; fi
 tlc() { nix shell "github:NixOS/nixpkgs/$REV#tlaplus" --command tlc -workers 1 -metadir "$OUT/states-$1" -config "$HERE/$1.cfg" "$HERE/MC.tla"; }
 
-# --- drift: has the covered code changed since the model was last confirmed? ---
+drift=0
 SYNC="$(sed -n 's/^sync commit: *\([0-9a-f]\{7,40\}\).*/\1/p' "$HERE/SKILL.md" | head -1)"
-COVERED=(internal/api/pool_handlers.go internal/api/cidr.go internal/storage/store.go internal/storage/sqlite/sqlite.go internal/storage/postgres/postgres.go migrations/0001_init.sql)
+COVERED=(internal/api/pool_handlers.go internal/api/pool_placement.go internal/api/schema_handlers.go internal/api/cidr.go internal/storage/store.go internal/storage/sqlite/sqlite.go internal/storage/postgres/postgres.go migrations/0001_init.sql migrations/postgres/001_core_schema.up.sql)
 if [ -n "$SYNC" ] && git -C "$REPO" cat-file -e "$SYNC^{commit}" 2>/dev/null; then
-  if ! git -C "$REPO" diff --quiet "$SYNC" HEAD -- "${COVERED[@]}"; then
+  if ! git -C "$REPO" diff --quiet "$SYNC" -- "${COVERED[@]}"; then
+    drift=1
     echo "DRIFT: covered files changed since sync commit $SYNC. The model may no longer describe the code:"
-    git -C "$REPO" diff --stat "$SYNC" HEAD -- "${COVERED[@]}" | sed 's/^/  /'
+    git -C "$REPO" diff --stat "$SYNC" -- "${COVERED[@]}" | sed 's/^/  /'
   else
     echo "no drift: covered files unchanged since sync commit $SYNC"
   fi
 else
-  echo "WARN: sync commit '$SYNC' from SKILL.md not found in this repo; skipping drift check"
+  drift=1
+  echo "DRIFT: sync commit '$SYNC' from SKILL.md not found in this repo; cannot tell whether the model still describes the code (shallow clone? git fetch --unshallow)"
 fi
 
 status=0
@@ -54,22 +57,24 @@ check() {
   elif grep -q "Invariant .* is violated" "$log"; then got="VIOLATED ($(grep -o 'Invariant [A-Za-z]* is violated' "$log" | head -1 | awk '{print $2}'))"
   else echo "could not read result for $cfg; see $log"; status=1; return; fi
   echo "result: $got   (full TLC output: $log)"
-  if [ "${got%% *}" = "${expect%% *}" ]; then return; fi
-  if [ "$cfg" = race ] && [ "$got" = HOLDS ]; then
-    echo "race.cfg HOLDS: either createPool is now atomic (update SKILL.md, move the sync commit) or the model drifted."
-    status=3; return
+  if [ "$got" = "$expect" ]; then return; fi
+  if [ "$cfg" = multi-process ] && [ "$got" = HOLDS ]; then
+    echo "multi-process.cfg HOLDS: either pool creation is now serialized across processes (update SKILL.md) or the model can no longer fail."
+    [ "$status" = 1 ] || status=3; return
   fi
-  echo "UNEXPECTED: $cfg gave '$got', expected '$expect'. Treat the model as broken until explained."
+  echo "UNEXPECTED: $cfg gave '$got', expected '$expect'. Replay the trace against the code: a broken rule on one process is a bug candidate."
   status=1
 }
-check race "VIOLATED (NoOverlappingSiblings)"
-check atomic "HOLDS"
-check memstore-dup "VIOLATED (NoOverlappingSiblings)"
+check one-process "HOLDS"
+check duplicate "HOLDS"
+check multi-process "VIOLATED (NoOverlappingSiblings)"
+if [ "$status" = 0 ] && [ "$drift" = 1 ]; then status=4; fi
 
 echo
 case $status in
-  0) echo "RESULT: as recorded in SKILL.md. Findings F1 and F2 still stand. Read any trace with /pstack:statechart." ;;
-  3) echo "RESULT: F1 no longer reproduces in the model. Confirm against the code before updating SKILL.md." ;;
-  *) echo "RESULT: verification itself failed; fix the model or the tool, not the code." ;;
+  0) echo "RESULT: matches SKILL.md at the sync commit. One process keeps siblings apart; L1 (several processes on one database) still stands." ;;
+  4) echo "RESULT: TLC matched SKILL.md, but the covered code drifted, so this pass may be on a stale description. Re-read the diff above before trusting it." ;;
+  3) echo "RESULT: L1 no longer reproduces in the model. Confirm against the code before updating SKILL.md." ;;
+  *) echo "RESULT: a check did not match. Read the trace with /pstack:statechart and decide: model error or bug in the code." ;;
 esac
 exit $status

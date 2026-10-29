@@ -7,13 +7,15 @@ EXTENDS PoolCreate, TLC
 
 MCRequests == {"r1", "r2", "r3"}
 
-\* Race scenario: r1 is a /8, r2 and r3 are its two disjoint halves.
 MCReqCIDR == ("r1" :> "10.0.0.0/8") @@ ("r2" :> "10.0.0.0/9") @@ ("r3" :> "10.128.0.0/9")
 
-\* Duplicate scenario: r2 and r3 ask for exactly the same CIDR.
 MCReqCIDRDup == ("r1" :> "10.0.0.0/8") @@ ("r2" :> "10.0.0.0/9") @@ ("r3" :> "10.0.0.0/9")
 
 MCReqParent == [r \in MCRequests |-> "root"]
+
+MCOneProcess == [r \in MCRequests |-> "p1"]
+
+MCThreeProcesses == ("r1" :> "p1") @@ ("r2" :> "p2") @@ ("r3" :> "p3")
 
 OverlapPairs == { {"10.0.0.0/8", "10.0.0.0/9"}, {"10.0.0.0/8", "10.128.0.0/9"} }
 MCOverlaps(a, b) == {a, b} \in OverlapPairs
