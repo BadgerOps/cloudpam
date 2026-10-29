@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus, Search, Trash2, ChevronRight, Pencil, X } from 'lucide-react'
 import { usePools } from '../hooks/usePools'
 import { useAccounts } from '../hooks/useAccounts'
@@ -89,6 +90,8 @@ export default function PoolsPage() {
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [selectedPool, setSelectedPool] = useState<PoolWithStats | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedId = Number(searchParams.get('selected')) || null
   const [editingPool, setEditingPool] = useState<Pool | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [createErrors, setCreateErrors] = useState<PoolFormErrors>({})
@@ -104,6 +107,40 @@ export default function PoolsPage() {
     fetchHierarchy()
     fetchAccounts()
   }, [fetchPools, fetchHierarchy, fetchAccounts])
+
+  // The URL owns the selection: ?selected=<id> is the only way the panel opens.
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedPool(null)
+      return
+    }
+    let stale = false
+    loadPool(selectedId).then(pool => {
+      if (!stale && pool) setSelectedPool(pool)
+    })
+    return () => { stale = true }
+  }, [selectedId])
+
+  async function loadPool(id: number): Promise<PoolWithStats | null> {
+    try {
+      return await get<PoolWithStats>(`/api/v1/pools/${id}`)
+    } catch (err) {
+      const pool = pools.find(p => p.id === id)
+      if (pool) {
+        return { ...pool, stats: { total_ips: getHostCount(pool.cidr), used_ips: 0, available_ips: getHostCount(pool.cidr), utilization: 0, child_count: 0, direct_children: 0 }, children: [] }
+      }
+      showToast(errorMessage(err, 'Failed to load pool'), 'error')
+      return null
+    }
+  }
+
+  function selectPool(pool: Pool) {
+    setSearchParams({ selected: String(pool.id) })
+  }
+
+  function closePanel() {
+    setSearchParams({}, { replace: true })
+  }
 
   const filteredPools = pools.filter(p => {
     if (!search) return !p.parent_id // Show root pools when no search
@@ -165,19 +202,9 @@ export default function PoolsPage() {
       await deletePool(pool.id)
       showToast('Pool deleted', 'success')
       fetchHierarchy()
-      if (selectedPool?.id === pool.id) setSelectedPool(null)
+      if (selectedPool?.id === pool.id) closePanel()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to delete pool', 'error')
-    }
-  }
-
-  async function handleSelectPool(pool: Pool) {
-    try {
-      const full = await get<PoolWithStats>(`/api/v1/pools/${pool.id}`)
-      setSelectedPool(full)
-    } catch {
-      // Fallback to basic pool data
-      setSelectedPool({ ...pool, stats: { total_ips: getHostCount(pool.cidr), used_ips: 0, available_ips: getHostCount(pool.cidr), utilization: 0, child_count: 0, direct_children: 0 }, children: [] })
     }
   }
 
@@ -186,7 +213,8 @@ export default function PoolsPage() {
     await fetchPools()
     await fetchHierarchy()
     if (selectedPool?.id === updated.id) {
-      await handleSelectPool(updated)
+      const pool = await loadPool(updated.id)
+      if (pool) setSelectedPool(pool)
     }
   }
 
@@ -378,7 +406,7 @@ export default function PoolsPage() {
                         <Pencil className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => handleSelectPool(p)}
+                        onClick={() => selectPool(p)}
                         className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 p-1"
                         title="View details"
                       >
@@ -404,7 +432,7 @@ export default function PoolsPage() {
       {selectedPool && (
         <PoolDetailPanel
           pool={selectedPool}
-          onClose={() => setSelectedPool(null)}
+          onClose={closePanel}
           onEdit={() => setEditingPool(selectedPool)}
         />
       )}
