@@ -273,6 +273,11 @@ func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, existing := range m.accounts {
+		if existing.Key == in.Key {
+			return domain.Account{}, fmt.Errorf("account key %q already exists: %w", in.Key, ErrConflict)
+		}
+	}
 	id := m.nextAccount
 	m.nextAccount++
 	now := time.Now().UTC()

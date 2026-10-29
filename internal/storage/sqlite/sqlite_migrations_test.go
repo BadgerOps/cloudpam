@@ -4,11 +4,13 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 func TestMigrationsAndConstraints(t *testing.T) {
@@ -53,5 +55,23 @@ func TestMigrationsAndConstraints(t *testing.T) {
 	}
 	if _, ok, _ := s.GetPool(ctx, child.ID); ok {
 		t.Fatalf("expected child removed after cascade")
+	}
+}
+
+func TestCreateAccount_DuplicateKeyIsConflict(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New("file:" + filepath.Join(dir, "test.db") + "?_fk=1&cache=shared")
+	if err != nil {
+		t.Fatalf("new sqlite store: %v", err)
+	}
+	t.Cleanup(func() { _ = s.db.Close() })
+
+	ctx := context.Background()
+	if _, err := s.CreateAccount(ctx, domain.CreateAccount{Key: "aws:123", Name: "Prod"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	_, err = s.CreateAccount(ctx, domain.CreateAccount{Key: "aws:123", Name: "Prod again"})
+	if !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("expected ErrConflict, got %v", err)
 	}
 }
