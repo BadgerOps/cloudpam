@@ -1,8 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
-import { Search, Bell, User, LogOut, Key, UserCircle, Sun, Moon, Menu } from 'lucide-react'
+import { Search, User, LogOut, Key, UserCircle, Sun, Moon, Monitor, Menu } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
-import { useTheme } from '../hooks/useTheme'
+import { useTheme, type ThemeMode } from '../hooks/useTheme'
 import { useNavigate } from 'react-router-dom'
+
+const THEME_MODES: Record<ThemeMode, { Icon: LucideIcon; label: string }> = {
+  light: { Icon: Sun, label: 'Light' },
+  dark: { Icon: Moon, label: 'Dark' },
+  system: { Icon: Monitor, label: 'System' },
+}
 
 interface HeaderProps {
   onSearchClick: () => void
@@ -12,7 +19,8 @@ interface HeaderProps {
 
 export default function Header({ onSearchClick, onMenuClick, sidebarOpen }: HeaderProps) {
   const { isAuthenticated, currentUser, role, logout } = useAuth()
-  const { resolvedTheme, toggle: toggleTheme } = useTheme()
+  const { mode, cycle: cycleTheme } = useTheme()
+  const { Icon: ThemeIcon, label: themeLabel } = THEME_MODES[mode]
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -76,15 +84,13 @@ export default function Header({ onSearchClick, onMenuClick, sidebarOpen }: Head
         </div>
       </div>
       <div className="flex items-center gap-2 md:gap-4 flex-shrink-0">
-        <button className="relative hidden sm:block p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
-          <Bell className="w-5 h-5" />
-        </button>
         <button
-          onClick={toggleTheme}
-          aria-label={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          onClick={cycleTheme}
+          aria-label={`Theme: ${themeLabel}`}
+          title={`Theme: ${themeLabel}. Cycles light, dark, system.`}
           className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
         >
-          {resolvedTheme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          <ThemeIcon className="w-5 h-5" />
         </button>
         <div className="relative pl-2 md:pl-4 border-l border-gray-200 dark:border-gray-700" ref={menuRef}>
           <button

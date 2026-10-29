@@ -4,16 +4,12 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 
 interface ThemeContextValue {
   mode: ThemeMode
-  resolvedTheme: 'light' | 'dark'
   cycle: () => void
-  toggle: () => void
 }
 
 export const ThemeContext = createContext<ThemeContextValue>({
   mode: 'system',
-  resolvedTheme: 'light',
   cycle: () => {},
-  toggle: () => {},
 })
 
 export function useTheme() {
@@ -57,22 +53,5 @@ export function useThemeState(): ThemeContextValue {
     return () => mq.removeEventListener('change', handler)
   }, [mode, apply])
 
-  const resolvedTheme: 'light' | 'dark' =
-    mode === 'system'
-      ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-      : mode
-
-  const toggle = useCallback(() => {
-    setMode((prev) => {
-      const resolved = prev === 'system'
-        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-        : prev
-      const next: ThemeMode = resolved === 'dark' ? 'light' : 'dark'
-      localStorage.setItem('theme', next)
-      apply(next)
-      return next
-    })
-  }, [apply])
-
-  return { mode, resolvedTheme, cycle, toggle }
+  return { mode, cycle }
 }
