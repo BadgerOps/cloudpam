@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/netip"
 	"strconv"
 	"strings"
 
@@ -524,49 +523,22 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Overlap protection: disallow any overlapping CIDRs within the same parent scope
-	// (i.e., among pools sharing the same parent_id, or among top-level pools).
-	{
-		pfxNew, _ := netip.ParsePrefix(in.CIDR)
-		if !pfxNew.Addr().Is4() {
-			s.writeErr(r.Context(), w, http.StatusBadRequest, "only ipv4 supported for now", "")
-			return
-		}
-		all, err := s.store.ListPools(ctx)
-		if err != nil {
-			s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
-			return
-		}
-		for _, p := range all {
-			if in.ParentID == nil {
-				if p.ParentID != nil {
-					continue
-				}
-			} else {
-				if p.ParentID == nil || *p.ParentID != *in.ParentID {
-					continue
-				}
-			}
-			// Skip comparing with an exact duplicate; DB uniqueness should also catch
-			if strings.EqualFold(strings.TrimSpace(p.CIDR), in.CIDR) {
-				continue
-			}
-			old, err := netip.ParsePrefix(p.CIDR)
-			if err != nil || !old.Addr().Is4() {
-				continue
-			}
-			if prefixesOverlapIPv4(old, pfxNew) {
-				logger.WarnContext(ctx, "pools:create cidr overlap", appendRequestID(ctx, []any{
-					"candidate_cidr", in.CIDR,
-					"existing_pool_id", p.ID,
-					"existing_cidr", p.CIDR,
-				})...)
-				s.writeErr(r.Context(), w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", p.ID, p.CIDR))
-				return
-			}
-		}
+	placed, err := s.placePools(ctx, siblingsOnly, []poolPlacement{{In: in}})
+	var overlap *placementConflict
+	if errors.As(err, &overlap) {
+		logger.WarnContext(ctx, "pools:create cidr overlap", appendRequestID(ctx, []any{
+			"candidate_cidr", in.CIDR,
+			"existing_pool_id", overlap.With.ID,
+			"existing_cidr", overlap.With.CIDR,
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", overlap.With.ID, overlap.With.CIDR))
+		return
 	}
-	p, err := s.store.CreatePool(ctx, in)
+	if err != nil {
+		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
+		return
+	}
+	p, err := placed[0].Pool, placed[0].Err
 	if err != nil {
 		logger.WarnContext(ctx, "pools:create storage error", appendRequestID(ctx, []any{
 			"name", in.Name,
@@ -575,7 +547,11 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 			"account_id", valueOrNil(in.AccountID),
 			"error", err.Error(),
 		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
+		code := http.StatusBadRequest
+		if errors.Is(err, storage.ErrConflict) {
+			code = http.StatusConflict
+		}
+		s.writeErr(r.Context(), w, code, err.Error(), "")
 		return
 	}
 	logger.InfoContext(ctx, "pools:create success", appendRequestID(ctx, []any{
