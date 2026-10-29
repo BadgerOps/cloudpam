@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PoolsPage from '../pages/PoolsPage'
 import type { Pool } from '../api/types'
@@ -23,6 +24,20 @@ vi.mock('../hooks/useToast', () => ({
 vi.mock('../api/client', () => ({
   get: (...args: unknown[]) => mockGet(...args),
 }))
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname}{location.search}</div>
+}
+
+function renderPage(path = '/pools') {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <PoolsPage />
+      <LocationProbe />
+    </MemoryRouter>,
+  )
+}
 
 describe('PoolsPage validation', () => {
   const showToast = vi.fn()
@@ -65,7 +80,7 @@ describe('PoolsPage validation', () => {
   })
 
   it('shows inline create validation errors without submitting', () => {
-    render(<PoolsPage />)
+    renderPage()
 
     fireEvent.click(screen.getByRole('button', { name: /New Pool/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Create Pool' }))
@@ -77,7 +92,7 @@ describe('PoolsPage validation', () => {
 
   it('renders create server errors inline and as a toast', async () => {
     createPool.mockRejectedValue(new Error('CIDR overlaps an existing pool'))
-    render(<PoolsPage />)
+    renderPage()
 
     fireEvent.click(screen.getByRole('button', { name: /New Pool/i }))
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: ' prod child ' } })
@@ -92,7 +107,7 @@ describe('PoolsPage validation', () => {
   })
 
   it('shows inline edit validation errors without submitting', () => {
-    render(<PoolsPage />)
+    renderPage()
 
     fireEvent.click(screen.getByTitle('Edit pool'))
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: '   ' } })
@@ -104,7 +119,7 @@ describe('PoolsPage validation', () => {
 
   it('renders edit server errors inline and as a toast', async () => {
     updatePool.mockRejectedValue(new Error('pool update rejected'))
-    render(<PoolsPage />)
+    renderPage()
 
     fireEvent.click(screen.getByTitle('Edit pool'))
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'prod-renamed' } })
@@ -114,6 +129,36 @@ describe('PoolsPage validation', () => {
       expect(updatePool).toHaveBeenCalledWith(1, expect.objectContaining({ name: 'prod-renamed' }))
       expect(screen.getByRole('alert').textContent).toContain('pool update rejected')
       expect(showToast).toHaveBeenCalledWith('pool update rejected', 'error')
+    })
+  })
+
+  it('opens the detail panel for the pool named in ?selected', async () => {
+    mockGet.mockResolvedValue({
+      ...pool,
+      stats: { total_ips: 65536, used_ips: 0, available_ips: 65536, utilization: 0, child_count: 0, direct_children: 0 },
+      children: [],
+    })
+    renderPage('/pools?selected=1')
+
+    await waitFor(() => {
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/pools/1')
+      expect(screen.getByRole('heading', { level: 3, name: 'prod' })).toBeTruthy()
+    })
+  })
+
+  it('writes ?selected when a row is opened, so the URL and the panel agree', async () => {
+    mockGet.mockResolvedValue({
+      ...pool,
+      stats: { total_ips: 65536, used_ips: 0, available_ips: 65536, utilization: 0, child_count: 0, direct_children: 0 },
+      children: [],
+    })
+    renderPage()
+
+    fireEvent.click(screen.getByTitle('View details'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location').textContent).toBe('/pools?selected=1')
+      expect(screen.getByRole('heading', { level: 3, name: 'prod' })).toBeTruthy()
     })
   })
 })
