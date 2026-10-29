@@ -125,19 +125,18 @@ export default function SchemaPlanner() {
     [generatedSchema],
   )
 
+  const title = (
+    <div className="flex items-center gap-2 mb-6">
+      <Network className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+      <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Schema Planner</h1>
+    </div>
+  )
+
   if (applyResult) {
     return (
-      <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
-        <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-          <div className="max-w-5xl mx-auto flex items-center gap-3">
-            <Network className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">CloudPAM</h1>
-              <p className="text-sm text-gray-500 dark:text-gray-400">IP Schema Planner</p>
-            </div>
-          </div>
-        </header>
-        <main className="max-w-5xl mx-auto py-8 px-6">
+      <div className="flex-1 overflow-auto p-6">
+        <div className="max-w-5xl mx-auto">
+          {title}
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-8 text-center">
             <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle className="w-8 h-8 text-green-600 dark:text-green-400" />
@@ -171,30 +170,16 @@ export default function SchemaPlanner() {
               </button>
             </div>
           </div>
-        </main>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
-      {/* Header */}
-      <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Network className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">CloudPAM</h1>
-              <p className="text-sm text-gray-500 dark:text-gray-400">IP Schema Planner</p>
-            </div>
-          </div>
-          <a href="/" className="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 text-sm">
-            Back to Dashboard
-          </a>
-        </div>
-      </header>
+    <div className="flex-1 overflow-auto p-6">
+      <div className="max-w-5xl mx-auto">
+        {title}
 
-      <main className="max-w-5xl mx-auto py-8 px-6">
         {/* Progress Steps */}
         <nav className="mb-8">
           <ol className="flex items-center justify-between">
@@ -304,7 +289,7 @@ export default function SchemaPlanner() {
             Failed to apply schema: {applyError}
           </div>
         )}
-      </main>
+      </div>
     </div>
   )
 }
