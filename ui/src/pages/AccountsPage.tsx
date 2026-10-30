@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus, Search, Trash2 } from 'lucide-react'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
@@ -10,6 +11,8 @@ export default function AccountsPage() {
   const { accounts, loading, error, fetchAccounts, createAccount, deleteAccount } = useAccounts()
   const { showToast } = useToast()
   const [search, setSearch] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedId = Number(searchParams.get('selected')) || null
   const [showCreate, setShowCreate] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
@@ -19,7 +22,13 @@ export default function AccountsPage() {
 
   useEffect(() => { fetchAccounts() }, [fetchAccounts])
 
+  function handleSearchChange(value: string) {
+    setSearch(value)
+    if (selectedId) setSearchParams({}, { replace: true })
+  }
+
   const filtered = accounts.filter(a => {
+    if (selectedId) return a.id === selectedId
     if (!search) return true
     const q = search.toLowerCase()
     return a.name.toLowerCase().includes(q) ||
@@ -47,6 +56,7 @@ export default function AccountsPage() {
     try {
       await deleteAccount(id)
       showToast('Account deleted', 'success')
+      if (id === selectedId) setSearchParams({}, { replace: true })
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to delete account', 'error')
     }
@@ -141,7 +151,7 @@ export default function AccountsPage() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-gray-500" />
         <input
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => handleSearchChange(e.target.value)}
           placeholder="Search accounts by name, key, or provider..."
           className="w-full pl-9 pr-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         />
@@ -155,7 +165,7 @@ export default function AccountsPage() {
         <div className="text-center py-12 text-gray-400 dark:text-gray-500">Loading accounts...</div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-gray-500 dark:text-gray-400">{search ? 'No accounts match your search' : 'No accounts yet.'}</p>
+          <p className="text-gray-500 dark:text-gray-400">{selectedId ? 'Account not found.' : search ? 'No accounts match your search' : 'No accounts yet.'}</p>
         </div>
       ) : (
         <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg overflow-hidden">

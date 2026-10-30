@@ -34,8 +34,8 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, onClose])
 
-  function handleSelect(type: 'pool' | 'account') {
-    navigate(type === 'pool' ? '/pools' : '/accounts')
+  function handleSelect(type: 'pool' | 'account', id: number) {
+    navigate(`${type === 'pool' ? '/pools' : '/accounts'}?selected=${id}`)
     onClose()
   }
 
@@ -97,7 +97,7 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
                   {poolResults.map(item => (
                     <button
                       key={`pool-${item.id}`}
-                      onClick={() => handleSelect('pool')}
+                      onClick={() => handleSelect('pool', item.id)}
                       className="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-blue-50 dark:hover:bg-blue-900/30 text-left"
                     >
                       <Server className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />
@@ -120,7 +120,7 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
                   {accountResults.map(item => (
                     <button
                       key={`account-${item.id}`}
-                      onClick={() => handleSelect('account')}
+                      onClick={() => handleSelect('account', item.id)}
                       className="w-full flex items-center gap-3 px-4 py-2 text-sm hover:bg-blue-50 dark:hover:bg-blue-900/30 text-left"
                     >
                       <Cloud className="w-4 h-4 text-gray-400 dark:text-gray-500 flex-shrink-0" />

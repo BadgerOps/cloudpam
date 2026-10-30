@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ImportExportModal from '../components/ImportExportModal'
 import PoolsPage from '../pages/PoolsPage'
@@ -64,7 +65,7 @@ describe('responsive tables', () => {
   })
 
   it('hides secondary pool columns below md but keeps identity and actions', () => {
-    render(<PoolsPage />)
+    render(<MemoryRouter><PoolsPage /></MemoryRouter>)
 
     for (const label of ['Type', 'IPs', 'Created']) {
       const th = headerFor(label)
@@ -78,7 +79,7 @@ describe('responsive tables', () => {
   })
 
   it('hides the matching body cells so rows stay aligned', () => {
-    render(<PoolsPage />)
+    render(<MemoryRouter><PoolsPage /></MemoryRouter>)
 
     const row = document.querySelector('tbody tr') as HTMLElement
     const cells = Array.from(row.querySelectorAll('td'))

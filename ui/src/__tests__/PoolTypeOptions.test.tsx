@@ -95,7 +95,7 @@ describe('pool-type <select> options come from POOL_TYPES', () => {
   })
 
   it('lists every pool type in the create-pool select', () => {
-    render(<PoolsPage />)
+    render(<MemoryRouter><PoolsPage /></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: /New Pool/i }))
 
     expect(optionValuesOf('create-pool-type')).toEqual(expectedIds())
@@ -103,7 +103,7 @@ describe('pool-type <select> options come from POOL_TYPES', () => {
   })
 
   it('lists every pool type in the edit-pool select', () => {
-    render(<PoolsPage />)
+    render(<MemoryRouter><PoolsPage /></MemoryRouter>)
     fireEvent.click(screen.getByTitle('Edit pool'))
 
     expect(optionValuesOf('edit-pool-type')).toEqual(expectedIds())
