@@ -303,3 +303,31 @@ func TestSchemaApply_CancelledMidBatch_StoresNothing(t *testing.T) {
 		t.Fatalf("cancelled batch stored %d pools: %+v", len(pools), pools)
 	}
 }
+
+func TestCSVImportAndCreatePool_TwoReplicas_StoreOne(t *testing.T) {
+	r := newReplicaPair(t)
+	ctx := context.Background()
+
+	for i, pair := range []struct{ csv, pools *Server }{{r.a, r.b}, {r.b, r.a}} {
+		n := i + 1
+		release := holdPoolInserts(t, r.db)
+		imported := serveAsync(ctx, pair.csv, "/api/v1/import/pools", fmt.Sprintf("name,cidr\nc%d,10.%d.0.0/16\n", n, n))
+		pools := serveAsync(ctx, pair.pools, "/api/v1/pools", fmt.Sprintf(`{"name":"p%d","cidr":"10.%d.0.0/17"}`, n, n))
+		waitForLockWaiters(t, r.db, 2)
+		release()
+
+		c, p := <-imported, <-pools
+		var res struct {
+			Created int `json:"created"`
+		}
+		if err := json.Unmarshal(c.Body.Bytes(), &res); err != nil {
+			t.Fatalf("round %d: import response %d %s: %v", n, c.Code, c.Body, err)
+		}
+		importWon := res.Created == 1 && p.Code == stdhttp.StatusBadRequest
+		poolsWon := res.Created == 0 && p.Code == stdhttp.StatusCreated
+		if c.Code != stdhttp.StatusOK || !importWon && !poolsWon {
+			t.Errorf("round %d: want exactly one winner, got import %d %s, pools %d %s", n, c.Code, c.Body, p.Code, p.Body)
+		}
+	}
+	assertNoOverlappingSiblings(t, r.a)
+}
