@@ -96,7 +96,9 @@ curl -X POST http://localhost:8080/api/v1/discovery/import/apply \
   -d '{"account_id":1,"resource_ids":["00000000-0000-0000-0000-000000000001"]}'
 ```
 
-`POST /api/v1/discovery/import` remains available for compatibility, but new integrations should use preview/apply so conflicts and non-pool network objects are visible before conversion.
+Apply creates pools with the same checks as `POST /api/v1/pools`, under the same placement lock. A subnet goes under the pool that the same request created or linked for its VPC. A pool that is not inside its parent, or that overlaps a pool with the same parent, is reported in `errors` and skipped. The rest of the selection is still imported. The network conflict `override` does not bypass the overlap check.
+
+`POST /api/v1/discovery/import` remains available for compatibility, but new integrations should use preview/apply so conflicts and non-pool network objects are visible before conversion. It applies the same checks. It places each VPC at the top level, so a VPC inside an existing top-level pool is reported as an overlap. Use preview and apply to place it under that pool.
 
 ## Merged Network Views
 

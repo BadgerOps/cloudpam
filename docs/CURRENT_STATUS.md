@@ -14,7 +14,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Core IPAM | Complete | Hierarchical pools, accounts, assigned blocks, CIDR search, CSV import/export, validation, audit. Pool create and schema apply check overlaps under a lock that spans replicas on PostgreSQL and one process on SQLite or in memory. Schema apply skips the check when `skip_conflicts` is true |
+| Core IPAM | Complete | Hierarchical pools, accounts, assigned blocks, CIDR search, CSV import/export, validation, audit. Every endpoint that creates pools (pool create, schema apply, CSV import, AI plan apply, recommendation apply, discovery import) checks parent containment and sibling overlap under a lock that spans replicas on PostgreSQL and one process on SQLite or in memory. Schema apply and AI plan apply skip the overlap check when `skip_conflicts` is true |
 | Discovery: AWS | Complete | Single-account and Organizations, AssumeRole, standalone agent, ingest/heartbeat, bootstrap register/approve, IAM Terraform/CloudFormation helpers |
 | Discovery: GCP | Partial | Server collector for networks, subnetworks, and external IPs. No org mode, no agent, no IaC helpers. Uses Application Default Credentials on the CloudPAM host |
 | Discovery: Azure | Missing | Account keys accept `azure:<subscription-uuid>` and the UI offers Azure; there is no collector. Sync fails with `no collector registered for provider` |
@@ -66,7 +66,7 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 5. **The local observability stack ships no logs.** `deploy/docker-compose.observability.yml` starts Prometheus, Grafana, and Jaeger from a clean checkout. Vector runs only in the Kubernetes DaemonSet (`deploy/k8s/vector-daemonset.yaml`), and the sample `deploy/vector/vector.toml` needs updating for Vector 0.34.1 (its `encoding.codec` form is rejected).
 6. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
 7. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
-8. **Some pool writers skip the overlap check.** `POST /api/v1/pools` and `POST /api/v1/schema/apply` list, check, and insert under one lock. On PostgreSQL that lock is a per-organization advisory lock held in one transaction, so replicas on one database cannot both store overlapping siblings. SQLite and the in-memory store use the in-process `Server.placeGate`. CSV import, AI plan apply, recommendation apply, and discovery import call `CreatePool` directly and take neither lock. Schema apply with `skip_conflicts: true` creates the pools without any overlap check.
+8. **`skip_conflicts: true` skips the overlap check.** Every endpoint that creates pools lists, checks, and inserts under one lock. On PostgreSQL that lock is a per-organization advisory lock held in one transaction, so replicas on one database cannot both store overlapping siblings. SQLite and the in-memory store use the in-process `Server.placeGate`. Schema apply and AI plan apply with `skip_conflicts: true` still take the lock and check parent containment, but store overlapping pools.
 
 ---
 
