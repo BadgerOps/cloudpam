@@ -1125,7 +1125,7 @@ env:
 
 With `existingSecret` the chart creates no Secret, so every key under `secrets` must stay empty. Every key in the existing Secret is injected.
 
-On PostgreSQL you can set `replicaCount` above 1. `POST /api/v1/pools` and `POST /api/v1/schema/apply` take a per-organization advisory lock in the database, so two replicas cannot both store overlapping sibling pools. Each replica logs `placement guard: postgres advisory lock` at startup. A request that waits more than 10 seconds for that lock returns `503 Service Unavailable` with `Retry-After: 1`.
+On PostgreSQL you can set `replicaCount` above 1. `POST /api/v1/pools` and `POST /api/v1/schema/apply` take a per-organization advisory lock in the database, so two replicas cannot both store overlapping sibling pools. Each replica logs `placement guard: postgres advisory lock` at startup. A request that waits more than 5 seconds for that lock returns `503 Service Unavailable` with `Retry-After: 1`.
 
 ### Enable OIDC, AI planning, tracing, and audit forwarding
 
