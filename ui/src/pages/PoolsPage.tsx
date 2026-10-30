@@ -90,6 +90,7 @@ export default function PoolsPage() {
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [selectedPool, setSelectedPool] = useState<PoolWithStats | null>(null)
+  const [panelVersion, setPanelVersion] = useState(0)
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedId = Number(searchParams.get('selected')) || null
   const [editingPool, setEditingPool] = useState<Pool | null>(null)
@@ -108,29 +109,30 @@ export default function PoolsPage() {
     fetchAccounts()
   }, [fetchPools, fetchHierarchy, fetchAccounts])
 
-  // The URL owns the selection: ?selected=<id> is the only way the panel opens.
   useEffect(() => {
-    if (!selectedId) {
-      setSelectedPool(null)
-      return
-    }
+    setSelectedPool(prev => (prev && prev.id === selectedId ? prev : null))
+    if (!selectedId) return
     let stale = false
-    loadPool(selectedId).then(pool => {
-      if (!stale && pool) setSelectedPool(pool)
-    })
+    loadPool(selectedId).then(
+      pool => {
+        if (!stale) setSelectedPool(pool)
+      },
+      err => {
+        if (stale) return
+        showToast(errorMessage(err, 'Failed to load pool'), 'error')
+        setSearchParams({}, { replace: true })
+      },
+    )
     return () => { stale = true }
-  }, [selectedId])
+  }, [selectedId, panelVersion])
 
-  async function loadPool(id: number): Promise<PoolWithStats | null> {
+  async function loadPool(id: number): Promise<PoolWithStats> {
     try {
       return await get<PoolWithStats>(`/api/v1/pools/${id}`)
     } catch (err) {
       const pool = pools.find(p => p.id === id)
-      if (pool) {
-        return { ...pool, stats: { total_ips: getHostCount(pool.cidr), used_ips: 0, available_ips: getHostCount(pool.cidr), utilization: 0, child_count: 0, direct_children: 0 }, children: [] }
-      }
-      showToast(errorMessage(err, 'Failed to load pool'), 'error')
-      return null
+      if (!pool) throw err
+      return { ...pool, stats: { total_ips: getHostCount(pool.cidr), used_ips: 0, available_ips: getHostCount(pool.cidr), utilization: 0, child_count: 0, direct_children: 0 }, children: [] }
     }
   }
 
@@ -141,6 +143,8 @@ export default function PoolsPage() {
   function closePanel() {
     setSearchParams({}, { replace: true })
   }
+
+  const panelPool = selectedPool && selectedPool.id === selectedId ? selectedPool : null
 
   const filteredPools = pools.filter(p => {
     if (!search) return !p.parent_id // Show root pools when no search
@@ -202,20 +206,17 @@ export default function PoolsPage() {
       await deletePool(pool.id)
       showToast('Pool deleted', 'success')
       fetchHierarchy()
-      if (selectedPool?.id === pool.id) closePanel()
+      if (selectedId === pool.id) closePanel()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to delete pool', 'error')
     }
   }
 
-  async function handleEditSaved(updated: Pool) {
+  async function handleEditSaved() {
     setEditingPool(null)
     await fetchPools()
     await fetchHierarchy()
-    if (selectedPool?.id === updated.id) {
-      const pool = await loadPool(updated.id)
-      if (pool) setSelectedPool(pool)
-    }
+    setPanelVersion(v => v + 1)
   }
 
   return (
@@ -429,11 +430,11 @@ export default function PoolsPage() {
       </div>
 
       {/* Detail panel */}
-      {selectedPool && (
+      {panelPool && (
         <PoolDetailPanel
-          pool={selectedPool}
+          pool={panelPool}
           onClose={closePanel}
-          onEdit={() => setEditingPool(selectedPool)}
+          onEdit={() => setEditingPool(panelPool)}
         />
       )}
 

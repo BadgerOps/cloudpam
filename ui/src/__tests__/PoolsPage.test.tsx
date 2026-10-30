@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PoolsPage from '../pages/PoolsPage'
@@ -28,6 +28,25 @@ vi.mock('../api/client', () => ({
 function LocationProbe() {
   const location = useLocation()
   return <div data-testid="location">{location.pathname}{location.search}</div>
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(r => { resolve = r })
+  return { promise, resolve }
+}
+
+function withStats(p: Pool) {
+  return {
+    ...p,
+    stats: { total_ips: 65536, used_ips: 0, available_ips: 65536, utilization: 0, child_count: 0, direct_children: 0 },
+    children: [],
+  }
+}
+
+function panel() {
+  const heading = screen.queryByRole('heading', { level: 3 })
+  return heading ? within(heading.parentElement!.parentElement!) : null
 }
 
 function renderPage(path = '/pools') {
@@ -144,6 +163,94 @@ describe('PoolsPage validation', () => {
       expect(mockGet).toHaveBeenCalledWith('/api/v1/pools/1')
       expect(screen.getByRole('heading', { level: 3, name: 'prod' })).toBeTruthy()
     })
+  })
+
+  it('never shows the previous pool once ?selected names a different id', async () => {
+    const staging: Pool = { ...pool, id: 2, name: 'staging', cidr: '10.1.0.0/16' }
+    mockUsePools.mockReturnValue({
+      pools: [pool, staging], hierarchy: [], loading: false, error: null,
+      fetchPools, fetchHierarchy, createPool, updatePool, deletePool,
+    })
+    const second = deferred<ReturnType<typeof withStats>>()
+    mockGet.mockImplementation((url: string) => url === '/api/v1/pools/1' ? Promise.resolve(withStats(pool)) : second.promise)
+    renderPage('/pools?selected=1')
+
+    await waitFor(() => {
+      expect(panel()!.getByText('10.0.0.0/16')).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getAllByTitle('View details')[1])
+
+    expect(screen.getByTestId('location').textContent).toBe('/pools?selected=2')
+    expect(panel()).toBeNull()
+
+    second.resolve(withStats(staging))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3, name: 'staging' })).toBeTruthy()
+    })
+    expect(panel()!.getByText('10.1.0.0/16')).toBeTruthy()
+    expect(panel()!.queryByText('10.0.0.0/16')).toBeNull()
+  })
+
+  it('closes the panel and drops ?selected when the pool cannot be loaded', async () => {
+    mockGet.mockRejectedValue(new Error('pool not found'))
+    renderPage('/pools?selected=99')
+
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith('pool not found', 'error')
+      expect(screen.getByTestId('location').textContent).toBe('/pools')
+    })
+    expect(panel()).toBeNull()
+  })
+
+  it('reloads the open panel after the pool is saved', async () => {
+    mockGet.mockResolvedValueOnce(withStats(pool))
+    renderPage('/pools?selected=1')
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3, name: 'prod' })).toBeTruthy()
+    })
+
+    const renamed: Pool = { ...pool, name: 'prod-renamed' }
+    updatePool.mockResolvedValue(renamed)
+    mockGet.mockResolvedValueOnce(withStats(renamed))
+    fireEvent.click(screen.getByTitle('Edit pool'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'prod-renamed' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3, name: 'prod-renamed' })).toBeTruthy()
+    })
+    expect(screen.getByTestId('location').textContent).toBe('/pools?selected=1')
+  })
+
+  it('does not reopen a panel closed while a save was still refreshing', async () => {
+    mockGet.mockResolvedValue(withStats(pool))
+    const refresh = deferred<void>()
+    fetchPools.mockReturnValue(refresh.promise)
+    renderPage('/pools?selected=1')
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 3, name: 'prod' })).toBeTruthy()
+    })
+
+    updatePool.mockResolvedValue({ ...pool, name: 'prod-renamed' })
+    fireEvent.click(screen.getByTitle('Edit pool'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'prod-renamed' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(fetchPools).toHaveBeenCalled()
+    })
+
+    const heading = screen.getByRole('heading', { level: 3, name: 'prod' })
+    fireEvent.click(heading.parentElement!.querySelector('button')!)
+    expect(screen.getByTestId('location').textContent).toBe('/pools')
+
+    refresh.resolve()
+    await waitFor(() => {
+      expect(fetchHierarchy).toHaveBeenCalled()
+    })
+    expect(panel()).toBeNull()
+    expect(screen.getByTestId('location').textContent).toBe('/pools')
   })
 
   it('writes ?selected when a row is opened, so the URL and the panel agree', async () => {
