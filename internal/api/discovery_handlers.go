@@ -853,6 +853,7 @@ func addDiscoveryPreviewItem(resp *domain.DiscoveryImportPreviewResponse, item d
 
 func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImportPreviewItem, res *domain.DiscoveredResource, pools []domain.Pool) {
 	bestParentBits := -1
+	parentChosen := item.ProposedParentPoolID != nil
 	for _, pool := range pools {
 		if pool.CIDR == "" || res.CIDR == "" {
 			continue
@@ -871,12 +872,10 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 			if pool.AccountID != nil && *pool.AccountID != res.AccountID {
 				continue
 			}
-			if bits := prefixLength(pool.CIDR); bits > bestParentBits {
+			if bits := prefixLength(pool.CIDR); bits > bestParentBits && !parentChosen {
 				bestParentBits = bits
 				parentID := pool.ID
-				if item.ProposedParentPoolID == nil {
-					item.ProposedParentPoolID = &parentID
-				}
+				item.ProposedParentPoolID = &parentID
 			}
 			continue
 		}
