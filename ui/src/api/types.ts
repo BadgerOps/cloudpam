@@ -128,6 +128,8 @@ export interface CreateAccountRequest {
   regions?: string[]
 }
 
+export type UpdateAccountRequest = Omit<CreateAccountRequest, 'key'>
+
 export interface Block {
   id: number
   name: string

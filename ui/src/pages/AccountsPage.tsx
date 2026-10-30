@@ -1,24 +1,228 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plus, Search, Trash2 } from 'lucide-react'
+import { Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
 import StatusBadge from '../components/StatusBadge'
-import type { CreateAccountRequest } from '../api/types'
+import FormError from '../components/FormError'
+import type { Account, UpdateAccountRequest } from '../api/types'
 import { formatTimeAgo } from '../utils/format'
 
+interface AccountForm {
+  key: string
+  name: string
+  provider: string
+  tier: string
+  environment: string
+  platform: string
+  regions: string
+  external_id: string
+  description: string
+}
+
+const NEW_ACCOUNT_FORM: AccountForm = {
+  key: '', name: '', provider: 'aws', tier: 'dev', environment: '', platform: '', regions: '', external_id: '', description: '',
+}
+
+const PROVIDER_OPTIONS: [string, string][] = [['aws', 'AWS'], ['gcp', 'GCP'], ['azure', 'Azure'], ['', 'Other']]
+const TIER_OPTIONS: [string, string][] = [['prd', 'Production'], ['stg', 'Staging'], ['dev', 'Development'], ['sbx', 'Sandbox'], ['', 'None']]
+
+function formFromAccount(a: Account): AccountForm {
+  return {
+    key: a.key,
+    name: a.name,
+    provider: a.provider ?? '',
+    tier: a.tier ?? '',
+    environment: a.environment ?? '',
+    platform: a.platform ?? '',
+    regions: (a.regions ?? []).join(', '),
+    external_id: a.external_id ?? '',
+    description: a.description ?? '',
+  }
+}
+
+// PATCH replaces every optional field, so edits always send the whole form.
+function writableFields(f: AccountForm): UpdateAccountRequest {
+  return {
+    name: f.name.trim(),
+    provider: f.provider,
+    external_id: f.external_id.trim(),
+    description: f.description.trim(),
+    platform: f.platform.trim(),
+    tier: f.tier,
+    environment: f.environment.trim(),
+    regions: f.regions.split(',').map(r => r.trim()).filter(Boolean),
+  }
+}
+
+function withCurrent(options: [string, string][], current: string): [string, string][] {
+  return options.some(([value]) => value === current) ? options : [...options, [current, current]]
+}
+
+const inputClass = 'w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100'
+const labelClass = 'block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1'
+
+function AccountEditor({
+  title,
+  initial,
+  editing,
+  submitLabel,
+  submittingLabel,
+  onSubmit,
+  onCancel,
+}: {
+  title: string
+  initial: AccountForm
+  editing: boolean
+  submitLabel: string
+  submittingLabel: string
+  onSubmit: (form: AccountForm) => Promise<void>
+  onCancel: () => void
+}) {
+  const { showToast } = useToast()
+  const id = useId()
+  const [form, setForm] = useState(initial)
+  const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+
+  function set<K extends keyof AccountForm>(field: K, value: AccountForm[K]) {
+    setForm(prev => ({ ...prev, [field]: value }))
+    setFormError(null)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSubmitting(true)
+    try {
+      await onSubmit(form)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save account'
+      setFormError(message)
+      showToast(message, 'error')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form aria-label={title} onSubmit={handleSubmit} className="space-y-3">
+      <FormError message={formError} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label htmlFor={`${id}-key`} className={labelClass}>Key (required)</label>
+          <input
+            id={`${id}-key`}
+            required
+            readOnly={editing}
+            value={form.key}
+            onChange={e => set('key', e.target.value)}
+            className={`${inputClass} font-mono ${editing ? 'bg-gray-50 text-gray-500 dark:bg-gray-900 dark:text-gray-400' : ''}`}
+            placeholder="e.g., aws:123456789012"
+          />
+        </div>
+        <div>
+          <label htmlFor={`${id}-name`} className={labelClass}>Name (required)</label>
+          <input
+            id={`${id}-name`}
+            required
+            value={form.name}
+            onChange={e => set('name', e.target.value)}
+            className={inputClass}
+            placeholder="e.g., Production AWS"
+          />
+        </div>
+        <div>
+          <label htmlFor={`${id}-provider`} className={labelClass}>Provider</label>
+          <select id={`${id}-provider`} value={form.provider} onChange={e => set('provider', e.target.value)} className={inputClass}>
+            {withCurrent(PROVIDER_OPTIONS, form.provider).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor={`${id}-tier`} className={labelClass}>Tier</label>
+          <select id={`${id}-tier`} value={form.tier} onChange={e => set('tier', e.target.value)} className={inputClass}>
+            {withCurrent(TIER_OPTIONS, form.tier).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label htmlFor={`${id}-environment`} className={labelClass}>Environment</label>
+          <input
+            id={`${id}-environment`}
+            value={form.environment}
+            onChange={e => set('environment', e.target.value)}
+            className={inputClass}
+            placeholder="e.g., production"
+          />
+        </div>
+        <div>
+          <label htmlFor={`${id}-platform`} className={labelClass}>Platform</label>
+          <input
+            id={`${id}-platform`}
+            value={form.platform}
+            onChange={e => set('platform', e.target.value)}
+            className={inputClass}
+            placeholder="e.g., eks"
+          />
+        </div>
+        <div>
+          <label htmlFor={`${id}-regions`} className={labelClass}>Regions</label>
+          <input
+            id={`${id}-regions`}
+            value={form.regions}
+            onChange={e => set('regions', e.target.value)}
+            className={inputClass}
+            placeholder="e.g., us-east-1, us-west-2"
+          />
+        </div>
+        <div>
+          <label htmlFor={`${id}-external-id`} className={labelClass}>External ID</label>
+          <input
+            id={`${id}-external-id`}
+            value={form.external_id}
+            onChange={e => set('external_id', e.target.value)}
+            className={`${inputClass} font-mono`}
+            placeholder="e.g., 123456789012"
+          />
+        </div>
+        <div className="sm:col-span-2">
+          <label htmlFor={`${id}-description`} className={labelClass}>Description</label>
+          <textarea
+            id={`${id}-description`}
+            value={form.description}
+            onChange={e => set('description', e.target.value)}
+            rows={2}
+            className={inputClass}
+          />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+        >
+          {submitting ? submittingLabel : submitLabel}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={submitting}
+          className="px-4 py-1.5 border dark:border-gray-600 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  )
+}
+
 export default function AccountsPage() {
-  const { accounts, loading, error, fetchAccounts, createAccount, deleteAccount } = useAccounts()
+  const { accounts, loading, error, fetchAccounts, createAccount, updateAccount, deleteAccount } = useAccounts()
   const { showToast } = useToast()
   const [search, setSearch] = useState('')
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedId = Number(searchParams.get('selected')) || null
   const [showCreate, setShowCreate] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-
-  const [form, setForm] = useState<CreateAccountRequest>({
-    key: '', name: '', provider: 'aws', tier: 'dev',
-  })
+  const [editing, setEditing] = useState<Account | null>(null)
 
   useEffect(() => { fetchAccounts() }, [fetchAccounts])
 
@@ -36,19 +240,16 @@ export default function AccountsPage() {
       (a.provider || '').toLowerCase().includes(q)
   })
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault()
-    setSubmitting(true)
-    try {
-      await createAccount(form)
-      showToast('Account created', 'success')
-      setShowCreate(false)
-      setForm({ key: '', name: '', provider: 'aws', tier: 'dev' })
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to create account', 'error')
-    } finally {
-      setSubmitting(false)
-    }
+  async function handleCreate(form: AccountForm) {
+    await createAccount({ key: form.key.trim(), ...writableFields(form) })
+    showToast('Account created', 'success')
+    setShowCreate(false)
+  }
+
+  async function handleUpdate(id: number, form: AccountForm) {
+    const updated = await updateAccount(id, writableFields(form))
+    showToast(`Updated ${updated.name}`, 'success')
+    setEditing(null)
   }
 
   async function handleDelete(id: number, name: string) {
@@ -78,72 +279,17 @@ export default function AccountsPage() {
 
       {/* Create form */}
       {showCreate && (
-        <form onSubmit={handleCreate} className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-4 mb-4 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Key (required)</label>
-              <input
-                required
-                value={form.key}
-                onChange={e => setForm({ ...form, key: e.target.value })}
-                className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm font-mono dark:bg-gray-700 dark:text-gray-100"
-                placeholder="e.g., aws:123456789012"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Name (required)</label>
-              <input
-                required
-                value={form.name}
-                onChange={e => setForm({ ...form, name: e.target.value })}
-                className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
-                placeholder="e.g., Production AWS"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Provider</label>
-              <select
-                value={form.provider}
-                onChange={e => setForm({ ...form, provider: e.target.value })}
-                className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
-              >
-                <option value="aws">AWS</option>
-                <option value="gcp">GCP</option>
-                <option value="azure">Azure</option>
-                <option value="">Other</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Tier</label>
-              <select
-                value={form.tier}
-                onChange={e => setForm({ ...form, tier: e.target.value })}
-                className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
-              >
-                <option value="prd">Production</option>
-                <option value="stg">Staging</option>
-                <option value="dev">Development</option>
-                <option value="sbx">Sandbox</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={submitting}
-              className="px-4 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
-            >
-              {submitting ? 'Creating...' : 'Create Account'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowCreate(false)}
-              className="px-4 py-1.5 border dark:border-gray-600 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 dark:text-gray-300"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
+        <div className="bg-white dark:bg-gray-800 border dark:border-gray-700 rounded-lg p-4 mb-4">
+          <AccountEditor
+            title="New Account"
+            initial={NEW_ACCOUNT_FORM}
+            editing={false}
+            submitLabel="Create Account"
+            submittingLabel="Creating..."
+            onSubmit={handleCreate}
+            onCancel={() => setShowCreate(false)}
+          />
+        </div>
       )}
 
       {/* Search */}
@@ -192,6 +338,13 @@ export default function AccountsPage() {
                   <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(a.created_at)}</td>
                   <td className="px-4 py-2 text-right">
                     <button
+                      onClick={() => setEditing(a)}
+                      className="text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 p-1"
+                      title="Edit"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
                       onClick={() => handleDelete(a.id, a.name)}
                       className="text-red-400 dark:text-red-500 hover:text-red-600 dark:hover:text-red-400 p-1"
                       title="Delete"
@@ -203,6 +356,36 @@ export default function AccountsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {editing && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-account-title"
+            className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-auto"
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b dark:border-gray-700">
+              <h2 id="edit-account-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Edit Account</h2>
+              <button onClick={() => setEditing(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" title="Close">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-6 py-4">
+              <AccountEditor
+                key={editing.id}
+                title="Edit Account"
+                initial={formFromAccount(editing)}
+                editing
+                submitLabel="Save"
+                submittingLabel="Saving..."
+                onSubmit={form => handleUpdate(editing.id, form)}
+                onCancel={() => setEditing(null)}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

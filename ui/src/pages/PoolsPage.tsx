@@ -6,6 +6,7 @@ import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
 import PoolDetailPanel from '../components/PoolDetailPanel'
 import StatusBadge from '../components/StatusBadge'
+import FormError from '../components/FormError'
 import type { Pool, PoolWithStats, CreatePoolRequest, UpdatePoolRequest, PoolType, PoolStatus } from '../api/types'
 import { formatHostCount, getHostCount, formatTimeAgo } from '../utils/format'
 import { POOL_TYPES } from '../utils/poolTypes'
@@ -72,15 +73,6 @@ function fieldClass(hasError: boolean, extra = ''): string {
 function FieldError({ id, message }: { id: string; message?: string }) {
   if (!message) return null
   return <p id={id} className="mt-1 text-xs text-red-600 dark:text-red-300">{message}</p>
-}
-
-function FormError({ message }: { message: string | null }) {
-  if (!message) return null
-  return (
-    <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm p-3 rounded" role="alert">
-      {message}
-    </div>
-  )
 }
 
 export default function PoolsPage() {
