@@ -1207,7 +1207,14 @@ Chart 0.2.0 renames the server values. Move each old key to its new place before
 
 The default `storage.backend` changed from `postgres` to `sqlite`. An install that relied on the old default did not start, because it fell back to SQLite at an unwritable path, so set `storage.backend=postgres` explicitly if you use PostgreSQL.
 
-A SQLite install rolls out with `strategy: Recreate`. A client-side `helm upgrade` from 0.1.x replaces the `RollingUpdate` strategy the API server gave the old Deployment, so Helm 3 needs no extra step. If Helm 4 installed the 0.1.x release, it used server-side apply, which keeps the old `rollingUpdate` fields, and the API server rejects the Deployment with `spec.strategy.rollingUpdate: Forbidden`. Pass `--server-side=false` on that one upgrade.
+A SQLite install rolls out with `strategy: Recreate`. A client-side `helm upgrade` from 0.1.x replaces the `RollingUpdate` strategy the API server gave the old Deployment, so Helm 3 needs no extra step. If Helm 4 installed the 0.1.x release, it used server-side apply, which keeps the old `rollingUpdate` fields, and the API server rejects the Deployment with `spec.strategy.rollingUpdate: Forbidden`. Pass `--server-side=false` on that one upgrade. Setting `rollingUpdate: null` in the template does not help: server-side apply treats a null field as unset rather than as a deletion, so the rejection is the same with or without it.
+
+A GitOps controller that applies the rendered manifests server-side (Flux, or Argo CD with `ServerSideApply=true`) hits the same rejection and has no client-side switch. Replace the strategy once with a JSON patch before the controller applies the new render; after that the apply has nothing left to change:
+
+```bash
+kubectl -n <namespace> patch deployment <release>-cloudpam-server --type=json \
+  -p '[{"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}}]'
+```
 
 ### Check the charts
 
