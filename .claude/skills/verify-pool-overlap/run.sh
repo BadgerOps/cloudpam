@@ -29,7 +29,12 @@ tlc() { nix shell "github:NixOS/nixpkgs/$REV#tlaplus" --command tlc -workers 1 -
 
 drift=0
 SYNC="$(sed -n 's/^sync commit: *\([0-9a-f]\{7,40\}\).*/\1/p' "$HERE/SKILL.md" | head -1)"
-COVERED=(internal/api/pool_handlers.go internal/api/pool_placement.go internal/api/schema_handlers.go internal/api/cidr.go internal/storage/store.go internal/storage/sqlite/sqlite.go internal/storage/postgres/postgres.go migrations/0001_init.sql migrations/postgres/001_core_schema.up.sql)
+COVERED=(
+  internal/api/pool_handlers.go internal/api/pool_placement.go internal/api/server.go internal/api/schema_handlers.go internal/api/cidr.go
+  internal/storage/store.go internal/storage/sqlite/sqlite.go internal/storage/postgres/postgres.go
+  migrations/0001_init.sql migrations/postgres/001_core_schema.up.sql
+  internal/api/ai_handlers.go internal/api/export_handlers.go internal/api/discovery_handlers.go internal/planning/recommendations.go
+)
 if [ -n "$SYNC" ] && git -C "$REPO" cat-file -e "$SYNC^{commit}" 2>/dev/null; then
   if ! git -C "$REPO" diff --quiet "$SYNC" -- "${COVERED[@]}"; then
     drift=1
