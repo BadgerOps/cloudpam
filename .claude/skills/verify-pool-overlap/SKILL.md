@@ -29,6 +29,14 @@ Full TLC output lands in `out/<config>.out` (gitignored). Read every trace with 
 
 To see the guard on the real server, run `.claude/skills/verify-pool-overlap/repro.sh` (builds inside `nix develop`, starts an in-memory server on port 18180, kills only what it started). It fires eight overlapping sibling creates at once, 40 times, and expects exactly one `201` and seven `400` each time, then posts one CIDR twice and expects `201` then `409`. It refuses to start if the port already answers `/healthz`. Exit 0 means both held; exit 1 prints the overlapping pools it stored.
 
+To see the guard across processes on PostgreSQL, run:
+
+```sh
+DATABASE_URL='postgres://user:pass@host:5432/db?sslmode=disable' .claude/skills/verify-pool-overlap/repro-postgres.sh [PORT_A [PORT_B]]
+```
+
+The user in `DATABASE_URL` needs `CREATEDB`. The script creates a scratch database on that server, builds `cmd/cloudpam` with `-tags postgres`, and starts two processes on it (ports 18181 and 18182 by default) one after the other. It requires each process to log `placement guard: postgres advisory lock`. It then runs the same 40 attempts as `repro.sh` with the eight creates split four and four across the two processes, and posts one top-level CIDR on both processes at once, expecting one `201` and one `409`. Last, it scans `GET /api/v1/pools` for overlapping siblings. It stops only its own processes and drops only its own database. Exit 0 means `multi-process.cfg` and `multi-process-duplicate.cfg` hold on the binary. Exit 1 prints the codes and the overlapping pools. It uses `psql` from `PATH`, or from the pinned nixpkgs when `psql` is missing, plus `curl` and `python3`.
+
 ## What is checked
 
 | Config | Stands for | Expected |
@@ -73,7 +81,7 @@ Recorded since this skill was added, and resolved for PostgreSQL by 47df5c4 (#26
 3. A calls `store.CreatePool`: `10.0.0.0/8` stored, 201.
 4. B calls `store.CreatePool`: `10.0.0.0/9` stored, 201. No unique index fires because the CIDRs differ.
 
-The fix is a guard the database enforces: the advisory lock in `WithPlacementLock`. `multi-process.cfg` now models it and holds. The tests in 1184847 (`internal/api/pool_placement_postgres_test.go`) reproduced the race with two `api.Server` values on one database, and they pass after 47df5c4.
+The fix is a guard the database enforces: the advisory lock in `WithPlacementLock`. `multi-process.cfg` now models it and holds. The tests in 1184847 (`internal/api/pool_placement_postgres_test.go`) reproduced the race with two `api.Server` values on one database, and they pass after 47df5c4. `repro-postgres.sh` shows the same on two real processes.
 
 L1 is still open for stores without `PlacementLocker`: several processes on one SQLite file are serialized by nothing. That deployment is unsupported, and the Helm chart fails with `storage.backend=sqlite runs one replica` when `replicaCount` is above 1. `multi-process-local.cfg` is that case, and TLC still finds the four steps above in it.
 
@@ -139,5 +147,6 @@ sync commit: 47df5c46975ad913857b5f2614ed01b9a9c07258
   - Making `SessionLost` free only the advisory lock and leave the request running with its uncommitted insert makes `multi-process.cfg` violate `NoOverlappingSiblings` at depth 8. This is a session-level lock on a connection apart from the inserts: request A inserts `10.0.0.0/8`, loses the lock, B lists on another replica without seeing A's row, inserts `10.0.0.0/9`, and both commit.
   - `DatabaseLock = TRUE` in `multi-process-local.cfg` makes `run.sh` exit 3.
 - `repro.sh` on the real binary (in-memory store, port 18180): 40 attempts, each with exactly one `201` and seven `400` among eight overlapping sibling creates; the same top-level CIDR twice gave `201` then `409`.
+- `repro-postgres.sh` on two `-tags postgres` processes sharing one scratch database on PostgreSQL 16.15: 40 attempts, each with exactly one `201` and seven `400`; the same top-level CIDR on both processes at once gave one `201` and one `409`; 81 pools stored, none overlapping a sibling. The same script built from 0e327fa (before #267, with only the guard-line check removed) failed on attempt 1 with two `201`s and stored `10.1.0.0/17` beside `10.1.0.0/22` under one parent.
 
 Note: `.gitignore` ignores `.claude/*` but re-includes `.claude/skills/`, so this folder is tracked; its `out/` directory is ignored by the local `.gitignore`.
