@@ -1,5 +1,4 @@
-// journey.cjs: run one Playwright journey against the CloudPAM instance described by
-// $CLOUDPAM_VERIFY_ENV (written by `cloudpam-verify launch`). Invoked by `cloudpam-verify browser`.
+// journey.cjs: the Playwright runner behind `cloudpam-verify browser`.
 //
 // A journey is a CommonJS module exporting an async function:
 //   module.exports = async ({ page, context, baseURL, username, password, login, api, shot, aria, note, evidenceDir }) => { ... }
@@ -13,19 +12,14 @@ const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright');
 
-function readEnv(file) {
-  const env = {};
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-    const m = line.match(/^([A-Z_]+)='(.*)'$/);
-    if (m) env[m[1]] = m[2];
-  }
-  return env;
-}
-
 async function main() {
   const journeyPath = process.argv[2];
   if (!journeyPath) throw new Error('usage: node journey.cjs JOURNEY.cjs');
-  const env = readEnv(process.env.CLOUDPAM_VERIFY_ENV);
+  const env = {};
+  for (const name of ['BASE_URL', 'EVIDENCE', 'APP_VERSION', 'USERNAME', 'PASSWORD']) {
+    env[name] = process.env[`CLOUDPAM_VERIFY_${name}`];
+    if (!env[name]) throw new Error(`CLOUDPAM_VERIFY_${name} is not set; run this through cloudpam-verify browser`);
+  }
   const label = process.env.CLOUDPAM_VERIFY_LABEL || path.basename(journeyPath, '.cjs');
   const baseURL = env.BASE_URL;
   const evidenceDir = path.join(env.EVIDENCE, label);

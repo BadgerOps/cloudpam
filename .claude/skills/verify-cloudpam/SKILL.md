@@ -31,9 +31,9 @@ What it does, in order (about 1-2 minutes cold, under 30 seconds when `ui/node_m
 3. Builds the server with `-tags sqlite` and `CGO_ENABLED=0` (the release configuration) into the run's state dir.
 4. Picks a free port in 18080-18179 and starts the binary with a fresh SQLite file (`SQLITE_DSN=file:<state>/cloudpam.db`), `RATE_LIMIT_RPS=0`, JSON logs, and `APP_VERSION=cloudpam-verify-<git short rev>-<run id>` (the server trims a leading `v`, so the stamp must not start with one). Migrations `0001`..`0021` apply on startup. Everything else, including `SQLITE_MAX_OPEN_CONNS=1`, is the product default.
 5. Waits for `GET /readyz` (database health), then runs first-boot setup (`POST /api/v1/auth/setup`), logs in with curl (cookie jar in state), and seeds `Corp Supernet` 10.0.0.0/8, child `Prod East VPC` 10.20.0.0/16, and account `prod-platform`.
-6. Writes `<run>/state/env` and prints the run id. Ready means `GET /api/v1/auth/me` returns 200 for the seeded admin, not merely that the port answers.
+6. Writes `<run>/state/env` (one `NAME=value` line per variable, quoted with `printf %q`, so a credential with quotes or spaces sources back intact) and prints the run id. Ready means `GET /api/v1/auth/me` returns 200 for the seeded admin, not merely that the port answers.
 
-Runs live in `tmp/cloudpam-verify/<RUN_ID>/` (gitignored). `state/` holds the binary, database, `server.log`, pid, cookies, env. `evidence/` holds proof. `tmp/cloudpam-verify/current` names the latest run; set `CLOUDPAM_VERIFY_RUN_ID` to pin one when running two instances side by side (each run gets its own port and database, so parallel runs are safe).
+Runs live in `tmp/cloudpam-verify/<RUN_ID>/` (gitignored). `state/` holds the binary, database, `server.log`, pid, cookies, env. `evidence/` holds proof. `tmp/cloudpam-verify/current` names the latest run; set `CLOUDPAM_VERIFY_RUN_ID` to pin one when running two instances side by side (each run gets its own port and database, so parallel runs are safe). A run id names a directory that `cleanup` deletes, so it must match `^[A-Za-z0-9._-]+$`; every subcommand refuses any other value, including `.` and `..`.
 
 Credentials: `verify-admin` / `VerifyDev12345!` (`CLOUDPAM_VERIFY_USERNAME` / `CLOUDPAM_VERIFY_PASSWORD` override before launch; the password policy needs 12+ characters).
 
@@ -64,7 +64,7 @@ Prints the status line then the body; non-2xx exits 1, which is the expected exi
 .claude/skills/verify-cloudpam/bin/cloudpam-verify browser .claude/skills/verify-cloudpam/journeys/create-pool.cjs
 ```
 
-A journey is a CommonJS module exporting `async ({ page, context, baseURL, username, password, login, api, shot, aria, note, evidenceDir }) => {}`. `login()` drives the real `/login` form and waits for the `Main navigation` landmark; if the server answers `too many login attempts` (5 logins per minute per IP), it waits 60 seconds and retries once. Call it once per browser context. `api()` sends requests through the browser's session with CSRF handled. `shot(name)` and `aria(name)` write `evidence/<label>/name.png` and `name.aria.txt`. `note()` appends to `evidence/<label>/journey.log`. `confirm()` dialogs are auto-accepted and logged. A thrown error fails the run (exit 1) and leaves `failure.png`.
+A journey is a CommonJS module exporting `async ({ page, context, baseURL, username, password, login, api, shot, aria, note, evidenceDir }) => {}`. `login()` drives the real `/login` form and waits for the `Main navigation` landmark; if the server answers `too many login attempts` (5 logins per minute per IP), it waits 60 seconds and retries once. Call it once per browser context. `api()` sends requests through the browser's session with CSRF handled. `shot(name)` and `aria(name)` write `evidence/<label>/name.png` and `name.aria.txt`, where `<label>` is the journey's basename or the `--label NAME` argument taken literally (spaces and shell characters are part of the directory name, never interpreted). `note()` appends to `evidence/<label>/journey.log`. `confirm()` dialogs are auto-accepted and logged. A thrown error fails the run (exit 1) and leaves `failure.png`.
 
 Stable handles in this app: sidebar links by role `link` and name (`Address Pools`, `Cloud Accounts`, `Discovery`, ...); page `heading`s with the same names; the Pools create form fields by `getByLabel` (`Name`, `CIDR`, `Type`, `Status`, `Account`, `Parent Pool`, `Description`); buttons by name (`New Pool`, `Create Pool`, `Sign In`); toasts by text (`Pool created`, `Account created`). The login and account forms have labels without `htmlFor`, so use the placeholders named in their feature files. Prefer these over CSS classes, which are Tailwind utilities and change freely.
 
@@ -90,7 +90,7 @@ Sends SIGTERM only to the pid recorded in `state/server.pid`, and only if that p
 ## Helpers
 
 - `bin/cloudpam-verify` (bash, executable): subcommands above; `cloudpam-verify` with no arguments prints usage.
-- `bin/journey.cjs` (node, run via `cloudpam-verify browser`): the Playwright runner. Do not call it directly; `browser` sets the env it reads.
+- `bin/journey.cjs` (node, run via `cloudpam-verify browser`): the Playwright runner. Do not call it directly; `browser` exports the `CLOUDPAM_VERIFY_*` variables it reads (base URL, evidence dir, version, credentials, label) from the run's env file.
 - `journeys/<feature>.cjs`: the proven journey for `features/<feature>.md` (`login`, `create-pool`, `create-account`, `search`). New journeys go next to them, named after their feature file.
 
 ## Maintenance
