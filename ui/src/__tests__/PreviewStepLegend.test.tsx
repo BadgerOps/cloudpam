@@ -17,6 +17,7 @@ describe('PreviewStep legend', () => {
     const { container } = render(
       <PreviewStep
         schema={schema}
+        problems={[]}
         conflicts={[]}
         conflictsLoading={false}
         conflictsError={null}
@@ -33,6 +34,7 @@ describe('PreviewStep legend', () => {
     render(
       <PreviewStep
         schema={schema}
+        problems={[]}
         conflicts={[]}
         conflictsLoading={false}
         conflictsError={null}

@@ -83,6 +83,10 @@ func (s *Server) handleSchemaCheck(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := validateSchemaContainment(req.Pools); err != nil {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
+		return
+	}
 
 	// Get all existing pools
 	existing, err := s.store.ListPools(ctx)
@@ -205,6 +209,10 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if err := validateSchemaContainment(req.Pools); err != nil {
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
+		return
+	}
 
 	var errs []string
 	batch := make([]poolPlacement, 0, len(req.Pools))
@@ -272,4 +280,30 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 		resp.Errors = []string{}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func validateSchemaContainment(pools []schemaPoolEntry) error {
+	cidrByRef := make(map[string]string, len(pools))
+	for i, p := range pools {
+		if p.Ref == "" {
+			continue
+		}
+		if _, dup := cidrByRef[p.Ref]; dup {
+			return fmt.Errorf("pool %d (%s): duplicate ref", i, p.Ref)
+		}
+		cidrByRef[p.Ref] = p.CIDR
+	}
+	for i, p := range pools {
+		if p.ParentRef == "" {
+			continue
+		}
+		parent, ok := cidrByRef[p.ParentRef]
+		if !ok {
+			return fmt.Errorf("pool %d (%s): parent_ref %q not found", i, p.Ref, p.ParentRef)
+		}
+		if err := validateChildCIDR(parent, p.CIDR); err != nil {
+			return fmt.Errorf("pool %d (%s): %w", i, p.Ref, err)
+		}
+	}
+	return nil
 }

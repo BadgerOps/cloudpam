@@ -57,7 +57,7 @@ Bounds: three concurrent requests at the top level, CIDRs `10.0.0.0/8`, `10.0.0.
 
 `holder` in the model is `placeMu`, one per process (`ReqProcess`). It is a field of `Server`, so it serializes requests inside one process only; `net/http` runs each request on its own goroutine, and nothing else orders them. `POST /api/v1/schema/apply` takes the same lock through `placePools` (policy `anyLivePool`, or `overlapAllowed` with `skip_conflicts:true`), so it cannot interleave with `createPool` on one process; it is read, not modelled.
 
-Pools are never deleted in the model. The parent-containment half of the promise (`validateChildCIDR`) runs before the lock and is not modelled: `updatePool` cannot change a CIDR, so it has no ordering question, but see "Not covered" for the delete race.
+Pools are never deleted in the model. The parent-containment half of the promise (`validateChildCIDR`) runs before the lock and is not modelled: `updatePool` cannot change a CIDR, so it has no ordering question, but see "Not covered" for the delete race. `schema/apply` (and `schema/check`) run it too, through `validateSchemaContainment`, on each `parent_ref` entry against the CIDR of the entry it names in the same request body, before the lock and whatever `skip_conflicts` says; that reads no stored pool, so it adds no ordering question either.
 
 ## L1: several processes on one database (multi-process.cfg)
 
@@ -77,7 +77,7 @@ Not reproduced live: `repro.sh` runs one process. A fix needs a guard the databa
 ## Other writers that bypass the guard entirely (verified by reading, not modelled)
 
 These store pools with no overlap check, so one request can break the property with no concurrency. All but the first also skip `placeMu`, so they can insert between another request's check and insert:
-- `POST /api/v1/schema/apply` with `skip_conflicts:true` (documented bypass: `placePools` with `overlapAllowed` takes the lock but skips the check). With `skip_conflicts:false` it compares against every live pool, not only siblings, also refuses overlaps inside the batch, and never runs `validateChildCIDR`.
+- `POST /api/v1/schema/apply` with `skip_conflicts:true` (documented bypass: `placePools` with `overlapAllowed` takes the lock but skips the check). With `skip_conflicts:false` it compares against every live pool, not only siblings, and also refuses overlaps inside the batch. Either way it refuses a `parent_ref` entry outside its parent with `400` before the lock (`validateSchemaContainment`).
 - `POST /api/v1/ai/sessions/{id}/apply-plan` (`internal/api/ai_handlers.go` line 306): no overlap check.
 - `POST /api/v1/import/pools` CSV import (`internal/api/export_handlers.go` line 732): no overlap check.
 - `POST /api/v1/recommendations/{id}/apply` (`internal/planning/recommendations.go` line 117): inserts the CIDR suggested at generation time without rechecking.
@@ -98,14 +98,14 @@ Excluded because they cannot change a CIDR: `PATCH /api/v1/pools/{id}` (`updateP
 Files and functions this verification describes:
 - `internal/api/pool_handlers.go`: `createPool` (validation, `validateChildCIDR`, the `placePools` call and its 400/409 mapping), `updatePool` (confirmed no CIDR field).
 - `internal/api/pool_placement.go`: `placePools`, `checkPlacement`, `overlapPolicy.compares`, `cidrsOverlap`, `sameParent`; `Server.placeMu` (`internal/api/server.go`).
-- `internal/api/schema_handlers.go`: `handleSchemaApply` (same lock; read, not modelled).
+- `internal/api/schema_handlers.go`: `handleSchemaApply` (same lock; read, not modelled), `validateSchemaContainment` (pre-lock parent containment for `parent_ref` entries; read, not modelled).
 - `internal/api/cidr.go`: `prefixesOverlapIPv4`, `validateChildCIDR` (taken as the overlap relation).
 - `internal/storage/store.go`: `MemoryStore.ListPools`, `MemoryStore.CreatePool` (live `(parent, cidr)` duplicate refused with `ErrConflict`).
 - `internal/storage/sqlite/sqlite.go` and `internal/storage/postgres/postgres.go`: `CreatePool` (plain INSERT, conflict only from the unique index).
 - `migrations/0001_init.sql`: `uniq_pools_parent_cidr`; `migrations/postgres/001_core_schema.up.sql`: `idx_pools_org_cidr`.
 - Bypass list: `ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`.
 
-sync commit: e0818fd78bc0d7fbcea6916c2cf6af5c98eecfd4
+sync commit: 0d015fa09eccb12aa7c225999a2f6438257451b5
 
 `run.sh` prints DRIFT and exits 4 when any covered file in the working tree differs from the sync commit. The covered files are the model's sources above plus `internal/api/server.go` (`placeMu`) and the bypass writers (`ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`). When that happens: re-read the code cited above, fix the model if the code's steps changed (new lock, new constraint, new writer), rerun, and only then move the sync commit to a commit on master. A drift on a bypass file means re-reading that writer and updating its entry in the bypass list, not the model: those paths are recorded, not modelled, and the question is whether the writer still skips the check or the lock. If a change made `multi-process.cfg` hold, confirm the guard really spans processes before recording L1 as fixed. Never weaken a rule or widen a skip to make a run pass.
 

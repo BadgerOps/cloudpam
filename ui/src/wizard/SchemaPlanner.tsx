@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { Network, ArrowLeft, ArrowRight, Save, CheckCircle } from 'lucide-react'
 import type { Blueprint } from './data/blueprints'
 import type { Dimensions } from './steps/DimensionsStep'
 import type { SchemaNode } from './utils/cidr'
+import { outsideParent } from './utils/cidr'
 import { toCsv } from '../utils/csv'
 import { schemaToTerraform } from './utils/terraform'
 import TemplateStep from './steps/TemplateStep'
@@ -57,7 +58,21 @@ export default function SchemaPlanner() {
     },
   )
 
-  const generatedSchema = useSchemaGenerator({ selectedBlueprint, customCidr, strategy, dimensions })
+  const { schema: generatedSchema, error: fitError } = useSchemaGenerator({
+    selectedBlueprint,
+    customCidr,
+    strategy,
+    dimensions,
+  })
+  const problems = useMemo(
+    () => [
+      ...(fitError ? [fitError] : []),
+      ...outsideParent(generatedSchema).map(
+        ({ child, parent }) => `${child.name} (${child.cidr}) is not inside ${parent.name} (${parent.cidr}).`,
+      ),
+    ],
+    [generatedSchema, fitError],
+  )
   const { conflicts, loading: conflictsLoading, error: conflictsError } = useConflictChecker(
     generatedSchema,
     currentStep === 3,
@@ -233,6 +248,7 @@ export default function SchemaPlanner() {
           {currentStep === 3 && (
             <PreviewStep
               schema={generatedSchema}
+              problems={problems}
               conflicts={conflicts}
               conflictsLoading={conflictsLoading}
               conflictsError={conflictsError}
@@ -264,7 +280,7 @@ export default function SchemaPlanner() {
                 </button>
                 <button
                   onClick={handleApply}
-                  disabled={applyLoading}
+                  disabled={applyLoading || problems.length > 0}
                   className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
                   {applyLoading ? 'Applying...' : 'Apply to CloudPAM'}
