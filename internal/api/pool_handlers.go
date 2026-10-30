@@ -535,7 +535,7 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
+		s.writeStoreErr(r.Context(), w, err)
 		return
 	}
 	p, err := placed[0].Pool, placed[0].Err

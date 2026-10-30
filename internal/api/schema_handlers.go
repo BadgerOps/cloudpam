@@ -239,7 +239,7 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.writeErr(ctx, w, http.StatusInternalServerError, "failed to list existing pools", err.Error())
+		s.writeStoreErr(ctx, w, err)
 		return
 	}
 

@@ -6,6 +6,7 @@ import (
 	"net/netip"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 type overlapPolicy int
@@ -44,8 +45,25 @@ func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []p
 	s.placeMu.Lock()
 	defer s.placeMu.Unlock()
 
+	locker, ok := s.store.(storage.PlacementLocker)
+	if !ok {
+		return place(ctx, s.store, policy, batch)
+	}
+	var out []placedPool
+	err := locker.WithPlacementLock(ctx, func(ps storage.PlacementStore) error {
+		var err error
+		out, err = place(ctx, ps, policy, batch)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
 	if policy != overlapAllowed {
-		live, err := s.store.ListPools(ctx)
+		live, err := ps.ListPools(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -66,7 +84,7 @@ func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []p
 			}
 			in.ParentID = &id
 		}
-		p, err := s.store.CreatePool(ctx, in)
+		p, err := ps.CreatePool(ctx, in)
 		if err != nil {
 			out[i].Err = err
 			continue

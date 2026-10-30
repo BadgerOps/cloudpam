@@ -123,6 +123,9 @@ func (s *Server) writeStoreErr(ctx context.Context, w http.ResponseWriter, err e
 		s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
 	case errors.Is(err, storage.ErrValidation):
 		s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+	case errors.Is(err, storage.ErrBusy):
+		w.Header().Set("Retry-After", "1")
+		s.writeErr(ctx, w, http.StatusServiceUnavailable, err.Error(), "")
 	default:
 		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
 	}

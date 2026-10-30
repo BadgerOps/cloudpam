@@ -128,14 +128,24 @@ func (s *Store) scanPool(row pgx.Row) (domain.Pool, bool, error) {
 	return p, true, nil
 }
 
+// querier is what *pgxpool.Pool and pgx.Tx both provide.
+type querier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
+	return listPools(ctx, s.pool, s.orgID)
+}
+
+func listPools(ctx context.Context, q querier, orgID string) ([]domain.Pool, error) {
 	query := fmt.Sprintf(`
 		SELECT p.%s
 		FROM pools p
 		WHERE p.organization_id = $1 AND p.deleted_at IS NULL
 		ORDER BY p.seq_id ASC`, poolColumnsWithParentAccount())
 
-	rows, err := s.pool.Query(ctx, query, s.orgID)
+	rows, err := q.Query(ctx, query, orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +192,10 @@ func poolColumnsWithParentAccount() string {
 }
 
 func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
+	return createPool(ctx, s.pool, s.orgID, in)
+}
+
+func createPool(ctx context.Context, q querier, orgID string, in domain.CreatePool) (domain.Pool, error) {
 	if in.Name == "" || in.CIDR == "" {
 		return domain.Pool{}, fmt.Errorf("name and cidr required: %w", storage.ErrValidation)
 	}
@@ -209,7 +223,7 @@ func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Po
 	var parentUUID *string
 	if in.ParentID != nil {
 		var uuid string
-		err := s.pool.QueryRow(ctx, `SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, *in.ParentID, s.orgID).Scan(&uuid)
+		err := q.QueryRow(ctx, `SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, *in.ParentID, orgID).Scan(&uuid)
 		if err != nil {
 			return domain.Pool{}, fmt.Errorf("parent pool not found: %w", storage.ErrNotFound)
 		}
@@ -220,7 +234,7 @@ func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Po
 	var accountUUID *string
 	if in.AccountID != nil {
 		var uuid string
-		err := s.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, *in.AccountID, s.orgID).Scan(&uuid)
+		err := q.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, *in.AccountID, orgID).Scan(&uuid)
 		if err != nil {
 			return domain.Pool{}, fmt.Errorf("account not found: %w", storage.ErrNotFound)
 		}
@@ -232,14 +246,14 @@ func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Po
 	var tagsOut []byte
 	var createdAt, updatedAt time.Time
 
-	err := s.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		INSERT INTO pools (organization_id, parent_id, account_id, name, description, cidr, type, status, source, tags)
 		VALUES ($1, $2, $3, $4, $5, $6::inet, $7, $8, $9, $10::jsonb)
 		RETURNING seq_id, name, cidr::text,
 			(SELECT pp.seq_id FROM pools pp WHERE pp.id = pools.parent_id),
 			(SELECT a.seq_id FROM accounts a WHERE a.id = pools.account_id),
 			type, status, source, description, tags, created_at, updated_at`,
-		s.orgID, parentUUID, accountUUID, in.Name, in.Description, in.CIDR,
+		orgID, parentUUID, accountUUID, in.Name, in.Description, in.CIDR,
 		string(poolType), string(poolStatus), string(poolSource), string(tagsJSON),
 	).Scan(
 		&p.ID, &p.Name, &p.CIDR,
