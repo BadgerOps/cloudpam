@@ -17,11 +17,9 @@ config:
   # Account ID to discover (required)
   accountId: 1
 
-  # Stable agent identity. Empty means <namespace>-<release>-cloudpam-agent, so the
-  # agent keeps the same registration across pod restarts and two releases in
-  # different namespaces of one cluster get different names. The agent derives its
-  # ID from the server URL, this name, and the account ID, so when more than one
-  # cluster reports to the same account, set a value unique across those clusters.
+  # Stable agent identity (required). The agent derives its ID from the server URL,
+  # this name, and the account ID. Use a name unique across every cluster that
+  # reports to the same CloudPAM server and account.
   agentName: ""
 
   # Sync interval (default: 15m)

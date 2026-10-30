@@ -2,6 +2,7 @@ apiKey: ci-placeholder
 config:
   serverUrl: https://cloudpam.example.com
   accountId: 7
+  agentName: ci-cluster-agent
   awsRegions: [us-east-1, us-west-2]
   awsOrg:
     enabled: true

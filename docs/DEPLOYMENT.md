@@ -1183,12 +1183,13 @@ Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Withou
 helm install cloudpam-agent deploy/helm/cloudpam-agent \
   --set config.serverUrl=https://cloudpam.example.com \
   --set config.accountId=1 \
+  --set config.agentName=prod-us-east-eks \
   --set 'config.awsRegions={us-east-1,us-west-2}' \
   --set apiKey=cpk_... \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/cloudpam-discovery
 ```
 
-The agent name defaults to `<namespace>-<release>-cloudpam-agent`, so the agent keeps one registration across pod restarts and two releases in different namespaces do not share one. The agent derives its ID from the server URL, this name, and the account ID, so set `config.agentName` to a value unique across clusters when more than one cluster reports to the same account. For AWS Organizations discovery, set `config.awsOrg.enabled=true` and `config.awsOrg.roleName`. The agent has no HTTP port, so the chart defines no probes; its health is the heartbeat shown on the Discovery page.
+`config.agentName` is required and must be unique across every cluster that reports to the same CloudPAM server and account. It is the stable identity seed, so keep it unchanged across pod restarts and chart upgrades. For AWS Organizations discovery, set `config.awsOrg.enabled=true` and `config.awsOrg.roleName`. The agent has no HTTP port, so the chart defines no probes; its health is the heartbeat shown on the Discovery page.
 
 ### Upgrade from chart 0.1.x
 
@@ -1204,6 +1205,7 @@ Chart 0.2.0 renames the server values. Move each old key to its new place before
 | `observability.sentryDsn` | `secrets.SENTRY_DSN` |
 | `rateLimit.rps`, `rateLimit.burst` | `config.RATE_LIMIT_RPS`, `config.RATE_LIMIT_BURST` |
 | `existingSecret` keys `database-url`, `admin-password`, `sentry-dsn` | Keys `DATABASE_URL`, `CLOUDPAM_ADMIN_PASSWORD`, `SENTRY_DSN` |
+| Empty `config.agentName` | Set a stable name unique across clusters for this server and account. |
 
 The default `storage.backend` changed from `postgres` to `sqlite`. An install that relied on the old default did not start, because it fell back to SQLite at an unwritable path, so set `storage.backend=postgres` explicitly if you use PostgreSQL.
 
@@ -1212,9 +1214,14 @@ A SQLite install rolls out with `strategy: Recreate`. A client-side `helm upgrad
 A GitOps controller that applies the rendered manifests server-side (Flux, or Argo CD with `ServerSideApply=true`) hits the same rejection and has no client-side switch. Replace the strategy once with a JSON patch before the controller applies the new render; after that the apply has nothing left to change:
 
 ```bash
-kubectl -n <namespace> patch deployment <release>-cloudpam-server --type=json \
+deployment="$(kubectl -n <namespace> get deployment \
+  -l 'app.kubernetes.io/instance=<release>' \
+  -o jsonpath='{.items[0].metadata.name}')"
+kubectl -n <namespace> patch deployment "$deployment" --type=json \
   -p '[{"op":"replace","path":"/spec/strategy","value":{"type":"Recreate"}}]'
 ```
+
+The release-instance label is stable when `nameOverride` or `fullnameOverride` changes the Deployment name.
 
 ### Check the charts
 

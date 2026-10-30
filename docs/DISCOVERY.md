@@ -713,10 +713,14 @@ A Helm chart is available in `deploy/helm/cloudpam-agent/`:
 helm install cloudpam-agent deploy/helm/cloudpam-agent/ \
   --set config.serverUrl=https://cloudpam.example.com \
   --set config.accountId=1 \
+  --set config.agentName=prod-us-east-eks \
   --set config.awsRegions='{us-east-1,us-west-2}' \
   --set apiKey=cpk_abc123... \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/cloudpam-discovery
 ```
+
+`config.agentName` is required. Keep it stable across upgrades and make it unique
+across clusters that report to the same CloudPAM server and account.
 
 ### Agent Health & Monitoring
 

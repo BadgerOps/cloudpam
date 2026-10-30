@@ -45,7 +45,13 @@ helm lint "$AGENT" -f "$AGENT/ci/full-values.yaml"
 render cloudpam "$SERVER" server-default
 render cloudpam "$SERVER" server-full -f "$SERVER/ci/full-values.yaml"
 render cloudpam-agent "$AGENT" agent-full -f "$AGENT/ci/full-values.yaml"
-render cloudpam-agent "$AGENT" agent-default --namespace discovery --set config.accountId=1 --set apiKey=x
+render cloudpam-agent "$AGENT" agent-explicit --set config.accountId=1 --set config.agentName=cluster-a-discovery --set apiKey=x
+
+if helm template cloudpam-agent "$AGENT" --set apiKey=x >"$OUT/agent-missing-name.txt" 2>&1; then
+	fail "agent chart renders without required config.agentName"
+elif ! grep -q 'config.agentName is required' "$OUT/agent-missing-name.txt"; then
+	fail "agent chart does not explain that config.agentName is required"
+fi
 
 release="$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+' docs/CHANGELOG.md | sed 's/^## \[//')"
 for chart in "$SERVER" "$AGENT"; do
@@ -108,8 +114,8 @@ want_once CLOUDPAM_API_KEY "${af[@]}"
 want_absent CLOUDPAM_AGENT_NAME "${af[@]}"
 grep -q '^    agent_name: ' "${af[0]}" || fail "agent.yaml has no agent_name"
 grep -q '^    aws_org:' "${af[0]}" || fail "agent.yaml has no aws_org block"
-grep -q '^    agent_name: "discovery-cloudpam-agent"$' "$OUT/agent-default-configmap.yaml" ||
-	fail "default agent_name is not <namespace>-<fullname>"
+grep -q '^    agent_name: "cluster-a-discovery"$' "$OUT/agent-explicit-configmap.yaml" ||
+	fail "configured agent_name did not render"
 
 check_values_catalog_lists_every_server_env() {
 	local not_for_pod=(ADDR PORT APP_VERSION SQLITE_DSN CLOUDPAM_STORAGE DEV_MODE CLOUDPAM_DEV_MODE
