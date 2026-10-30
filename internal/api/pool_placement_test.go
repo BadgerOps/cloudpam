@@ -36,10 +36,15 @@ func setupSlowListServer() (*Server, *storage.MemoryStore) {
 type post struct{ path, body string }
 
 func postTogether(srv *Server, posts []post) map[int]int {
+	return postAcross([]*Server{srv}, posts)
+}
+
+func postAcross(servers []*Server, posts []post) map[int]int {
 	codes := make([]int, len(posts))
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for i, p := range posts {
+		srv := servers[i%len(servers)]
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
