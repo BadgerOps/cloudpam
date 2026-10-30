@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.23.6] - 2026-10-30
+
+### Added
+- The Cloud Accounts page can edit every writable account field through the same form used for creation. The account key stays read-only, save failures render in the form, and protected account updates and deletes now write audit events. SQLite also preserves an account's `created_at` when it is edited. (#303)
+- `deploy/docker-compose.observability.yml` starts Prometheus, Grafana, and Jaeger from a clean checkout. Grafana is provisioned with the CloudPAM Prometheus datasource and a request dashboard, and CI validates the compose, Prometheus, and provisioning files. Loki, Promtail, and Vector were removed from this local stack because they had no working configuration or log source. The Kubernetes Vector sample still needs a separate update for Vector 0.34.1. (#297)
+
+### Changed
+- The server and agent Helm charts advertise application version `0.23.6`. Their chart package versions remain `0.2.1`.
+- The SPA uses one permission table for sidebar visibility and route guards. Audit and API-key pages now require the permissions their APIs enforce, so custom-role users no longer see links they cannot open or open routes their sidebar hides. (#308)
+
+### Fixed
+- Audit events emitted during HTTP requests record the resolved client IP, including CEF records sent to a SIEM. `X-Forwarded-For` is accepted only from peers in `CLOUDPAM_TRUSTED_PROXIES`, and forwarded IPv4 and IPv6 forms are normalized before storage. (#293)
+- The Schema Planner generates children inside their parents, disables Apply when a plan cannot fit, and rejects out-of-parent, forward, or missing `parent_ref` entries with `400` from both schema endpoints before storing anything. `skip_conflicts` does not bypass containment. (#284)
+- PostgreSQL replicas now serialize pool creation and schema apply with a per-organization transaction-scoped advisory lock. The list, overlap check, and inserts share one READ COMMITTED transaction; duplicate inserts retain their `409` behavior, while a placement that exceeds its 10-second budget or PostgreSQL's lock timeout returns `503` with `Retry-After` and stores nothing. SQLite and in-memory deployments keep the per-process gate. CSV import, AI plan apply, recommendation apply, and discovery import still bypass the overlap guard. (#267)
+
 ## [0.23.5] - 2026-10-30
 
 ### Changed
