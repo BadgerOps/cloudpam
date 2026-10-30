@@ -192,6 +192,32 @@ func TestWithPlacementLock_LockWaitTimeoutIsErrBusy(t *testing.T) {
 	}
 }
 
+func TestWithPlacementLock_IdleHolderIsEndedAndReportsBusy(t *testing.T) {
+	resetDB(t)
+	old := placementIdleLimit
+	placementIdleLimit = "200ms"
+	t.Cleanup(func() { placementIdleLimit = old })
+
+	err := testDB.store.WithPlacementLock(context.Background(), func(ps storage.PlacementStore) error {
+		if _, err := ps.ListPools(context.Background()); err != nil {
+			return err
+		}
+		time.Sleep(600 * time.Millisecond)
+		_, err := ps.CreatePool(context.Background(), domain.CreatePool{Name: "late", CIDR: "10.1.0.0/16"})
+		return err
+	})
+	if !errors.Is(err, storage.ErrBusy) {
+		t.Fatalf("want storage.ErrBusy after the idle limit, got %v", err)
+	}
+	pools, err := testDB.store.ListPools(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(pools) != 0 {
+		t.Fatalf("ended placement stored %v", cidrs(pools))
+	}
+}
+
 func TestWithPlacementLock_TerminatedHolderStoresNothingAndFreesLock(t *testing.T) {
 	resetDB(t)
 	ctx := context.Background()

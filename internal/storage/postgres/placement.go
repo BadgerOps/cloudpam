@@ -15,13 +15,20 @@ import (
 	"cloudpam/internal/storage"
 )
 
-// placementLockWait is a var so tests can shorten it.
-var placementLockWait = "10s"
+// placementLockWait and placementIdleLimit are vars so tests can shorten them.
+// PostgreSQL counts the time between ListPools and the first INSERT as idle, so the
+// idle limit bounds the in-process overlap check. It stays under the 15s HTTP write
+// timeout in cmd/cloudpam/main.go: a check that would outrun the response is rolled
+// back and reported busy instead of committing after the client has given up.
+var (
+	placementLockWait  = "10s"
+	placementIdleLimit = "10s"
+)
 
 const (
-	placementIdleLimit = "15s"
-	placementEndLimit  = 5 * time.Second
-	lockNotAvailable   = "55P03"
+	placementEndLimit = 5 * time.Second
+	lockNotAvailable  = "55P03"
+	idleInTxTimeout   = "25P03"
 )
 
 var _ storage.PlacementLocker = (*Store)(nil)
@@ -44,19 +51,35 @@ func (s *Store) WithPlacementLock(ctx context.Context, fn func(storage.Placement
 		return err
 	}
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('cloudpam/pool-placement/' || $1::text, 0))`, s.orgID); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == lockNotAvailable {
+		if sqlState(err) == lockNotAvailable {
 			return fmt.Errorf("pool placement lock not acquired within %s: %w", placementLockWait, storage.ErrBusy)
 		}
 		return err
 	}
 	if err := fn(placementTx{tx: tx, orgID: s.orgID}); err != nil {
-		return err
+		return busyIfIdleKilled(err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return endTx(ctx, tx.Commit)
+	return busyIfIdleKilled(endTx(ctx, tx.Commit))
+}
+
+func sqlState(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code
+	}
+	return ""
+}
+
+// busyIfIdleKilled maps the server ending the session for idling in the transaction to
+// ErrBusy: nothing was stored and the caller may retry.
+func busyIfIdleKilled(err error) error {
+	if err != nil && sqlState(err) == idleInTxTimeout {
+		return fmt.Errorf("pool placement session ended after idling %s: %w", placementIdleLimit, storage.ErrBusy)
+	}
+	return err
 }
 
 // endTx ends the transaction on a context detached from the request. A cancel that lands during
