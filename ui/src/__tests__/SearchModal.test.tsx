@@ -93,6 +93,19 @@ describe('SearchModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('renders the empty state when the API returns null items', () => {
+    mockUseSearch.mockReturnValue({
+      query: 'volcano',
+      setQuery: vi.fn(),
+      loading: false,
+      error: null,
+      results: { items: null, total: 0, page: 1, page_size: 20 },
+    })
+    renderModal(true, vi.fn())
+
+    expect(screen.getByText(/No results for/)).toBeTruthy()
+  })
+
   it('lands on the chosen pool or account, not the bare list', () => {
     mockUseSearch.mockReturnValue({
       query: 'prod',
