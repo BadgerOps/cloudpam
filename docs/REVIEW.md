@@ -1,6 +1,6 @@
 # CloudPAM Codebase Review - Comprehensive Analysis
 
-> **⚠️ Historical Document**: This review was written in October 2025 based on an early version of the codebase. **All P0 and P1 issues identified below have been resolved** as of Sprint 18 (February 2026). The project now has structured logging (slog), rate limiting, graceful shutdown, Prometheus metrics, health/readiness endpoints, RBAC authentication, 80%+ test coverage, and three storage backends (memory, SQLite, PostgreSQL). This document is preserved for historical reference.
+> **⚠️ Historical Document**: This review was written in October 2025 based on an early version of the codebase. **All P0 and P1 issues identified below have been resolved** as of Sprint 18 (February 2026). Coverage figures, "60% production readiness," and missing-observability claims in the body are obsolete (0.23.x is at ~85% Go coverage with slog, Prometheus, Sentry, and opt-in tracing). For current implemented-vs-missing work see [CURRENT_STATUS.md](CURRENT_STATUS.md). This document is preserved for historical reference.
 
 **Review Date:** 2025-10-14
 **Reviewer:** Claude Code (golang-pro agent)

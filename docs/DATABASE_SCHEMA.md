@@ -1,5 +1,11 @@
 # CloudPAM Database Schema
 
+> **Design document, not a dump of the live schema.** This describes the *target* model (UUID primary keys, `organization_id` on most tables, teams, FTS, native CIDR operators, audit triggers). The running schema is the SQL in `migrations/` (SQLite, through `0021_network_objects_relationships.sql`) and `migrations/postgres/` (separate numbering through `0023_recommendations.up.sql`).
+>
+> What actually ships today: integer `seq_id` pool/account IDs in the HTTP API, SQLite users without `organization_id`, Postgres stores hardcoded to `defaultOrgID`, no teams table, no FTS5/`tsvector` usage, no utilization-snapshot table on Postgres, and `deleted_at` without a restore API. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+>
+> The `recommendations` table ships on both backends (`migrations/0011_recommendations.sql` and `migrations/postgres/0023_recommendations.up.sql`). This document does not describe it.
+
 This document defines the database schema for CloudPAM, supporting both PostgreSQL (production) and SQLite (development/lightweight deployments).
 
 ## Design Principles

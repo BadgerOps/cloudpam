@@ -1,5 +1,7 @@
 # Discovery Agent Separation Plan
 
+> **Plan status (0.23.4):** The standalone agent shipped (`cmd/cloudpam-agent/`, Docker image, Helm chart, ingest/heartbeat, bootstrap register/approve). The diagram's **GCP agent is not built**. `cmd/cloudpam-agent/main.go` hardcodes `aws.New()`. Server-side GCP discovery uses host ADC. Do not treat this file as remaining-work; remaining discovery gaps are in [CURRENT_STATUS.md](CURRENT_STATUS.md).
+
 ## Goal
 
 Extract the discovery subsystem from the monolithic CloudPAM binary into a standalone **discovery agent** that can be deployed independently — close to cloud credentials, in different regions, or scaled horizontally — while the main CloudPAM instance remains the single source of truth for IPAM data.
