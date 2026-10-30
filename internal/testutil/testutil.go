@@ -31,6 +31,8 @@ type TestServerConfig struct {
 	EnableMetrics bool
 	// EnableAudit enables audit logging.
 	EnableAudit bool
+	// TrustedProxies lists the proxies whose X-Forwarded-For is honoured.
+	TrustedProxies *api.TrustedProxyConfig
 }
 
 // DefaultTestServerConfig returns a basic test server configuration.
