@@ -13,7 +13,7 @@ Which files under `docs/` are current, which are design, and which are historica
 | [DISCOVERY.md](DISCOVERY.md) | AWS/GCP discovery operator guide (see CURRENT_STATUS for Azure/agent limits) |
 | [AUTH_FLOWS.md](AUTH_FLOWS.md) | Local, OIDC, API key, RBAC (no MFA) |
 | [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md) | CEF syslog (shipped) plus remaining SIEM design |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Production setup; Helm snippets may lag `deploy/helm/` |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Production setup and Helm 0.2.0 upgrade guidance |
 
 Runtime API contract: `/openapi` and `/openapi.yaml` on a running server. Do not maintain a snapshot `docs/openapi.yaml`.
 

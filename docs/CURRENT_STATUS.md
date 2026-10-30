@@ -1,6 +1,8 @@
 # CloudPAM Current Status and Known Gaps
 
-Validated against `master` at **0.23.4** plus one later commit (2026-10-29, commit `e0818fd`). That commit (#315) stores PostgreSQL recommendations in a `recommendations` table. It is not in a release yet, so a 0.23.4 binary on PostgreSQL still keeps recommendations in memory and loses them on restart.
+Validated against `master` at commit `e0818fd` (**0.23.4** plus #315) and the changes queued in #316–#319 and #322 (2026-10-30). #315 stores PostgreSQL recommendations in a `recommendations` table. It is not in a release yet, so a 0.23.4 binary on PostgreSQL still keeps recommendations in memory and loses them on restart.
+
+> **Merge dependency for #320:** merge #316–#319 and #322 first. This snapshot already treats those changes as applied; if any dependency is dropped, restore its corresponding gap before merging this documentation.
 
 This is the source of truth for what is implemented versus what is still missing. Week-by-week checkboxes in [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md), architecture sketches in [SMART_PLANNING.md](SMART_PLANNING.md) / [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) / [OBSERVABILITY.md](OBSERVABILITY.md), and the October 2025 [REVIEW.md](REVIEW.md) are **not** current status unless they agree with this file.
 
@@ -61,12 +63,11 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 2. **Cloud credentials are the host's, not the account's.** No encrypted per-account secrets, no cloud-connect OAuth. AWS uses the default credential chain / AssumeRole. GCP uses ADC. The standalone agent (`cmd/cloudpam-agent`) hardcodes `aws.New()`, so **GCP cannot run in the agent**.
 3. **Soft delete is one-way.** `deleted_at` is set; there is no restore API or UI.
 4. **Network objects cannot be deleted.**
-5. **Helm charts were refreshed in #322** (chart 0.2.0, `appVersion` 0.23.4, env vars keyed to the server's catalog). `scripts/helm-check.sh` runs in CI and fails when `appVersion` falls behind the newest changelog release or the server reads a variable the chart does not list, so a changelog release PR must bump both charts.
-6. **`deploy/docker-compose.observability.yml` is broken as checked in.** It mounts `./prometheus/prometheus.yml` and `./grafana/provisioning`; those directories are not in the repo.
-7. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
-8. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
-9. **Audit events shipped to SIEM have empty `IPAddress`.** Handler-level audit helpers do not set source IP; `AuditMiddleware` is not in the production chain. See [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md) §1.4.
-10. **The pool overlap check does not span replicas.** `Server.placeMu` serializes `POST /api/v1/pools` and `POST /api/v1/schema/apply` inside one process only. Two replicas on one PostgreSQL database can each pass the check and store overlapping sibling pools (#267). CSV import, AI plan apply, recommendation apply, and discovery import call `CreatePool` directly and do not take this lock, and schema apply with `skip_conflicts: true` creates the pools without any overlap check.
+5. **`deploy/docker-compose.observability.yml` is broken as checked in.** It mounts `./prometheus/prometheus.yml` and `./grafana/provisioning`; those directories are not in the repo.
+6. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
+7. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
+8. **Audit events shipped to SIEM have empty `IPAddress`.** Handler-level audit helpers do not set source IP; `AuditMiddleware` is not in the production chain. See [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md) §1.4.
+9. **The pool overlap check does not span replicas.** `Server.placeMu` serializes `POST /api/v1/pools` and `POST /api/v1/schema/apply` inside one process only. Two replicas on one PostgreSQL database can each pass the check and store overlapping sibling pools (#267). CSV import, AI plan apply, recommendation apply, and discovery import call `CreatePool` directly and do not take this lock, and schema apply with `skip_conflicts: true` creates the pools without any overlap check.
 
 ---
 
@@ -81,16 +82,11 @@ These backend capabilities exist and the SPA does not expose them (or exposes th
 | Account edit | `PATCH /api/v1/accounts/{id}` | `useAccounts` is list/create/delete only. Create form omits regions, environment, description, `external_id` |
 | Cascade delete | `DELETE …?force=true` | UI never sends `force`; parents with children return 409 |
 | Persisted network schema policy | `GET/PATCH /api/v1/settings/network-schema-policy` | Discovery has a request-scoped dropdown only |
-| Search result → entity | Search returns item ids | Modal navigates to `/pools` or `/accounts` and drops the id |
 | Session revoke | `POST /api/v1/auth/users/{id}/revoke-sessions` | No UI |
 | Recs / drift / blocks pagination | Hooks accept `page` | Count readout only (audit pager works) |
 | LLM configuration | `CLOUDPAM_LLM_*` env | No settings UI |
-| Light / Dark / **System** theme | `cycle()` in `useTheme` | Header uses binary `toggle()` |
 | Log Destinations | Env-based CEF syslog | Page is static copy |
-| Header bell | None | Button with no `onClick` |
 | Dashboard ops | Drift, recs, sync APIs | Dashboard is pool stats + 5 accounts + 5 audit rows |
-| Profile password | Local users only | OIDC users still see Change Password |
-| Schema Planner chrome | None | Renders a second full-page header inside `Layout` |
 | Sidebar vs route RBAC | None | `/config/api-keys` is always in the sidebar but the route requires `settings:read`. `/audit` is gated in the sidebar but not on the route |
 
 Phase 6 (Graphēon-style top nav and shared primitives) is not started. The shell is still a left sidebar; pages restyle cards and tables locally. Identity / Configuration grouping exists.
@@ -122,8 +118,8 @@ The Discovery UI at `/discovery` has four tabs: Resources, Network, Sync History
 These are the gaps that most contradict the product's stated Postgres, multi-cloud, and operator-console story. Each item has an open GitHub issue in the range #266 to #314.
 
 1. Analysis UI, or fold gaps/fragmentation/compliance into pool detail and the dashboard.
-2. Helm `appVersion`, drop `CLOUDPAM_AUTH_ENABLED`, fix observability compose volume paths.
-3. Operator UI holes: account edit, cascade delete, search deep-link, schema policy in Configuration, System theme, Log Destinations vs env docs, dead header bell.
+2. Fix the observability compose volume paths.
+3. Operator UI holes: account edit, cascade delete, schema policy in Configuration, and Log Destinations vs env docs.
 4. Admin-managed AI provider settings instead of more chat features.
 5. GCP in the discovery agent (or document that GCP sync is in-process only).
 6. Larger programs: true multi-tenancy, IPv6, MFA, per-org quotas, incremental sync, vendor SIEM, Graphēon shell.
