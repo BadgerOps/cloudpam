@@ -19,12 +19,41 @@ import (
 
 var migFileRe = regexp.MustCompile(`^(\d+)_.+\.up\.sql$`)
 
+// migrationLock names the advisory lock that serializes runMigrations across replicas
+// starting against one database. CloudPAM's advisory locks, each keyed as
+// hashtextextended(name, 0):
+//
+//	cloudpam/migrations                       session lock, held for the whole pass (this file)
+//	cloudpam/pool-placement/<organization>    transaction lock (placement.go)
+const migrationLock = "cloudpam/migrations"
+
+// runMigrations applies the pending migrations on one connection under a session-level
+// advisory lock. The lock comes before the tracking tables and the applied-set read, so a
+// replica that gets it second sees the first one's rows and finds nothing to do.
 func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire connection: %w", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended($1, 0))`, migrationLock); err != nil {
+		return fmt.Errorf("lock migrations: %w", err)
+	}
+	defer func() {
+		// A session lock outlives the pass unless it is unlocked or the session ends. If the
+		// unlock fails, close the session so the pool cannot hand out a connection that still
+		// holds it.
+		unlock := context.WithoutCancel(ctx)
+		if _, err := conn.Exec(unlock, `SELECT pg_advisory_unlock(hashtextextended($1, 0))`, migrationLock); err != nil {
+			_ = conn.Conn().Close(unlock)
+		}
+	}()
+
 	// Create migration tracking tables
-	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY, name TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
+	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY, name TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
 		return fmt.Errorf("create schema_migrations: %w", err)
 	}
-	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_info (id INTEGER PRIMARY KEY CHECK(id=1), schema_version INTEGER NOT NULL, min_supported_schema INTEGER NOT NULL DEFAULT 1, app_version TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
+	if _, err := conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_info (id INTEGER PRIMARY KEY CHECK(id=1), schema_version INTEGER NOT NULL, min_supported_schema INTEGER NOT NULL DEFAULT 1, app_version TEXT NOT NULL, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())`); err != nil {
 		return fmt.Errorf("create schema_info: %w", err)
 	}
 
@@ -59,7 +88,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 
 	// Determine which migrations are already applied
 	applied := map[int]bool{}
-	rows, err := pool.Query(ctx, `SELECT version FROM schema_migrations`)
+	rows, err := conn.Query(ctx, `SELECT version FROM schema_migrations`)
 	if err != nil {
 		return fmt.Errorf("query applied migrations: %w", err)
 	}
@@ -95,7 +124,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 		}
 
 		// Execute migration in a transaction
-		tx, err := pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return fmt.Errorf("begin tx for migration %s: %w", f.name, err)
 		}
@@ -118,14 +147,14 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool) error {
 	// Update schema_info
 	if latest == 0 {
 		var max int
-		_ = pool.QueryRow(ctx, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&max)
+		_ = conn.QueryRow(ctx, `SELECT COALESCE(MAX(version),0) FROM schema_migrations`).Scan(&max)
 		latest = max
 	}
 	appVersion := os.Getenv("APP_VERSION")
 	if appVersion == "" {
 		appVersion = "dev"
 	}
-	_, _ = pool.Exec(ctx, `
+	_, _ = conn.Exec(ctx, `
 		INSERT INTO schema_info(id, schema_version, min_supported_schema, app_version, applied_at)
 		VALUES(1, $1, COALESCE((SELECT min_supported_schema FROM schema_info WHERE id=1),1), $2, $3)
 		ON CONFLICT(id) DO UPDATE SET schema_version=EXCLUDED.schema_version, app_version=EXCLUDED.app_version, applied_at=EXCLUDED.applied_at`,
