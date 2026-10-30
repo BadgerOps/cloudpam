@@ -33,6 +33,64 @@ func setupSlowListServer() (*Server, *storage.MemoryStore) {
 	return srv, st
 }
 
+type gatedListStore struct {
+	*storage.MemoryStore
+	gate chan struct{}
+}
+
+func (s gatedListStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
+	<-s.gate
+	return s.MemoryStore.ListPools(ctx)
+}
+
+// A request that spends its whole budget, whether queued on the placement gate or inside the store,
+// answers 503 and stores nothing.
+func TestPlacePools_BudgetCoversTheMutexWait(t *testing.T) {
+	old := placementBudget
+	placementBudget = 300 * time.Millisecond
+	t.Cleanup(func() { placementBudget = old })
+
+	st := storage.NewMemoryStore()
+	gate := make(chan struct{})
+	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: io.Discard})
+	srv := NewServer(stdhttp.NewServeMux(), gatedListStore{st, gate}, logger, nil, nil)
+	srv.registerUnprotectedTestRoutes()
+
+	send := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/pools", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rr, req)
+		return rr
+	}
+	first := make(chan *httptest.ResponseRecorder, 1)
+	go func() { first <- send(`{"name":"held","cidr":"10.1.0.0/16"}`) }()
+	for !srv.placeGate.held() {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	queued := send(`{"name":"queued","cidr":"10.2.0.0/16"}`)
+	close(gate)
+	held := <-first
+
+	if queued.Code != stdhttp.StatusServiceUnavailable {
+		t.Fatalf("request queued past its budget: got %d %s, want 503", queued.Code, queued.Body.String())
+	}
+	if queued.Header().Get("Retry-After") == "" {
+		t.Fatal("503 without Retry-After")
+	}
+	if held.Code != stdhttp.StatusServiceUnavailable {
+		t.Fatalf("request held in the store past its budget: got %d %s, want 503", held.Code, held.Body.String())
+	}
+	pools, err := st.ListPools(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools) != 0 {
+		t.Fatalf("placements past their budget stored %d pools", len(pools))
+	}
+}
+
 type post struct{ path, body string }
 
 func postTogether(srv *Server, posts []post) map[int]int {

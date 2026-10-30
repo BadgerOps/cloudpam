@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sync"
 
 	"github.com/getsentry/sentry-go"
 
@@ -31,7 +30,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 type Server struct {
 	mux              *http.ServeMux
 	store            storage.Store
-	placeMu          sync.Mutex
+	placeGate        placementGate
 	logger           observability.Logger
 	metrics          *observability.Metrics
 	auditLogger      audit.AuditLogger
