@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"cloudpam/internal/domain"
@@ -261,6 +262,8 @@ func TestMemoryStoreExtra_SearchPagination(t *testing.T) {
 		{"partial last page", 2, 4, 2, 4, 2},
 		{"page past the end", 99, 4, 99, 4, 0},
 		{"page size clamped to 200", 1, 5000, 1, 200, 6},
+		{"page past MaxInt/pageSize", math.MaxInt/200 + 2, 200, math.MaxInt/200 + 2, 200, 0},
+		{"page at MaxInt", math.MaxInt, 4, math.MaxInt, 4, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
