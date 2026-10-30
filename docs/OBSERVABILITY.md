@@ -1,6 +1,6 @@
 # CloudPAM Observability Architecture
 
-> **Implemented vs design.** Shipped today: structured `slog` logs, a custom Prometheus text exporter at `/metrics` (`internal/observability/metrics.go`), Sentry, opt-in OTLP/HTTP tracing (`internal/observability/tracing.go`, off unless `CLOUDPAM_TRACING_ENABLED=true`), and CEF-over-syslog audit forwarding. Also shipped: a local stack, `deploy/docker-compose.observability.yml`, that runs Prometheus, Grafana (with a provisioned request dashboard), and Jaeger, plus a Vector service that has no log source (see [7.1](#71-local-development) and [8](#8-grafana-dashboards)). Not shipped: Vector sidecar as a product integration, Splunk HEC / CloudWatch / Cloud Logging connectors, and OTel SDK metrics. See [CURRENT_STATUS.md](CURRENT_STATUS.md) and [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md).
+> **Implemented vs design.** Shipped today: structured `slog` logs, a custom Prometheus text exporter at `/metrics` (`internal/observability/metrics.go`), Sentry, opt-in OTLP/HTTP tracing (`internal/observability/tracing.go`, off unless `CLOUDPAM_TRACING_ENABLED=true`), and CEF-over-syslog audit forwarding. Also shipped: a local stack, `deploy/docker-compose.observability.yml`, that runs Prometheus, Grafana (with a provisioned request dashboard), and Jaeger, with no log pipeline (see [7.1](#71-local-development) and [8](#8-grafana-dashboards)). Not shipped: Vector sidecar as a product integration, Splunk HEC / CloudWatch / Cloud Logging connectors, and OTel SDK metrics. See [CURRENT_STATUS.md](CURRENT_STATUS.md) and [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md).
 
 ## Overview
 
@@ -547,7 +547,7 @@ docker compose -f deploy/docker-compose.observability.yml up -d
 
 Prometheus reaches the host through `host.docker.internal`, which the compose file maps to the host gateway so it also works on Linux. If CloudPAM listens on another port, edit the target in `deploy/prometheus/prometheus.yml`. To send traces to Jaeger, start CloudPAM with `CLOUDPAM_TRACING_ENABLED=true` (the default endpoint, `http://localhost:4318`, is Jaeger's OTLP/HTTP port).
 
-The Vector service in the compose file mounts the repo's sample config but has no log source in this stack: CloudPAM writes logs to stdout and nothing fills the `cloudpam-logs` volume Vector reads. The sample config also fails to load on the pinned Vector 0.34.1 (`sinks.datadog` rejects `encoding.codec`), so that container restarts. The Kubernetes DaemonSet (`deploy/k8s/vector-daemonset.yaml`) is the intended Vector deployment. The stack does not include Loki or Promtail.
+The local compose stack runs Prometheus, Grafana (provisioned request dashboard), and Jaeger. It ships no log pipeline: no Vector, Loki, or Promtail. Vector is deployed by the Kubernetes DaemonSet (`deploy/k8s/vector-daemonset.yaml`); the sample `deploy/vector/vector.toml` needs updating for Vector 0.34.1, which rejects its `encoding.codec` form.
 
 ### 7.2 Kubernetes
 
