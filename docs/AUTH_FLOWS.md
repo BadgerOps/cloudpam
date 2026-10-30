@@ -271,15 +271,12 @@ Administrators manage API key policy from **Configuration > Security** via `GET/
 
 #### Rate Limiting
 
-API keys have configurable rate limits:
+API keys have no rate limit of their own. Two limiters exist, and both key on an IP address, not on the key or the user:
 
-```yaml
-# Per-key configuration
-rate_limit:
-  requests_per_minute: 100   # Default
-  requests_per_hour: 1000
-  burst: 20                   # Max concurrent requests
-```
+- `RateLimitMiddleware` wraps every route with one token bucket per TCP peer address. It ignores `X-Forwarded-For`, so all clients that reach one CloudPAM instance through the same reverse proxy share one bucket. `RATE_LIMIT_RPS` sets the rate (default `100` requests per second) and `RATE_LIMIT_BURST` sets the burst (default `200`). `RATE_LIMIT_RPS=0` turns it off.
+- `LoginRateLimitMiddleware` wraps `/api/v1/auth/login` with one token bucket per client IP. The bucket holds 5 tokens and refills at 5 per minute, and every request to that path takes one, whatever its method. The client IP is the first `X-Forwarded-For` entry when the TCP peer is in `CLOUDPAM_TRUSTED_PROXIES`, and the TCP peer address otherwise. `cmd/cloudpam/main.go` sets the 5. The **Configuration > Security** page saves `login_rate_limit_per_minute`, but the limiter never reads it.
+
+Per-key and per-user limits, such as a `rate_limit` block with `requests_per_minute`, `requests_per_hour`, and `burst`, are not implemented. Issue #291 tracks them.
 
 ## Authorization (RBAC)
 
@@ -594,14 +591,6 @@ func AuthMiddleware(next http.Handler) http.Handler {
         if err != nil {
             respondUnauthorized(w, "Authentication required")
             return
-        }
-
-        // 3. Check if access token needs refresh
-        if session.AccessTokenExpiresSoon() {
-            if err := refreshAccessToken(session); err != nil {
-                respondUnauthorized(w, "Session expired")
-                return
-            }
         }
 
         ctx := context.WithValue(r.Context(), "auth", &AuthContext{

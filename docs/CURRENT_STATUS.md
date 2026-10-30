@@ -12,7 +12,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Core IPAM | Complete | Hierarchical pools, accounts, assigned blocks, CIDR search, CSV import/export, validation, audit |
+| Core IPAM | Complete | Hierarchical pools, accounts, assigned blocks, CIDR search, CSV import/export, validation, audit. Pool create and schema apply check overlaps per process only, so run one replica on PostgreSQL until #267 lands |
 | Discovery: AWS | Complete | Single-account and Organizations, AssumeRole, standalone agent, ingest/heartbeat, bootstrap register/approve, IAM Terraform/CloudFormation helpers |
 | Discovery: GCP | Partial | Server collector for networks, subnetworks, and external IPs. No org mode, no agent, no IaC helpers. Uses Application Default Credentials on the CloudPAM host |
 | Discovery: Azure | Missing | Account keys accept `azure:<subscription-uuid>` and the UI offers Azure; there is no collector. Sync fails with `no collector registered for provider` |
@@ -66,6 +66,7 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 7. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
 8. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
 9. **Audit events shipped to SIEM have empty `IPAddress`.** Handler-level audit helpers do not set source IP; `AuditMiddleware` is not in the production chain. See [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md) §1.4.
+10. **The pool overlap check does not span replicas.** `Server.placeMu` serializes `POST /api/v1/pools` and `POST /api/v1/schema/apply` inside one process only. Two replicas on one PostgreSQL database can each pass the check and store overlapping sibling pools (#267). CSV import, AI plan apply, and discovery import call `CreatePool` directly and do not take this lock.
 
 ---
 
