@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"cloudpam/internal/auth"
+	"cloudpam/internal/storage"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
@@ -401,6 +402,7 @@ func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
 // LoginRateLimitConfig configures per-IP login rate limiting.
 type LoginRateLimitConfig struct {
 	AttemptsPerMinute int
+	Settings          storage.SettingsStore
 	ProxyConfig       *TrustedProxyConfig
 }
 

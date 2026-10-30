@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"cloudpam/internal/auth"
+	"cloudpam/internal/storage"
 )
 
 func newTestLogger() *slog.Logger {
@@ -1986,5 +1988,67 @@ func TestLoginRateLimitMiddleware_PerIPIsolation(t *testing.T) {
 	handler.ServeHTTP(rr2, req2)
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("expected IP2 to succeed, got %d", rr2.Code)
+	}
+}
+
+func TestLoginRateLimitMiddleware_FollowsSecuritySettings(t *testing.T) {
+	ctx := context.Background()
+	settingsStore := storage.NewMemorySettingsStore()
+	setLimit := func(n int) {
+		t.Helper()
+		settings, err := settingsStore.GetSecuritySettings(ctx)
+		if err != nil {
+			t.Fatalf("get settings: %v", err)
+		}
+		settings.LoginRateLimitPerMin = n
+		if err := settingsStore.UpdateSecuritySettings(ctx, settings); err != nil {
+			t.Fatalf("update settings: %v", err)
+		}
+	}
+	setLimit(2)
+
+	us, _, _ := setupUserTestServer()
+	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
+		AttemptsPerMinute: 5,
+		Settings:          settingsStore,
+	})
+	handler := loginRL(http.HandlerFunc(us.handleLogin))
+
+	login := func(ip string) int {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"nobody","password":"wrong-password-1"}`))
+		req.RemoteAddr = ip + ":12345"
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	for i := 1; i <= 2; i++ {
+		if code := login("1.2.3.4"); code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: got %d, want 401", i, code)
+		}
+	}
+	if code := login("1.2.3.4"); code != http.StatusTooManyRequests {
+		t.Fatalf("attempt 3 with limit 2: got %d, want 429", code)
+	}
+
+	setLimit(4)
+	for i := 1; i <= 4; i++ {
+		if code := login("5.6.7.8"); code != http.StatusUnauthorized {
+			t.Fatalf("raised limit, attempt %d: got %d, want 401", i, code)
+		}
+	}
+	if code := login("5.6.7.8"); code != http.StatusTooManyRequests {
+		t.Fatalf("raised limit, attempt 5: got %d, want 429", code)
+	}
+
+	if code := login("9.9.9.9"); code != http.StatusUnauthorized {
+		t.Fatalf("existing ip first attempt: got %d, want 401", code)
+	}
+	setLimit(1)
+	if code := login("9.9.9.9"); code != http.StatusUnauthorized {
+		t.Fatalf("lowered limit, attempt 2: got %d, want 401", code)
+	}
+	if code := login("9.9.9.9"); code != http.StatusTooManyRequests {
+		t.Fatalf("lowered limit, attempt 3: got %d, want 429", code)
 	}
 }
