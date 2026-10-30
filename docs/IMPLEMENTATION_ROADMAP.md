@@ -63,7 +63,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
   - [x] Prometheus metrics at `/metrics` (hand-rolled registry, not the OpenTelemetry metrics SDK)
   - [x] Distributed tracing — opt-in OpenTelemetry OTLP/HTTP export (`CLOUDPAM_TRACING_ENABLED`, 0.23.0); no Jaeger deployment is wired
   - [x] Health check endpoints (`/healthz`, `/readyz`)
-- [ ] Local observability stack — [docker-compose.observability.yml](../deploy/docker-compose.observability.yml) mounts `./prometheus/prometheus.yml` and `./grafana/provisioning`, which are not in the repo, so it does not start as checked in
+- [x] Local observability stack — [docker-compose.observability.yml](../deploy/docker-compose.observability.yml) starts Prometheus, Grafana (provisioned request dashboard), and Jaeger from a clean checkout. Its Vector service has no log source (CloudPAM logs to stdout; nothing fills the `cloudpam-logs` volume), and the sample Vector config does not load on the pinned 0.34.1. The Kubernetes DaemonSet is the intended Vector deployment
 
 **Success Criteria**:
 - Server starts cleanly and responds to `/health` endpoint
@@ -984,8 +984,8 @@ The original plan named chi, golang-migrate, jwt-go, Axios and Redux. None of th
 **DevOps**:
 - Containerization: Docker (`deploy/docker/`); Helm charts for server and agent in `deploy/helm/` (CI checks chart `appVersion` against the changelog, #322)
 - CI/CD: GitHub Actions (race tests on three backends, lint, coverage, `govulncheck`, Trivy image scans, release builds with an SPDX SBOM). CodeQL code scanning runs through GitHub's default setup, not a workflow file
-- Monitoring: Prometheus scrape of `/metrics`; the Grafana/Prometheus compose stack is not runnable as checked in
-- Logging: JSON to stdout; Vector configs exist in `deploy/vector/` but are not integrated
+- Monitoring: Prometheus scrape of `/metrics`; the local Prometheus, Grafana, and Jaeger compose stack runs from a clean checkout
+- Logging: JSON to stdout; Vector configs exist in `deploy/vector/` but are not integrated (the compose Vector service has no log source; the Kubernetes DaemonSet is the intended deployment)
 
 ---
 
