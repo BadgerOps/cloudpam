@@ -1,10 +1,10 @@
 # CloudPAM Observability Architecture
 
-> **Implemented vs design.** Shipped today: structured `slog` logs, a custom Prometheus text exporter at `/metrics` (`internal/observability/metrics.go`), Sentry, opt-in OTLP/HTTP tracing (`internal/observability/tracing.go`, off unless `CLOUDPAM_TRACING_ENABLED=true`), and CEF-over-syslog audit forwarding. Not shipped: Vector sidecar as a product integration, Splunk HEC / CloudWatch / Cloud Logging connectors, OTel SDK metrics, and a working `deploy/docker-compose.observability.yml` (it mounts Prometheus/Grafana files that are not in the repo). See [CURRENT_STATUS.md](CURRENT_STATUS.md) and [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md).
+> **Implemented vs design.** Shipped today: structured `slog` logs, a custom Prometheus text exporter at `/metrics` (`internal/observability/metrics.go`), Sentry, opt-in OTLP/HTTP tracing (`internal/observability/tracing.go`, off unless `CLOUDPAM_TRACING_ENABLED=true`), and CEF-over-syslog audit forwarding. Also shipped: a local stack, `deploy/docker-compose.observability.yml`, that runs Prometheus, Grafana (with a provisioned request dashboard), Jaeger, and Vector (see [7.1](#71-local-development) and [8](#8-grafana-dashboards)). Not shipped: Vector sidecar as a product integration, Splunk HEC / CloudWatch / Cloud Logging connectors, and OTel SDK metrics. See [CURRENT_STATUS.md](CURRENT_STATUS.md) and [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md).
 
 ## Overview
 
-CloudPAM implements a comprehensive observability stack covering structured logging, metrics collection, distributed tracing, and audit logging. The architecture follows cloud-native best practices with pluggable backends for enterprise integration. The diagram includes **target** backends (Vector, Splunk HEC, CloudWatch, Jaeger as a bundled stack) that are not wired in this repository.
+CloudPAM implements a comprehensive observability stack covering structured logging, metrics collection, distributed tracing, and audit logging. The architecture follows cloud-native best practices with pluggable backends for enterprise integration. The diagram includes **target** backends (Vector, Splunk HEC, CloudWatch) that are not wired in this repository.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -235,6 +235,8 @@ The original design exported OTel SDK metrics to Prometheus:
 
 #### HTTP Metrics (RED Method)
 
+> The tables in this section are the design catalog. The series the server exports today are listed in [section 8](#8-grafana-dashboards).
+
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
 | `http_request_duration_seconds` | Histogram | method, path, status | Request latency |
@@ -280,6 +282,8 @@ The original design exported OTel SDK metrics to Prometheus:
 | `cloudpam_audit_processing_duration_seconds` | Histogram | - | Event processing time |
 
 ### 3.3 Prometheus Configuration
+
+The local compose stack uses `deploy/prometheus/prometheus.yml`, which scrapes `host.docker.internal:8080/metrics` every 15s. The Kubernetes example below is a design sketch.
 
 ```yaml
 # prometheus.yml
@@ -529,14 +533,21 @@ See mockup: `cloudpam-audit-log.html`
 ### 7.1 Local Development
 
 ```bash
+# Run CloudPAM on the host (Prometheus scrapes it on :8080)
+just dev
+
 # Start observability stack
-docker-compose -f deploy/docker-compose.observability.yml up -d
+docker compose -f deploy/docker-compose.observability.yml up -d
 
 # Access dashboards
 # Grafana: http://localhost:3000 (admin/admin)
 # Prometheus: http://localhost:9090
 # Jaeger: http://localhost:16686
 ```
+
+Prometheus reaches the host through `host.docker.internal`, which the compose file maps to the host gateway so it also works on Linux. If CloudPAM listens on another port, edit the target in `deploy/prometheus/prometheus.yml`. To send traces to Jaeger, start CloudPAM with `CLOUDPAM_TRACING_ENABLED=true` (the default endpoint, `http://localhost:4318`, is Jaeger's OTLP/HTTP port).
+
+The stack does not include Loki or Promtail. Log shipping goes through Vector (`deploy/vector/`).
 
 ### 7.2 Kubernetes
 
@@ -561,15 +572,16 @@ kubectl apply -f deploy/k8s/cloudpam-deployment.yaml
 
 ## 8. Grafana Dashboards
 
-Pre-built dashboards available in `deploy/grafana/dashboards/`:
+The compose stack provisions one dashboard, **CloudPAM Requests** (`deploy/grafana/dashboards/cloudpam-requests.json`), into Grafana's default folder. Other dashboards are not shipped.
 
-| Dashboard | Panels |
-|-----------|--------|
-| **CloudPAM Overview** | Request rate, error rate, latency p50/p95/p99 |
-| **Pool Management** | Pool utilization, allocation rate, conflicts |
-| **Discovery** | Sync frequency, success rate, discovered resources |
-| **Authentication** | Login attempts, active sessions, token usage |
-| **Database** | Query latency, connection pool, slow queries |
+| Panel | Query | Source series |
+|-------|-------|---------------|
+| Request rate by status | `sum by (status) (rate(cloudpam_http_requests_total[1m]))` | `cloudpam_http_requests_total{method,path,status}` counter |
+| Latency (worst path) | `max by (quantile) (cloudpam_http_request_duration_seconds)` | `cloudpam_http_request_duration_seconds{method,path,quantile}` summary |
+| Error rate | 5xx request rate divided by total request rate over 5m | `cloudpam_http_requests_total` |
+| In-flight requests | `cloudpam_active_connections` | gauge incremented per request in `MetricsMiddleware` |
+
+The latency series is a summary over the last 1000 samples per method and path, exposing quantiles 0.5, 0.9, and 0.99 (not 0.95). Quantiles cannot be averaged across paths, so the panel plots the maximum. `_sum` and `_count` series are cumulative and can feed `rate()` for mean latency. Requests to `/metrics` are not counted.
 
 ## 9. Alerting Rules
 

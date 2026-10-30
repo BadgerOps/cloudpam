@@ -1,18 +1,17 @@
 # CloudPAM Observability Stack - Docker Compose
 #
 # Local development stack for observability components.
-# Includes Prometheus, Grafana, Jaeger, and Vector.
+# Includes Prometheus, Grafana, Jaeger, and Vector. Prometheus scrapes
+# CloudPAM running on the host at :8080 (start it with `just dev`).
 #
 # Usage:
-#   docker-compose -f deploy/docker-compose.observability.yml up -d
+#   docker compose -f deploy/docker-compose.observability.yml up -d
 #
 # Access:
 #   Prometheus: http://localhost:9090
 #   Grafana:    http://localhost:3000 (admin/admin)
 #   Jaeger:     http://localhost:16686
 #   Vector:     http://localhost:8686/health
-
-version: '3.9'
 
 services:
   # ===========================================================================
@@ -33,6 +32,8 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - observability
     restart: unless-stopped
@@ -52,7 +53,6 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
     ports:
       - "3000:3000"
     volumes:
@@ -129,44 +129,6 @@ services:
       timeout: 5s
       retries: 3
 
-  # ===========================================================================
-  # Loki - Log Aggregation (Alternative to Vector shipping)
-  # ===========================================================================
-  loki:
-    image: grafana/loki:2.9.0
-    container_name: cloudpam-loki
-    command: -config.file=/etc/loki/loki-config.yaml
-    ports:
-      - "3100:3100"
-    volumes:
-      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
-      - loki-data:/loki
-    networks:
-      - observability
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  # ===========================================================================
-  # Promtail - Log Collector for Loki
-  # ===========================================================================
-  promtail:
-    image: grafana/promtail:2.9.0
-    container_name: cloudpam-promtail
-    command: -config.file=/etc/promtail/promtail-config.yaml
-    volumes:
-      - ./promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
-      - cloudpam-logs:/var/log/cloudpam:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - observability
-    depends_on:
-      - loki
-    restart: unless-stopped
-
 networks:
   observability:
     name: cloudpam-observability
@@ -179,7 +141,5 @@ volumes:
     name: cloudpam-grafana-data
   vector-data:
     name: cloudpam-vector-data
-  loki-data:
-    name: cloudpam-loki-data
   cloudpam-logs:
     name: cloudpam-logs
