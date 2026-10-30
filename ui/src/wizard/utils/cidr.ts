@@ -40,7 +40,7 @@ function networkOf(ipNum: number, prefix: number): number {
 
 export function subdivide(cidr: string, newPrefix: number): string[] {
   const parsed = parse(cidr)
-  if (newPrefix < parsed.prefixLen) return []
+  if (newPrefix <= parsed.prefixLen) return []
   const start = networkOf(parsed.ipNum, parsed.prefixLen)
   const count = Math.pow(2, newPrefix - parsed.prefixLen)
   const blockSize = Math.pow(2, 32 - newPrefix)

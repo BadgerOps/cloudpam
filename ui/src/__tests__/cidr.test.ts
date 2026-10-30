@@ -79,10 +79,8 @@ describe('subdivide', () => {
     expect(blocks[1]).toBe('10.0.1.0/24')
   })
 
-  it('same prefix returns single block', () => {
-    const blocks = subdivide('10.0.0.0/24', 24)
-    expect(blocks.length).toBe(1)
-    expect(blocks[0]).toBe('10.0.0.0/24')
+  it('returns no blocks when the new prefix equals the parent', () => {
+    expect(subdivide('10.0.0.0/24', 24)).toEqual([])
   })
 
   it('returns no blocks when the new prefix is shorter than the parent', () => {

@@ -202,6 +202,42 @@ func TestSchemaApply_MethodNotAllowed(t *testing.T) {
 	doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/schema/apply", "", stdhttp.StatusMethodNotAllowed)
 }
 
+func TestSchemaCheck_ForwardAndMissingParentRefs(t *testing.T) {
+	cases := []struct {
+		name, body, wantDetail string
+	}{
+		{
+			name: "child outside a parent declared later",
+			body: `{"pools":[
+				{"ref":"child","name":"Child","cidr":"10.60.0.0/24","type":"environment","parent_ref":"root"},
+				{"ref":"root","name":"Root","cidr":"10.50.0.0/16","type":"supernet"}
+			]}`,
+			wantDetail: "pool 0 (child): child not within parent",
+		},
+		{
+			name: "parent_ref that names no entry",
+			body: `{"pools":[
+				{"ref":"root","name":"Root","cidr":"10.50.0.0/16","type":"supernet"},
+				{"ref":"child","name":"Child","cidr":"10.50.1.0/24","type":"environment","parent_ref":"ghost"}
+			]}`,
+			wantDetail: `pool 1 (child): parent_ref "ghost" not found`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := setupTestServer()
+			rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/schema/check", tc.body, stdhttp.StatusBadRequest)
+			var got apiError
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got.Error != "invalid sub-pool cidr" || got.Detail != tc.wantDetail {
+				t.Fatalf("got %q / %q, want detail %q", got.Error, got.Detail, tc.wantDetail)
+			}
+		})
+	}
+}
+
 func TestSchemaPlan_ChildOutsideParentRefused(t *testing.T) {
 	plan := func(child string, skip bool) string {
 		return fmt.Sprintf(`{"pools":[

@@ -284,13 +284,20 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 
 func validateSchemaContainment(pools []schemaPoolEntry) error {
 	cidrByRef := make(map[string]string, len(pools))
-	for i, p := range pools {
-		if parent, ok := cidrByRef[p.ParentRef]; ok && p.ParentRef != "" {
-			if err := validateChildCIDR(parent, p.CIDR); err != nil {
-				return fmt.Errorf("pool %d (%s): %w", i, p.Ref, err)
-			}
-		}
+	for _, p := range pools {
 		cidrByRef[p.Ref] = p.CIDR
+	}
+	for i, p := range pools {
+		if p.ParentRef == "" {
+			continue
+		}
+		parent, ok := cidrByRef[p.ParentRef]
+		if !ok {
+			return fmt.Errorf("pool %d (%s): parent_ref %q not found", i, p.Ref, p.ParentRef)
+		}
+		if err := validateChildCIDR(parent, p.CIDR); err != nil {
+			return fmt.Errorf("pool %d (%s): %w", i, p.Ref, err)
+		}
 	}
 	return nil
 }
