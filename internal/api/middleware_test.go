@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2013,6 +2014,7 @@ func TestLoginRateLimitMiddleware_FollowsSecuritySettings(t *testing.T) {
 	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
 		AttemptsPerMinute: 5,
 		Settings:          settingsStore,
+		SettingsRefresh:   time.Nanosecond,
 	})
 	handler := loginRL(http.HandlerFunc(us.handleLogin))
 
@@ -2079,4 +2081,98 @@ func TestLoginRateLimitMiddleware_FallsBackToDefaultWhenSettingsUnreadable(t *te
 			t.Fatalf("attempt %d: got %d, want %d", i, rr.Code, want)
 		}
 	}
+}
+
+type countingSettingsStore struct {
+	storage.SettingsStore
+	reads atomic.Int64
+	limit int
+}
+
+func (c *countingSettingsStore) GetSecuritySettings(context.Context) (*domain.SecuritySettings, error) {
+	c.reads.Add(1)
+	settings := domain.DefaultSecuritySettings()
+	settings.LoginRateLimitPerMin = c.limit
+	return &settings, nil
+}
+
+func TestLoginRateLimitMiddleware_CachesSettingsWithinRefreshWindow(t *testing.T) {
+	store := &countingSettingsStore{limit: 2}
+	handler := LoginRateLimitMiddleware(LoginRateLimitConfig{Settings: store, SettingsRefresh: time.Hour})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	const requests = 50
+	var limited int
+	for i := 0; i < requests; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		handler.ServeHTTP(rr, req)
+		if rr.Code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited != requests-2 {
+		t.Fatalf("got %d limited responses, want %d", limited, requests-2)
+	}
+	if got := store.reads.Load(); got != 1 {
+		t.Fatalf("settings store read %d times across %d requests, want 1", got, requests)
+	}
+}
+
+func TestLoginRateLimitMiddleware_EnforcesSettingRange(t *testing.T) {
+	burst := func(t *testing.T, cfg LoginRateLimitConfig) int {
+		t.Helper()
+		handler := LoginRateLimitMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		allowed := 0
+		for i := 0; i < domain.MaxLoginRateLimitPerMin+5; i++ {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+			req.RemoteAddr = "1.2.3.4:12345"
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				break
+			}
+			allowed++
+		}
+		return allowed
+	}
+
+	cases := []struct {
+		name     string
+		stored   int
+		fallback int
+		want     int
+	}{
+		{"stored zero", 0, 0, domain.DefaultLoginRateLimitPerMin},
+		{"stored min", 1, 0, 1},
+		{"stored max", 60, 0, 60},
+		{"stored above max", 61, 0, domain.DefaultLoginRateLimitPerMin},
+		{"stored negative", -3, 0, domain.DefaultLoginRateLimitPerMin},
+		{"invalid stored uses valid fallback", 61, 7, 7},
+		{"invalid stored uses invalid fallback", 0, 61, domain.DefaultLoginRateLimitPerMin},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &countingSettingsStore{limit: tc.stored}
+			got := burst(t, LoginRateLimitConfig{AttemptsPerMinute: tc.fallback, Settings: store})
+			if got != tc.want {
+				t.Fatalf("stored %d fallback %d: allowed %d, want %d", tc.stored, tc.fallback, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("no store with out of range fallback", func(t *testing.T) {
+		for _, fb := range []int{0, 61} {
+			if got := burst(t, LoginRateLimitConfig{AttemptsPerMinute: fb}); got != domain.DefaultLoginRateLimitPerMin {
+				t.Fatalf("fallback %d: allowed %d, want %d", fb, got, domain.DefaultLoginRateLimitPerMin)
+			}
+		}
+		if got := burst(t, LoginRateLimitConfig{AttemptsPerMinute: 60}); got != 60 {
+			t.Fatalf("fallback 60: allowed %d, want 60", got)
+		}
+	})
 }

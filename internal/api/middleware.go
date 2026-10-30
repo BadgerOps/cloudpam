@@ -400,29 +400,70 @@ func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
 	return host
 }
 
+// defaultLoginSettingsRefresh is how long the login limiter reuses a resolved limit.
+const defaultLoginSettingsRefresh = 10 * time.Second
+
 // LoginRateLimitConfig configures per-IP login rate limiting.
-// Settings supplies login_rate_limit_per_minute on every request. AttemptsPerMinute
-// applies when Settings is nil or unreadable, and zero means
-// domain.DefaultLoginRateLimitPerMin.
+// Settings supplies login_rate_limit_per_minute. AttemptsPerMinute applies when
+// Settings is nil, unreadable, or holds a value outside
+// [domain.MinLoginRateLimitPerMin, domain.MaxLoginRateLimitPerMin]; a value of
+// its own outside that range means domain.DefaultLoginRateLimitPerMin.
 type LoginRateLimitConfig struct {
 	AttemptsPerMinute int
 	Settings          storage.SettingsStore
-	ProxyConfig       *TrustedProxyConfig
+	// SettingsRefresh bounds how long a resolved limit is reused before Settings
+	// is read again. Zero means 10 seconds.
+	SettingsRefresh time.Duration
+	ProxyConfig     *TrustedProxyConfig
 }
 
-func (cfg LoginRateLimitConfig) attemptsPerMinute(ctx context.Context) int {
-	fallback := cfg.AttemptsPerMinute
-	if fallback < 1 {
-		fallback = domain.DefaultLoginRateLimitPerMin
+func validLoginRateLimit(n int) bool {
+	return n >= domain.MinLoginRateLimitPerMin && n <= domain.MaxLoginRateLimitPerMin
+}
+
+func (cfg LoginRateLimitConfig) fallbackAttempts() int {
+	if validLoginRateLimit(cfg.AttemptsPerMinute) {
+		return cfg.AttemptsPerMinute
 	}
+	return domain.DefaultLoginRateLimitPerMin
+}
+
+func (cfg LoginRateLimitConfig) readAttempts(ctx context.Context) int {
+	fallback := cfg.fallbackAttempts()
 	if cfg.Settings == nil {
 		return fallback
 	}
 	settings, err := cfg.Settings.GetSecuritySettings(ctx)
-	if err != nil || settings == nil || settings.LoginRateLimitPerMin < 1 {
+	if err != nil || settings == nil || !validLoginRateLimit(settings.LoginRateLimitPerMin) {
 		return fallback
 	}
 	return settings.LoginRateLimitPerMin
+}
+
+type loginLimitCache struct {
+	cfg     LoginRateLimitConfig
+	ttl     time.Duration
+	mu      sync.Mutex
+	value   int
+	expires time.Time
+}
+
+func newLoginLimitCache(cfg LoginRateLimitConfig) *loginLimitCache {
+	ttl := cfg.SettingsRefresh
+	if ttl <= 0 {
+		ttl = defaultLoginSettingsRefresh
+	}
+	return &loginLimitCache{cfg: cfg, ttl: ttl}
+}
+
+func (c *loginLimitCache) attempts(ctx context.Context) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if now := time.Now(); !now.Before(c.expires) {
+		c.value = c.cfg.readAttempts(ctx)
+		c.expires = now.Add(c.ttl)
+	}
+	return c.value
 }
 
 // LoginRateLimitMiddleware wraps a handler with per-IP login rate limiting.
@@ -433,6 +474,7 @@ func LoginRateLimitMiddleware(cfg LoginRateLimitConfig) func(http.Handler) http.
 	}
 	var mu sync.Mutex
 	clients := make(map[string]*ipEntry)
+	limits := newLoginLimitCache(cfg)
 
 	go func() {
 		for {
@@ -450,7 +492,7 @@ func LoginRateLimitMiddleware(cfg LoginRateLimitConfig) func(http.Handler) http.
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := clientKeyWithProxies(r, cfg.ProxyConfig)
-			attempts := cfg.attemptsPerMinute(r.Context())
+			attempts := limits.attempts(r.Context())
 			limit := rate.Limit(float64(attempts) / 60.0)
 
 			mu.Lock()

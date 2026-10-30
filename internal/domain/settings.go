@@ -3,6 +3,12 @@ package domain
 // DefaultLoginRateLimitPerMin is the per-IP login attempts allowed per minute on a fresh install.
 const DefaultLoginRateLimitPerMin = 5
 
+// MinLoginRateLimitPerMin and MaxLoginRateLimitPerMin bound login_rate_limit_per_minute.
+const (
+	MinLoginRateLimitPerMin = 1
+	MaxLoginRateLimitPerMin = 60
+)
+
 // SecuritySettings holds runtime security configuration.
 type SecuritySettings struct {
 	SessionDurationHours          int                 `json:"session_duration_hours"`
