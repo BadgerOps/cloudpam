@@ -20,10 +20,18 @@ import (
 // Returns the mux, store, keyStore, and a valid API key plaintext for requests.
 func setupProtectedTestServer(t *testing.T) (*stdhttp.ServeMux, storage.Store, string) {
 	t.Helper()
+	mux, st, key, _ := setupProtectedTestServerWithAudit(t)
+	return mux, st, key
+}
+
+// setupProtectedTestServerWithAudit is setupProtectedTestServer with an in-memory audit logger wired in.
+func setupProtectedTestServerWithAudit(t *testing.T) (*stdhttp.ServeMux, storage.Store, string, *audit.MemoryAuditLogger) {
+	t.Helper()
 	st := storage.NewMemoryStore()
 	mux := stdhttp.NewServeMux()
 	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: io.Discard})
-	srv := NewServer(mux, st, logger, nil, nil)
+	auditLogger := audit.NewMemoryAuditLogger()
+	srv := NewServer(mux, st, logger, nil, auditLogger)
 
 	keyStore := auth.NewMemoryKeyStore()
 	slogger := slog.New(slog.NewJSONHandler(io.Discard, nil))
@@ -41,7 +49,7 @@ func setupProtectedTestServer(t *testing.T) (*stdhttp.ServeMux, storage.Store, s
 	}
 
 	srv.RegisterProtectedRoutes(keyStore, auth.NewMemorySessionStore(), auth.NewMemoryUserStore(), slogger)
-	return mux, st, plaintext
+	return mux, st, plaintext, auditLogger
 }
 
 // doProtected sends a request with an Authorization header.
@@ -287,6 +295,56 @@ func TestProtectedAccountSubroutes_Patch(t *testing.T) {
 	rr := doProtected(t, mux, stdhttp.MethodPatch, "/api/v1/accounts/"+itoa(a.ID), `{"name":"Updated"}`, key)
 	if rr.Code != stdhttp.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProtectedAccountSubroutes_PatchWritesAuditEvent(t *testing.T) {
+	mux, st, key, auditLogger := setupProtectedTestServerWithAudit(t)
+	a, _ := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:111111111111", Name: "Prod"})
+
+	rr := doProtected(t, mux, stdhttp.MethodPatch, "/api/v1/accounts/"+itoa(a.ID), `{"name":"Prod Renamed"}`, key)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	events, total, err := auditLogger.List(t.Context(), audit.ListOptions{
+		Action:       audit.ActionUpdate,
+		ResourceType: audit.ResourceAccount,
+		ResourceID:   itoa(a.ID),
+	})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if total != 1 || len(events) != 1 {
+		t.Fatalf("expected 1 update/account audit event, got total=%d len=%d", total, len(events))
+	}
+	if events[0].ResourceName != "Prod Renamed" || events[0].StatusCode != stdhttp.StatusOK {
+		t.Fatalf("unexpected audit event: %+v", events[0])
+	}
+}
+
+func TestProtectedAccountSubroutes_DeleteWritesAuditEvent(t *testing.T) {
+	mux, st, key, auditLogger := setupProtectedTestServerWithAudit(t)
+	a, _ := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:111111111111", Name: "Prod"})
+
+	rr := doProtected(t, mux, stdhttp.MethodDelete, "/api/v1/accounts/"+itoa(a.ID), "", key)
+	if rr.Code != stdhttp.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	events, total, err := auditLogger.List(t.Context(), audit.ListOptions{
+		Action:       audit.ActionDelete,
+		ResourceType: audit.ResourceAccount,
+		ResourceID:   itoa(a.ID),
+	})
+	if err != nil {
+		t.Fatalf("list audit: %v", err)
+	}
+	if total != 1 || len(events) != 1 {
+		t.Fatalf("expected 1 delete/account audit event, got total=%d len=%d", total, len(events))
+	}
+	if events[0].ResourceName != "Prod" || events[0].StatusCode != stdhttp.StatusNoContent {
+		t.Fatalf("unexpected audit event: %+v", events[0])
 	}
 }
 

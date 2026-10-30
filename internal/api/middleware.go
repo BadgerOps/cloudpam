@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"cloudpam/internal/auth"
+	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/google/uuid"
@@ -139,6 +141,17 @@ func RequestIDMiddleware() Middleware {
 			r = r.WithContext(ctx)
 			w.Header().Set(requestIDHeader, requestID)
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ClientIPMiddleware resolves the client IP once per request, honouring
+// X-Forwarded-For only from trusted proxies, and stores it on the context.
+func ClientIPMiddleware(proxies *TrustedProxyConfig) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := WithClientIP(r.Context(), clientKeyWithProxies(r, proxies))
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
@@ -386,8 +399,8 @@ func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
 	if proxies != nil && proxies.IsTrusted(r.RemoteAddr) {
 		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
 			parts := strings.SplitN(xff, ",", 2)
-			if ip := strings.TrimSpace(parts[0]); ip != "" {
-				return ip
+			if addr, ok := forwardedAddr(parts[0]); ok {
+				return addr.String()
 			}
 		}
 	}
@@ -398,10 +411,106 @@ func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
 	return host
 }
 
+// forwardedAddr parses one X-Forwarded-For entry. Proxies write a bare
+// address, a bracketed IPv6 literal, or either with a port; the zone is
+// dropped so the result is a plain address the audit store and CEF accept.
+func forwardedAddr(entry string) (netip.Addr, bool) {
+	entry = strings.TrimSpace(entry)
+	if ap, err := netip.ParseAddrPort(entry); err == nil {
+		return ap.Addr().WithZone(""), true
+	}
+	entry = strings.TrimSuffix(strings.TrimPrefix(entry, "["), "]")
+	addr, err := netip.ParseAddr(entry)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return addr.WithZone(""), true
+}
+
+// defaultLoginSettingsRefresh is how long the login limiter reuses a resolved limit.
+// loginSettingsReadTimeout bounds each refresh read, which runs detached from the
+// request's cancellation so one aborted login cannot change the limit for every IP.
+const (
+	defaultLoginSettingsRefresh = 10 * time.Second
+	loginSettingsReadTimeout    = 2 * time.Second
+)
+
 // LoginRateLimitConfig configures per-IP login rate limiting.
+// Settings supplies login_rate_limit_per_minute. AttemptsPerMinute applies when
+// Settings is nil, unreadable, or holds a value outside
+// [domain.MinLoginRateLimitPerMin, domain.MaxLoginRateLimitPerMin]; a value of
+// its own outside that range means domain.DefaultLoginRateLimitPerMin.
 type LoginRateLimitConfig struct {
 	AttemptsPerMinute int
-	ProxyConfig       *TrustedProxyConfig
+	Settings          storage.SettingsStore
+	// SettingsRefresh bounds how long a resolved limit is reused before Settings
+	// is read again. Zero means 10 seconds.
+	SettingsRefresh time.Duration
+	ProxyConfig     *TrustedProxyConfig
+}
+
+func validLoginRateLimit(n int) bool {
+	return n >= domain.MinLoginRateLimitPerMin && n <= domain.MaxLoginRateLimitPerMin
+}
+
+func (cfg LoginRateLimitConfig) fallbackAttempts() int {
+	if validLoginRateLimit(cfg.AttemptsPerMinute) {
+		return cfg.AttemptsPerMinute
+	}
+	return domain.DefaultLoginRateLimitPerMin
+}
+
+func (cfg LoginRateLimitConfig) readAttempts(ctx context.Context) (int, error) {
+	if cfg.Settings == nil {
+		return cfg.fallbackAttempts(), nil
+	}
+	settings, err := cfg.Settings.GetSecuritySettings(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if settings == nil || !validLoginRateLimit(settings.LoginRateLimitPerMin) {
+		return cfg.fallbackAttempts(), nil
+	}
+	return settings.LoginRateLimitPerMin, nil
+}
+
+type loginLimitCache struct {
+	cfg     LoginRateLimitConfig
+	ttl     time.Duration
+	mu      sync.Mutex
+	value   int
+	expires time.Time
+}
+
+func newLoginLimitCache(cfg LoginRateLimitConfig) *loginLimitCache {
+	ttl := cfg.SettingsRefresh
+	if ttl <= 0 {
+		ttl = defaultLoginSettingsRefresh
+	}
+	return &loginLimitCache{cfg: cfg, ttl: ttl}
+}
+
+// attempts returns the current limit, reading Settings once per ttl. A failed read
+// keeps the last value that was read successfully, or the fallback before any read
+// has succeeded, until the next refresh.
+func (c *loginLimitCache) attempts(ctx context.Context) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if now.Before(c.expires) {
+		return c.value
+	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginSettingsReadTimeout)
+	defer cancel()
+	value, err := c.cfg.readAttempts(readCtx)
+	switch {
+	case err == nil:
+		c.value = value
+	case c.value == 0:
+		c.value = c.cfg.fallbackAttempts()
+	}
+	c.expires = now.Add(c.ttl)
+	return c.value
 }
 
 // LoginRateLimitMiddleware wraps a handler with per-IP login rate limiting.
@@ -412,6 +521,7 @@ func LoginRateLimitMiddleware(cfg LoginRateLimitConfig) func(http.Handler) http.
 	}
 	var mu sync.Mutex
 	clients := make(map[string]*ipEntry)
+	limits := newLoginLimitCache(cfg)
 
 	go func() {
 		for {
@@ -426,17 +536,20 @@ func LoginRateLimitMiddleware(cfg LoginRateLimitConfig) func(http.Handler) http.
 		}
 	}()
 
-	rps := rate.Limit(float64(cfg.AttemptsPerMinute) / 60.0)
-
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := clientKeyWithProxies(r, cfg.ProxyConfig)
+			attempts := limits.attempts(r.Context())
+			limit := rate.Limit(float64(attempts) / 60.0)
 
 			mu.Lock()
 			entry, ok := clients[ip]
 			if !ok {
-				entry = &ipEntry{limiter: rate.NewLimiter(rps, cfg.AttemptsPerMinute)}
+				entry = &ipEntry{limiter: rate.NewLimiter(limit, attempts)}
 				clients[ip] = entry
+			} else if entry.limiter.Burst() != attempts {
+				entry.limiter.SetLimit(limit)
+				entry.limiter.SetBurst(attempts)
 			}
 			entry.lastSeen = time.Now()
 			mu.Unlock()
@@ -865,7 +978,7 @@ func AuditMiddleware(auditLogger AuditLogger, logger *slog.Logger) Middleware {
 				ResourceType: resourceType,
 				ResourceID:   resourceID,
 				RequestID:    RequestIDFromContext(ctx),
-				IPAddress:    clientKey(r),
+				IPAddress:    ClientIPFromContext(ctx),
 				StatusCode:   recorder.status,
 			}
 

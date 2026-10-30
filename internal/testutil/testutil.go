@@ -31,6 +31,8 @@ type TestServerConfig struct {
 	EnableMetrics bool
 	// EnableAudit enables audit logging.
 	EnableAudit bool
+	// TrustedProxies lists the proxies whose X-Forwarded-For is honoured.
+	TrustedProxies *api.TrustedProxyConfig
 }
 
 // DefaultTestServerConfig returns a basic test server configuration.
@@ -138,6 +140,8 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 	if cfg.EnableMetrics && metrics != nil {
 		handler = observability.MetricsMiddleware(metrics)(handler)
 	}
+
+	handler = api.ClientIPMiddleware(cfg.TrustedProxies)(handler)
 
 	// Apply request ID middleware
 	handler = api.RequestIDMiddleware()(handler)

@@ -279,8 +279,8 @@ func main() {
 	userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
 	userSrv.SetRoleStore(roleStore)
 	loginRL := api.LoginRateLimitMiddleware(api.LoginRateLimitConfig{
-		AttemptsPerMinute: 5,
-		ProxyConfig:       proxyConfig,
+		Settings:    settingsStore,
+		ProxyConfig: proxyConfig,
 	})
 	userSrv.RegisterProtectedUserRoutes(logger.Slog(), api.WithLoginRateLimit(loginRL))
 	dualMW := api.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
@@ -318,8 +318,8 @@ func main() {
 		}
 	}()
 
-	// Apply middleware stack (metrics, request ID, tracing, structured logging, rate limiting).
-	// Order: metrics (outermost) -> requestID -> tracing -> logging -> rateLimiting (innermost before handler)
+	// Apply middleware stack (metrics, request ID, client IP, tracing, structured logging, rate limiting).
+	// Order: metrics (outermost) -> requestID -> clientIP -> tracing -> logging -> rateLimiting (innermost before handler)
 	// Tracing sits after requestID so the span can carry the request ID, and
 	// before logging so log records emitted downstream carry the trace ID.
 	// With tracing disabled TracingMiddleware returns the handler unchanged, so
@@ -328,6 +328,7 @@ func main() {
 		mux,
 		observability.MetricsMiddleware(metrics),
 		api.RequestIDMiddleware(),
+		api.ClientIPMiddleware(proxyConfig),
 		observability.TracingMiddleware(tracerProvider),
 		api.LoggingMiddleware(logger.Slog()),
 		api.CSRFMiddleware(),

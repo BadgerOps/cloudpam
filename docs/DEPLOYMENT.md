@@ -1014,7 +1014,7 @@ output "ecr_repository_url" {
 
 ## 4. Kubernetes (Helm)
 
-Two charts live in the repository. Both are at chart version `0.2.0` and track the application release in `appVersion`:
+Two charts live in the repository. Both are at chart version `0.2.1` and track the application release in `appVersion`:
 
 | Chart | Path | Deploys |
 |-------|------|---------|
@@ -1025,8 +1025,8 @@ Two charts live in the repository. Both are at chart version `0.2.0` and track t
 # deploy/helm/cloudpam-server/Chart.yaml
 apiVersion: v2
 name: cloudpam-server
-version: 0.2.0
-appVersion: "0.23.4"
+version: 0.2.1
+appVersion: "0.23.5"
 ```
 
 `image.tag` is empty by default, so the chart pulls `ghcr.io/badgerops/cloudpam/server:<appVersion>`. The same string is passed to the server as `APP_VERSION`, which the in-app update check compares against the latest GitHub release.

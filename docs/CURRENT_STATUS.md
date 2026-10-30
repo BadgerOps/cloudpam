@@ -26,7 +26,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 | Terraform provider | Complete for v1 | `cloudpam_pool` and `cloudpam_account` resources plus matching data sources. Not discovery, drift, users, or AI. See [TERRAFORM_PROVIDER.md](TERRAFORM_PROVIDER.md) |
 | AI planning | Complete, optional | OpenAI-compatible backend via `CLOUDPAM_LLM_*`. SSE chat, sessions, plan extract/apply. Env-only config; no admin provider registry |
 | Auth | Complete | Local users, sessions, API keys (`Authorization: Bearer cpam_…`), custom-role RBAC, OIDC/SSO with JIT and group mapping. Auth is always on. **No MFA** |
-| Observability | Partial | slog, custom Prometheus `/metrics`, Sentry, opt-in OTLP/HTTP tracing (`CLOUDPAM_TRACING_ENABLED`). Vector sidecar configs exist but are not integrated. Observability compose mounts Prometheus/Grafana files that are not in the repo |
+| Observability | Partial | slog, custom Prometheus `/metrics`, Sentry, opt-in OTLP/HTTP tracing (`CLOUDPAM_TRACING_ENABLED`). Vector sidecar configs exist but are not integrated. `deploy/docker-compose.observability.yml` starts Prometheus, Grafana (provisioned request dashboard), and Jaeger from a clean checkout, with no log pipeline; `deploy/vector/vector.toml` needs updating for Vector 0.34.1 |
 | SIEM | Partial | CEF-over-syslog via `CLOUDPAM_AUDIT_SYSLOG_*`. Log Destinations UI is documentation, not destination CRUD. No Splunk HEC / CloudWatch / Cloud Logging connectors |
 | Updates | Complete, host-managed | Release check and file-triggered upgrade when `CLOUDPAM_CONTROL_DIR` is set; otherwise trigger returns 501 |
 | Multi-tenancy | Not enforced | Postgres stores pin `defaultOrgID`. SQLite `organizations` table is unused by pools/users. Single-tenant appliance |
@@ -63,11 +63,10 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 2. **Cloud credentials are the host's, not the account's.** No encrypted per-account secrets, no cloud-connect OAuth. AWS uses the default credential chain / AssumeRole. GCP uses ADC. The standalone agent (`cmd/cloudpam-agent`) hardcodes `aws.New()`, so **GCP cannot run in the agent**.
 3. **Soft delete is one-way.** `deleted_at` is set; there is no restore API or UI.
 4. **Network objects cannot be deleted.**
-5. **`deploy/docker-compose.observability.yml` is broken as checked in.** It mounts `./prometheus/prometheus.yml` and `./grafana/provisioning`; those directories are not in the repo.
+5. **The local observability stack ships no logs.** `deploy/docker-compose.observability.yml` starts Prometheus, Grafana, and Jaeger from a clean checkout. Vector runs only in the Kubernetes DaemonSet (`deploy/k8s/vector-daemonset.yaml`), and the sample `deploy/vector/vector.toml` needs updating for Vector 0.34.1 (its `encoding.codec` form is rejected).
 6. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
 7. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
-8. **Audit events shipped to SIEM have empty `IPAddress`.** Handler-level audit helpers do not set source IP; `AuditMiddleware` is not in the production chain. See [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md) §1.4.
-9. **Some pool writers skip the overlap check.** `POST /api/v1/pools` and `POST /api/v1/schema/apply` list, check, and insert under one lock. On PostgreSQL that lock is a per-organization advisory lock held in one transaction, so replicas on one database cannot both store overlapping siblings. SQLite and the in-memory store use the in-process `Server.placeMu`. CSV import, AI plan apply, recommendation apply, and discovery import call `CreatePool` directly and take neither lock. Schema apply with `skip_conflicts: true` creates the pools without any overlap check.
+8. **Some pool writers skip the overlap check.** `POST /api/v1/pools` and `POST /api/v1/schema/apply` list, check, and insert under one lock. On PostgreSQL that lock is a per-organization advisory lock held in one transaction, so replicas on one database cannot both store overlapping siblings. SQLite and the in-memory store use the in-process `Server.placeGate`. CSV import, AI plan apply, recommendation apply, and discovery import call `CreatePool` directly and take neither lock. Schema apply with `skip_conflicts: true` creates the pools without any overlap check.
 
 ---
 
@@ -118,11 +117,10 @@ The Discovery UI at `/discovery` has four tabs: Resources, Network, Sync History
 These are the gaps that most contradict the product's stated Postgres, multi-cloud, and operator-console story. Each item has an open GitHub issue in the range #266 to #314.
 
 1. Analysis UI, or fold gaps/fragmentation/compliance into pool detail and the dashboard.
-2. Fix the observability compose volume paths.
-3. Operator UI holes: account edit, cascade delete, schema policy in Configuration, and Log Destinations vs env docs.
-4. Admin-managed AI provider settings instead of more chat features.
-5. GCP in the discovery agent (or document that GCP sync is in-process only).
-6. Larger programs: true multi-tenancy, IPv6, MFA, per-org quotas, incremental sync, vendor SIEM, Graphēon shell.
+2. Operator UI holes: account edit, cascade delete, schema policy in Configuration, and Log Destinations vs env docs.
+3. Admin-managed AI provider settings instead of more chat features.
+4. GCP in the discovery agent (or document that GCP sync is in-process only).
+5. Larger programs: true multi-tenancy, IPv6, MFA, per-org quotas, incremental sync, vendor SIEM, Graphēon shell.
 
 ---
 

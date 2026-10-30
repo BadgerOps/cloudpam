@@ -7,13 +7,14 @@ import { POOL_TYPES } from '../../utils/poolTypes'
 
 interface Props {
   schema: SchemaNode
+  problems: string[]
   conflicts: SchemaConflict[]
   conflictsLoading: boolean
   conflictsError: string | null
   onExport: (format: 'csv' | 'terraform') => void
 }
 
-export default function PreviewStep({ schema, conflicts, conflictsLoading, conflictsError, onExport }: Props) {
+export default function PreviewStep({ schema, problems, conflicts, conflictsLoading, conflictsError, onExport }: Props) {
   const totalAddresses = hostCount(parseInt(schema.cidr.split('/')[1]))
   const topLevel = schema.children?.length ?? 0
   const totalPools = countLeafNodes(schema)
@@ -43,13 +44,31 @@ export default function PreviewStep({ schema, conflicts, conflictsLoading, confl
         </div>
       </div>
 
+      {problems.length > 0 && (
+        <div role="alert" className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg p-4">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-5 h-5 text-red-500 dark:text-red-400 shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-medium text-red-800 dark:text-red-300">This plan cannot be applied</h3>
+              <ul className="mt-2 space-y-1">
+                {problems.map((p, i) => (
+                  <li key={i} className="text-sm text-red-700 dark:text-red-300">
+                    {p}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
       {conflictsLoading && (
         <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-4 text-sm text-blue-700 dark:text-blue-300">
           Checking for conflicts with existing pools...
         </div>
       )}
 
-      {conflictsError && (
+      {conflictsError && problems.length === 0 && (
         <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 text-sm text-yellow-700 dark:text-yellow-300">
           Could not check for conflicts: {conflictsError}. You can still apply the schema.
         </div>

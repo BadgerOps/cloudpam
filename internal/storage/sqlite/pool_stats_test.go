@@ -175,6 +175,9 @@ func TestUpdateAccountPersistsChanges(t *testing.T) {
 		Description: "moved",
 		Regions:     []string{"us-east1"},
 	}
+	if updated.CreatedAt.IsZero() || !updated.CreatedAt.Equal(stored.CreatedAt) {
+		t.Errorf("returned created_at = %v, want stored %v", updated.CreatedAt, stored.CreatedAt)
+	}
 	stored.CreatedAt, stored.UpdatedAt = time.Time{}, time.Time{}
 	if !reflect.DeepEqual(stored, want) {
 		t.Errorf("stored account = %+v, want %+v", stored, want)

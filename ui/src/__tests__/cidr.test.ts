@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parse, toIp, hostCount, usableHosts, subdivide, formatHostCount, countLeafNodes } from '../wizard/utils/cidr'
+import { parse, toIp, hostCount, usableHosts, subdivide, formatHostCount, countLeafNodes, isWithin, outsideParent } from '../wizard/utils/cidr'
 import type { SchemaNode } from '../wizard/utils/cidr'
 
 describe('parse', () => {
@@ -79,10 +79,82 @@ describe('subdivide', () => {
     expect(blocks[1]).toBe('10.0.1.0/24')
   })
 
-  it('same prefix returns single block', () => {
-    const blocks = subdivide('10.0.0.0/24', 24)
-    expect(blocks.length).toBe(1)
-    expect(blocks[0]).toBe('10.0.0.0/24')
+  it('returns no blocks when the new prefix equals the parent', () => {
+    expect(subdivide('10.0.0.0/24', 24)).toEqual([])
+  })
+
+  it('returns no blocks when the new prefix is shorter than the parent', () => {
+    expect(subdivide('10.0.0.0/16', 12)).toEqual([])
+  })
+
+  it('carves blocks from the network address when the parent has host bits set', () => {
+    const blocks = subdivide('10.255.0.0/8', 12)
+    expect(blocks[0]).toBe('10.0.0.0/12')
+    expect(blocks[15]).toBe('10.240.0.0/12')
+  })
+})
+
+describe('isWithin', () => {
+  it('accepts a longer prefix inside the parent', () => {
+    expect(isWithin('10.0.1.0/24', '10.0.0.0/16')).toBe(true)
+    expect(isWithin('10.0.255.0/24', '10.0.0.0/16')).toBe(true)
+  })
+
+  it('rejects a block outside the parent', () => {
+    expect(isWithin('10.1.0.0/24', '10.0.0.0/16')).toBe(false)
+    expect(isWithin('10.60.0.0/24', '10.50.0.0/16')).toBe(false)
+  })
+
+  it('rejects a block equal to or larger than the parent', () => {
+    expect(isWithin('10.0.0.0/16', '10.0.0.0/16')).toBe(false)
+    expect(isWithin('10.0.0.0/12', '10.0.0.0/16')).toBe(false)
+  })
+
+  it('compares network addresses, as the server does', () => {
+    expect(isWithin('10.0.1.0/24', '10.0.5.0/16')).toBe(true)
+    expect(isWithin('11.15.0.0/12', '10.255.0.0/8')).toBe(false)
+  })
+})
+
+describe('outsideParent', () => {
+  it('names each child that is not inside its own parent', () => {
+    const tree: SchemaNode = {
+      id: 'root',
+      name: 'Root',
+      type: 'supernet',
+      cidr: '10.0.0.0/16',
+      children: [
+        {
+          id: 'r1',
+          name: 'us-east-1',
+          type: 'region',
+          cidr: '10.0.0.0/12',
+          children: [{ id: 'e1', name: 'prod', type: 'environment', cidr: '10.1.0.0/16', children: [] }],
+        },
+        {
+          id: 'r2',
+          name: 'us-west-2',
+          type: 'region',
+          cidr: '10.0.16.0/20',
+          children: [{ id: 'e2', name: 'staging', type: 'environment', cidr: '10.0.32.0/24', children: [] }],
+        },
+      ],
+    }
+    expect(outsideParent(tree).map(({ child, parent }) => [child.name, parent.name])).toEqual([
+      ['us-east-1', 'Root'],
+      ['staging', 'us-west-2'],
+    ])
+  })
+
+  it('returns nothing for a tree that nests correctly', () => {
+    const tree: SchemaNode = {
+      id: 'root',
+      name: 'Root',
+      type: 'supernet',
+      cidr: '10.0.0.0/8',
+      children: [{ id: 'r1', name: 'us-east-1', type: 'region', cidr: '10.16.0.0/12', children: [] }],
+    }
+    expect(outsideParent(tree)).toEqual([])
   })
 })
 

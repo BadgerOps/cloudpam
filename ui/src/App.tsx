@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { ToastContext, useToastState } from './hooks/useToast'
 import { AuthContext, useAuthState } from './hooks/useAuth'
@@ -24,6 +25,30 @@ import UpdatesPage from './pages/UpdatesPage'
 import ChangelogPage from './pages/ChangelogPage'
 import IdentityPage from './pages/IdentityPage'
 import ConfigurationPage from './pages/ConfigurationPage'
+import { APP_ROUTES } from './navigation'
+import type { RoutePath } from './navigation'
+
+const PAGES: Record<RoutePath, ComponentType> = {
+  '/': DashboardPage,
+  '/pools': PoolsPage,
+  '/blocks': BlocksPage,
+  '/accounts': AccountsPage,
+  '/discovery': DiscoveryPage,
+  '/drift': DriftPage,
+  '/audit': AuditPage,
+  '/schema': SchemaPage,
+  '/recommendations': RecommendationsPage,
+  '/ai-planner': AIPlannerPage,
+  '/config/api-keys': ApiKeysPage,
+  '/changelog': ChangelogPage,
+  '/identity': IdentityPage,
+  '/config': ConfigurationPage,
+  '/config/log-destinations': LogDestinationsPage,
+  '/config/updates': UpdatesPage,
+  '/config/security': SecuritySettingsPage,
+  '/config/users': UsersPage,
+  '/profile': ProfilePage,
+}
 
 export default function App() {
   const toastState = useToastState()
@@ -38,35 +63,14 @@ export default function App() {
             <Route path="/setup" element={<SetupPage />} />
             <Route element={<ProtectedRoute />}>
               <Route element={<Layout />}>
-                <Route index element={<DashboardPage />} />
-                <Route path="pools" element={<PoolsPage />} />
-                <Route path="blocks" element={<BlocksPage />} />
-                <Route path="accounts" element={<AccountsPage />} />
-                <Route path="audit" element={<AuditPage />} />
-                <Route path="discovery" element={<DiscoveryPage />} />
-                <Route path="drift" element={<DriftPage />} />
-                <Route path="schema" element={<SchemaPage />} />
-                <Route path="recommendations" element={<RecommendationsPage />} />
-                <Route path="ai-planner" element={<AIPlannerPage />} />
-                <Route path="profile" element={<ProfilePage />} />
-                <Route path="changelog" element={<ChangelogPage />} />
-                <Route element={<ProtectedRoute requiredAnyPermissions={['settings:read', 'users:list']} />}>
-                  <Route path="identity" element={<IdentityPage />} />
-                </Route>
-                <Route element={<ProtectedRoute requiredPermission="settings:read" />}>
-                  <Route path="config" element={<ConfigurationPage />} />
-                  {/* config/api-keys additionally enforces the apikeys:*
-                      permissions inside ApiKeysPage: settings:read opens the
-                      configuration area, but GET /api/v1/auth/keys is guarded
-                      by apikeys:list or apikeys:read. */}
-                  <Route path="config/api-keys" element={<ApiKeysPage />} />
-                  <Route path="config/log-destinations" element={<LogDestinationsPage />} />
-                  <Route path="config/updates" element={<UpdatesPage />} />
-                  <Route path="config/security" element={<SecuritySettingsPage />} />
-                </Route>
-                <Route element={<ProtectedRoute requiredPermission="users:list" />}>
-                  <Route path="config/users" element={<UsersPage />} />
-                </Route>
+                {APP_ROUTES.map(({ path }) => {
+                  const Page = PAGES[path]
+                  return (
+                    <Route key={path} element={<ProtectedRoute route={path} />}>
+                      <Route path={path} element={<Page />} />
+                    </Route>
+                  )
+                })}
               </Route>
             </Route>
           </Routes>

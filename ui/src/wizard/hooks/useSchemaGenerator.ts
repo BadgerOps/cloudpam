@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import type { Blueprint } from '../data/blueprints'
 import type { Dimensions } from '../steps/DimensionsStep'
 import type { SchemaNode } from '../utils/cidr'
-import { subdivide } from '../utils/cidr'
+import { parse, subdivide } from '../utils/cidr'
 
 interface GeneratorInput {
   selectedBlueprint: Blueprint | null
@@ -11,7 +11,28 @@ interface GeneratorInput {
   dimensions: Dimensions
 }
 
-export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, dimensions }: GeneratorInput): SchemaNode {
+export interface GeneratedSchema {
+  schema: SchemaNode
+  error: string | null
+}
+
+const MAX_POOL_PREFIX = 30
+
+const LEVEL_PREFIXES: Record<string, number[]> = {
+  'region-first': [12, 16, 20],
+  'environment-first': [12, 16],
+  'account-first': [16],
+}
+
+function levelPrefixes(rootPrefix: number, strategy: string): number[] {
+  let parent = rootPrefix
+  return (LEVEL_PREFIXES[strategy] ?? LEVEL_PREFIXES['account-first']).map((preferred) => {
+    parent = preferred > parent ? preferred : parent + 4
+    return parent
+  })
+}
+
+export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, dimensions }: GeneratorInput): GeneratedSchema {
   return useMemo(() => {
     const rootCidr =
       selectedBlueprint?.id === 'custom'
@@ -26,8 +47,17 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
       children: [],
     }
 
+    const levels = levelPrefixes(parse(rootCidr).prefixLen, strategy)
+    const deepest = levels[levels.length - 1]
+    if (deepest > MAX_POOL_PREFIX) {
+      return {
+        schema: root,
+        error: `${rootCidr} is too small for this strategy. Its deepest level needs /${deepest} blocks, and a pool can be at most /${MAX_POOL_PREFIX}.`,
+      }
+    }
+
     if (strategy === 'region-first') {
-      const regionBlocks = subdivide(rootCidr, 12)
+      const regionBlocks = subdivide(rootCidr, levels[0])
       dimensions.regions.forEach((region, ri) => {
         if (ri >= regionBlocks.length) return
         const regionNode: SchemaNode = {
@@ -38,7 +68,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
           children: [],
         }
 
-        const envBlocks = subdivide(regionBlocks[ri], 16)
+        const envBlocks = subdivide(regionBlocks[ri], levels[1])
         dimensions.environments.forEach((env, ei) => {
           if (ei >= envBlocks.length) return
           const envNode: SchemaNode = {
@@ -49,7 +79,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
             children: [],
           }
 
-          const accountBlocks = subdivide(envBlocks[ei], 20)
+          const accountBlocks = subdivide(envBlocks[ei], levels[2])
           for (let ai = 0; ai < Math.min(dimensions.accountsPerEnv, accountBlocks.length); ai++) {
             envNode.children.push({
               id: `region-${ri}-env-${ei}-acct-${ai}`,
@@ -66,7 +96,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
         root.children.push(regionNode)
       })
     } else if (strategy === 'environment-first') {
-      const envBlocks = subdivide(rootCidr, 12)
+      const envBlocks = subdivide(rootCidr, levels[0])
       dimensions.environments.forEach((env, ei) => {
         if (ei >= envBlocks.length) return
         const envNode: SchemaNode = {
@@ -77,7 +107,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
           children: [],
         }
 
-        const accountBlocks = subdivide(envBlocks[ei], 16)
+        const accountBlocks = subdivide(envBlocks[ei], levels[1])
         for (
           let ai = 0;
           ai < Math.min(dimensions.accountsPerEnv * dimensions.regions.length, accountBlocks.length);
@@ -99,7 +129,7 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
       // "account" while the type says 'vpc': 'account' is a search-result kind,
       // not a pool type, and only POOL_TYPES ids render with a colour. The
       // region-first branch above does the same thing with tier-based names.
-      const accountBlocks = subdivide(rootCidr, 16)
+      const accountBlocks = subdivide(rootCidr, levels[0])
       const totalAccounts = dimensions.environments.length * dimensions.accountsPerEnv
       for (let ai = 0; ai < Math.min(totalAccounts, accountBlocks.length); ai++) {
         root.children.push({
@@ -112,6 +142,6 @@ export function useSchemaGenerator({ selectedBlueprint, customCidr, strategy, di
       }
     }
 
-    return root
+    return { schema: root, error: null }
   }, [selectedBlueprint, customCidr, strategy, dimensions])
 }

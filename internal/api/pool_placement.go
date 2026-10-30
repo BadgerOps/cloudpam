@@ -44,7 +44,7 @@ func (c *placementConflict) Error() string {
 	return fmt.Sprintf("pool %q (%s) overlaps with existing pool %q (%s)", c.Pool.Name, c.Pool.CIDR, c.With.Name, c.With.CIDR)
 }
 
-// placementBudget bounds a placement from the moment it queues on placeMu to its last
+// placementBudget bounds a placement from the moment it queues on placeGate to its last
 // insert. It is a var so tests can shorten it. With the store's 5s commit margin it fits
 // inside the server's 15s write timeout, so a placement never commits after the client
 // has stopped waiting for the response.

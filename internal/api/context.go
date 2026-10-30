@@ -4,7 +4,10 @@ import "context"
 
 type contextKey string
 
-const requestIDContextKey contextKey = "requestID"
+const (
+	requestIDContextKey contextKey = "requestID"
+	clientIPContextKey  contextKey = "clientIP"
+)
 
 // WithRequestID stores the provided request ID in the context.
 func WithRequestID(ctx context.Context, requestID string) context.Context {
@@ -20,6 +23,25 @@ func RequestIDFromContext(ctx context.Context) string {
 		return ""
 	}
 	if v, ok := ctx.Value(requestIDContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// WithClientIP stores the resolved client IP address in the context.
+func WithClientIP(ctx context.Context, ip string) context.Context {
+	if ip == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, clientIPContextKey, ip)
+}
+
+// ClientIPFromContext retrieves the client IP address from context if present.
+func ClientIPFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(clientIPContextKey).(string); ok {
 		return v
 	}
 	return ""

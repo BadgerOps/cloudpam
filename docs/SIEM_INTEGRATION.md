@@ -8,7 +8,7 @@ It is a companion to `docs/OBSERVABILITY.md`, which owns structured logging, met
 
 **The most important finding is that issue #93 is not a greenfield design.** A working CEF-over-syslog forwarder already exists, is wired into `main.go`, is covered by tests, and is documented. The issue's framing ("what format? CEF, JSON, OCSF?") and its recommendation ("JSON format; webhook + S3/GCS shipping for v1; CEF/OCSF as optional formatters for enterprise") were written without that context and are revised below.
 
-**Still not implemented (as of 0.23.4):** webhook and file sinks shown in the diagram, persisted Log Destinations CRUD, Splunk HEC / CloudWatch / Cloud Logging connectors, `AuditStore` retention APIs, and source IP on production audit events (§1.4). The `/config/log-destinations` page documents the syslog env vars only. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+**Still not implemented (as of 0.23.4):** webhook and file sinks shown in the diagram, persisted Log Destinations CRUD, Splunk HEC / CloudWatch / Cloud Logging connectors, and `AuditStore` retention APIs. The `/config/log-destinations` page documents the syslog env vars only. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -62,7 +62,7 @@ It is a companion to `docs/OBSERVABILITY.md`, which owns structured logging, met
 | `ResourceName` | string | omitempty |
 | `Changes` | `*Changes` | `Before`/`After` as `map[string]any` (`audit.go:27-30`) |
 | `RequestID` | string | correlates with request logs |
-| `IPAddress` | string | **empty in production — see §1.4** |
+| `IPAddress` | string | client IP, resolved per request honouring `CLOUDPAM_TRUSTED_PROXIES` — see §1.4 |
 | `StatusCode` | int | HTTP status |
 
 `ListOptions` (`internal/audit/audit.go:33-41`) supports `Limit`, `Offset`, `Actor`, `Action`, `ResourceType`, `Since`, `Until`. The `Since`/`Until` pair is what makes gap-replay feasible (§6.4).
@@ -91,11 +91,11 @@ This is the part issue #93 did not account for.
 - Documented at `docs/OBSERVABILITY.md:110-131`, which explicitly states the architectural position that vendor APIs (Splunk HEC, Datadog intake) belong in a collector, "keeps credentials, buffering, and backpressure handling outside the CloudPAM process" (`OBSERVABILITY.md:129-131`).
 - Tests: `internal/audit/syslog_test.go`, `internal/audit/forwarding_test.go`.
 
-### 1.4 Two gaps in what is captured today
+### 1.4 Source IP, and one gap in what is captured today
 
-**`IPAddress` is empty on every production audit event.** The only code in the repository that sets `AuditEvent.IPAddress` is `internal/api/middleware.go:868`, inside `AuditMiddleware` (`middleware.go:805`). That middleware is **not** in the production chain — `cmd/cloudpam/main.go:294-300` applies `MetricsMiddleware`, `RequestIDMiddleware`, `LoggingMiddleware`, `CSRFMiddleware`, and `RateLimitMiddleware`, and no audit middleware. `AuditMiddleware`'s only caller is `internal/testutil/testutil.go:124`. Production events are emitted by the handler-level helpers — `Server.logAuditWithChanges` (`internal/api/server.go:135-167`), `UserServer.logAuditEventAs` (`internal/api/user_handlers.go:899-929`), and `OIDCServer.logOIDCAudit` (`internal/api/oidc_handlers.go:801-822`) — and **none of the three populate `IPAddress`**.
+**`IPAddress` carries the client IP on every audit event (#293).** `ClientIPMiddleware` (`internal/api/middleware.go`) runs right after `RequestIDMiddleware` in the production chain (`cmd/cloudpam/main.go`). It resolves the client address once per request and stores it on the context (`WithClientIP` / `ClientIPFromContext` in `internal/api/context.go`). Every handler-level emitter reads it from there: `Server.logAuditWithChanges`, `UserServer.logAuditEventAs`, `OIDCServer.logOIDCAudit`, and the API-key rotation event in `AuthServer`. Resolution uses the TCP peer address. `X-Forwarded-For` is honoured only when the peer falls inside `CLOUDPAM_TRUSTED_PROXIES`, and only when its first entry parses as an IP address. Otherwise the peer address is recorded.
 
-The consequence for SIEM is direct: the CEF formatter only emits `src=` when `net.ParseIP(event.IPAddress)` succeeds (`cef.go:59-61`), so today's forwarded CEF records carry no source address at all. Source IP is the single most-used correlation key in SIEM detection rules — brute-force clustering, impossible-travel, threat-intel joins all key on it. Shipping auth-failure events with no source IP delivers very little of the value the integration exists for. This is a prerequisite fix (§8).
+The CEF formatter emits `src=` whenever `net.ParseIP(event.IPAddress)` succeeds (`cef.go:59-61`), so forwarded CEF records now carry the source address that brute-force clustering, impossible-travel, and threat-intel joins key on.
 
 **`Actor` is inconsistent between emitters.** `Server.logAuditWithChanges` records `key.Name` for API-key actors (`server.go:147`), while `UserServer.logAuditEventAs` records `key.Prefix` (`user_handlers.go:911`) and `AuditMiddleware` also records `key.Prefix` (`middleware.go:856`). `OIDCServer.logOIDCAudit` sets `Actor` to the resource name and hardcodes `ActorType` to `user` (`oidc_handlers.go:807-808`). A SIEM cannot build a reliable per-principal timeline across these. Normalising on the key prefix (a stable, non-secret identifier) is a prerequisite.
 
@@ -171,17 +171,17 @@ Envelope fields added by the shipper (not part of `AuditEvent`, see §5):
 }
 ```
 
-Two things to note against §1.4: `ip_address` above is populated only once the prerequisite fix lands, and `actor` is the key prefix only once the emitters are normalised.
+One thing to note against §1.4: `actor` is the key prefix only once the emitters are normalised.
 
 ### 2.5 Example payload — CEF format (current behaviour)
 
-The same event through today's `CEFFormatter` (`cef.go:78-86`), with `IPAddress` empty as it is in production:
+The same event through today's `CEFFormatter` (`cef.go:78-86`), shown as it was before #293 populated `IPAddress`:
 
 ```
 CEF:0|BadgerOps|CloudPAM|0.9.3|delete|pool.delete|5|act=delete outcome=success rt=1785680527418 externalId=0f1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d suser=cp_a1b2c3d4 cs1Label=actor_type cs1=api_key request=01J9K3M7QW8ZP2X4V6R1TB5NCD cs2Label=resource_type cs2=pool cs3Label=resource_id cs3=412 cs4Label=resource_name cs4=prod-us-east-1-shared cn1Label=http_status cn1=204
 ```
 
-Severity `5` comes from the delete branch of `cefSeverity` (`cef.go:109-110`). Note the absence of both `src=` (§1.4) and any representation of `changes` (§2.2) — the two concrete losses this design fixes.
+Severity `5` comes from the delete branch of `cefSeverity` (`cef.go:109-110`). Note the absence of any representation of `changes` (§2.2). Since #293 the record also carries `src=203.0.113.44` (§1.4).
 
 ---
 
@@ -247,7 +247,6 @@ So: auth failures — **yes, already there**. Drift detection — **yes, already
 
 | Gap | Evidence | Priority | Why it matters to a SIEM |
 |-----|----------|----------|--------------------------|
-| **Source IP on all events** | Only `middleware.go:868` sets it; that middleware is unwired (§1.4) | **P0** | Blocks brute-force, impossible-travel, and threat-intel correlation |
 | **Actor normalisation** | `key.Name` (`server.go:147`) vs `key.Prefix` (`user_handlers.go:911`) | **P0** | Breaks per-principal timelines |
 | **Authorization denials (403)** | No audit call in `internal/auth/rbac.go` | **P1** | Privilege-probing is a primary detection signal; currently invisible |
 | **Bulk export** | No `logAudit` in `internal/api/export_handlers.go` | **P1** | `GET /api/v1/export` dumps accounts, pools, and blocks to CSV. This is the clearest data-exfiltration signal in the product and it is entirely unaudited. `AuditMiddleware` would not have caught it either — it skips all GET requests (`middleware.go:826`) |
@@ -461,7 +460,7 @@ It fetches the newest 1000 events of the given *type* and then filters by `resou
 
 From §4.2, required before the integration delivers its intended value:
 
-1. Populate `IPAddress` in `Server.logAuditWithChanges`, `UserServer.logAuditEventAs`, and `OIDCServer.logOIDCAudit`, using the same trusted-proxy-aware client resolution as `middleware.go:868`. **P0.**
+1. ~~Populate `IPAddress` in every emitter~~ Done in #293 (§1.4).
 2. Normalise `Actor` for API-key principals to `key.Prefix` across all emitters. **P0.**
 3. Decide `AuditMiddleware`'s fate: wire it in (`main.go:294-300`) as a backstop, or delete it. Leaving unwired production-shaped code that is only exercised by `testutil.go:124` is how the `IPAddress` gap went unnoticed.
 
@@ -475,7 +474,7 @@ Sizing is rough, in engineer-days, excluding review.
 
 - Fix `sqlite.go` `ownDB` (§8.1) — 0.5 d
 - Add `ResourceID` to `ListOptions`, push predicate into SQL, fix `GetByResource` (§8.2) — 1 d
-- Populate `IPAddress` and normalise `Actor` across the three emitters; resolve `AuditMiddleware` (§8.3) — 1.5 d
+- Normalise `Actor` across the emitters; resolve `AuditMiddleware` (§8.3) — 1 d
 - Tests across memory/sqlite/postgres — 1 d
 
 Independently valuable; unblocks everything below.
@@ -525,6 +524,6 @@ Direct S3/GCS sinks (§3.3), Kafka (§3.4), and per-tenant SIEM routing (multi-t
 | Format | JSON default for new transports; CEF retained as syslog default; OCSF deferred | **Yes** — CEF is already shipped, not a future "optional enterprise formatter" |
 | Transport v1 | Webhook + file (JSON Lines); syslog already exists | **Yes** — file sink replaces direct S3/GCS, per `OBSERVABILITY.md:129-131` |
 | Kafka | Deferred to collector | No |
-| Events beyond CRUD | Auth failures and drift **already captured**; real gaps are source IP, authz denials, export, discovery sync | **Yes** — more exists than the issue assumes; the binding gap is missing `IPAddress` |
+| Events beyond CRUD | Auth failures and drift **already captured**; real gaps are authz denials, export, discovery sync (source IP landed in #293) | **Yes** — more exists than the issue assumes |
 | Delivery | Async, bounded, at-least-once with DB as system of record; drop-on-full | — |
 | Redaction | Recursive denylist on a copy of `Changes`; must land with the JSON formatter | — |
