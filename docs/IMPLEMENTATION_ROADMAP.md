@@ -982,7 +982,7 @@ The original plan named chi, golang-migrate, jwt-go, Axios and Redux. None of th
 - Tests: Vitest; screenshots via Playwright; built assets embedded into the Go binary with `go:embed`
 
 **DevOps**:
-- Containerization: Docker (`deploy/docker/`); Helm charts for server and agent in `deploy/helm/` (chart `appVersion` is stale at 0.8.1)
+- Containerization: Docker (`deploy/docker/`); Helm charts for server and agent in `deploy/helm/` (CI checks chart `appVersion` against the changelog, #322)
 - CI/CD: GitHub Actions (race tests on three backends, lint, coverage, `govulncheck`, Trivy image scans, release builds with an SPDX SBOM). CodeQL code scanning runs through GitHub's default setup, not a workflow file
 - Monitoring: Prometheus scrape of `/metrics`; the Grafana/Prometheus compose stack is not runnable as checked in
 - Logging: JSON to stdout; Vector configs exist in `deploy/vector/` but are not integrated

@@ -84,7 +84,7 @@ This summary reflects what is implemented in the current repository. The deeper 
 - Multi-tenancy exists only as PostgreSQL schema/default-org scaffolding; the running application remains single-tenant.
 - Log Destinations documents env-based CEF/syslog audit forwarding rather than offering persisted destination management.
 - Analysis, recommendation, and drift APIs exist. Analysis has no UI, and it scores fragmentation for only the first requested pool. Recommendations cover allocation and compliance only. The recommendation and drift list pages do not paginate.
-- Helm charts still advertise `appVersion: "0.8.1"` and emit the removed `CLOUDPAM_AUTH_ENABLED` toggle.
+- Helm charts are kept in step with releases by `scripts/helm-check.sh` in CI (#322).
 
 ### Not Yet Implemented
 

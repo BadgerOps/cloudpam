@@ -12,7 +12,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Core IPAM | Complete | Hierarchical pools, accounts, assigned blocks, CIDR search, CSV import/export, validation, audit. Pool create and schema apply check overlaps per process only, so run one replica on PostgreSQL until #267 lands |
+| Core IPAM | Complete | Hierarchical pools, accounts, assigned blocks, CIDR search, CSV import/export, validation, audit. Pool create and schema apply check overlaps per process only (and schema apply skips the check when `skip_conflicts` is true), so run one replica on PostgreSQL until #267 lands |
 | Discovery: AWS | Complete | Single-account and Organizations, AssumeRole, standalone agent, ingest/heartbeat, bootstrap register/approve, IAM Terraform/CloudFormation helpers |
 | Discovery: GCP | Partial | Server collector for networks, subnetworks, and external IPs. No org mode, no agent, no IaC helpers. Uses Application Default Credentials on the CloudPAM host |
 | Discovery: Azure | Missing | Account keys accept `azure:<subscription-uuid>` and the UI offers Azure; there is no collector. Sync fails with `no collector registered for provider` |
@@ -61,12 +61,12 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 2. **Cloud credentials are the host's, not the account's.** No encrypted per-account secrets, no cloud-connect OAuth. AWS uses the default credential chain / AssumeRole. GCP uses ADC. The standalone agent (`cmd/cloudpam-agent`) hardcodes `aws.New()`, so **GCP cannot run in the agent**.
 3. **Soft delete is one-way.** `deleted_at` is set; there is no restore API or UI.
 4. **Network objects cannot be deleted.**
-5. **Helm charts are stale.** `deploy/helm/cloudpam-server/Chart.yaml` and `cloudpam-agent` still say `appVersion: "0.8.1"`. Server ConfigMap still emits `CLOUDPAM_AUTH_ENABLED` (removed; auth is always on). `values.yaml` still has `auth.enabled: false`. Charts do not set `CLOUDPAM_LLM_*` or `CLOUDPAM_TRACING_*`.
+5. **Helm charts were refreshed in #322** (chart 0.2.0, `appVersion` 0.23.4, env vars keyed to the server's catalog). `scripts/helm-check.sh` runs in CI and fails when `appVersion` falls behind the newest changelog release or the server reads a variable the chart does not list, so a changelog release PR must bump both charts.
 6. **`deploy/docker-compose.observability.yml` is broken as checked in.** It mounts `./prometheus/prometheus.yml` and `./grafana/provisioning`; those directories are not in the repo.
 7. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
 8. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
 9. **Audit events shipped to SIEM have empty `IPAddress`.** Handler-level audit helpers do not set source IP; `AuditMiddleware` is not in the production chain. See [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md) §1.4.
-10. **The pool overlap check does not span replicas.** `Server.placeMu` serializes `POST /api/v1/pools` and `POST /api/v1/schema/apply` inside one process only. Two replicas on one PostgreSQL database can each pass the check and store overlapping sibling pools (#267). CSV import, AI plan apply, and discovery import call `CreatePool` directly and do not take this lock.
+10. **The pool overlap check does not span replicas.** `Server.placeMu` serializes `POST /api/v1/pools` and `POST /api/v1/schema/apply` inside one process only. Two replicas on one PostgreSQL database can each pass the check and store overlapping sibling pools (#267). CSV import, AI plan apply, recommendation apply, and discovery import call `CreatePool` directly and do not take this lock, and schema apply with `skip_conflicts: true` creates the pools without any overlap check.
 
 ---
 
