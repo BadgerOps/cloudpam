@@ -1,8 +1,10 @@
 # CloudPAM UI Enhancement Requirements
 
 ## Document Status
-**Stage:** Discovery (In Progress)
+**Stage:** Historical discovery notes
 **Last Updated:** 2026-01-27
+
+This is early UI research, not current UI status. The running app is a sidebar-based React SPA. Phase 6 (Graphēon-style shell and shared primitives) is not started. Operator-facing UI gaps (analysis page, account edit, schema policy, and others) are listed in [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 ---
 

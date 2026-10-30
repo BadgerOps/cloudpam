@@ -1,8 +1,10 @@
 # CloudPAM Observability Architecture
 
+> **Implemented vs design.** Shipped today: structured `slog` logs, a custom Prometheus text exporter at `/metrics` (`internal/observability/metrics.go`), Sentry, opt-in OTLP/HTTP tracing (`internal/observability/tracing.go`, off unless `CLOUDPAM_TRACING_ENABLED=true`), and CEF-over-syslog audit forwarding. Not shipped: Vector sidecar as a product integration, Splunk HEC / CloudWatch / Cloud Logging connectors, OTel SDK metrics, and a working `deploy/docker-compose.observability.yml` (it mounts Prometheus/Grafana files that are not in the repo). See [CURRENT_STATUS.md](CURRENT_STATUS.md) and [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md).
+
 ## Overview
 
-CloudPAM implements a comprehensive observability stack covering structured logging, metrics collection, distributed tracing, and audit logging. The architecture follows cloud-native best practices with pluggable backends for enterprise integration.
+CloudPAM implements a comprehensive observability stack covering structured logging, metrics collection, distributed tracing, and audit logging. The architecture follows cloud-native best practices with pluggable backends for enterprise integration. The diagram includes **target** backends (Vector, Splunk HEC, CloudWatch, Jaeger as a bundled stack) that are not wired in this repository.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -208,11 +210,13 @@ endpoint = "${SPLUNK_HEC_URL}"
 token = "${SPLUNK_HEC_TOKEN}"
 ```
 
-## 3. Metrics with OpenTelemetry
+## 3. Metrics (Prometheus text at `/metrics`)
 
 ### 3.1 Instrumentation Strategy
 
-CloudPAM exports metrics via OpenTelemetry SDK to Prometheus:
+CloudPAM does **not** use the OpenTelemetry SDK for metrics. `internal/observability/metrics.go` is a custom Prometheus text exporter served at `/metrics`. Tracing (section 4) is the only OpenTelemetry path, and it is opt-in.
+
+The original design exported OTel SDK metrics to Prometheus:
 
 ```
 ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐

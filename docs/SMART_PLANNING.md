@@ -1,5 +1,7 @@
 # CloudPAM Smart Planning Architecture
 
+> **Target architecture.** Gap analysis, fragmentation, compliance, allocation/compliance recommendations, the schema wizard, and optional OpenAI-compatible chat/apply-plan **are implemented**. The diagram below still shows capabilities that are not: Azure ARM collector, Excel import, growth projections, migration paths, what-if/risk analysis, on-prem SNMP, DNS, and CMDB. Analysis has no UI. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+
 ## Overview
 
 Smart Planning is CloudPAM's intelligent network planning system that analyzes existing infrastructure, understands user intent, and generates optimized IP address allocation recommendations. It combines rule-based analysis with optional AI/LLM integration for natural language planning.

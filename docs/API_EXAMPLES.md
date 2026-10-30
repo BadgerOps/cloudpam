@@ -1,6 +1,8 @@
 # CloudPAM API Examples
 
-Practical examples for common API operations.
+Most of these examples come from the API design and do not match the running server. The server serves the `/api/v1/pools`, `/api/v1/accounts`, and `/api/v1/discovery/resources` paths, but pools and accounts take integer ids, not UUIDs. Paths such as `/api/v1/pools/tree`, `/api/v1/schema-plans`, `/api/v1/planning/ai/conversations`, `/api/v1/users`, and `/api/v1/audit/events` do not exist. The server answers an unknown `/api/v1` path with the SPA's HTML page and status 200, so a 200 from one of these examples does not mean it worked. The running server publishes its real contract at `/openapi` and `/openapi.yaml`. [CURRENT_STATUS.md](CURRENT_STATUS.md) lists the gaps.
+
+Auth is always on. API keys are sent as `Authorization: Bearer cpam_…`. There is no `X-API-Key` header. Browser sessions use the HttpOnly cookie from `POST /api/v1/auth/login` (or OIDC).
 
 ## Authentication
 
@@ -9,14 +11,14 @@ Practical examples for common API operations.
 ```bash
 # All requests require authentication
 curl -X GET "https://cloudpam.example.com/api/v1/pools" \
-  -H "X-API-Key: cpam_v1_abc12345_x7k9mN2pQr5tVw8yZa4bCd6eF"
+  -H "Authorization: Bearer cpam_abcdefgh12345678901234567890123456789012345"
 ```
 
-### Using Bearer Token (from OAuth flow)
+### Using a session cookie (browser login)
 
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/pools" \
-  -H "Authorization: Bearer eyJhbGciOiJSUzI1NiIs..."
+  --cookie "session=…"
 ```
 
 ---
@@ -28,7 +30,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/pools" \
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/pools?limit=10" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -75,7 +77,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/pools?limit=10" \
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/pools/tree" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -145,7 +147,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/pools/tree" \
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/pools" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "EU West Production VPC",
@@ -203,7 +205,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/pools" \
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/pools/550e8400-e29b-41d4-a716-446655440050/allocate" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "app-tier-subnet",
@@ -239,7 +241,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/pools/550e8400-e29b-41d4-a716-
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/pools/validate-cidr" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "cidr": "10.1.0.0/24",
@@ -283,7 +285,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/pools/validate-cidr" \
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/schema-templates?category=enterprise" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -339,7 +341,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/schema-templates?category=enter
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/schema-plans/generate" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "template_id": "template-enterprise-multi-region",
@@ -423,7 +425,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/schema-plans/generate" \
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/schema-plans" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Q1 2024 Network Expansion",
@@ -464,7 +466,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/schema-plans" \
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/schema-plans/550e8400-e29b-41d4-a716-446655440100/preview" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -492,7 +494,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/schema-plans/550e8400-e29b-41d4
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/schema-plans/550e8400-e29b-41d4-a716-446655440100/apply" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "dry_run": false }'
 ```
@@ -523,7 +525,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/schema-plans/550e8400-e29b-41d
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/accounts" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Production AWS",
@@ -570,7 +572,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/accounts" \
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/accounts" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Production GCP",
@@ -591,7 +593,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/accounts" \
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/accounts/550e8400-e29b-41d4-a716-446655440300/test" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -624,7 +626,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/accounts/550e8400-e29b-41d4-a7
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/accounts/550e8400-e29b-41d4-a716-446655440300/sync" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response (202 Accepted):**
@@ -647,7 +649,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/accounts/550e8400-e29b-41d4-a7
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/discovery/resources?account_id=550e8400-e29b-41d4-a716-446655440300&status=untracked&limit=20" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -712,7 +714,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/discovery/resources?account_id=
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/discovery/resources/550e8400-e29b-41d4-a716-446655440500/link" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "pool_id": "550e8400-e29b-41d4-a716-446655440050"
@@ -733,7 +735,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/discovery/resources/550e8400-e
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/discovery/drift?severity=warning" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -798,7 +800,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/discovery/drift?severity=warnin
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "organization_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -831,7 +833,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations" \
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-550e8400-e29b-41d4-a716-446655441000/messages" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "content": "I need to plan networking for a new Kubernetes cluster in production. We will have about 100 nodes and use Calico for pod networking. The cluster will be in us-east-1."
@@ -884,7 +886,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-550e8400-e29b-41d4-a716-446655441000/plans" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -908,7 +910,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-550e8400-e29b-41d4-a716-446655441000/plans/plan-550e8400-e29b-41d4-a716-446655441100/validate" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -931,7 +933,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-550e8400-e29b-41d4-a716-446655441000/plans/plan-550e8400-e29b-41d4-a716-446655441100/apply" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "dry_run": true,
@@ -974,7 +976,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-550e8400-e29b-41d4-a716-446655441000/plans/plan-550e8400-e29b-41d4-a716-446655441100/apply" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "dry_run": false,
@@ -1013,7 +1015,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-550e8400-e29b-41d4-a716-446655441000/plans/plan-550e8400-e29b-41d4-a716-446655441100/export?format=terraform" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -1029,7 +1031,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-
 **Request:**
 ```bash
 curl -X PATCH "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-550e8400-e29b-41d4-a716-446655441000" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "title": "K8s Production Cluster - US East"
@@ -1051,7 +1053,7 @@ curl -X PATCH "https://cloudpam.example.com/api/v1/planning/ai/conversations/con
 **Request:**
 ```bash
 curl -X DELETE "https://cloudpam.example.com/api/v1/planning/ai/conversations/conv-550e8400-e29b-41d4-a716-446655441000" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:** `204 No Content`
@@ -1065,7 +1067,7 @@ curl -X DELETE "https://cloudpam.example.com/api/v1/planning/ai/conversations/co
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/users" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -1101,7 +1103,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/users" \
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/users" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "newuser@example.com",
@@ -1169,7 +1171,7 @@ curl -X POST "https://cloudpam.example.com/api/v1/api-tokens" \
 **Request:**
 ```bash
 curl -X GET "https://cloudpam.example.com/api/v1/audit/events?resource_type=pool&action=create&from=2024-01-01T00:00:00Z&limit=10" \
-  -H "X-API-Key: $API_KEY"
+  -H "Authorization: Bearer $API_KEY"
 ```
 
 **Response:**
@@ -1218,7 +1220,7 @@ curl -X GET "https://cloudpam.example.com/api/v1/audit/events?resource_type=pool
 **Request:**
 ```bash
 curl -X POST "https://cloudpam.example.com/api/v1/audit/export" \
-  -H "X-API-Key: $API_KEY" \
+  -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "format": "csv",

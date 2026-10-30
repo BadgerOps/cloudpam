@@ -1040,7 +1040,7 @@ curl -X POST http://localhost:8080/api/v1/discovery/ingest \
 
 ## RBAC Permissions
 
-When `CLOUDPAM_AUTH_ENABLED=true`, discovery endpoints require the `discovery` resource permission:
+Auth is always on. Discovery endpoints require the `discovery` resource permission:
 
 | Action | Required Permission | Roles |
 |--------|-------------------|-------|
@@ -1050,13 +1050,14 @@ When `CLOUDPAM_AUTH_ENABLED=true`, discovery endpoints require the `discovery` r
 
 ## Frontend
 
-The Discovery page is at `/discovery` in the CloudPAM UI. It has three tabs:
+The Discovery page is at `/discovery` in the CloudPAM UI. It has four tabs:
 
 - **Resources** — table of discovered cloud resources with search + filters (type, status, linked). Click the link/unlink icons in the Actions column to manage pool associations.
+- **Network** — merged view of managed objects and discovered resources, with conflict review and schema-policy scoping.
 - **Sync History** — table of past sync jobs showing status, timing, and resource counts.
 - **Agents** — table of registered discovery agents with health status, version, hostname, and last heartbeat time. Auto-refreshes every 30 seconds.
 
-Select a cloud account from the dropdown, then click **Sync Now** to run discovery.
+Select a cloud account from the dropdown, then click **Sync Now** to run discovery. The setup wizard is AWS-shaped (IAM role, optional Organizations mode). GCP accounts can still be synced in-process when the server has Application Default Credentials; Azure accounts can be created but have no collector. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 ## Architecture
 
@@ -1069,7 +1070,7 @@ type Collector interface {
 }
 ```
 
-Each cloud provider implements this interface. The AWS collector is registered at startup in `cmd/cloudpam/main.go`.
+Each cloud provider implements this interface. AWS and GCP collectors are registered at startup in `cmd/cloudpam/main.go`. The standalone agent (`cmd/cloudpam-agent`) registers AWS only.
 
 ### SyncService
 
@@ -1094,18 +1095,17 @@ Discovery data lives in these tables:
 | `discovery_agents` | `0009_discovery_agents.sql` | Registered agents with version, hostname, last_seen_at |
 | (approval columns) | `0010_agent_registration.sql` | Agent approval workflow: status, registered_at, approved_at |
 
-The `DiscoveryStore` interface (`internal/storage/discovery.go`) defines 15 methods. Implementations exist for in-memory and SQLite backends.
+The `DiscoveryStore` interface (`internal/storage/discovery.go`) is implemented for in-memory, SQLite, and PostgreSQL backends.
 
 ## Adding a New Cloud Provider
 
-To add GCP or Azure discovery:
+GCP is already implemented (`internal/discovery/gcp/`) and registered next to AWS. Azure is the remaining collector.
 
-1. Create `internal/discovery/gcp/collector.go` (or `azure/`)
+To add Azure (or another provider):
+
+1. Create `internal/discovery/azure/collector.go`
 2. Implement the `Collector` interface
-3. Register the collector in `cmd/cloudpam/main.go`:
-   ```go
-   syncService.RegisterCollector(gcpcollector.New())
-   ```
-4. Create accounts with `"provider": "gcp"` — the sync service auto-selects the right collector
+3. Register the collector in `cmd/cloudpam/main.go` (and in `cmd/cloudpam-agent` if the agent should run it)
+4. Create accounts with `"provider": "azure"` — the sync service selects the collector by `account.Provider`
 
-No changes needed to the API, frontend, or storage layer — they're provider-agnostic.
+The HTTP API and storage layer are provider-agnostic. The Discovery wizard, IAM snippets, and agent binary are still AWS-oriented and will need matching work. Account keys for `azure:` already validate as subscription UUIDs; without a collector, sync fails.

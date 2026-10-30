@@ -2,14 +2,16 @@
 
 This document details the authentication and authorization architecture for CloudPAM.
 
+Auth is **always on**. The `CLOUDPAM_AUTH_ENABLED` toggle was removed. MFA, trusted devices, and ABAC are **not implemented**. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+
 ## Overview
 
 CloudPAM currently supports three authentication methods:
 1. **Local username/password sessions** - Primary built-in browser login flow
 2. **OIDC / SSO sessions** - Optional browser login via an external identity provider
-3. **API Keys** - For programmatic access and integrations
+3. **API Keys** - For programmatic access and integrations (`Authorization: Bearer cpam_…`. There is no `X-API-Key` header)
 
-Authorization uses Role-Based Access Control (RBAC) with future support for Attribute-Based Access Control (ABAC).
+Authorization uses Role-Based Access Control (RBAC). Attribute-Based Access Control (ABAC) is not implemented.
 
 ## Authentication Flows
 
@@ -211,7 +213,7 @@ For programmatic access without user context (CI/CD, scripts, integrations).
 │ (Script/CI)  │                              │                 │
 └──────┬───────┘                              └────────┬────────┘
        │                                               │
-       │  Request with X-API-Key header               │
+       │  Request with Authorization: Bearer cpam_…    │
        │──────────────────────────────────────────────>│
        │                                               │
        │                        Validate key, check scopes
@@ -224,15 +226,12 @@ For programmatic access without user context (CI/CD, scripts, integrations).
 #### API Key Format
 
 ```
-cpam_v1_<prefix>_<secret>
+cpam_<43 base64url characters>
 
-Example: cpam_v1_abc12345_x7k9mN2pQr5tVw8yZa4bCd6eF
-         │    │  │        │
-         │    │  │        └─ Secret portion (never logged)
-         │    │  └─ Prefix for identification (logged, displayed)
-         │    └─ Version identifier
-         └─ CloudPAM identifier
+Example: cpam_abcdefgh12345678901234567890123456789012345
 ```
+
+The 43 characters encode 32 random bytes. The server stores the first 8 of them as the key's lookup prefix, next to an Argon2id hash of the whole key.
 
 #### Key Storage
 
@@ -272,15 +271,12 @@ Administrators manage API key policy from **Configuration > Security** via `GET/
 
 #### Rate Limiting
 
-API keys have configurable rate limits:
+API keys have no rate limit of their own. Two limiters exist, and both key on an IP address, not on the key or the user:
 
-```yaml
-# Per-key configuration
-rate_limit:
-  requests_per_minute: 100   # Default
-  requests_per_hour: 1000
-  burst: 20                   # Max concurrent requests
-```
+- `RateLimitMiddleware` wraps every route with one token bucket per TCP peer address. It ignores `X-Forwarded-For`, so all clients that reach one CloudPAM instance through the same reverse proxy share one bucket. `RATE_LIMIT_RPS` sets the rate (default `100` requests per second) and `RATE_LIMIT_BURST` sets the burst (default `200`). `RATE_LIMIT_RPS=0` turns it off.
+- `LoginRateLimitMiddleware` wraps `/api/v1/auth/login` with one token bucket per client IP. The bucket holds 5 tokens and refills at 5 per minute, and every request to that path takes one, whatever its method. The client IP is the first `X-Forwarded-For` entry when the TCP peer is in `CLOUDPAM_TRUSTED_PROXIES`, and the TCP peer address otherwise. `cmd/cloudpam/main.go` sets the 5. The **Configuration > Security** page saves `login_rate_limit_per_minute`, but the limiter never reads it.
+
+Per-key and per-user limits, such as a `rate_limit` block with `requests_per_minute`, `requests_per_hour`, and `burst`, are not implemented. Issue #291 tracks them.
 
 ## Authorization (RBAC)
 
@@ -567,11 +563,15 @@ Logged events:
 
 ### Go Middleware Chain
 
+This sketch shows the order of checks, not the shipped code. The real middleware is `DualAuthMiddleware` in `internal/api/middleware.go`. It checks an `Authorization: Bearer cpam_` key first and the `session` cookie second, and it has no access-token refresh step.
+
 ```go
 func AuthMiddleware(next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         // 1. Try API key auth
-        if apiKey := r.Header.Get("X-API-Key"); apiKey != "" {
+        authHeader := r.Header.Get("Authorization")
+        if strings.HasPrefix(authHeader, "Bearer cpam_") {
+            apiKey := strings.TrimPrefix(authHeader, "Bearer ")
             token, err := validateAPIKey(apiKey)
             if err != nil {
                 respondUnauthorized(w, "Invalid API key")
@@ -591,14 +591,6 @@ func AuthMiddleware(next http.Handler) http.Handler {
         if err != nil {
             respondUnauthorized(w, "Authentication required")
             return
-        }
-
-        // 3. Check if access token needs refresh
-        if session.AccessTokenExpiresSoon() {
-            if err := refreshAccessToken(session); err != nil {
-                respondUnauthorized(w, "Session expired")
-                return
-            }
         }
 
         ctx := context.WithValue(r.Context(), "auth", &AuthContext{

@@ -8,6 +8,8 @@ It is a companion to `docs/OBSERVABILITY.md`, which owns structured logging, met
 
 **The most important finding is that issue #93 is not a greenfield design.** A working CEF-over-syslog forwarder already exists, is wired into `main.go`, is covered by tests, and is documented. The issue's framing ("what format? CEF, JSON, OCSF?") and its recommendation ("JSON format; webhook + S3/GCS shipping for v1; CEF/OCSF as optional formatters for enterprise") were written without that context and are revised below.
 
+**Still not implemented (as of 0.23.4):** webhook and file sinks shown in the diagram, persisted Log Destinations CRUD, Splunk HEC / CloudWatch / Cloud Logging connectors, `AuditStore` retention APIs, and source IP on production audit events (§1.4). The `/config/log-destinations` page documents the syslog env vars only. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                            CloudPAM Process                                   │

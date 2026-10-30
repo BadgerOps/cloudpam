@@ -18,22 +18,26 @@ CloudPAM is an intelligent IP Address Management (IPAM) platform designed to man
 
 ---
 
-## Status Refresh (validated against the codebase on 2026-04-04)
+## Status Refresh (validated against the codebase on 2026-10-29, product 0.23.4, commit `e0818fd`)
 
-This document started as a phased implementation plan. The detailed week-by-week sections below are still useful as design history, but they are no longer a reliable source of truth for current status.
+This document started as a phased implementation plan. The detailed week-by-week sections below are still useful as design history, but they are no longer a reliable source of truth for current status. **Use [CURRENT_STATUS.md](CURRENT_STATUS.md) for implemented vs missing.** Checkboxes below were re-checked against the code on the date above; a checked box means the code exists, not that the success criteria next to it were measured.
+
+The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHANGELOG.md](CHANGELOG.md) lists them. One change landed after the 0.23.4 tag and is not in a release yet. PostgreSQL now stores recommendations in a `recommendations` table (`migrations/postgres/0023_recommendations.up.sql`), so they survive a restart (#315).
 
 | Area | Current Status | Notes |
 |------|----------------|-------|
-| Core IPAM | Implemented | Pools, accounts, blocks, search, import/export, validation, audit |
+| Core IPAM | Implemented | Pools, accounts, blocks, search, import/export, validation, audit. IPv4 only |
 | Discovery: AWS | Implemented | Single-account and AWS Organizations discovery, agent flow, IaC helpers |
-| Discovery: GCP | Implemented, narrower than AWS | Networks, subnetworks, and external IP discovery exist; Azure is still missing |
-| Drift Detection | Implemented | Detection, listing, resolve, and ignore workflows are in place |
-| Smart Planning | Implemented | Analysis, recommendations, and schema planner are available |
-| AI Planning | Implemented, optional | OpenAI-compatible backend, SSE chat, stored sessions, plan extraction/apply |
-| OIDC / SSO | Implemented | Provider management, discovery, group mapping, JIT provisioning, local-auth toggle |
-| Operations | Partial | Metrics, Sentry, release notes, and host-managed upgrades exist; tracing is still missing |
-| UI / UX | Functional, inconsistent | Current UI is a sidebar-based app with page-local styling; Graphēon-style shell and design-system consistency are still future work |
+| Discovery: GCP | Implemented, narrower than AWS | Server collector for networks, subnetworks, and external IPs. Agent is AWS-only. Azure is still missing |
+| Drift Detection | Implemented | Detection, listing, resolve, and ignore workflows are in place. No reconciliation suggestions |
+| Smart Planning | Implemented | Analysis and recommendations APIs exist; schema planner is in the UI. Analysis has no dedicated page |
+| AI Planning | Implemented, optional | OpenAI-compatible backend, SSE chat, stored sessions, plan extraction/apply. Env-only config |
+| OIDC / SSO | Implemented | Provider management, discovery, group mapping, JIT provisioning, local-auth toggle. No MFA |
+| Terraform | Implemented (v1) | Nested module for `cloudpam_pool` / `cloudpam_account`. Schema Planner exports those resources |
+| Operations | Partial | Metrics, Sentry, opt-in OTel tracing, CEF/syslog audit forwarding, release notes, host-managed upgrades. Vendor SIEM and Vector integration are not wired |
+| UI / UX | Functional, inconsistent | Sidebar-based app with page-local styling; Graphēon-style shell is still future work |
 | Multi-tenancy | Planned | PostgreSQL schema has default-org scaffolding, but runtime isolation is not active |
+| Postgres extras | Partial | Recommendations are stored in PostgreSQL since #315. Utilization snapshots have no PostgreSQL table, and nothing records them on any backend |
 
 ## Phase 1: Foundation (Weeks 1-4)
 
@@ -45,21 +49,21 @@ This document started as a phased implementation plan. The detailed week-by-week
 - Initialize Go project structure with module dependencies
 - Set up development environment (Docker Compose for PostgreSQL/SQLite)
 - Implement CI/CD pipeline (GitHub Actions)
-- Create HTTP server framework with chi router
+- Create HTTP server framework (shipped on `net/http` + `ServeMux`, not chi)
 - Set up logging, metrics, and error handling middleware
 - Implement database abstraction layer supporting both PostgreSQL and SQLite
 
 **Deliverables**:
 - [x] Git repository with proper structure
-- [x] Docker Compose development environment
+- [x] Docker Compose development environment (`docker-compose.yml`)
 - [x] HTTP server running on port 8080
-- [x] Database connection pool with support for both PostgreSQL and SQLite
+- [x] Database connection pool with support for both PostgreSQL and SQLite (plus the in-memory store; backend chosen by build tag)
 - [x] Observability framework (see [OBSERVABILITY.md](OBSERVABILITY.md)):
   - [x] Structured logging with slog (JSON output)
-  - [x] OpenTelemetry metrics (Prometheus export)
-  - [ ] Distributed tracing (Jaeger) — not yet implemented
+  - [x] Prometheus metrics at `/metrics` (hand-rolled registry, not the OpenTelemetry metrics SDK)
+  - [x] Distributed tracing — opt-in OpenTelemetry OTLP/HTTP export (`CLOUDPAM_TRACING_ENABLED`, 0.23.0); no Jaeger deployment is wired
   - [x] Health check endpoints (`/healthz`, `/readyz`)
-- [ ] Local observability stack (see [docker-compose.observability.yml](deploy/docker-compose.observability.yml)) — config exists but not integrated
+- [ ] Local observability stack — [docker-compose.observability.yml](../deploy/docker-compose.observability.yml) mounts `./prometheus/prometheus.yml` and `./grafana/provisioning`, which are not in the repo, so it does not start as checked in
 
 **Success Criteria**:
 - Server starts cleanly and responds to `/health` endpoint
@@ -170,7 +174,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 - [ ] OAuth2 flows for each cloud provider — not yet implemented
 - [ ] Credential encryption/decryption system — not yet implemented
 - [x] Account management endpoints: `/api/v1/accounts/*`
-- [x] Health check endpoints for connected accounts
+- [ ] Health check endpoints for connected accounts — not implemented; a failed sync job is the only connectivity signal
 - [x] Account listing with status
 
 **Success Criteria**:
@@ -195,10 +199,10 @@ This document started as a phased implementation plan. The detailed week-by-week
 - [x] Collector interface and SDK
 - [x] AWS collector (VPCs, subnets, EIPs) + AWS Organizations cross-account discovery
 - [x] GCP collector (networks, subnetworks, external IPs)
-- [ ] Azure collector (VNets, subnets, NICs) — not yet implemented
+- [ ] Azure collector (VNets, subnets, NICs) — not yet implemented; `azure:` account keys are accepted and the UI offers Azure, but sync fails with `no collector registered for provider`
 - [x] Discovery resource storage
-- [x] Collector registry and heartbeat
-- [x] Rate limiting per collector
+- [x] Collector registry and heartbeat (standalone agent: bootstrap tokens, register/approve/reject, `/heartbeat`; AWS only)
+- [ ] Rate limiting per collector — not implemented
 
 **Success Criteria**:
 - AWS collector discovers resources in test accounts
@@ -323,7 +327,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 **Deliverables**:
 - [x] Recommendation generation engine
 - [x] Allocation suggestion algorithm
-- [x] Consolidation detection
+- [ ] Consolidation detection — `consolidation`, `resize` and `reclaim` are commented-out types in `internal/domain/recommendations.go`; only allocation and compliance recommendations are generated
 - [x] Compliance fix recommendations
 - [ ] Growth projections (3-12 months) — not yet implemented
 - [x] Recommendation ranking by impact
@@ -347,13 +351,14 @@ This document started as a phased implementation plan. The detailed week-by-week
 - Implement schema visualization
 
 **Deliverables**:
-- [x] Schema template entities and storage
+- [x] Schema templates — built into the UI (`ui/src/wizard/data`); there is no server-side template entity or storage
 - [x] Built-in templates: Regional, Hierarchical, Flat, Cloud-Native, Hybrid
-- [x] Schema wizard form endpoints
+- [x] Schema wizard form endpoints (`/api/v1/schema/check`, `/api/v1/schema/apply`)
 - [x] Schema generation from parameters
-- [x] Schema validation with detailed errors (conflict detection)
-- [ ] ASCII art visualization of generated schema — not implemented
-- [ ] Schema export (JSON, YAML, Terraform) — not implemented
+- [x] Schema validation with detailed errors (conflict detection). Apply does not check that generated children sit inside their parents, because the wizard can emit children outside them today
+- [ ] ASCII art visualization of generated schema — not implemented (the wizard renders an interactive tree instead)
+- [x] Schema export — Terraform (`cloudpam_pool` resources for the CloudPAM provider, 0.23.1) and CSV from the Preview step
+- [ ] Schema export as JSON or YAML — not implemented
 
 **Success Criteria**:
 - 5+ built-in templates available
@@ -376,7 +381,7 @@ This document started as a phased implementation plan. The detailed week-by-week
 **Deliverables**:
 - [x] CSV import for accounts and pools
 - [ ] Excel import — not implemented
-- [x] Data validation and preview before commit
+- [x] Data validation and preview before commit (client-side CSV preview in the import modal; the server validates each row on import)
 - [ ] Dry-run mode for all imports — not implemented
 - [x] CSV/ZIP export endpoint
 - [x] Error reporting on failed imports
@@ -631,9 +636,9 @@ For CloudPAM AI, the roadmap should follow those patterns instead of keeping AI 
 **Reference Documentation**:
 - [OBSERVABILITY.md](OBSERVABILITY.md) - Full observability architecture
 - [openapi-observability.yaml](openapi-observability.yaml) - Audit API endpoints
-- [deploy/vector/vector.toml](deploy/vector/vector.toml) - Vector configuration
-- [deploy/k8s/vector-daemonset.yaml](deploy/k8s/vector-daemonset.yaml) - K8s log collection
-- [cloudpam-audit-log.html](cloudpam-audit-log.html) - UI mockup
+- [deploy/vector/vector.toml](../deploy/vector/vector.toml) - Vector configuration
+- [deploy/k8s/vector-daemonset.yaml](../deploy/k8s/vector-daemonset.yaml) - K8s log collection
+- [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md) - CEF syslog forwarding (shipped) and remaining SIEM design
 
 **Deliverables**:
 - [x] Comprehensive audit logging for all mutations
@@ -705,6 +710,8 @@ The current CloudPAM UI already has broad route coverage and some useful buildin
 - `ui/src/pages/DashboardPage.tsx` is functional, but less dense and less action-oriented than Graphēon's dashboard.
 - Admin and operations surfaces are spread across multiple pages without the same status-first, workflow-driven feel Graphēon uses in `frontend/src/pages/Config.jsx` and `frontend/src/pages/AuthAdmin.jsx`.
 
+**Where this stands (2026-10-29).** The design side has started; the `ui/` side has not. A "CloudPAM Design System" Claude Design project defines six configuration primitives (modal, field, switch, table, and friends) and an identity model, pulled read-only into [design/](design/) on 2026-08-04. [design/repo-changes.md](design/repo-changes.md) is the ordered list of changes that project asks for in `ui/`. Of those, only the smallest have landed: one pool-type colour map (0.23.2, its §6) and the extra status-badge vocabulary (0.23.2, part of its §3). The primitives are not extracted, `UsersAdminPanel` is not retired, and the Administration nav is not collapsed. The shell is still the left sidebar, now off-canvas below the `md` breakpoint (0.23.0). Treat the week-by-week deliverables below as unstarted except where marked.
+
 Useful Graphēon reference points in `~/code/grapheon`:
 
 - `frontend/src/App.jsx` - sticky top nav, compact app shell, role-aware navigation, user menu placement
@@ -727,8 +734,8 @@ Useful Graphēon reference points in `~/code/grapheon`:
 - [ ] New top-nav application shell
 - [ ] Rationalized navigation model for IPAM, discovery, planning, identity, and configuration
 - [ ] Shared user chip/dropdown with role badge
-- [ ] Global status surface for updates and system health
-- [ ] Mobile-responsive shell behavior
+- [ ] Global status surface for updates and system health (`UpdateBanner` exists; no health surface)
+- [x] Mobile-responsive shell behavior — sidebar collapses to an off-canvas drawer, tables hide secondary columns, modals fit small screens (0.23.0); done on the current sidebar shell, not a new one
 
 **Success Criteria**:
 - Core routes remain accessible with fewer navigation jumps
@@ -749,8 +756,8 @@ Useful Graphēon reference points in `~/code/grapheon`:
 - [ ] Shared component styling layer in `ui/src/index.css` and/or reusable components
 - [ ] Common metric card, table container, form section, and alert patterns
 - [ ] Empty-state and skeleton/loading patterns used across major pages
-- [ ] Consistent status badge language and visual treatment
-- [ ] Page template guidelines for future UI work
+- [ ] Consistent status badge language and visual treatment — `StatusBadge` knows `locked`, `disabled`, `revoked`, `idle` since 0.23.2, but the users and API-keys tables still render their own pills
+- [ ] Page template guidelines for future UI work — the standard exists in [design/primitives.md](design/primitives.md) and [design/primitives-contracts.md](design/primitives-contracts.md); nothing in `ui/` implements it yet
 
 **Success Criteria**:
 - New pages do not restyle core controls from scratch
@@ -957,28 +964,28 @@ Phase 6
 - API Gateway for rate limiting
 - CDN for static assets
 
-### Technology Stack
+### Technology Stack (as built, 2026-10-29)
+
+The original plan named chi, golang-migrate, jwt-go, Axios and Redux. None of those were used. What ships:
 
 **Backend**:
-- Language: Go 1.21+
-- Web Framework: chi router
-- Database: PostgreSQL (primary), SQLite (fallback)
-- Migration Tool: golang-migrate
-- Auth: go-oidc, jwt-go
-- Cloud SDKs: AWS SDK v2, GCP client libraries, Azure SDK
+- Language: Go 1.25 (`go.mod`), `net/http` + `ServeMux`, no router framework
+- Database: PostgreSQL via `pgx/v5` (`-tags postgres`), SQLite via `modernc.org/sqlite` (`-tags sqlite`, CGO-free), in-memory store by default
+- Migrations: embedded SQL files with an in-repo runner (`migrations/`, `migrations/postgres/`); forward-only
+- Auth: `coreos/go-oidc/v3`, Argon2id password and API-key hashing, server-side sessions, custom-role RBAC
+- Cloud SDKs: AWS SDK v2, GCP Compute client; no Azure SDK
+- Observability: slog, hand-rolled Prometheus metrics, OpenTelemetry tracing (opt-in), Sentry, CEF-over-syslog audit forwarding
 
-**Frontend** (not detailed in roadmap, assumed separate):
-- Framework: React or Vue
-- HTTP Client: Axios
-- State Management: Redux/Vuex
-- UI Library: Material-UI or Tailwind CSS
+**Frontend**:
+- React 18 + TypeScript on Vite 8, Tailwind CSS 4, `react-router-dom` 7, `lucide-react`
+- `fetch`-based client in `ui/src/api/client.ts` with hooks per resource; no Redux or query library
+- Tests: Vitest; screenshots via Playwright; built assets embedded into the Go binary with `go:embed`
 
 **DevOps**:
-- Containerization: Docker
-- Orchestration: Docker Compose (dev), Kubernetes (production optional)
-- CI/CD: GitHub Actions
-- Monitoring: Prometheus + Grafana
-- Logging: ELK Stack or cloud provider logs
+- Containerization: Docker (`deploy/docker/`); Helm charts for server and agent in `deploy/helm/` (CI checks chart `appVersion` against the changelog, #322)
+- CI/CD: GitHub Actions (race tests on three backends, lint, coverage, `govulncheck`, Trivy image scans, release builds with an SPDX SBOM). CodeQL code scanning runs through GitHub's default setup, not a workflow file
+- Monitoring: Prometheus scrape of `/metrics`; the Grafana/Prometheus compose stack is not runnable as checked in
+- Logging: JSON to stdout; Vector configs exist in `deploy/vector/` but are not integrated
 
 ---
 
@@ -1082,7 +1089,7 @@ Week   1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20
 
 ### Code Quality
 
-- **Language**: Go 1.21+ with strict `go vet` and `golangci-lint`
+- **Language**: Go 1.25 with `go vet` and `golangci-lint` v2 (`govet`, `staticcheck`, `ineffassign`, `errcheck`, `gocritic`, `misspell`, narrow `revive`; `gofmt` enforced)
 - **Testing**: Unit tests (>80%), Integration tests, E2E tests
 - **Documentation**: Godoc on all exported functions
 - **Code Review**: All PRs require 2 approvals before merge
@@ -1140,7 +1147,7 @@ After initial launch, consider these enhancements:
 - Chargeback reporting
 
 ### Month 9-10: Integration Ecosystem
-- Terraform provider for CloudPAM
+- ~~Terraform provider for CloudPAM~~ — shipped in 0.23.0 (`terraform-provider-cloudpam/`: `cloudpam_pool`, `cloudpam_account`, matching data sources; see [TERRAFORM_PROVIDER.md](TERRAFORM_PROVIDER.md))
 - Ansible inventory plugin
 - CI/CD integrations (Jenkins, GitLab CI)
 - Webhook support for events
@@ -1245,7 +1252,7 @@ After initial launch, consider these enhancements:
 
 ## Document Control
 
-- **Version**: 1.1
-- **Last Updated**: 2026-02-18
+- **Version**: 1.3
+- **Last Updated**: 2026-10-29 (checkboxes re-validated against commit `e0818fd`)
 - **Owner**: CloudPAM Product Team
-- **Status**: Phases 1-4 substantially complete; Phase 5 in progress
+- **Status**: Phases 1–5 substantially complete except multi-tenancy, Azure, IPv6, and MFA. Phase 6: design system specified in [design/](design/), UI implementation not started. See [CURRENT_STATUS.md](CURRENT_STATUS.md).

@@ -4,9 +4,9 @@ This document captures the roadmap for CloudPAM, a cloud-native IP Address Manag
 
 ---
 
-## Current State (validated against the codebase on 2026-04-04)
+## Current State (validated against the codebase on 2026-10-29, product 0.23.4, commit `e0818fd`)
 
-This summary reflects what is implemented in the current repository. The deeper milestone sections later in this document are retained as historical planning material and may lag the code.
+This summary reflects what is implemented in the current repository. The deeper milestone sections later in this document are retained as historical planning material and may lag the code. **Prefer [CURRENT_STATUS.md](CURRENT_STATUS.md) for gaps.**
 
 ### Implemented Features
 
@@ -20,9 +20,9 @@ This summary reflects what is implemented in the current repository. The deeper 
 
 **Storage:**
 - In-memory store (default, for development/testing)
-- SQLite store (`-tags sqlite`) with embedded migrations through `0018_drift_items.sql`
-- PostgreSQL store (`-tags postgres`) with pgx/v5
-- All three implement identical `Store` interface
+- SQLite store (`-tags sqlite`) with embedded migrations through `0021_network_objects_relationships.sql`
+- PostgreSQL store (`-tags postgres`) with pgx/v5 and a separate migration sequence through `0023_recommendations.up.sql`
+- All three implement the core pool/account `Store` interface and `RecommendationStore` (PostgreSQL since #315). PostgreSQL does **not** implement `UtilizationStore`. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 **Authentication & Authorization:**
 - API key authentication with Argon2id hashing
@@ -68,28 +68,35 @@ This summary reflects what is implemented in the current repository. The deeper 
 **Operational:**
 - Request ID middleware, structured logging with slog
 - Rate limiting per IP, Prometheus metrics
+- Opt-in OpenTelemetry tracing (OTLP/HTTP, `CLOUDPAM_TRACING_ENABLED`)
 - Sentry integration (errors + performance)
 - Graceful shutdown, health/readiness endpoints
-- Audit logging for all mutations
+- Audit logging for all mutations; optional CEF-over-syslog forwarding
 - Embedded changelog, release metadata endpoints, and optional file-triggered host upgrade flow
+- Terraform provider module for pools and accounts
 - Docker, Nix flake, CI/CD with GitHub Actions
 
 ### Partial / Caveated Areas
 
-- GCP discovery is implemented in code and covered by tests, but AWS currently has the most complete setup guidance, org-mode workflow, and IaC support.
-- AI planning currently targets a single OpenAI-compatible backend configured via `CLOUDPAM_LLM_*`; there is no separate Anthropic-native integration or backend fallback selection.
+- GCP discovery is implemented in code and covered by tests, but AWS currently has the most complete setup guidance, org-mode workflow, agent, and IaC support. The standalone agent is AWS-only.
+- AI planning currently targets a single OpenAI-compatible backend configured via `CLOUDPAM_LLM_*`; there is no separate Anthropic-native integration, backend fallback selection, or admin settings UI.
 - The update flow is host-managed and file-triggered; CloudPAM can request and report upgrades, but it does not perform a universal self-update on its own.
 - Multi-tenancy exists only as PostgreSQL schema/default-org scaffolding; the running application remains single-tenant.
-- Some UI surfaces are intentionally unfinished: the schema planner's Terraform export is still a stub, and Log Destinations currently documents env-based CEF/syslog audit forwarding rather than offering persisted destination management.
+- Log Destinations documents env-based CEF/syslog audit forwarding rather than offering persisted destination management.
+- Analysis, recommendation, and drift APIs exist. Analysis has no UI, and it scores fragmentation for only the first requested pool. Recommendations cover allocation and compliance only. The recommendation and drift list pages do not paginate.
+- Helm charts are kept in step with releases by `scripts/helm-check.sh` in CI (#322).
 
 ### Not Yet Implemented
 
-- Azure cloud discovery
+- Azure cloud discovery (accounts may still be created with provider `azure`)
 - Active multi-tenant enforcement, organization management UI/API, and quotas
-- IPv6 support
-- Distributed tracing
+- IPv6 support for managed pools
+- Durable PostgreSQL utilization-snapshot store
+- Restore after soft delete; delete for network objects
 - Rich drift reconciliation suggestions or automatic remediation
-- Persisted external log destination management beyond env-based CEF/syslog audit forwarding
+- Persisted external log destination management beyond env-based CEF/syslog
+- MFA / trusted devices
+- Per-user, per-API-key, and per-org rate limits
 - VLAN/VRF tracking
 - Host/Address tracking (deferred to M7+)
 
