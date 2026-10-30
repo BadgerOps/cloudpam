@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"cloudpam/internal/auth"
+	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 
 	"github.com/getsentry/sentry-go"
@@ -400,10 +401,28 @@ func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
 }
 
 // LoginRateLimitConfig configures per-IP login rate limiting.
+// Settings supplies login_rate_limit_per_minute on every request. AttemptsPerMinute
+// applies when Settings is nil or unreadable, and zero means
+// domain.DefaultLoginRateLimitPerMin.
 type LoginRateLimitConfig struct {
 	AttemptsPerMinute int
 	Settings          storage.SettingsStore
 	ProxyConfig       *TrustedProxyConfig
+}
+
+func (cfg LoginRateLimitConfig) attemptsPerMinute(ctx context.Context) int {
+	fallback := cfg.AttemptsPerMinute
+	if fallback < 1 {
+		fallback = domain.DefaultLoginRateLimitPerMin
+	}
+	if cfg.Settings == nil {
+		return fallback
+	}
+	settings, err := cfg.Settings.GetSecuritySettings(ctx)
+	if err != nil || settings == nil || settings.LoginRateLimitPerMin < 1 {
+		return fallback
+	}
+	return settings.LoginRateLimitPerMin
 }
 
 // LoginRateLimitMiddleware wraps a handler with per-IP login rate limiting.
@@ -428,17 +447,20 @@ func LoginRateLimitMiddleware(cfg LoginRateLimitConfig) func(http.Handler) http.
 		}
 	}()
 
-	rps := rate.Limit(float64(cfg.AttemptsPerMinute) / 60.0)
-
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := clientKeyWithProxies(r, cfg.ProxyConfig)
+			attempts := cfg.attemptsPerMinute(r.Context())
+			limit := rate.Limit(float64(attempts) / 60.0)
 
 			mu.Lock()
 			entry, ok := clients[ip]
 			if !ok {
-				entry = &ipEntry{limiter: rate.NewLimiter(rps, cfg.AttemptsPerMinute)}
+				entry = &ipEntry{limiter: rate.NewLimiter(limit, attempts)}
 				clients[ip] = entry
+			} else if entry.limiter.Burst() != attempts {
+				entry.limiter.SetLimit(limit)
+				entry.limiter.SetBurst(attempts)
 			}
 			entry.lastSeen = time.Now()
 			mu.Unlock()

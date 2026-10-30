@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"cloudpam/internal/auth"
+	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 )
 
@@ -2050,5 +2052,31 @@ func TestLoginRateLimitMiddleware_FollowsSecuritySettings(t *testing.T) {
 	}
 	if code := login("9.9.9.9"); code != http.StatusTooManyRequests {
 		t.Fatalf("lowered limit, attempt 3: got %d, want 429", code)
+	}
+}
+
+type failingSettingsStore struct{ storage.SettingsStore }
+
+func (failingSettingsStore) GetSecuritySettings(context.Context) (*domain.SecuritySettings, error) {
+	return nil, errors.New("settings unavailable")
+}
+
+func TestLoginRateLimitMiddleware_FallsBackToDefaultWhenSettingsUnreadable(t *testing.T) {
+	handler := LoginRateLimitMiddleware(LoginRateLimitConfig{Settings: failingSettingsStore{}})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 1; i <= domain.DefaultLoginRateLimitPerMin+1; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		handler.ServeHTTP(rr, req)
+		want := http.StatusOK
+		if i > domain.DefaultLoginRateLimitPerMin {
+			want = http.StatusTooManyRequests
+		}
+		if rr.Code != want {
+			t.Fatalf("attempt %d: got %d, want %d", i, rr.Code, want)
+		}
 	}
 }
