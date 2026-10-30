@@ -44,7 +44,7 @@ CloudPAM follows a modular architecture that supports multiple deployment patter
 | Docker Compose | Local dev, small teams | Low | Single node |
 | Cloud Run | GCP-native, auto-scaling | Medium | High |
 | AWS ECS Fargate | AWS-native, serverless | Medium | High |
-| Kubernetes (GKE/EKS) | Multi-cloud, enterprise | High | Very High |
+| Kubernetes (Helm) | Multi-cloud, enterprise | High | Very High |
 
 ---
 
@@ -1012,64 +1012,129 @@ output "ecr_repository_url" {
 
 ---
 
-## 4. Kubernetes (GKE/EKS)
+## 4. Kubernetes (Helm)
 
-For enterprise deployments requiring maximum control and multi-cloud portability.
+Two charts live in the repository. Both are at chart version `0.2.0` and track the application release in `appVersion`:
 
-### Helm Chart Structure
-
-```
-helm/cloudpam/
-├── Chart.yaml
-├── values.yaml
-├── values-gke.yaml
-├── values-eks.yaml
-├── templates/
-│   ├── _helpers.tpl
-│   ├── deployment.yaml
-│   ├── service.yaml
-│   ├── ingress.yaml
-│   ├── hpa.yaml
-│   ├── configmap.yaml
-│   ├── secret.yaml
-│   └── serviceaccount.yaml
-```
-
-### Chart.yaml
+| Chart | Path | Deploys |
+|-------|------|---------|
+| `cloudpam-server` | `deploy/helm/cloudpam-server/` | The server, with SQLite on a PersistentVolumeClaim by default or PostgreSQL |
+| `cloudpam-agent` | `deploy/helm/cloudpam-agent/` | The discovery agent (see [DISCOVERY.md](DISCOVERY.md#deploying-with-helm-kubernetes)) |
 
 ```yaml
-# helm/cloudpam/Chart.yaml
+# deploy/helm/cloudpam-server/Chart.yaml
 apiVersion: v2
-name: cloudpam
-description: Cloud-native IP Address Management
-version: 0.1.0
-appVersion: "0.1.0"
+name: cloudpam-server
+version: 0.2.0
+appVersion: "0.23.4"
 ```
 
-### values.yaml
+`image.tag` is empty by default, so the chart pulls `ghcr.io/badgerops/cloudpam/server:<appVersion>`. The same string is passed to the server as `APP_VERSION`, which the in-app update check compares against the latest GitHub release.
+
+### How values map to the server
+
+The server reads only environment variables. The chart does not rename them: every key under `config` is an environment variable name and lands in a ConfigMap, every key under `secrets` is an environment variable name and lands in a Secret, and the Deployment loads both with `envFrom`. An empty value is not rendered, so the server's own default applies. A list renders as one comma-separated string.
+
+The chart owns five variables and refuses them under `config`: `APP_VERSION` (from `image.tag`), `SQLITE_DSN` (from `storage.sqlite.dsn`, SQLite only), `DATABASE_URL` (a secret), and `ADDR` and `PORT` (the container listens on 8080). A `config` key that looks like a credential (`DATABASE_URL`, `SENTRY_DSN`, or a name ending in `_PASSWORD`, `_SECRET`, `_TOKEN`, or `_KEY`) fails the render.
+
+`deploy/helm/cloudpam-server/values.yaml` lists every variable with the server default as a trailing comment:
 
 ```yaml
-# helm/cloudpam/values.yaml
-replicaCount: 2
+storage:
+  backend: sqlite            # or postgres
+  sqlite:
+    dsn: "file:/data/cloudpam.db?cache=shared&_fk=1"
+    persistence:
+      enabled: true
+      size: 1Gi
 
-image:
-  repository: cloudpam
-  tag: latest
-  pullPolicy: IfNotPresent
+config:
+  CLOUDPAM_ADMIN_USERNAME: ""
+  CLOUDPAM_TRUSTED_PROXIES: []       # none trusted
+  CLOUDPAM_OIDC_CALLBACK_URL: ""     # none
+  CLOUDPAM_AUDIT_SYSLOG_ADDR: ""     # host:port
+  CLOUDPAM_AUDIT_SYSLOG_NETWORK: ""  # udp
+  CLOUDPAM_LOG_LEVEL: ""             # info
+  CLOUDPAM_TRACING_ENABLED: ""       # false
+  CLOUDPAM_TRACING_ENDPOINT: ""      # http://localhost:4318
+  CLOUDPAM_LLM_ENDPOINT: ""          # OpenAI
+  CLOUDPAM_LLM_MODEL: ""             # gpt-4o
+  RATE_LIMIT_RPS: ""                 # 100
 
-serviceAccount:
-  create: true
-  annotations: {}
+secrets:
+  DATABASE_URL: ""
+  CLOUDPAM_ADMIN_PASSWORD: ""
+  CLOUDPAM_OIDC_ENCRYPTION_KEY: ""
+  CLOUDPAM_LLM_API_KEY: ""
+  SENTRY_DSN: ""
 
-service:
-  type: ClusterIP
-  port: 8080
+existingSecret: ""
+```
+
+### Install with SQLite
+
+The default install runs one replica with the database on a 1Gi PersistentVolumeClaim mounted at `/data`, and rolls out with `strategy: Recreate` so two pods never open the same file. The chart refuses `replicaCount` above 1 while `storage.backend` is `sqlite`.
+
+```bash
+helm install cloudpam deploy/helm/cloudpam-server
+```
+
+Set one variable without a values file:
+
+```bash
+helm upgrade cloudpam deploy/helm/cloudpam-server --reuse-values \
+  --set config.CLOUDPAM_LOG_LEVEL=debug
+```
+
+### Install with PostgreSQL
+
+Set `storage.backend=postgres` and provide `DATABASE_URL` from one of three places. The chart renders no volume and fails the render when none of them is set.
+
+A Secret you manage, with environment variable names as keys:
+
+```bash
+kubectl create secret generic cloudpam-secrets \
+  --from-literal=DATABASE_URL='postgres://cloudpam:s3cret@postgres.db.svc:5432/cloudpam?sslmode=require' \
+  --from-literal=CLOUDPAM_OIDC_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+
+helm install cloudpam deploy/helm/cloudpam-server \
+  --set storage.backend=postgres \
+  --set existingSecret=cloudpam-secrets
+```
+
+Inline, through the chart's own Secret:
+
+```bash
+helm install cloudpam deploy/helm/cloudpam-server \
+  --set storage.backend=postgres \
+  --set secrets.DATABASE_URL='postgres://cloudpam:s3cret@postgres.db.svc:5432/cloudpam?sslmode=require'
+```
+
+From a Secret an operator created under a different key name, through `env`:
+
+```yaml
+storage:
+  backend: postgres
+env:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: cloudpam-db-app
+        key: uri
+```
+
+With `existingSecret` the chart creates no Secret, so every key under `secrets` must stay empty. Every key in the existing Secret is injected.
+
+### Enable OIDC, AI planning, tracing, and audit forwarding
+
+```yaml
+# values-prod.yaml
+storage:
+  backend: postgres
 
 ingress:
   enabled: true
   className: nginx
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
     - host: cloudpam.example.com
       paths:
@@ -1080,110 +1145,71 @@ ingress:
       hosts:
         - cloudpam.example.com
 
-resources:
-  limits:
-    cpu: 500m
-    memory: 512Mi
-  requests:
-    cpu: 100m
-    memory: 128Mi
-
-autoscaling:
-  enabled: true
-  minReplicas: 2
-  maxReplicas: 10
-  targetCPUUtilizationPercentage: 70
-
 config:
-  environment: production
-  logLevel: info
+  CLOUDPAM_TRUSTED_PROXIES:
+    - 10.244.0.0/16
+  CLOUDPAM_SERVER_URL: https://cloudpam.example.com
+  CLOUDPAM_OIDC_CALLBACK_URL: https://cloudpam.example.com/api/v1/auth/oidc/callback
+  CLOUDPAM_LLM_ENDPOINT: http://ollama.ai.svc:11434/v1
+  CLOUDPAM_LLM_MODEL: llama3
+  CLOUDPAM_TRACING_ENABLED: true
+  CLOUDPAM_TRACING_ENDPOINT: http://otel-collector.observability.svc:4318
+  CLOUDPAM_TRACING_SAMPLE_RATE: 0.25
+  CLOUDPAM_AUDIT_SYSLOG_ADDR: syslog.logging.svc:514
+  CLOUDPAM_AUDIT_SYSLOG_NETWORK: tcp
+  RATE_LIMIT_RPS: 0
 
-database:
-  type: postgres
-  host: ""
-  name: cloudpam
-  existingSecret: cloudpam-db-credentials
-
-# Cloud provider specific
-cloudProvider: ""  # gke or eks
+secrets:
+  DATABASE_URL: postgres://cloudpam:s3cret@postgres.db.svc:5432/cloudpam?sslmode=require
+  CLOUDPAM_OIDC_ENCRYPTION_KEY: <openssl rand -hex 32>
+  CLOUDPAM_LLM_API_KEY: sk-...
 ```
 
-### Deployment Template
-
-```yaml
-# helm/cloudpam/templates/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: {{ include "cloudpam.fullname" . }}
-  labels:
-    {{- include "cloudpam.labels" . | nindent 4 }}
-spec:
-  {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
-  {{- end }}
-  selector:
-    matchLabels:
-      {{- include "cloudpam.selectorLabels" . | nindent 6 }}
-  template:
-    metadata:
-      labels:
-        {{- include "cloudpam.selectorLabels" . | nindent 8 }}
-    spec:
-      serviceAccountName: {{ include "cloudpam.serviceAccountName" . }}
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-      containers:
-        - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          ports:
-            - name: http
-              containerPort: 8080
-              protocol: TCP
-          env:
-            - name: CLOUDPAM_ENV
-              value: {{ .Values.config.environment }}
-            - name: CLOUDPAM_LOG_LEVEL
-              value: {{ .Values.config.logLevel }}
-            - name: CLOUDPAM_DB_TYPE
-              value: {{ .Values.database.type }}
-            - name: CLOUDPAM_DB_HOST
-              value: {{ .Values.database.host }}
-            - name: CLOUDPAM_DB_NAME
-              value: {{ .Values.database.name }}
-            - name: CLOUDPAM_DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.existingSecret }}
-                  key: username
-            - name: CLOUDPAM_DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.database.existingSecret }}
-                  key: password
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 15
-            periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: http
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          resources:
-            {{- toYaml .Values.resources | nindent 12 }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop:
-                - ALL
+```bash
+helm install cloudpam deploy/helm/cloudpam-server -f values-prod.yaml
 ```
+
+Three things to know behind an ingress:
+
+- `CLOUDPAM_TRUSTED_PROXIES` must contain the ingress controller's pod CIDR, or every user shares one login rate limit.
+- The global rate limiter keys on the client address, which is the ingress behind a proxy. Set `RATE_LIMIT_RPS: 0` and limit at the ingress instead.
+- The ingress must send `X-Forwarded-Proto`, or session cookies lose the `Secure` flag.
+
+Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Without it the server generates a key on every start, and saved provider secrets stop decrypting after a restart. The chart never generates this key, because a key generated at render time would rotate on every `helm template` run under tools such as Argo CD.
+
+### Install the agent
+
+```bash
+helm install cloudpam-agent deploy/helm/cloudpam-agent \
+  --set config.serverUrl=https://cloudpam.example.com \
+  --set config.accountId=1 \
+  --set 'config.awsRegions={us-east-1,us-west-2}' \
+  --set apiKey=cpk_... \
+  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/cloudpam-discovery
+```
+
+The agent name defaults to the chart full name (`<release>-cloudpam-agent`), so the agent keeps one registration across pod restarts. For AWS Organizations discovery, set `config.awsOrg.enabled=true` and `config.awsOrg.roleName`. The agent has no HTTP port, so the chart defines no probes; its health is the heartbeat shown on the Discovery page.
+
+### Upgrade from chart 0.1.x
+
+Chart 0.2.0 renames the server values. Move each old key to its new place before `helm upgrade`:
+
+| Chart 0.1.x | Chart 0.2.0 |
+|-------------|-------------|
+| `auth.enabled` | Removed. Auth is always on. |
+| `auth.adminUsername`, `auth.adminEmail` | `config.CLOUDPAM_ADMIN_USERNAME`, `config.CLOUDPAM_ADMIN_EMAIL` |
+| `auth.adminPassword` | `secrets.CLOUDPAM_ADMIN_PASSWORD` |
+| `storage.postgres.databaseUrl` | `secrets.DATABASE_URL` |
+| `observability.logLevel`, `logFormat`, `metricsEnabled`, `sentryEnvironment` | `config.CLOUDPAM_LOG_LEVEL`, `CLOUDPAM_LOG_FORMAT`, `CLOUDPAM_METRICS_ENABLED`, `SENTRY_ENVIRONMENT` |
+| `observability.sentryDsn` | `secrets.SENTRY_DSN` |
+| `rateLimit.rps`, `rateLimit.burst` | `config.RATE_LIMIT_RPS`, `config.RATE_LIMIT_BURST` |
+| `existingSecret` keys `database-url`, `admin-password`, `sentry-dsn` | Keys `DATABASE_URL`, `CLOUDPAM_ADMIN_PASSWORD`, `SENTRY_DSN` |
+
+The default `storage.backend` changed from `postgres` to `sqlite`. An install that relied on the old default did not start, because it fell back to SQLite at an unwritable path, so set `storage.backend=postgres` explicitly if you use PostgreSQL.
+
+### Check the charts
+
+`just helm-check` runs `scripts/helm-check.sh`, the same script CI runs on every pull request that touches `deploy/helm/` or the Go tree. It lints and renders both charts, checks that `appVersion` matches the latest `docs/CHANGELOG.md` release, checks that the rendered environment matches the server, and fails when the server reads a variable that `values.yaml` does not list.
 
 ### Kubernetes Password Reset
 
@@ -1208,14 +1234,13 @@ The command exits non-zero if the user does not exist, the password fails policy
 ### GKE-specific Values
 
 ```yaml
-# helm/cloudpam/values-gke.yaml
-cloudProvider: gke
-
+# values-gke.yaml
 serviceAccount:
   annotations:
     iam.gke.io/gcp-service-account: cloudpam@PROJECT_ID.iam.gserviceaccount.com
 
 ingress:
+  enabled: true
   className: gce
   annotations:
     kubernetes.io/ingress.global-static-ip-name: cloudpam-ip
@@ -1225,14 +1250,13 @@ ingress:
 ### EKS-specific Values
 
 ```yaml
-# helm/cloudpam/values-eks.yaml
-cloudProvider: eks
-
+# values-eks.yaml
 serviceAccount:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/cloudpam-role
 
 ingress:
+  enabled: true
   className: alb
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
