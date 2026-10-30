@@ -1,63 +1,127 @@
-# Default values for cloudpam-server
+# Default values for cloudpam-server.
+#
+# The server reads only environment variables. Keys under `config` and
+# `secrets` are those variable names. An empty value is not rendered, so the
+# server default applies (shown in the trailing comment). A list renders
+# joined with ",". Precedence inside the container, lowest first:
+# chart-owned (APP_VERSION, SQLITE_DSN) < config < secrets/existingSecret < env.
 
-# Image configuration
 image:
   repository: ghcr.io/badgerops/cloudpam/server
   pullPolicy: IfNotPresent
-  tag: "latest"
+  # Empty means the chart appVersion. Release image tags carry no leading "v".
+  # The tag is also passed as APP_VERSION, which drives the in-app update check.
+  tag: ""
 
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
-# Number of replicas (use 1 for SQLite mode)
+# Must be 1 while storage.backend is sqlite (the chart refuses more).
 replicaCount: 1
 
-# Storage backend: "postgres" or "sqlite"
 storage:
-  backend: postgres
-
-  # PostgreSQL settings (used when backend is "postgres")
-  postgres:
-    # DATABASE_URL connection string
-    # Can be provided directly or via existingSecret
-    databaseUrl: ""
-
-  # SQLite settings (used when backend is "sqlite")
+  # sqlite:   one replica, the database on the volume below, Recreate rollouts,
+  #           SQLITE_DSN set by the chart from storage.sqlite.dsn.
+  # postgres: no volume. DATABASE_URL must come from secrets, existingSecret or env.
+  backend: sqlite
   sqlite:
-    # SQLITE_DSN (default: file:/data/cloudpam.db?cache=shared&_fk=1)
+    # Must point into the volume mounted at /data.
     dsn: "file:/data/cloudpam.db?cache=shared&_fk=1"
-    # Persistent volume for SQLite data
     persistence:
+      # false mounts an emptyDir; data is lost when the pod goes away.
       enabled: true
       size: 1Gi
       storageClass: ""
       accessModes:
         - ReadWriteOnce
 
-# Auth configuration
-auth:
-  enabled: false
-  # Bootstrap admin credentials (used on first startup)
-  adminUsername: ""
-  adminPassword: ""
-  adminEmail: ""
+# Non-secret settings, rendered into a ConfigMap. Every key is the environment
+# variable name the server reads. The trailing comment is the server default.
+# A name that looks like a credential (DATABASE_URL, SENTRY_DSN, *_PASSWORD,
+# *_SECRET, *_TOKEN, *_KEY) fails the render here; put it under secrets.
+config:
+  # Bootstrap admin, created at startup when the user does not exist. Password
+  # goes in secrets.CLOUDPAM_ADMIN_PASSWORD. Without these, the first visitor
+  # creates the admin on the setup screen.
+  CLOUDPAM_ADMIN_USERNAME: ""
+  CLOUDPAM_ADMIN_EMAIL: ""           # <username>@localhost
 
-# Observability
-observability:
-  logLevel: info
-  logFormat: json
-  metricsEnabled: true
-  sentryDsn: ""
-  sentryEnvironment: production
+  # CIDRs whose X-Forwarded-For the login rate limiter trusts. Bare IPs are
+  # rejected; write /32. Set it to the ingress controller's pod CIDR, or every
+  # user shares one login limit.
+  CLOUDPAM_TRUSTED_PROXIES: []       # none trusted
+  # External https URL written into agent bootstrap tokens. Without it the
+  # server builds http://<Host> from the request, ignoring X-Forwarded-Proto.
+  CLOUDPAM_SERVER_URL: ""            # built from the request
 
-# Rate limiting
-rateLimit:
-  rps: "10.0"
-  burst: "20"
+  # OIDC. Also needs secrets.CLOUDPAM_OIDC_ENCRYPTION_KEY.
+  # Required for OIDC: <external URL>/api/v1/auth/oidc/callback.
+  CLOUDPAM_OIDC_CALLBACK_URL: ""     # none
 
-# Existing secret for sensitive values
-# Must contain keys as needed: database-url, admin-password, sentry-dsn
+  # Audit events as CEF over syslog. On when CLOUDPAM_AUDIT_SYSLOG_ADDR is set.
+  CLOUDPAM_AUDIT_SYSLOG_ADDR: ""     # host:port
+  CLOUDPAM_AUDIT_SYSLOG_NETWORK: ""  # udp (udp or tcp; no TLS)
+  CLOUDPAM_AUDIT_SYSLOG_APP_NAME: "" # cloudpam
+
+  CLOUDPAM_LOG_LEVEL: ""             # info (debug, info, warn, error)
+  CLOUDPAM_LOG_FORMAT: ""            # json (json or text)
+  # /metrics is served without auth. Any value other than true or 1 turns it off.
+  CLOUDPAM_METRICS_ENABLED: ""       # true
+
+  # OpenTelemetry over OTLP/HTTP. ENDPOINT and SAMPLE_RATE are read only when enabled.
+  CLOUDPAM_TRACING_ENABLED: ""       # false
+  CLOUDPAM_TRACING_ENDPOINT: ""      # http://localhost:4318
+  CLOUDPAM_TRACING_SAMPLE_RATE: ""   # 1.0, greater than 0 and at most 1
+
+  # AI planning over an OpenAI-compatible API. On when CLOUDPAM_LLM_ENDPOINT or
+  # secrets.CLOUDPAM_LLM_API_KEY is set. An endpoint with no key is authless
+  # mode (Ollama, vLLM).
+  CLOUDPAM_LLM_ENDPOINT: ""          # OpenAI
+  CLOUDPAM_LLM_MODEL: ""             # gpt-4o
+  CLOUDPAM_LLM_MAX_TOKENS: ""        # 4096
+  CLOUDPAM_LLM_TEMPERATURE: ""       # 0.7
+
+  # Global per-IP rate limit. 0 disables. Behind an ingress every client
+  # arrives from the ingress address and shares one bucket; prefer 0 here and
+  # limiting at the ingress.
+  RATE_LIMIT_RPS: ""                 # 100
+  RATE_LIMIT_BURST: ""               # 200
+
+  # Sentry. The DSN lives under secrets.
+  SENTRY_ENVIRONMENT: ""             # production
+  SENTRY_FRONTEND_DSN: ""            # browser-public; unused by the 0.23.4 UI
+
+  # SQLite connection pool (sqlite backend only).
+  SQLITE_MAX_OPEN_CONNS: ""          # 1
+  SQLITE_MAX_IDLE_CONNS: ""          # 2
+  SQLITE_CONN_MAX_LIFETIME_SECS: ""  # 3600
+  SQLITE_CONN_MAX_IDLE_SECS: ""      # 600
+
+  # Release check. The in-app upgrade button does not work in a pod; upgrade
+  # with helm. Point these at a mirror on an air-gapped cluster.
+  CLOUDPAM_RELEASE_REPO: ""          # BadgerOps/cloudpam
+  CLOUDPAM_GITHUB_API_ROOT: ""       # https://api.github.com
+
+# Credentials, rendered into a Secret this chart owns. Leave them empty when
+# existingSecret is set; the render fails otherwise.
+secrets:
+  # pgx connection string. Required when storage.backend is postgres.
+  DATABASE_URL: ""
+  # 12 to 72 bytes. Used with config.CLOUDPAM_ADMIN_USERNAME.
+  CLOUDPAM_ADMIN_PASSWORD: ""
+  # 64 hex characters (openssl rand -hex 32). Encrypts the OIDC client secrets
+  # stored in the database. Without it the server makes a new key on every
+  # start and saved OIDC providers stop working after a restart. Set it before
+  # enabling OIDC and never rotate it casually.
+  CLOUDPAM_OIDC_ENCRYPTION_KEY: ""
+  CLOUDPAM_LLM_API_KEY: ""
+  SENTRY_DSN: ""
+
+# A Secret you manage (External Secrets, Sealed Secrets, kubectl). Its keys are
+# environment variable names, the same as under secrets, and every key becomes
+# a container variable. The chart then creates no Secret. With
+# storage.backend=postgres it must hold DATABASE_URL.
 existingSecret: ""
 
 # Service account
@@ -72,6 +136,7 @@ service:
   port: 8080
 
 # Ingress
+# The ingress must forward X-Forwarded-Proto, or session cookies lose the Secure flag.
 ingress:
   enabled: false
   className: ""
@@ -115,7 +180,12 @@ tolerations: []
 # Affinity
 affinity: {}
 
-# Extra environment variables
+# Raw container env entries. They win over config and secrets. Use them for
+# valueFrom sources, for example a Postgres operator's connection Secret:
+#   env:
+#     - name: DATABASE_URL
+#       valueFrom:
+#         secretKeyRef: {name: cloudpam-db-app, key: uri}
 env: []
 
 # Extra volumes

@@ -1,0 +1,10 @@
+{{ include "cloudpam-server.fullname" . }} is installed.
+
+  image:   {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+  storage: {{ .Values.storage.backend }}
+{{- if and (not .Values.existingSecret) (not (dig "CLOUDPAM_OIDC_ENCRYPTION_KEY" "" (.Values.secrets | default dict))) }}
+
+NOTE: secrets.CLOUDPAM_OIDC_ENCRYPTION_KEY is not set. The server makes a new
+key on every start, so saved OIDC providers stop working after a restart.
+Set it to the output of `openssl rand -hex 32` before configuring SSO.
+{{- end }}
