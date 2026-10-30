@@ -65,6 +65,7 @@ want_once SQLITE_DSN "${sd[@]}"
 want_absent DATABASE_URL "${sd[@]}"
 grep -q 'kind: PersistentVolumeClaim' "$OUT/server-default-all.yaml" || fail "default render has no PVC"
 grep -q 'type: Recreate' "${sd[1]}" || fail "default render is not strategy Recreate"
+grep -q 'rollingUpdate' "${sd[1]}" && fail "default render sets rollingUpdate, which the API server rejects with Recreate"
 
 SERVER_FULL_ENV=(
 	APP_VERSION
@@ -100,6 +101,7 @@ done
 want_absent SQLITE_DSN "${sf[@]}"
 grep -q 'kind: PersistentVolumeClaim' "$OUT/server-full-all.yaml" && fail "postgres render still has a PVC"
 grep -q 'mountPath: /data' "${sf[1]}" && fail "postgres render still mounts /data"
+grep -q 'type: RollingUpdate' "${sf[1]}" || fail "postgres render is not strategy RollingUpdate"
 
 want_once CLOUDPAM_API_KEY "${af[@]}"
 want_absent CLOUDPAM_AGENT_NAME "${af[@]}"

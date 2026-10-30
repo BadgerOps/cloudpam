@@ -1207,6 +1207,8 @@ Chart 0.2.0 renames the server values. Move each old key to its new place before
 
 The default `storage.backend` changed from `postgres` to `sqlite`. An install that relied on the old default did not start, because it fell back to SQLite at an unwritable path, so set `storage.backend=postgres` explicitly if you use PostgreSQL.
 
+A SQLite install rolls out with `strategy: Recreate`. A client-side `helm upgrade` from 0.1.x replaces the `RollingUpdate` strategy the API server gave the old Deployment, so Helm 3 needs no extra step. If Helm 4 installed the 0.1.x release, it used server-side apply, which keeps the old `rollingUpdate` fields, and the API server rejects the Deployment with `spec.strategy.rollingUpdate: Forbidden`. Pass `--server-side=false` on that one upgrade.
+
 ### Check the charts
 
 `just helm-check` runs `scripts/helm-check.sh`, the same script CI runs on every pull request that touches `deploy/helm/` or the Go tree. It lints and renders both charts, checks that `appVersion` matches the latest `docs/CHANGELOG.md` release, checks that the rendered environment matches the server, and fails when the server reads a variable that `values.yaml` does not list.
