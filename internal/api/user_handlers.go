@@ -740,6 +740,10 @@ func (us *UserServer) changePassword(w http.ResponseWriter, r *http.Request, id 
 		us.writeErr(ctx, w, http.StatusNotFound, "user not found", "")
 		return
 	}
+	if user.AuthProvider == "oidc" {
+		us.writeErr(ctx, w, http.StatusBadRequest, "password is managed by the identity provider", "")
+		return
+	}
 
 	var input struct {
 		CurrentPassword string `json:"current_password"`

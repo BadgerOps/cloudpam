@@ -6,6 +6,7 @@ import { useToast } from '../hooks/useToast'
 
 export default function ProfilePage() {
   const { currentUser } = useAuth()
+  const passwordManagedByIdP = currentUser?.auth_provider === 'oidc'
   const changePassword = useChangePassword()
   const { showToast } = useToast()
 
@@ -82,7 +83,19 @@ export default function ProfilePage() {
         </dl>
       </div>
 
-      {/* Change Password */}
+      {passwordManagedByIdP ? (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Password</h3>
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            Your password is managed by your identity provider. Change it there.
+          </p>
+          {currentUser?.oidc_issuer && (
+            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+              Identity provider: <span className="font-mono">{currentUser.oidc_issuer}</span>
+            </p>
+          )}
+        </div>
+      ) : (
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Change Password</h3>
         <form onSubmit={handleChangePassword} className="space-y-4">
@@ -131,6 +144,7 @@ export default function ProfilePage() {
           </button>
         </form>
       </div>
+      )}
     </div>
   )
 }
