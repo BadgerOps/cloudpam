@@ -119,6 +119,16 @@ json_string() {
 }
 login_body() { printf '{"username":"%s","password":"%s"}' "$(json_string "$USERNAME")" "$(json_string "$PASSWORD")"; }
 
+# `npm run build` rewrites the tracked web/dist/index.html in the caller's checkout. The binary embeds
+# the built copy, so the checkout's file goes back once the binary exists.
+restore_index_html() {
+  if [ -f "$STATE/index.html.orig" ]; then
+    cp "$STATE/index.html.orig" "$REPO_ROOT/web/dist/index.html"
+    rm -f "$STATE/index.html.orig"
+    log "restored the checkout's web/dist/index.html (the built copy is embedded in the binary)"
+  fi
+}
+
 cmd_launch() {
   local pinned="${CLOUDPAM_VERIFY_RUN_ID:-}"
   RUN_ID="${CLOUDPAM_VERIFY_RUN_ID:-$(date +%Y%m%d-%H%M%S)-$$}"
@@ -131,7 +141,12 @@ cmd_launch() {
   [ -n "$pinned" ] || echo "$RUN_ID" > "$RUNS_DIR/current"
   log "run $RUN_ID -> $RUN_DIR"
 
+  # Side-by-side launches share web/dist and the checkout's index.html, so they build one at a time.
+  exec 9>"$RUNS_DIR/build.lock"
+  flock 9
   if [ "${CLOUDPAM_VERIFY_SKIP_UI:-0}" != "1" ]; then
+    [ -f "$REPO_ROOT/web/dist/index.html" ] && cp "$REPO_ROOT/web/dist/index.html" "$STATE/index.html.orig"
+    trap restore_index_html EXIT
     log "building UI (ui/ -> web/dist, embedded into the binary)"
     nixrun 'cd "$REPO_ROOT/ui" && ([ -d node_modules ] || npm ci --no-audit --no-fund) && npm run build' >"$STATE/ui-build.log" 2>&1 \
       || { tail -n 40 "$STATE/ui-build.log" >&2; die "ui build failed (see $STATE/ui-build.log)"; }
@@ -150,6 +165,9 @@ cmd_launch() {
   log "building server (-tags sqlite, CGO_ENABLED=0)"
   nixrun 'cd "$REPO_ROOT" && mkdir -p tmp/go-cache && GOCACHE="$REPO_ROOT/tmp/go-cache" CGO_ENABLED=0 go build -tags sqlite -ldflags "-X main.version=$APP_VERSION" -o "$STATE/cloudpam" ./cmd/cloudpam' \
     || die "go build failed"
+  restore_index_html
+  trap - EXIT
+  exec 9>&-
 
   PORT="$(free_port)" || die "no free port in 18080-18179"
   BASE_URL="http://127.0.0.1:$PORT"

@@ -26,7 +26,7 @@ All commands run from the repo root. The helper wraps itself in `nix develop` (t
 
 What it does, in order (about 1-2 minutes cold, under 30 seconds when `ui/node_modules` and the Go cache are warm):
 
-1. Builds the SPA (`cd ui && npm ci && npm run build` → `web/dist/`, embedded via `go:embed`). Skip with `CLOUDPAM_VERIFY_SKIP_UI=1` only when you know `web/dist/assets` is current.
+1. Builds the SPA (`cd ui && npm ci && npm run build` → `web/dist/`, embedded via `go:embed`). The build rewrites the tracked `web/dist/index.html`, so launch copies it to `state/index.html.orig` first and copies it back once the server binary exists (step 3), logging `restored the checkout's web/dist/index.html`; the binary serves the freshly built copy, and your checkout keeps whatever was there, uncommitted edits included. Side-by-side launches take turns at the build (`tmp/cloudpam-verify/build.lock`), so one cannot save or restore another's output. Skip with `CLOUDPAM_VERIFY_SKIP_UI=1` only when you know `web/dist/assets` is current.
 2. Installs Playwright + Chromium from the repo-root `package.json` (idempotent).
 3. Builds the server with `-tags sqlite` and `CGO_ENABLED=0` (the release configuration) into the run's state dir.
 4. Picks a free port in 18080-18179 and starts the binary with a fresh SQLite file (`SQLITE_DSN=file:<state>/cloudpam.db`), `RATE_LIMIT_RPS=0`, JSON logs, and `APP_VERSION=cloudpam-verify-<git short rev>-<run id>` (the server trims a leading `v`, so the stamp must not start with one). Migrations `0001`..`0021` apply on startup. Everything else, including `SQLITE_MAX_OPEN_CONNS=1`, is the product default.
