@@ -112,7 +112,11 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
-			acct, acctFound, _ := s.store.GetAccount(ctx, id)
+			acct, acctFound, err := s.store.GetAccount(ctx, id)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusInternalServerError, "failed to load account", err.Error())
+				return
+			}
 			var ok bool
 			force := strings.ToLower(r.URL.Query().Get("force"))
 			if force == "1" || force == "true" || force == "yes" {
