@@ -4,7 +4,8 @@
 image:
   repository: ghcr.io/badgerops/cloudpam/agent
   pullPolicy: IfNotPresent
-  tag: "latest"
+  # Empty means the chart appVersion. Release image tags carry no leading "v".
+  tag: ""
 
 imagePullSecrets: []
 
@@ -16,7 +17,8 @@ config:
   # Account ID to discover (required)
   accountId: 1
 
-  # Agent name (defaults to pod name if not set)
+  # Stable agent identity. Empty means the chart full name (<release>-cloudpam-agent),
+  # so the agent keeps the same registration across pod restarts.
   agentName: ""
 
   # Sync interval (default: 15m)
@@ -36,6 +38,14 @@ config:
   maxRetries: 3
   retryBackoff: "5s"
   requestTimeout: "30s"
+
+  # AWS Organizations mode: assume a role in every member account.
+  awsOrg:
+    enabled: false
+    roleName: ""          # CloudPAMDiscoveryRole
+    externalId: ""
+    regions: []           # falls back to awsRegions
+    excludeAccounts: []   # account IDs as strings
 
 # API key for authentication (required)
 # Can be provided directly or via existingSecret

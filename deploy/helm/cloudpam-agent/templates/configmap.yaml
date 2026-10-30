@@ -8,9 +8,7 @@ data:
   agent.yaml: |
     server_url: {{ .Values.config.serverUrl | quote }}
     account_id: {{ .Values.config.accountId }}
-    {{- if .Values.config.agentName }}
-    agent_name: {{ .Values.config.agentName | quote }}
-    {{- end }}
+    agent_name: {{ .Values.config.agentName | default (include "cloudpam-agent.fullname" .) | quote }}
     sync_interval: {{ .Values.config.syncInterval | quote }}
     heartbeat_interval: {{ .Values.config.heartbeatInterval | quote }}
     {{- if .Values.config.awsRegions }}
@@ -22,3 +20,25 @@ data:
     max_retries: {{ .Values.config.maxRetries }}
     retry_backoff: {{ .Values.config.retryBackoff | quote }}
     request_timeout: {{ .Values.config.requestTimeout | quote }}
+    {{- if .Values.config.awsOrg.enabled }}
+    aws_org:
+      enabled: true
+      {{- with .Values.config.awsOrg.roleName }}
+      role_name: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.config.awsOrg.externalId }}
+      external_id: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.config.awsOrg.regions }}
+      regions:
+        {{- range . }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.config.awsOrg.excludeAccounts }}
+      exclude_accounts:
+        {{- range . }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+    {{- end }}
