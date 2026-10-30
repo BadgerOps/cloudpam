@@ -3,16 +3,21 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"cloudpam/internal/auth"
+	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 func newTestLogger() *slog.Logger {
@@ -2013,4 +2018,251 @@ func TestLoginRateLimitMiddleware_PerIPIsolation(t *testing.T) {
 	if rr2.Code != http.StatusOK {
 		t.Fatalf("expected IP2 to succeed, got %d", rr2.Code)
 	}
+}
+
+func TestLoginRateLimitMiddleware_FollowsSecuritySettings(t *testing.T) {
+	ctx := context.Background()
+	settingsStore := storage.NewMemorySettingsStore()
+	setLimit := func(n int) {
+		t.Helper()
+		settings, err := settingsStore.GetSecuritySettings(ctx)
+		if err != nil {
+			t.Fatalf("get settings: %v", err)
+		}
+		settings.LoginRateLimitPerMin = n
+		if err := settingsStore.UpdateSecuritySettings(ctx, settings); err != nil {
+			t.Fatalf("update settings: %v", err)
+		}
+	}
+	setLimit(2)
+
+	us, _, _ := setupUserTestServer()
+	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
+		AttemptsPerMinute: 5,
+		Settings:          settingsStore,
+		SettingsRefresh:   time.Nanosecond,
+	})
+	handler := loginRL(http.HandlerFunc(us.handleLogin))
+
+	login := func(ip string) int {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"nobody","password":"wrong-password-1"}`))
+		req.RemoteAddr = ip + ":12345"
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	for i := 1; i <= 2; i++ {
+		if code := login("1.2.3.4"); code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: got %d, want 401", i, code)
+		}
+	}
+	if code := login("1.2.3.4"); code != http.StatusTooManyRequests {
+		t.Fatalf("attempt 3 with limit 2: got %d, want 429", code)
+	}
+
+	setLimit(4)
+	for i := 1; i <= 4; i++ {
+		if code := login("5.6.7.8"); code != http.StatusUnauthorized {
+			t.Fatalf("raised limit, attempt %d: got %d, want 401", i, code)
+		}
+	}
+	if code := login("5.6.7.8"); code != http.StatusTooManyRequests {
+		t.Fatalf("raised limit, attempt 5: got %d, want 429", code)
+	}
+
+	if code := login("9.9.9.9"); code != http.StatusUnauthorized {
+		t.Fatalf("existing ip first attempt: got %d, want 401", code)
+	}
+	setLimit(1)
+	if code := login("9.9.9.9"); code != http.StatusUnauthorized {
+		t.Fatalf("lowered limit, attempt 2: got %d, want 401", code)
+	}
+	if code := login("9.9.9.9"); code != http.StatusTooManyRequests {
+		t.Fatalf("lowered limit, attempt 3: got %d, want 429", code)
+	}
+}
+
+type failingSettingsStore struct{ storage.SettingsStore }
+
+func (failingSettingsStore) GetSecuritySettings(context.Context) (*domain.SecuritySettings, error) {
+	return nil, errors.New("settings unavailable")
+}
+
+func TestLoginRateLimitMiddleware_FallsBackToDefaultWhenSettingsUnreadable(t *testing.T) {
+	handler := LoginRateLimitMiddleware(LoginRateLimitConfig{Settings: failingSettingsStore{}})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 1; i <= domain.DefaultLoginRateLimitPerMin+1; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		handler.ServeHTTP(rr, req)
+		want := http.StatusOK
+		if i > domain.DefaultLoginRateLimitPerMin {
+			want = http.StatusTooManyRequests
+		}
+		if rr.Code != want {
+			t.Fatalf("attempt %d: got %d, want %d", i, rr.Code, want)
+		}
+	}
+}
+
+type countingSettingsStore struct {
+	storage.SettingsStore
+	reads atomic.Int64
+	limit int
+}
+
+func (c *countingSettingsStore) GetSecuritySettings(context.Context) (*domain.SecuritySettings, error) {
+	c.reads.Add(1)
+	settings := domain.DefaultSecuritySettings()
+	settings.LoginRateLimitPerMin = c.limit
+	return &settings, nil
+}
+
+func TestLoginRateLimitMiddleware_CachesSettingsWithinRefreshWindow(t *testing.T) {
+	store := &countingSettingsStore{limit: 2}
+	handler := LoginRateLimitMiddleware(LoginRateLimitConfig{Settings: store, SettingsRefresh: time.Hour})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	const requests = 50
+	var limited int
+	for i := 0; i < requests; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		handler.ServeHTTP(rr, req)
+		if rr.Code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited != requests-2 {
+		t.Fatalf("got %d limited responses, want %d", limited, requests-2)
+	}
+	if got := store.reads.Load(); got != 1 {
+		t.Fatalf("settings store read %d times across %d requests, want 1", got, requests)
+	}
+}
+
+type flakySettingsStore struct {
+	storage.SettingsStore
+	limit int
+	fail  atomic.Bool
+}
+
+func (f *flakySettingsStore) GetSecuritySettings(ctx context.Context) (*domain.SecuritySettings, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f.fail.Load() {
+		return nil, errors.New("settings unavailable")
+	}
+	settings := domain.DefaultSecuritySettings()
+	settings.LoginRateLimitPerMin = f.limit
+	return &settings, nil
+}
+
+func attemptsBeforeLimit(t *testing.T, handler http.Handler, ip string, ctx context.Context) int {
+	t.Helper()
+	for i := 1; i <= domain.MaxLoginRateLimitPerMin+1; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil).WithContext(ctx)
+		req.RemoteAddr = ip + ":12345"
+		handler.ServeHTTP(rr, req)
+		if rr.Code == http.StatusTooManyRequests {
+			return i - 1
+		}
+	}
+	t.Fatalf("no 429 within %d attempts from %s", domain.MaxLoginRateLimitPerMin+1, ip)
+	return 0
+}
+
+func TestLoginRateLimitMiddleware_KeepsLastGoodLimitWhenRefreshFails(t *testing.T) {
+	store := &flakySettingsStore{limit: 2}
+	handler := LoginRateLimitMiddleware(LoginRateLimitConfig{Settings: store, SettingsRefresh: time.Nanosecond})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	if got := attemptsBeforeLimit(t, handler, "10.0.0.1", context.Background()); got != 2 {
+		t.Fatalf("healthy store: %d attempts allowed, want 2", got)
+	}
+	store.fail.Store(true)
+	if got := attemptsBeforeLimit(t, handler, "10.0.0.2", context.Background()); got != 2 {
+		t.Fatalf("failing store after a good read: %d attempts allowed, want the last good 2", got)
+	}
+}
+
+func TestLoginRateLimitMiddleware_RefreshIgnoresRequestCancellation(t *testing.T) {
+	store := &flakySettingsStore{limit: 2}
+	handler := LoginRateLimitMiddleware(LoginRateLimitConfig{Settings: store, SettingsRefresh: time.Hour})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := attemptsBeforeLimit(t, handler, "10.0.0.3", cancelled); got != 2 {
+		t.Fatalf("cancelled request: %d attempts allowed, want 2", got)
+	}
+	if got := attemptsBeforeLimit(t, handler, "10.0.0.4", context.Background()); got != 2 {
+		t.Fatalf("after a cancelled refresh: %d attempts allowed, want 2", got)
+	}
+}
+
+func TestLoginRateLimitMiddleware_EnforcesSettingRange(t *testing.T) {
+	burst := func(t *testing.T, cfg LoginRateLimitConfig) int {
+		t.Helper()
+		handler := LoginRateLimitMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		allowed := 0
+		for i := 0; i < domain.MaxLoginRateLimitPerMin+5; i++ {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+			req.RemoteAddr = "1.2.3.4:12345"
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				break
+			}
+			allowed++
+		}
+		return allowed
+	}
+
+	cases := []struct {
+		name     string
+		stored   int
+		fallback int
+		want     int
+	}{
+		{"stored zero", 0, 0, domain.DefaultLoginRateLimitPerMin},
+		{"stored min", 1, 0, 1},
+		{"stored max", 60, 0, 60},
+		{"stored above max", 61, 0, domain.DefaultLoginRateLimitPerMin},
+		{"stored negative", -3, 0, domain.DefaultLoginRateLimitPerMin},
+		{"invalid stored uses valid fallback", 61, 7, 7},
+		{"invalid stored uses invalid fallback", 0, 61, domain.DefaultLoginRateLimitPerMin},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &countingSettingsStore{limit: tc.stored}
+			got := burst(t, LoginRateLimitConfig{AttemptsPerMinute: tc.fallback, Settings: store})
+			if got != tc.want {
+				t.Fatalf("stored %d fallback %d: allowed %d, want %d", tc.stored, tc.fallback, got, tc.want)
+			}
+		})
+	}
+
+	t.Run("no store with out of range fallback", func(t *testing.T) {
+		for _, fb := range []int{0, 61} {
+			if got := burst(t, LoginRateLimitConfig{AttemptsPerMinute: fb}); got != domain.DefaultLoginRateLimitPerMin {
+				t.Fatalf("fallback %d: allowed %d, want %d", fb, got, domain.DefaultLoginRateLimitPerMin)
+			}
+		}
+		if got := burst(t, LoginRateLimitConfig{AttemptsPerMinute: 60}); got != 60 {
+			t.Fatalf("fallback 60: allowed %d, want 60", got)
+		}
+	})
 }

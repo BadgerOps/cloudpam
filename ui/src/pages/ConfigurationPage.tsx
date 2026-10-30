@@ -4,6 +4,8 @@ import { CheckCircle2, ExternalLink, FileText, Key, Loader2, Radio, RefreshCw, S
 import { checkForUpdates, getSystemInfo, getUpgradeStatus, triggerUpgrade } from '../api/client'
 import type { SystemInfoResponse, UpdateCheckResponse } from '../api/types'
 import { scheduleFrontendResetAfterUpgrade } from '../utils/upgradeReload'
+import { useAuth } from '../hooks/useAuth'
+import { canOpen } from '../navigation'
 
 function formatVersion(version: string | null | undefined) {
   if (!version) return 'unknown'
@@ -16,6 +18,7 @@ function formatDate(value?: string) {
 }
 
 export default function ConfigurationPage() {
+  const { hasPermission } = useAuth()
   const [systemInfo, setSystemInfo] = useState<SystemInfoResponse | null>(null)
   const [updateInfo, setUpdateInfo] = useState<UpdateCheckResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -232,15 +235,17 @@ export default function ConfigurationPage() {
               </div>
             </Link>
 
-            <Link to="/config/api-keys" className="flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 hover:border-blue-400 hover:bg-blue-50/60 dark:hover:bg-blue-950/20">
-              <div className="flex items-center gap-3">
-                <Key className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">API Keys</p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">Manage machine credentials and access scopes</p>
+            {canOpen('/config/api-keys', hasPermission) && (
+              <Link to="/config/api-keys" className="flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 hover:border-blue-400 hover:bg-blue-50/60 dark:hover:bg-blue-950/20">
+                <div className="flex items-center gap-3">
+                  <Key className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                  <div>
+                    <p className="font-medium text-gray-900 dark:text-white">API Keys</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Manage machine credentials and access scopes</p>
+                  </div>
                 </div>
-              </div>
-            </Link>
+              </Link>
+            )}
 
             <Link to="/config/log-destinations" className="flex items-center justify-between rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-3 hover:border-blue-400 hover:bg-blue-50/60 dark:hover:bg-blue-950/20">
               <div className="flex items-center gap-3">

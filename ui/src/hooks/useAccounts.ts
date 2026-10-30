@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
-import { get, post, del } from '../api/client'
+import { get, post, patch, del } from '../api/client'
 import { useLatestRequest } from './useLatestRequest'
-import type { Account, CreateAccountRequest } from '../api/types'
+import type { Account, CreateAccountRequest, UpdateAccountRequest } from '../api/types'
 
 export function useAccounts() {
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -33,11 +33,18 @@ export function useAccounts() {
     return account
   }, [begin])
 
+  const updateAccount = useCallback(async (id: number, data: UpdateAccountRequest) => {
+    const account = await patch<Account>(`/api/v1/accounts/${id}`, data)
+    begin()
+    setAccounts(prev => prev.map(a => (a.id === id ? account : a)))
+    return account
+  }, [begin])
+
   const deleteAccount = useCallback(async (id: number) => {
     await del(`/api/v1/accounts/${id}`)
     begin()
     setAccounts(prev => prev.filter(a => a.id !== id))
   }, [begin])
 
-  return { accounts, loading, error, fetchAccounts, createAccount, deleteAccount }
+  return { accounts, loading, error, fetchAccounts, createAccount, updateAccount, deleteAccount }
 }

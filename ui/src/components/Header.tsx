@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Search, User, LogOut, Key, UserCircle, Sun, Moon, Monitor, Menu } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { canOpen } from '../navigation'
 import { useTheme, type ThemeMode } from '../hooks/useTheme'
 import { useNavigate } from 'react-router-dom'
 
@@ -18,7 +19,7 @@ interface HeaderProps {
 }
 
 export default function Header({ onSearchClick, onMenuClick, sidebarOpen }: HeaderProps) {
-  const { isAuthenticated, currentUser, role, logout } = useAuth()
+  const { isAuthenticated, currentUser, role, logout, hasPermission } = useAuth()
   const { mode, cycle: cycleTheme } = useTheme()
   const { Icon: ThemeIcon, label: themeLabel } = THEME_MODES[mode]
   const navigate = useNavigate()
@@ -125,13 +126,15 @@ export default function Header({ onSearchClick, onMenuClick, sidebarOpen }: Head
                   <UserCircle className="w-4 h-4" />
                   Profile
                 </button>
-                <button
-                  onClick={() => { setMenuOpen(false); navigate('/config/api-keys') }}
-                  className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-                >
-                  <Key className="w-4 h-4" />
-                  My API Keys
-                </button>
+                {canOpen('/config/api-keys', hasPermission) && (
+                  <button
+                    onClick={() => { setMenuOpen(false); navigate('/config/api-keys') }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  >
+                    <Key className="w-4 h-4" />
+                    My API Keys
+                  </button>
+                )}
               </div>
               {isAuthenticated && (
                 <>

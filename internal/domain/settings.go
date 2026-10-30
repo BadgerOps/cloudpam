@@ -1,5 +1,14 @@
 package domain
 
+// DefaultLoginRateLimitPerMin is the per-IP login attempts allowed per minute on a fresh install.
+const DefaultLoginRateLimitPerMin = 5
+
+// MinLoginRateLimitPerMin and MaxLoginRateLimitPerMin bound login_rate_limit_per_minute.
+const (
+	MinLoginRateLimitPerMin = 1
+	MaxLoginRateLimitPerMin = 60
+)
+
 // SecuritySettings holds runtime security configuration.
 type SecuritySettings struct {
 	SessionDurationHours          int                 `json:"session_duration_hours"`
@@ -24,7 +33,7 @@ func DefaultSecuritySettings() SecuritySettings {
 		MaxSessionsPerUser:            10,
 		PasswordMinLength:             12,
 		PasswordMaxLength:             72,
-		LoginRateLimitPerMin:          5,
+		LoginRateLimitPerMin:          DefaultLoginRateLimitPerMin,
 		AccountLockoutAttempts:        0,
 		AccountLockoutCooldownMinutes: 15,
 		TrustedProxies:                []string{},

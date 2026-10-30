@@ -2,8 +2,8 @@ apiVersion: v2
 name: cloudpam-agent
 description: CloudPAM Discovery Agent - Remote cloud resource discovery
 type: application
-version: 0.2.0
-appVersion: "0.23.4"
+version: 0.2.1
+appVersion: "0.23.5"
 keywords:
   - ipam
   - cloud

@@ -1,14 +1,14 @@
 import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { canOpen } from '../navigation'
+import type { RoutePath } from '../navigation'
 
 interface ProtectedRouteProps {
-  requiredRole?: string
-  requiredPermission?: string
-  requiredAnyPermissions?: string[]
+  route?: RoutePath
 }
 
-export default function ProtectedRoute({ requiredRole, requiredPermission, requiredAnyPermissions }: ProtectedRouteProps) {
-  const { isAuthenticated, authEnabled, localAuthEnabled, needsSetup, authChecked, role, hasPermission } = useAuth()
+export default function ProtectedRoute({ route }: ProtectedRouteProps) {
+  const { isAuthenticated, authEnabled, localAuthEnabled, needsSetup, authChecked, hasPermission } = useAuth()
 
   // Wait for the healthz check to finish before deciding
   if (!authChecked) {
@@ -25,13 +25,7 @@ export default function ProtectedRoute({ requiredRole, requiredPermission, requi
     return <Navigate to="/login" replace />
   }
 
-  if (requiredRole && role !== requiredRole) {
-    return <Navigate to="/" replace />
-  }
-  if (requiredPermission && !hasPermission(requiredPermission)) {
-    return <Navigate to="/" replace />
-  }
-  if (requiredAnyPermissions?.length && !requiredAnyPermissions.some(hasPermission)) {
+  if (route && !canOpen(route, hasPermission)) {
     return <Navigate to="/" replace />
   }
 
