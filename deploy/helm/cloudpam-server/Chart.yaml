@@ -3,7 +3,7 @@ name: cloudpam-server
 description: CloudPAM Server - Intelligent IP Address Management platform
 type: application
 version: 0.2.1
-appVersion: "0.23.5"
+appVersion: "0.23.6"
 keywords:
   - ipam
   - cloud
