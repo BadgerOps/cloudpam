@@ -1685,6 +1685,32 @@ func TestClientKeyWithProxies_UntrustedProxy(t *testing.T) {
 	}
 }
 
+func TestClientKeyWithProxies_ForwardedForms(t *testing.T) {
+	proxies, err := ParseTrustedProxies("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ header, want string }{
+		{"203.0.113.9", "203.0.113.9"},
+		{"203.0.113.9:4433", "203.0.113.9"},
+		{"2001:db8::7", "2001:db8::7"},
+		{"[2001:db8::7]", "2001:db8::7"},
+		{"[2001:db8::7]:4433", "2001:db8::7"},
+		{"fe80::1%eth0", "fe80::1"},
+		{"2001:db8::7, 10.0.0.5", "2001:db8::7"},
+		{"not-an-ip", "10.0.0.5"},
+		{"203.0.113.9:notaport", "10.0.0.5"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = "10.0.0.5:9999"
+		req.Header.Set("X-Forwarded-For", tc.header)
+		if got := clientKeyWithProxies(req, proxies); got != tc.want {
+			t.Errorf("X-Forwarded-For %q: got %q, want %q", tc.header, got, tc.want)
+		}
+	}
+}
+
 func TestClientKeyWithProxies_EmptyXFF(t *testing.T) {
 	cfg, _ := ParseTrustedProxies("172.16.0.0/12")
 
