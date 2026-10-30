@@ -44,5 +44,6 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Create a pool](./create-pool.md) covers the Address Pools form, parent selection, overlap and duplicate refusal, API creation, and audit side effects. Proven journey: `journeys/create-pool.cjs`.
 - [Create a cloud account](./create-account.md) covers the Cloud Accounts form, duplicate-key refusal, API creation, and deletion. Proven journey: `journeys/create-account.cjs`.
 - [Search](./search.md) covers the header search box, CIDR containment lookups, and the search API. Proven journey: `journeys/search.cjs` (its last step fails at e0818fd on a product bug; see the feature file).
+- [Navigation permissions](./navigation-permissions.md) covers which sidebar links a limited user sees, the redirect from gated URLs, the header API keys shortcut, and the matching API refusals. Proven journey: `journeys/navigation-permissions.cjs`.
 
 Not yet mapped (the sidebar reaches them, no recipe here): Dashboard, Allocated Blocks, Discovery, Drift Detection, Audit Log, Schema Planner, Recommendations, AI Planner, API Keys, Release Notes (and the update banner), Identity, Configuration, Log Destinations, and the `Import/Export` button. A proof that needs one of these starts by adding its feature file.

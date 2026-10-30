@@ -91,7 +91,7 @@ Sends SIGTERM only to the pid recorded in `state/server.pid`, and only if that p
 
 - `bin/cloudpam-verify` (bash, executable): subcommands above; `cloudpam-verify` with no arguments prints usage.
 - `bin/journey.cjs` (node, run via `cloudpam-verify browser`): the Playwright runner. Do not call it directly; `browser` exports the `CLOUDPAM_VERIFY_*` variables it reads (base URL, evidence dir, version, credentials, label) from the run's env file.
-- `journeys/<feature>.cjs`: the proven journey for `features/<feature>.md` (`login`, `create-pool`, `create-account`, `search`). New journeys go next to them, named after their feature file.
+- `journeys/<feature>.cjs`: the proven journey for `features/<feature>.md` (`login`, `create-pool`, `create-account`, `search`, `navigation-permissions`). New journeys go next to them, named after their feature file.
 
 ## Maintenance
 
