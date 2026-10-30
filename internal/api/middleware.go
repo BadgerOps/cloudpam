@@ -145,6 +145,17 @@ func RequestIDMiddleware() Middleware {
 	}
 }
 
+// ClientIPMiddleware resolves the client IP once per request, honouring
+// X-Forwarded-For only from trusted proxies, and stores it on the context.
+func ClientIPMiddleware(proxies *TrustedProxyConfig) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := WithClientIP(r.Context(), clientKeyWithProxies(r, proxies))
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 func sanitizeRequestID(raw string) string {
 	id := strings.TrimSpace(raw)
 	if id == "" || len(id) > maxRequestIDLength {
@@ -388,8 +399,8 @@ func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
 	if proxies != nil && proxies.IsTrusted(r.RemoteAddr) {
 		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
 			parts := strings.SplitN(xff, ",", 2)
-			if ip := strings.TrimSpace(parts[0]); ip != "" {
-				return ip
+			if addr, ok := forwardedAddr(parts[0]); ok {
+				return addr.String()
 			}
 		}
 	}
@@ -398,6 +409,22 @@ func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// forwardedAddr parses one X-Forwarded-For entry. Proxies write a bare
+// address, a bracketed IPv6 literal, or either with a port; the zone is
+// dropped so the result is a plain address the audit store and CEF accept.
+func forwardedAddr(entry string) (netip.Addr, bool) {
+	entry = strings.TrimSpace(entry)
+	if ap, err := netip.ParseAddrPort(entry); err == nil {
+		return ap.Addr().WithZone(""), true
+	}
+	entry = strings.TrimSuffix(strings.TrimPrefix(entry, "["), "]")
+	addr, err := netip.ParseAddr(entry)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return addr.WithZone(""), true
 }
 
 // defaultLoginSettingsRefresh is how long the login limiter reuses a resolved limit.
@@ -951,7 +978,7 @@ func AuditMiddleware(auditLogger AuditLogger, logger *slog.Logger) Middleware {
 				ResourceType: resourceType,
 				ResourceID:   resourceID,
 				RequestID:    RequestIDFromContext(ctx),
-				IPAddress:    clientKey(r),
+				IPAddress:    ClientIPFromContext(ctx),
 				StatusCode:   recorder.status,
 			}
 

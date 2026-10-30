@@ -924,6 +924,7 @@ func (us *UserServer) logAuditEventAs(ctx context.Context, actor, actorType, act
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
 		ResourceName: resourceName,
+		IPAddress:    ClientIPFromContext(ctx),
 		StatusCode:   statusCode,
 	}
 	if reqID := RequestIDFromContext(ctx); reqID != "" {

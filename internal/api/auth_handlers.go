@@ -488,6 +488,7 @@ func (as *AuthServer) logAPIKeyRotationDue(ctx context.Context, key *auth.APIKey
 		ResourceName: key.Name,
 		Changes:      &audit.Changes{After: after},
 		RequestID:    RequestIDFromContext(ctx),
+		IPAddress:    ClientIPFromContext(ctx),
 		StatusCode:   http.StatusOK,
 	})
 }
