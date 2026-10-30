@@ -2,8 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	stdhttp "net/http"
+	"strings"
 	"testing"
+
+	"cloudpam/internal/domain"
 )
 
 func TestSchemaCheck_NoConflicts(t *testing.T) {
@@ -196,4 +200,63 @@ func TestSchemaApply_InvalidParentRef(t *testing.T) {
 func TestSchemaApply_MethodNotAllowed(t *testing.T) {
 	srv, _ := setupTestServer()
 	doJSON(t, srv.mux, stdhttp.MethodGet, "/api/v1/schema/apply", "", stdhttp.StatusMethodNotAllowed)
+}
+
+func TestSchemaPlan_ChildOutsideParentRefused(t *testing.T) {
+	plan := func(child string, skip bool) string {
+		return fmt.Sprintf(`{"pools":[
+			{"ref":"root","name":"Root","cidr":"10.50.0.0/16","type":"supernet"},
+			{"ref":"ok","name":"Inside","cidr":"10.50.1.0/24","type":"environment","parent_ref":"root"},
+			{"ref":"child","name":"Child","cidr":%q,"type":"environment","parent_ref":"root"}
+		],"skip_conflicts":%t}`, child, skip)
+	}
+	singleCreate := func(t *testing.T, child string) apiError {
+		t.Helper()
+		srv, st := setupTestServer()
+		parent, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "Root", CIDR: "10.50.0.0/16"})
+		if err != nil {
+			t.Fatalf("create parent: %v", err)
+		}
+		rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools",
+			fmt.Sprintf(`{"name":"Child","cidr":%q,"parent_id":%d}`, child, parent.ID), stdhttp.StatusBadRequest)
+		var e apiError
+		if err := json.Unmarshal(rr.Body.Bytes(), &e); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return e
+	}
+
+	for _, child := range []string{"10.60.0.0/24", "10.50.0.0/16", "10.0.0.0/12"} {
+		want := singleCreate(t, child)
+		for _, req := range []struct {
+			path string
+			skip bool
+		}{
+			{"/api/v1/schema/check", false},
+			{"/api/v1/schema/apply", false},
+			{"/api/v1/schema/apply", true},
+		} {
+			t.Run(fmt.Sprintf("%s %s skip_conflicts=%t", req.path, child, req.skip), func(t *testing.T) {
+				srv, st := setupTestServer()
+				rr := doJSON(t, srv.mux, stdhttp.MethodPost, req.path, plan(child, req.skip), stdhttp.StatusBadRequest)
+				var got apiError
+				if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+				if got.Error != want.Error {
+					t.Fatalf("error = %q, want %q as POST /api/v1/pools returns", got.Error, want.Error)
+				}
+				if !strings.Contains(got.Detail, "pool 2 (child)") || !strings.Contains(got.Detail, want.Detail) {
+					t.Fatalf("detail = %q, want it to name pool 2 (child) and say %q", got.Detail, want.Detail)
+				}
+				pools, err := st.ListPools(t.Context())
+				if err != nil {
+					t.Fatalf("list: %v", err)
+				}
+				if len(pools) != 0 {
+					t.Fatalf("refused plan stored %d pools: %+v", len(pools), pools)
+				}
+			})
+		}
+	}
 }
