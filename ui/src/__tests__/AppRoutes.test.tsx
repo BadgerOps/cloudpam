@@ -70,8 +70,8 @@ describe('App routes', () => {
     window.history.pushState({}, '', '/')
   })
 
-  it('blocks direct API key management navigation without settings read permission', async () => {
-    mockUseAuthState.mockReturnValue(authState({ permissions: [] }))
+  it('blocks direct API key management navigation without an API key read permission', async () => {
+    mockUseAuthState.mockReturnValue(authState({ permissions: ['settings:read'] }))
     window.history.pushState({}, '', '/config/api-keys')
 
     render(<App />)
@@ -82,8 +82,8 @@ describe('App routes', () => {
     expect(screen.queryByText('API keys page')).toBeNull()
   })
 
-  it('allows direct API key management navigation with settings read permission', async () => {
-    mockUseAuthState.mockReturnValue(authState({ permissions: ['settings:read'] }))
+  it('allows direct API key management navigation with apikeys:list', async () => {
+    mockUseAuthState.mockReturnValue(authState({ permissions: ['apikeys:list'] }))
     window.history.pushState({}, '', '/config/api-keys')
 
     render(<App />)
