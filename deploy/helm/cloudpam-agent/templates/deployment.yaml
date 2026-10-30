@@ -39,12 +39,6 @@ spec:
               secretKeyRef:
                 name: {{ include "cloudpam-agent.secretName" . }}
                 key: api-key
-          {{- if not .Values.config.agentName }}
-          - name: CLOUDPAM_AGENT_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
-          {{- end }}
           {{- with .Values.env }}
           {{- toYaml . | nindent 10 }}
           {{- end }}

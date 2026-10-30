@@ -2,8 +2,8 @@ apiVersion: v2
 name: cloudpam-server
 description: CloudPAM Server - Intelligent IP Address Management platform
 type: application
-version: 0.1.1
-appVersion: "0.8.1"
+version: 0.2.0
+appVersion: "0.23.4"
 keywords:
   - ipam
   - cloud

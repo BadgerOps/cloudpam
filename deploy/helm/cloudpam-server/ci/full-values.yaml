@@ -1,0 +1,22 @@
+replicaCount: 2
+storage:
+  backend: postgres
+config:
+  CLOUDPAM_ADMIN_USERNAME: admin
+  CLOUDPAM_SERVER_URL: https://cloudpam.example.com
+  CLOUDPAM_OIDC_CALLBACK_URL: https://cloudpam.example.com/api/v1/auth/oidc/callback
+  CLOUDPAM_TRUSTED_PROXIES: [10.0.0.0/8, 172.16.0.0/12]
+  CLOUDPAM_LLM_ENDPOINT: http://ollama.ai.svc:11434/v1
+  CLOUDPAM_LLM_MODEL: llama3
+  CLOUDPAM_TRACING_ENABLED: true
+  CLOUDPAM_TRACING_ENDPOINT: http://otel-collector.observability.svc:4318
+  CLOUDPAM_TRACING_SAMPLE_RATE: 0.25
+  CLOUDPAM_AUDIT_SYSLOG_ADDR: syslog.logging.svc:514
+  CLOUDPAM_AUDIT_SYSLOG_NETWORK: tcp
+  CLOUDPAM_AUDIT_SYSLOG_APP_NAME: cloudpam-prod
+secrets:
+  DATABASE_URL: postgres://cloudpam:s3cret@postgres.db.svc:5432/cloudpam?sslmode=require
+  CLOUDPAM_ADMIN_PASSWORD: ci-placeholder-password
+  CLOUDPAM_OIDC_ENCRYPTION_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+  CLOUDPAM_LLM_API_KEY: sk-ci
+  SENTRY_DSN: https://examplePublicKey@o0.ingest.sentry.io/0

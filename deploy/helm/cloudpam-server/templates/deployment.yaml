@@ -1,3 +1,5 @@
+{{- include "cloudpam-server.validateStorage" . }}
+{{- $sqlite := eq .Values.storage.backend "sqlite" }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,6 +8,8 @@ metadata:
     {{- include "cloudpam-server.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: {{ ternary "Recreate" "RollingUpdate" $sqlite }}
   selector:
     matchLabels:
       {{- include "cloudpam-server.selectorLabels" . | nindent 6 }}
@@ -37,34 +41,22 @@ spec:
         envFrom:
           - configMapRef:
               name: {{ include "cloudpam-server.fullname" . }}
+          - secretRef:
+              name: {{ include "cloudpam-server.secretName" . }}
+        {{- $chartDatabaseUrl := and (not $sqlite) (not (include "cloudpam-server.databaseUrlFromEnv" .)) }}
+        {{- if or $chartDatabaseUrl .Values.env }}
         env:
-          {{- if eq .Values.storage.backend "postgres" }}
+          {{- if $chartDatabaseUrl }}
           - name: DATABASE_URL
             valueFrom:
               secretKeyRef:
                 name: {{ include "cloudpam-server.secretName" . }}
-                key: database-url
-                optional: true
+                key: DATABASE_URL
           {{- end }}
-          {{- if .Values.auth.adminPassword }}
-          - name: CLOUDPAM_ADMIN_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: {{ include "cloudpam-server.secretName" . }}
-                key: admin-password
-                optional: true
-          {{- end }}
-          - name: SENTRY_DSN
-            valueFrom:
-              secretKeyRef:
-                name: {{ include "cloudpam-server.secretName" . }}
-                key: sentry-dsn
-                optional: true
-          - name: APP_VERSION
-            value: {{ .Chart.AppVersion | quote }}
           {{- with .Values.env }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
+        {{- end }}
         livenessProbe:
           httpGet:
             path: /healthz
@@ -83,26 +75,30 @@ spec:
           failureThreshold: 3
         resources:
           {{- toYaml .Values.resources | nindent 12 }}
+        {{- if or $sqlite .Values.extraVolumeMounts }}
         volumeMounts:
-          {{- if eq .Values.storage.backend "sqlite" }}
+          {{- if $sqlite }}
           - name: data
             mountPath: /data
           {{- end }}
           {{- with .Values.extraVolumeMounts }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
+        {{- end }}
+      {{- if or $sqlite .Values.extraVolumes }}
       volumes:
-        {{- if and (eq .Values.storage.backend "sqlite") .Values.storage.sqlite.persistence.enabled }}
+        {{- if and $sqlite .Values.storage.sqlite.persistence.enabled }}
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "cloudpam-server.fullname" . }}-data
-        {{- else if eq .Values.storage.backend "sqlite" }}
+        {{- else if $sqlite }}
         - name: data
           emptyDir: {}
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

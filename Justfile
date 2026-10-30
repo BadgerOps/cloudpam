@@ -154,6 +154,9 @@ docker-build-all tag="latest":
     docker build -t cloudpam:{{tag}} .
     docker build -t cloudpam-agent:{{tag}} -f deploy/docker/Dockerfile.agent .
 
+helm-check:
+    ./scripts/helm-check.sh
+
 openapi-validate: ensure-cache
     {{go-env}} go test ./internal/api -run TestOpenAPISpecValidation
 

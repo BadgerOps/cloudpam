@@ -75,6 +75,7 @@
             docker-client
             git
             nodejs_22
+            kubernetes-helm
           ];
 
           shellHook = ''
