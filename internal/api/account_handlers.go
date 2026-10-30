@@ -104,6 +104,7 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
 				return
 			}
+			s.logAudit(ctx, audit.ActionUpdate, audit.ResourceAccount, fmt.Sprintf("%d", a.ID), a.Name, http.StatusOK)
 			writeJSON(w, http.StatusOK, a)
 
 		case http.MethodDelete:
@@ -111,6 +112,7 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
+			acct, acctFound, _ := s.store.GetAccount(ctx, id)
 			var ok bool
 			force := strings.ToLower(r.URL.Query().Get("force"))
 			if force == "1" || force == "true" || force == "yes" {
@@ -126,6 +128,11 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
 				return
 			}
+			accountName := ""
+			if acctFound {
+				accountName = acct.Name
+			}
+			s.logAudit(ctx, audit.ActionDelete, audit.ResourceAccount, fmt.Sprintf("%d", id), accountName, http.StatusNoContent)
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
