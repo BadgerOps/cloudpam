@@ -1,0 +1,42 @@
+name: Helm
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'deploy/helm/**'
+      - 'scripts/helm-check.sh'
+      - 'docs/CHANGELOG.md'
+      - 'cmd/cloudpam/**'
+      - 'cmd/cloudpam-agent/**'
+      - 'internal/**'
+      - '.github/workflows/helm.yml'
+  pull_request:
+    paths:
+      - 'deploy/helm/**'
+      - 'scripts/helm-check.sh'
+      - 'docs/CHANGELOG.md'
+      - 'cmd/cloudpam/**'
+      - 'cmd/cloudpam-agent/**'
+      - 'internal/**'
+      - '.github/workflows/helm.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  helm-check:
+    name: Lint and render charts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Setup Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.19.1
+
+      - name: Lint, render, and check the env contract
+        run: ./scripts/helm-check.sh
