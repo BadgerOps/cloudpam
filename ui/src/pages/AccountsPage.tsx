@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { useAccounts } from '../hooks/useAccounts'
@@ -70,6 +70,7 @@ function AccountEditor({
   submittingLabel,
   onSubmit,
   onCancel,
+  onBusyChange,
 }: {
   title: string
   initial: AccountForm
@@ -78,12 +79,15 @@ function AccountEditor({
   submittingLabel: string
   onSubmit: (form: AccountForm) => Promise<void>
   onCancel: () => void
+  onBusyChange?: (busy: boolean) => void
 }) {
   const { showToast } = useToast()
   const id = useId()
   const [form, setForm] = useState(initial)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+
+  useEffect(() => { onBusyChange?.(submitting) }, [submitting, onBusyChange])
 
   function set<K extends keyof AccountForm>(field: K, value: AccountForm[K]) {
     setForm(prev => ({ ...prev, [field]: value }))
@@ -215,6 +219,73 @@ function AccountEditor({
   )
 }
 
+function EditAccountDialog({
+  account,
+  returnFocusTo,
+  onSubmit,
+  onClose,
+}: {
+  account: Account
+  returnFocusTo: HTMLElement | null
+  onSubmit: (form: AccountForm) => Promise<void>
+  onClose: () => void
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    dialogRef.current?.querySelector<HTMLElement>('input:not([readonly])')?.focus()
+    return () => {
+      if (returnFocusTo?.isConnected) returnFocusTo.focus()
+    }
+  }, [returnFocusTo])
+
+  useEffect(() => {
+    if (saving) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [saving, onClose])
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-account-title"
+        className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-auto"
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b dark:border-gray-700">
+          <h2 id="edit-account-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Edit Account</h2>
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+            title="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="px-6 py-4">
+          <AccountEditor
+            title="Edit Account"
+            initial={formFromAccount(account)}
+            editing
+            submitLabel="Save"
+            submittingLabel="Saving..."
+            onSubmit={onSubmit}
+            onCancel={onClose}
+            onBusyChange={setSaving}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function AccountsPage() {
   const { accounts, loading, error, fetchAccounts, createAccount, updateAccount, deleteAccount } = useAccounts()
   const { showToast } = useToast()
@@ -223,6 +294,7 @@ export default function AccountsPage() {
   const selectedId = Number(searchParams.get('selected')) || null
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState<Account | null>(null)
+  const editTrigger = useRef<HTMLElement | null>(null)
 
   useEffect(() => { fetchAccounts() }, [fetchAccounts])
 
@@ -249,8 +321,10 @@ export default function AccountsPage() {
   async function handleUpdate(id: number, form: AccountForm) {
     const updated = await updateAccount(id, writableFields(form))
     showToast(`Updated ${updated.name}`, 'success')
-    setEditing(null)
+    setEditing(current => (current?.id === id ? null : current))
   }
+
+  const closeEditor = useCallback(() => setEditing(null), [])
 
   async function handleDelete(id: number, name: string) {
     if (!confirm(`Delete account "${name}"?`)) return
@@ -338,7 +412,10 @@ export default function AccountsPage() {
                   <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(a.created_at)}</td>
                   <td className="px-4 py-2 text-right">
                     <button
-                      onClick={() => setEditing(a)}
+                      onClick={e => {
+                        editTrigger.current = e.currentTarget
+                        setEditing(a)
+                      }}
                       className="text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 p-1"
                       title="Edit"
                     >
@@ -360,33 +437,13 @@ export default function AccountsPage() {
       )}
 
       {editing && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="edit-account-title"
-            className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-auto"
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b dark:border-gray-700">
-              <h2 id="edit-account-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100">Edit Account</h2>
-              <button onClick={() => setEditing(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" title="Close">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="px-6 py-4">
-              <AccountEditor
-                key={editing.id}
-                title="Edit Account"
-                initial={formFromAccount(editing)}
-                editing
-                submitLabel="Save"
-                submittingLabel="Saving..."
-                onSubmit={form => handleUpdate(editing.id, form)}
-                onCancel={() => setEditing(null)}
-              />
-            </div>
-          </div>
-        </div>
+        <EditAccountDialog
+          key={editing.id}
+          account={editing}
+          returnFocusTo={editTrigger.current}
+          onSubmit={form => handleUpdate(editing.id, form)}
+          onClose={closeEditor}
+        />
       )}
     </div>
   )

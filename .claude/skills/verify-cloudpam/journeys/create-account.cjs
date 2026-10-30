@@ -54,6 +54,12 @@ module.exports = async ({ page, login, api, shot, aria, note }) => {
   await seedRow.getByRole('button', { name: 'Edit' }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit Account' });
   await dialog.waitFor();
+  assert.equal(await dialog.getByLabel('Name (required)').evaluate((el) => el === document.activeElement), true, 'name field has focus on open');
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'detached' });
+  assert.equal(await seedRow.getByRole('button', { name: 'Edit' }).evaluate((el) => el === document.activeElement), true, 'Edit button regains focus after Escape');
+  await seedRow.getByRole('button', { name: 'Edit' }).click();
+  await dialog.waitFor();
   assert.equal(await dialog.getByLabel('Key (required)').inputValue(), seedKey, 'edit form pre-filled with the key');
   assert.equal(await dialog.getByLabel('Key (required)').isEditable(), false, 'key is read-only on edit');
   assert.equal(await dialog.getByLabel('Name (required)').inputValue(), seedBefore.name, 'edit form pre-filled with the name');
@@ -76,6 +82,13 @@ module.exports = async ({ page, login, api, shot, aria, note }) => {
   assert.equal(seedAfter.provider, seedBefore.provider, 'untouched provider preserved');
   assert.equal(seedAfter.id, seedBefore.id, 'same account id');
   note(`edit ${seedKey}: ${JSON.stringify(seedBefore)} -> ${JSON.stringify(seedAfter)}`);
-  const audit = await api('GET', '/api/v1/audit?action=update&resource_type=account');
-  note(`audit update/account -> ${audit.status} ${JSON.stringify(audit.body)}`);
+  const audit = await api('GET', '/api/v1/audit?action=update&resource_type=account&limit=1');
+  assert.equal(audit.status, 200, 'GET /api/v1/audit is 200');
+  const event = audit.body.events[0];
+  assert.ok(event, 'an update/account audit event exists after the edit');
+  assert.equal(event.resource_type, 'account');
+  assert.equal(event.action, 'update');
+  assert.equal(event.resource_id, String(seedBefore.id), 'audit event names the edited account');
+  assert.equal(event.resource_name, renamed, 'audit event carries the new name');
+  note(`audit update/account -> ${JSON.stringify(event)}`);
 };

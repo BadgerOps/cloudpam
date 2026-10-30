@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AccountsPage from '../pages/AccountsPage'
@@ -133,6 +133,58 @@ describe('AccountsPage edit', () => {
 
     await waitFor(() => expect(updateAccount).toHaveBeenCalledTimes(1))
     expect(updateAccount.mock.calls[0][1].regions).toEqual([])
+  })
+  it('focuses the first editable field on open, closes on Escape and returns focus to the Edit button', () => {
+    renderPage()
+    const editButton = within(screen.getByRole('row', { name: /prod-platform/ })).getByRole('button', { name: 'Edit' })
+    editButton.focus()
+    fireEvent.click(editButton)
+
+    const dialog = within(screen.getByRole('dialog', { name: 'Edit Account' }))
+    expect(document.activeElement).toBe(field(dialog, 'Name (required)'))
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(editButton)
+  })
+
+  it('refuses every close path while a save is in flight and then closes when it resolves', async () => {
+    let resolveSave: (a: Account) => void = () => {}
+    updateAccount.mockReturnValue(new Promise<Account>(resolve => { resolveSave = resolve }))
+    renderPage()
+    fireEvent.click(within(screen.getByRole('row', { name: /prod-platform/ })).getByRole('button', { name: 'Edit' }))
+
+    const dialog = within(screen.getByRole('dialog', { name: 'Edit Account' }))
+    fireEvent.change(field(dialog, 'Name (required)'), { target: { value: 'prod-renamed' } })
+    fireEvent.click(dialog.getByRole('button', { name: 'Save' }))
+    await dialog.findByRole('button', { name: 'Saving...' })
+
+    expect((dialog.getByTitle('Close') as HTMLButtonElement).disabled).toBe(true)
+    expect((dialog.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(dialog.getByTitle('Close'))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByRole('dialog', { name: 'Edit Account' })).toBeTruthy()
+    expect(field(dialog, 'Name (required)').value).toBe('prod-renamed')
+
+    await act(async () => { resolveSave({ ...prod, name: 'prod-renamed' }) })
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('keeps a newer dialog open when an older save resolves late', async () => {
+    let resolveSave: (a: Account) => void = () => {}
+    updateAccount.mockReturnValue(new Promise<Account>(resolve => { resolveSave = resolve }))
+    renderPage()
+    fireEvent.click(within(screen.getByRole('row', { name: /prod-platform/ })).getByRole('button', { name: 'Edit' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Edit Account' })).getByRole('button', { name: 'Save' }))
+    await screen.findByRole('button', { name: 'Saving...' })
+
+    fireEvent.click(within(screen.getByRole('row', { name: /staging-net/ })).getByRole('button', { name: 'Edit' }))
+    await act(async () => { resolveSave(prod) })
+
+    const dialog = within(screen.getByRole('dialog', { name: 'Edit Account' }))
+    expect(field(dialog, 'Key (required)').value).toBe('gcp:staging-net')
   })
 })
 
