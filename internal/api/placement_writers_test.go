@@ -4,7 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	stdhttp "net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -256,7 +262,7 @@ func setupRecommendationApplyServer(t *testing.T) (*Server, *storage.MemoryStore
 	t.Helper()
 	srv, st := setupTestServer()
 	recStore := storage.NewMemoryRecommendationStore(st)
-	recSvc := planning.NewRecommendationService(planning.NewAnalysisService(st), recStore, st)
+	recSvc := planning.NewRecommendationService(planning.NewAnalysisService(st), recStore, st, srv)
 	NewRecommendationServer(srv, recSvc, recStore).RegisterRecommendationRoutes()
 	return srv, st, recStore
 }
@@ -336,5 +342,158 @@ func TestConcurrentPoolsAndCSVImportStoreOne(t *testing.T) {
 	}
 	if len(pools) != 1 {
 		t.Fatalf("want 1 pool stored, got %d: %+v", len(pools), pools)
+	}
+}
+
+func TestCreatePool_MissingParentIs400(t *testing.T) {
+	srv, st := setupTestServer()
+	rr := doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/pools", `{"name":"orphan","cidr":"10.1.0.0/16","parent_id":99}`, stdhttp.StatusBadRequest)
+	var got apiError
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Error != "parent not found" {
+		t.Fatalf("want parent not found, got %+v", got)
+	}
+	if n := len(storedCIDRs(t, st)); n != 0 {
+		t.Fatalf("stored %d pools", n)
+	}
+}
+
+func TestImportPools_ReimportOfExportSkipsEveryRow(t *testing.T) {
+	srv, _ := setupTestServer()
+	root := createRootPool(t, srv, "10.0.0.0/8")
+	child := createChildPool(t, srv, root.ID, "10.1.0.0/16")
+	grand := createChildPool(t, srv, child.ID, "10.1.1.0/24")
+	csv := fmt.Sprintf("id,name,cidr,parent_id\n%d,root,10.0.0.0/8,\n%d,child,10.1.0.0/16,%d\n%d,grand,10.1.1.0/24,%d\n",
+		root.ID, child.ID, root.ID, grand.ID, child.ID)
+
+	res := importPoolsCSV(t, srv, csv)
+
+	if res.Created != 0 || res.Skipped != 3 || len(res.Errors) != 0 {
+		t.Fatalf("want every row skipped as a duplicate, got %+v", res)
+	}
+}
+
+func TestImportPools_BudgetSpentIs503(t *testing.T) {
+	old := placementBudget
+	placementBudget = 50 * time.Millisecond
+	t.Cleanup(func() { placementBudget = old })
+	st := storage.NewMemoryStore()
+	gate := make(chan struct{})
+	srv := NewServerWithSlog(stdhttp.NewServeMux(), gatedListStore{st, gate}, nil)
+	srv.registerUnprotectedTestRoutes()
+
+	held := make(chan struct{})
+	go func() {
+		defer close(held)
+		req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/pools", strings.NewReader(`{"name":"held","cidr":"10.1.0.0/16"}`))
+		srv.mux.ServeHTTP(httptest.NewRecorder(), req)
+	}()
+	for !srv.placeGate.held() {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	rr := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rr, httptest.NewRequest(stdhttp.MethodPost, "/api/v1/import/pools", strings.NewReader("name,cidr\nqueued,10.2.0.0/16\n")))
+	close(gate)
+	<-held
+
+	if rr.Code != stdhttp.StatusServiceUnavailable || rr.Header().Get("Retry-After") == "" {
+		t.Fatalf("want 503 with Retry-After, got %d %s", rr.Code, rr.Body.String())
+	}
+	if storedCIDRs(t, st)["10.2.0.0/16"] {
+		t.Fatal("an import past its budget stored a pool")
+	}
+}
+
+func TestDiscoveryImportApply_SubnetGoesUnderItsVPC(t *testing.T) {
+	d, st, ds, _ := setupDiscoveryTestServer()
+	createRootPool(t, d.srv, "10.0.0.0/8")
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vpcID := "vpc-1"
+	vpc := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, vpcID, "10.1.0.0/16", nil)
+	subnet := discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-1", "10.1.1.0/24", &vpcID)
+	upsertDiscoveredForImportTest(t, ds, vpc)
+	upsertDiscoveredForImportTest(t, ds, subnet)
+
+	resp := applyDiscoveryImportForTest(t, d, account.ID, vpc.ID, subnet.ID)
+
+	if resp.PoolsCreated != 2 || len(resp.Errors) != 0 {
+		t.Fatalf("want the vpc and its subnet created, got %+v", resp)
+	}
+	pools, err := st.ListPools(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	byCIDR := map[string]domain.Pool{}
+	for _, p := range pools {
+		byCIDR[p.CIDR] = p
+	}
+	if got := byCIDR["10.1.1.0/24"].ParentID; got == nil || *got != byCIDR["10.1.0.0/16"].ID {
+		t.Fatalf("subnet parent = %v, want the vpc pool %d", got, byCIDR["10.1.0.0/16"].ID)
+	}
+}
+
+func TestImportDiscoveredSchema_SameShapeInTwoRegionsLinksToOnePool(t *testing.T) {
+	d, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	east, west := "vpc-east", "vpc-west"
+	upsertDiscoveredForImportTest(t, ds, discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, east, "172.31.0.0/16", nil))
+	upsertDiscoveredForImportTest(t, ds, discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, west, "172.31.0.0/16", nil))
+	upsertDiscoveredForImportTest(t, ds, discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-east", "172.31.0.0/20", &east))
+	upsertDiscoveredForImportTest(t, ds, discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-west", "172.31.0.0/20", &west))
+
+	resp := importDiscoveredSchemaForTest(t, d, account.ID)
+
+	if resp.PoolsCreated != 2 || resp.ResourcesLinked != 4 || len(resp.Errors) != 0 {
+		t.Fatalf("want one vpc pool and one subnet pool shared by both regions, got %+v", resp)
+	}
+	if n := len(storedCIDRs(t, st)); n != 2 {
+		t.Fatalf("want 2 pools stored, got %d", n)
+	}
+}
+
+func TestPoolsAreCreatedOnlyByPlacement(t *testing.T) {
+	root := filepath.Join("..", "..")
+	allowed := filepath.Join("internal", "api", "pool_placement.go")
+	fset := token.NewFileSet()
+	for _, dir := range []string{"internal", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, _ := filepath.Rel(root, path)
+			if entry.IsDir() && rel == filepath.Join("internal", "storage") {
+				return filepath.SkipDir
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || rel == allowed {
+				return nil
+			}
+			file, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "CreatePool" {
+					t.Errorf("%s calls CreatePool directly; create pools through placePools or Server.PlacePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()))
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }

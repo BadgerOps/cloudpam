@@ -12,7 +12,6 @@ import (
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/storage"
-	"cloudpam/internal/validation"
 )
 
 // AIPlanningServer handles AI planning API endpoints.
@@ -222,112 +221,15 @@ func (a *AIPlanningServer) handleApplyPlan(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Validate all entries
-	refSet := make(map[string]bool)
+	pools := make([]schemaPoolEntry, len(req.Plan.Pools))
 	for i, p := range req.Plan.Pools {
-		if p.Ref == "" {
-			a.srv.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d: ref is required", i), "")
-			return
-		}
-		if refSet[p.Ref] {
-			a.srv.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d: duplicate ref %q", i, p.Ref), "")
-			return
-		}
-		refSet[p.Ref] = true
-
-		if err := validation.ValidateName(p.Name); err != nil {
-			a.srv.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Ref, err), "")
-			return
-		}
-		if err := validation.ValidateCIDRWithOptions(p.CIDR, validation.CIDROptions{
-			MinPrefix: 8,
-			MaxPrefix: 30,
-		}); err != nil {
-			a.srv.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Ref, err), "")
-			return
-		}
-		if p.ParentRef != "" {
-			found := false
-			for _, prev := range req.Plan.Pools[:i] {
-				if prev.Ref == p.ParentRef {
-					found = true
-					break
-				}
-			}
-			if !found {
-				a.srv.writeErr(ctx, w, http.StatusBadRequest,
-					fmt.Sprintf("pool %d (%s): parent_ref %q not found in preceding entries", i, p.Ref, p.ParentRef), "")
-				return
-			}
-		}
+		pools[i] = schemaPoolEntry(p)
 	}
-
-	// Create pools in topological order
-	refToID := make(map[string]int64)
-	var created, skipped int
-	var errs []string
-	var rootPoolID int64
-
-	tags := map[string]string{
-		"ai_planner": "true",
-		"session_id": sessionID,
-	}
-
-	for _, p := range req.Plan.Pools {
-		poolType := domain.PoolType(p.Type)
-		if poolType == "" {
-			poolType = domain.PoolTypeSubnet
-		}
-		if !domain.IsValidPoolType(poolType) {
-			errs = append(errs, fmt.Sprintf("pool %q: invalid type %q, using subnet", p.Ref, p.Type))
-			poolType = domain.PoolTypeSubnet
-		}
-
-		cp := domain.CreatePool{
-			Name:        p.Name,
-			CIDR:        p.CIDR,
-			Type:        poolType,
-			Status:      domain.PoolStatusPlanned,
-			Source:      domain.PoolSourceManual,
-			Description: "Created by AI Planner",
-			Tags:        tags,
-		}
-
-		if p.ParentRef != "" {
-			parentID, ok := refToID[p.ParentRef]
-			if !ok {
-				errs = append(errs, fmt.Sprintf("pool %q: parent_ref %q not yet created", p.Ref, p.ParentRef))
-				skipped++
-				continue
-			}
-			cp.ParentID = &parentID
-		}
-
-		pool, err := a.srv.store.CreatePool(ctx, cp)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("pool %q: %v", p.Ref, err))
-			skipped++
-			continue
-		}
-
-		refToID[p.Ref] = pool.ID
-		if p.ParentRef == "" {
-			rootPoolID = pool.ID
-		}
-		created++
-
-		a.srv.logAudit(ctx, "create", "pool", fmt.Sprintf("%d", pool.ID), pool.Name, http.StatusCreated)
-	}
-
-	resp := map[string]any{
-		"created":      created,
-		"skipped":      skipped,
-		"errors":       errs,
-		"root_pool_id": rootPoolID,
-		"pool_map":     refToID,
-	}
-	if errs == nil {
-		resp["errors"] = []string{}
-	}
-	writeJSON(w, http.StatusOK, resp)
+	a.srv.applyPoolPlan(ctx, w, poolPlan{
+		Pools:         pools,
+		SkipConflicts: req.SkipConflicts,
+		Status:        domain.PoolStatusPlanned,
+		Description:   "Created by AI Planner",
+		Tags:          map[string]string{"ai_planner": "true", "session_id": sessionID},
+	})
 }

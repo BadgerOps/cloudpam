@@ -497,35 +497,32 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If ParentID provided, ensure child CIDR is subset of parent CIDR (IPv4 only for now).
-	if in.ParentID != nil {
-		parent, ok, err := s.store.GetPool(ctx, *in.ParentID)
-		if err != nil {
-			s.writeErr(r.Context(), w, http.StatusInternalServerError, "internal error", err.Error())
-			return
-		}
-		if !ok {
-			logger.WarnContext(ctx, "pools:create parent not found", appendRequestID(ctx, []any{
-				"parent_id", *in.ParentID,
-				"cidr", in.CIDR,
-			})...)
-			s.writeErr(r.Context(), w, http.StatusBadRequest, "parent not found", "")
-			return
-		}
-		if err := validateChildCIDR(parent.CIDR, in.CIDR); err != nil {
-			logger.WarnContext(ctx, "pools:create invalid sub-pool cidr", appendRequestID(ctx, []any{
-				"child_cidr", in.CIDR,
-				"parent_cidr", parent.CIDR,
-				"reason", err.Error(),
-			})...)
-			s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
-			return
-		}
-	}
-
 	placed, err := s.placePools(ctx, siblingsOnly, []poolPlacement{{In: in}})
+	if err != nil {
+		s.writeStoreErr(r.Context(), w, err)
+		return
+	}
+	p, err := placed[0].Pool, placed[0].Err
+	var missing *missingParentError
+	var outside *containmentError
 	var overlap *placementConflict
-	if errors.As(err, &overlap) {
+	switch {
+	case errors.As(err, &missing):
+		logger.WarnContext(ctx, "pools:create parent not found", appendRequestID(ctx, []any{
+			"parent_id", missing.ParentID,
+			"cidr", in.CIDR,
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "parent not found", "")
+		return
+	case errors.As(err, &outside):
+		logger.WarnContext(ctx, "pools:create invalid sub-pool cidr", appendRequestID(ctx, []any{
+			"child_cidr", in.CIDR,
+			"parent_id", valueOrNil(in.ParentID),
+			"reason", outside.Cause.Error(),
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid sub-pool cidr", outside.Cause.Error())
+		return
+	case errors.As(err, &overlap):
 		logger.WarnContext(ctx, "pools:create cidr overlap", appendRequestID(ctx, []any{
 			"candidate_cidr", in.CIDR,
 			"existing_pool_id", overlap.With.ID,
@@ -533,13 +530,7 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		})...)
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "cidr overlaps with existing block", fmt.Sprintf("conflicts with pool #%d (%s)", overlap.With.ID, overlap.With.CIDR))
 		return
-	}
-	if err != nil {
-		s.writeStoreErr(r.Context(), w, err)
-		return
-	}
-	p, err := placed[0].Pool, placed[0].Err
-	if err != nil {
+	case err != nil:
 		logger.WarnContext(ctx, "pools:create storage error", appendRequestID(ctx, []any{
 			"name", in.Name,
 			"cidr", in.CIDR,

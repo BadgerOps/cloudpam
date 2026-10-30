@@ -653,11 +653,9 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 	var created, skipped int
 	var errs []string
 
-	// Map old IDs to new IDs for parent resolution
-	oldToNewID := make(map[int64]int64)
-
-	// Also build a CIDR to new ID map for fallback parent resolution
-	cidrToNewID := make(map[string]int64)
+	batch := make([]poolPlacement, 0, len(rows))
+	batchRows := make([]int, 0, len(rows))
+	queued := make(map[int64]bool)
 
 	for _, pr := range rows {
 		pool := domain.CreatePool{
@@ -695,25 +693,6 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Resolve parent_id using old-to-new mapping
-		if pr.oldParentID != 0 {
-			if newParentID, ok := oldToNewID[pr.oldParentID]; ok {
-				pool.ParentID = &newParentID
-				s.logger.DebugContext(r.Context(), "pools:import resolved parent",
-					"row", pr.rowNum, "old_parent_id", pr.oldParentID, "new_parent_id", newParentID)
-			} else {
-				// Check if parent exists directly (for imports into existing data)
-				if _, ok, _ := s.store.GetPool(r.Context(), pr.oldParentID); ok {
-					pool.ParentID = &pr.oldParentID
-				} else {
-					s.logger.WarnContext(r.Context(), "pools:import parent_id not found",
-						"row", pr.rowNum, "parent_id", pr.oldParentID)
-					errs = append(errs, fmt.Sprintf("row %d: parent_id %d not found", pr.rowNum, pr.oldParentID))
-					continue
-				}
-			}
-		}
-
 		// Set defaults
 		if pool.Type == "" {
 			pool.Type = domain.PoolTypeSubnet
@@ -725,30 +704,42 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			pool.Source = domain.PoolSourceManual
 		}
 
-		s.logger.DebugContext(r.Context(), "pools:import creating pool",
-			"row", pr.rowNum, "name", pool.Name, "cidr", pool.CIDR,
-			"parent_id", valueOrNil(pool.ParentID), "account_id", valueOrNil(pool.AccountID))
+		e := poolPlacement{In: pool}
+		if pr.oldID != 0 {
+			e.Ref = strconv.FormatInt(pr.oldID, 10)
+		}
+		if pr.oldParentID != 0 {
+			parentID := pr.oldParentID
+			e.In.ParentID = &parentID
+			if queued[parentID] {
+				e.ParentRef = strconv.FormatInt(parentID, 10)
+			}
+		}
+		if pr.oldID != 0 {
+			queued[pr.oldID] = true
+		}
+		batch = append(batch, e)
+		batchRows = append(batchRows, pr.rowNum)
+	}
 
-		createdPool, err := s.store.CreatePool(r.Context(), pool)
-		if err != nil {
+	placed, err := s.placePools(r.Context(), siblingsOnly, batch)
+	if err != nil {
+		s.writeStoreErr(r.Context(), w, err)
+		return
+	}
+	for i, res := range placed {
+		if res.Err != nil {
 			s.logger.WarnContext(r.Context(), "pools:import create failed",
-				"row", pr.rowNum, "name", pool.Name, "error", err.Error())
-			if errors.Is(err, storage.ErrConflict) {
+				"row", batchRows[i], "name", batch[i].In.Name, "error", res.Err.Error())
+			if errors.Is(res.Err, storage.ErrConflict) {
 				skipped++
 			} else {
-				errs = append(errs, fmt.Sprintf("row %d: %v", pr.rowNum, err))
+				errs = append(errs, fmt.Sprintf("row %d: %v", batchRows[i], res.Err))
 			}
 			continue
 		}
-
-		// Record the ID mapping for child pool resolution
-		if pr.oldID != 0 {
-			oldToNewID[pr.oldID] = createdPool.ID
-		}
-		cidrToNewID[pr.cidr] = createdPool.ID
-
 		s.logger.InfoContext(r.Context(), "pools:import created pool",
-			"row", pr.rowNum, "id", createdPool.ID, "name", createdPool.Name)
+			"row", batchRows[i], "id", res.Pool.ID, "name", res.Pool.Name)
 		created++
 	}
 

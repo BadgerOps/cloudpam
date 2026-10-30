@@ -9,14 +9,15 @@ import (
 	"time"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/planning"
 	"cloudpam/internal/storage"
 )
 
 type overlapPolicy int
 
 const (
-	anyLivePool overlapPolicy = iota
-	siblingsOnly
+	siblingsOnly overlapPolicy = iota
+	anyLivePool
 	overlapAllowed
 )
 
@@ -44,11 +45,53 @@ func (c *placementConflict) Error() string {
 	return fmt.Sprintf("pool %q (%s) overlaps with existing pool %q (%s)", c.Pool.Name, c.Pool.CIDR, c.With.Name, c.With.CIDR)
 }
 
+type missingParentError struct {
+	ParentID int64
+}
+
+func (e *missingParentError) Error() string {
+	return fmt.Sprintf("parent_id %d not found", e.ParentID)
+}
+
+type containmentError struct {
+	Index int
+	Ref   string
+	Cause error
+}
+
+func (e *containmentError) Error() string {
+	return "invalid sub-pool cidr: " + e.Cause.Error()
+}
+
 // placementBudget bounds a placement from the moment it queues on placeGate to its last
 // insert. It is a var so tests can shorten it. With the store's 5s commit margin it fits
 // inside the server's 15s write timeout, so a placement never commits after the client
 // has stopped waiting for the response.
 var placementBudget = 10 * time.Second
+
+var _ planning.PoolPlacer = (*Server)(nil)
+
+// PlacePool creates one pool the way POST /api/v1/pools does and returns it once stored, on
+// PostgreSQL once committed. Its errors carry storage sentinels for callers outside this package:
+// a missing parent or a pool outside its parent is ErrValidation, an overlapping sibling is
+// ErrConflict, and a placement past its budget is ErrBusy.
+func (s *Server) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
+	placed, err := s.placePools(ctx, siblingsOnly, []poolPlacement{{In: in}})
+	if err != nil {
+		return domain.Pool{}, err
+	}
+	p, err := placed[0].Pool, placed[0].Err
+	var missing *missingParentError
+	var outside *containmentError
+	var overlap *placementConflict
+	switch {
+	case errors.As(err, &missing), errors.As(err, &outside):
+		return p, fmt.Errorf("%w: %w", storage.ErrValidation, err)
+	case errors.As(err, &overlap):
+		return p, fmt.Errorf("%w: %w", storage.ErrConflict, err)
+	}
+	return p, err
+}
 
 func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
 	work, cancel := context.WithTimeout(ctx, placementBudget)
@@ -111,13 +154,14 @@ func busyIfBudgetSpent(request context.Context, err error) error {
 }
 
 func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
-	if policy != overlapAllowed {
-		live, err := ps.ListPools(ctx)
-		if err != nil {
+	live, err := ps.ListPools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pools := indexPools(live)
+	if policy != siblingsOnly {
+		if err := checkPlan(policy, live, pools, batch); err != nil {
 			return nil, err
-		}
-		if c := checkPlacement(policy, live, batch); c != nil {
-			return nil, c
 		}
 	}
 
@@ -129,12 +173,18 @@ func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy,
 	for i, e := range batch {
 		in := e.In
 		if e.ParentRef != "" {
-			id, ok := stored[e.ParentRef]
-			if !ok {
+			if id, ok := stored[e.ParentRef]; ok {
+				in.ParentID = &id
+			} else if in.ParentID == nil {
 				out[i].Err = fmt.Errorf("parent_ref %q not yet created", e.ParentRef)
 				continue
 			}
-			in.ParentID = &id
+		}
+		if policy == siblingsOnly {
+			if err := pools.admit(i, e.Ref, in); err != nil {
+				out[i].Err = err
+				continue
+			}
 		}
 		p, err := ps.CreatePool(ctx, in)
 		if errors.Is(err, storage.ErrBusy) {
@@ -144,16 +194,117 @@ func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy,
 			out[i].Err = err
 			continue
 		}
+		pools.add(p)
 		out[i].Pool = p
 		stored[e.Ref] = p.ID
 	}
 	return out, nil
 }
 
-func checkPlacement(policy overlapPolicy, live []domain.Pool, batch []poolPlacement) *placementConflict {
+type sibling struct {
+	pool   domain.Pool
+	lo, hi uint32
+}
+
+func ipv4Span(cidr string) (lo, hi uint32, ok bool) {
+	p, err := netip.ParsePrefix(cidr)
+	if err != nil || !p.Addr().Is4() {
+		return 0, 0, false
+	}
+	lo = ipv4ToUint32(p.Masked().Addr())
+	return lo, lo + uint32(1)<<uint32(32-p.Bits()) - 1, true
+}
+
+type scope struct {
+	parentID int64
+	topLevel bool
+}
+
+func scopeOf(parentID *int64) scope {
+	if parentID == nil {
+		return scope{topLevel: true}
+	}
+	return scope{parentID: *parentID}
+}
+
+type poolIndex struct {
+	byID     map[int64]domain.Pool
+	children map[scope][]sibling
+}
+
+func indexPools(live []domain.Pool) *poolIndex {
+	x := &poolIndex{byID: make(map[int64]domain.Pool, len(live)), children: make(map[scope][]sibling)}
+	for _, p := range live {
+		x.add(p)
+	}
+	return x
+}
+
+func (x *poolIndex) add(p domain.Pool) {
+	x.byID[p.ID] = p
+	lo, hi, ok := ipv4Span(p.CIDR)
+	if !ok {
+		return
+	}
+	key := scopeOf(p.ParentID)
+	x.children[key] = append(x.children[key], sibling{pool: p, lo: lo, hi: hi})
+}
+
+func (x *poolIndex) admit(i int, ref string, in domain.CreatePool) error {
+	if in.ParentID != nil {
+		parent, ok := x.byID[*in.ParentID]
+		if !ok {
+			return &missingParentError{ParentID: *in.ParentID}
+		}
+		if err := validateChildCIDR(parent.CIDR, in.CIDR); err != nil {
+			return &containmentError{Index: i, Ref: ref, Cause: err}
+		}
+	}
+	lo, hi, ok := ipv4Span(in.CIDR)
+	if !ok {
+		return nil
+	}
+	for _, s := range x.children[scopeOf(in.ParentID)] {
+		if s.pool.CIDR != in.CIDR && s.lo <= hi && lo <= s.hi {
+			return &placementConflict{Pool: in, With: s.pool}
+		}
+	}
+	return nil
+}
+
+func checkPlan(policy overlapPolicy, live []domain.Pool, pools *poolIndex, batch []poolPlacement) error {
+	cidrByRef := make(map[string]string, len(batch))
+	for i, e := range batch {
+		var parentCIDR string
+		switch {
+		case e.ParentRef != "":
+			parentCIDR = cidrByRef[e.ParentRef]
+		case e.In.ParentID != nil:
+			parent, ok := pools.byID[*e.In.ParentID]
+			if !ok {
+				return &missingParentError{ParentID: *e.In.ParentID}
+			}
+			parentCIDR = parent.CIDR
+		}
+		if parentCIDR != "" {
+			if err := validateChildCIDR(parentCIDR, e.In.CIDR); err != nil {
+				return &containmentError{Index: i, Ref: e.Ref, Cause: err}
+			}
+		}
+		if e.Ref != "" {
+			cidrByRef[e.Ref] = e.In.CIDR
+		}
+	}
+	if policy == overlapAllowed {
+		return nil
+	}
+	return checkPlacement(live, batch)
+}
+
+func checkPlacement(live []domain.Pool, batch []poolPlacement) error {
 	for i, e := range batch {
 		for _, p := range live {
-			if policy.compares(e, p) && cidrsOverlap(p.CIDR, e.In.CIDR) {
+			if cidrsOverlap(p.CIDR, e.In.CIDR) {
 				return &placementConflict{Pool: e.In, With: p}
 			}
 		}
@@ -164,13 +315,6 @@ func checkPlacement(policy overlapPolicy, live []domain.Pool, batch []poolPlacem
 		}
 	}
 	return nil
-}
-
-func (policy overlapPolicy) compares(e poolPlacement, p domain.Pool) bool {
-	if policy == siblingsOnly {
-		return e.ParentRef == "" && sameParent(e.In.ParentID, p.ParentID) && p.CIDR != e.In.CIDR
-	}
-	return true
 }
 
 func cidrsOverlap(a, b string) bool {

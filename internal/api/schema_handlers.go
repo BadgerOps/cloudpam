@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,9 +170,26 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 	}
 	tags["schema_planner"] = "true"
 
-	// Validate all entries upfront
+	s.applyPoolPlan(ctx, w, poolPlan{
+		Pools:         req.Pools,
+		SkipConflicts: req.SkipConflicts,
+		Status:        status,
+		Description:   "Created by Schema Planner",
+		Tags:          tags,
+	})
+}
+
+type poolPlan struct {
+	Pools         []schemaPoolEntry
+	SkipConflicts bool
+	Status        domain.PoolStatus
+	Description   string
+	Tags          map[string]string
+}
+
+func (s *Server) applyPoolPlan(ctx context.Context, w http.ResponseWriter, plan poolPlan) {
 	refSet := make(map[string]bool)
-	for i, p := range req.Pools {
+	for i, p := range plan.Pools {
 		if p.Ref == "" {
 			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d: ref is required", i), "")
 			return
@@ -180,8 +198,6 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d: duplicate ref %q", i, p.Ref), "")
 			return
 		}
-		refSet[p.Ref] = true
-
 		if err := validation.ValidateName(p.Name); err != nil {
 			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Ref, err), "")
 			return
@@ -194,29 +210,16 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if p.ParentRef != "" && !refSet[p.ParentRef] {
-			// parent_ref must reference an earlier entry in the array (topological order)
-			found := false
-			for _, prev := range req.Pools[:i] {
-				if prev.Ref == p.ParentRef {
-					found = true
-					break
-				}
-			}
-			if !found {
-				s.writeErr(ctx, w, http.StatusBadRequest,
-					fmt.Sprintf("pool %d (%s): parent_ref %q not found in preceding entries", i, p.Ref, p.ParentRef), "")
-				return
-			}
+			s.writeErr(ctx, w, http.StatusBadRequest,
+				fmt.Sprintf("pool %d (%s): parent_ref %q not found in preceding entries", i, p.Ref, p.ParentRef), "")
+			return
 		}
-	}
-	if err := validateSchemaContainment(req.Pools); err != nil {
-		s.writeErr(ctx, w, http.StatusBadRequest, "invalid sub-pool cidr", err.Error())
-		return
+		refSet[p.Ref] = true
 	}
 
 	var errs []string
-	batch := make([]poolPlacement, 0, len(req.Pools))
-	for _, p := range req.Pools {
+	batch := make([]poolPlacement, 0, len(plan.Pools))
+	for _, p := range plan.Pools {
 		poolType := domain.PoolType(p.Type)
 		if poolType == "" {
 			poolType = domain.PoolTypeSubnet
@@ -229,24 +232,28 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 			Name:        p.Name,
 			CIDR:        p.CIDR,
 			Type:        poolType,
-			Status:      status,
+			Status:      plan.Status,
 			Source:      domain.PoolSourceManual,
-			Description: "Created by Schema Planner",
-			Tags:        tags,
+			Description: plan.Description,
+			Tags:        plan.Tags,
 		}})
 	}
 
 	policy := anyLivePool
-	if req.SkipConflicts {
+	if plan.SkipConflicts {
 		policy = overlapAllowed
 	}
 	placed, err := s.placePools(ctx, policy, batch)
+	var outside *containmentError
 	var overlap *placementConflict
-	if errors.As(err, &overlap) {
+	switch {
+	case errors.As(err, &outside):
+		s.writeErr(ctx, w, http.StatusBadRequest, "invalid sub-pool cidr", fmt.Sprintf("pool %d (%s): %v", outside.Index, outside.Ref, outside.Cause))
+		return
+	case errors.As(err, &overlap):
 		s.writeErr(ctx, w, http.StatusConflict, overlap.Error(), "set skip_conflicts to true to bypass this check")
 		return
-	}
-	if err != nil {
+	case err != nil:
 		s.writeStoreErr(ctx, w, err)
 		return
 	}
@@ -255,7 +262,7 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 	var created, skipped int
 	var rootPoolID int64
 	for i, r := range placed {
-		p := req.Pools[i]
+		p := plan.Pools[i]
 		if r.Err != nil {
 			errs = append(errs, fmt.Sprintf("pool %q: %v", p.Ref, r.Err))
 			skipped++

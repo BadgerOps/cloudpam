@@ -154,7 +154,7 @@ func TestImportPools_MissingColumns(t *testing.T) {
 
 func TestImportPools_Success(t *testing.T) {
 	srv, st := setupTestServer()
-	body := "name,cidr\nroot,10.0.0.0/8\nchild,10.0.0.0/16\n"
+	body := "name,cidr\nroot,10.0.0.0/8\nother,172.16.0.0/12\n"
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/import/pools", strings.NewReader(body))
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)

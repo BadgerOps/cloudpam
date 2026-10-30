@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	stdhttp "net/http"
@@ -242,49 +243,108 @@ func TestSchemaApply_OverlappingSiblingsInOneBatch(t *testing.T) {
 	}
 }
 
-func TestCheckPlacement(t *testing.T) {
-	rootID, aID := int64(1), int64(2)
-	live := []domain.Pool{
-		{ID: 1, Name: "root", CIDR: "10.0.0.0/8"},
-		{ID: 2, Name: "a", CIDR: "10.1.0.0/16", ParentID: &rootID},
-		{ID: 3, Name: "deep", CIDR: "10.1.1.0/24", ParentID: &aID},
+func placementOutcome(err error) string {
+	var overlap *placementConflict
+	var missing *missingParentError
+	var outside *containmentError
+	switch {
+	case err == nil:
+		return "stored"
+	case errors.As(err, &overlap):
+		return "overlaps " + overlap.With.Name
+	case errors.As(err, &missing):
+		return "no parent"
+	case errors.As(err, &outside):
+		return "outside"
+	case errors.Is(err, storage.ErrConflict):
+		return "duplicate"
 	}
-	one := func(cidr string, parent *int64) []poolPlacement {
-		return []poolPlacement{{In: domain.CreatePool{Name: "new", CIDR: cidr, ParentID: parent}}}
+	return err.Error()
+}
+
+func TestPlace(t *testing.T) {
+	rootID, aID, missingID := int64(1), int64(2), int64(99)
+	pool := func(ref, parentRef, cidr string, parent *int64) poolPlacement {
+		return poolPlacement{Ref: ref, ParentRef: parentRef, In: domain.CreatePool{Name: ref, CIDR: cidr, ParentID: parent}}
 	}
 	cases := []struct {
 		name   string
 		policy overlapPolicy
 		batch  []poolPlacement
-		with   string
+		whole  string
+		each   []string
 	}{
-		{"sibling overlap", siblingsOnly, one("10.1.0.0/17", &rootID), "a"},
-		{"disjoint sibling", siblingsOnly, one("10.2.0.0/16", &rootID), ""},
-		{"identical sibling is left to the store", siblingsOnly, one("10.1.0.0/16", &rootID), ""},
-		{"pools under other parents are ignored", siblingsOnly, one("10.1.2.0/24", &aID), ""},
-		{"top level", siblingsOnly, one("10.0.0.0/9", nil), "root"},
-		{"any live pool, other parent", anyLivePool, one("10.1.1.0/25", nil), "root"},
-		{"any live pool, identical", anyLivePool, one("10.0.0.0/8", nil), "root"},
-		{"batch siblings overlap", anyLivePool, []poolPlacement{
-			{Ref: "r", In: domain.CreatePool{Name: "r", CIDR: "192.168.0.0/16"}},
-			{Ref: "x", ParentRef: "r", In: domain.CreatePool{Name: "x", CIDR: "192.168.0.0/24"}},
-			{Ref: "y", ParentRef: "r", In: domain.CreatePool{Name: "y", CIDR: "192.168.0.0/25"}},
-		}, "x"},
-		{"batch parent and child do not conflict", anyLivePool, []poolPlacement{
-			{Ref: "r", In: domain.CreatePool{Name: "r", CIDR: "192.168.0.0/16"}},
-			{Ref: "x", ParentRef: "r", In: domain.CreatePool{Name: "x", CIDR: "192.168.0.0/24"}},
-		}, ""},
+		{"sibling overlap", siblingsOnly, []poolPlacement{pool("n", "", "10.1.0.0/17", &rootID)}, "", []string{"overlaps a"}},
+		{"disjoint sibling", siblingsOnly, []poolPlacement{pool("n", "", "10.2.0.0/16", &rootID)}, "", []string{"stored"}},
+		{"identical sibling is left to the store", siblingsOnly, []poolPlacement{pool("n", "", "10.1.0.0/16", &rootID)}, "", []string{"duplicate"}},
+		{"pools under other parents are ignored", siblingsOnly, []poolPlacement{pool("n", "", "10.1.2.0/24", &aID)}, "", []string{"stored"}},
+		{"top level", siblingsOnly, []poolPlacement{pool("n", "", "10.0.0.0/9", nil)}, "", []string{"overlaps root"}},
+		{"outside its parent", siblingsOnly, []poolPlacement{pool("n", "", "192.168.0.0/24", &rootID)}, "", []string{"outside"}},
+		{"missing parent", siblingsOnly, []poolPlacement{pool("n", "", "10.3.0.0/16", &missingID)}, "", []string{"no parent"}},
+		{"an entry stored earlier is a sibling", siblingsOnly, []poolPlacement{
+			pool("x", "", "172.16.0.0/16", nil),
+			pool("y", "", "172.16.0.0/17", nil),
+		}, "", []string{"stored", "overlaps x"}},
+		{"a child is checked against its parent entry", siblingsOnly, []poolPlacement{
+			pool("p", "", "172.16.0.0/16", nil),
+			pool("c", "p", "172.17.0.0/24", nil),
+		}, "", []string{"stored", "outside"}},
+		{"an unstored parent entry falls back to the stored parent", siblingsOnly, []poolPlacement{
+			pool("r", "", "10.0.0.0/8", nil),
+			pool("c", "r", "10.9.0.0/16", &rootID),
+		}, "", []string{"duplicate", "stored"}},
+		{"any live pool", anyLivePool, []poolPlacement{pool("n", "", "10.200.0.0/24", nil)}, "overlaps root", nil},
+		{"any live pool, identical", anyLivePool, []poolPlacement{pool("n", "", "192.0.2.0/24", nil)}, "overlaps solo", nil},
+		{"plan siblings overlap", anyLivePool, []poolPlacement{
+			pool("r", "", "192.168.0.0/16", nil),
+			pool("x", "r", "192.168.0.0/24", nil),
+			pool("y", "r", "192.168.0.0/25", nil),
+		}, "overlaps x", nil},
+		{"plan parent and child do not conflict", anyLivePool, []poolPlacement{
+			pool("r", "", "192.168.0.0/16", nil),
+			pool("x", "r", "192.168.0.0/24", nil),
+		}, "", []string{"stored", "stored"}},
+		{"plan containment is checked before overlap", anyLivePool, []poolPlacement{
+			pool("r", "", "192.168.0.0/16", nil),
+			pool("x", "r", "10.200.0.0/24", nil),
+		}, "outside", nil},
+		{"skip_conflicts still checks containment", overlapAllowed, []poolPlacement{
+			pool("r", "", "192.168.0.0/16", nil),
+			pool("x", "r", "10.200.0.0/24", nil),
+		}, "outside", nil},
+		{"skip_conflicts stores an overlap", overlapAllowed, []poolPlacement{pool("n", "", "10.0.0.0/9", nil)}, "", []string{"stored"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := checkPlacement(tc.policy, live, tc.batch)
-			switch {
-			case tc.with == "" && c != nil:
-				t.Fatalf("want no conflict, got %v", c)
-			case tc.with != "" && c == nil:
-				t.Fatalf("want a conflict with %q, got none", tc.with)
-			case tc.with != "" && c.With.Name != tc.with:
-				t.Fatalf("want a conflict with %q, got %v", tc.with, c)
+			st := storage.NewMemoryStore()
+			for _, in := range []domain.CreatePool{
+				{Name: "root", CIDR: "10.0.0.0/8"},
+				{Name: "a", CIDR: "10.1.0.0/16", ParentID: &rootID},
+				{Name: "deep", CIDR: "10.1.1.0/24", ParentID: &aID},
+				{Name: "solo", CIDR: "192.0.2.0/24"},
+			} {
+				if _, err := st.CreatePool(t.Context(), in); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := place(t.Context(), st, tc.policy, tc.batch)
+			if tc.whole != "" {
+				if got := placementOutcome(err); got != tc.whole {
+					t.Fatalf("want the whole batch refused with %q, got %q", tc.whole, got)
+				}
+				pools, _ := st.ListPools(t.Context())
+				if len(pools) != 4 {
+					t.Fatalf("a refused batch stored %d pools", len(pools)-4)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want per-entry results, got %v", err)
+			}
+			for i, r := range out {
+				if got := placementOutcome(r.Err); got != tc.each[i] {
+					t.Fatalf("entry %d: want %q, got %q", i, tc.each[i], got)
+				}
 			}
 		})
 	}

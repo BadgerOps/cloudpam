@@ -577,6 +577,10 @@ func (ns *NetworkServer) handleNetworkConflictImportAction(w http.ResponseWriter
 		return
 	}
 	importResp, err := discoveryServer.applyDiscoveryImport(r.Context(), importReq, discoveryImportApplyOptions{AllowBlocked: req.Override})
+	if errors.Is(err, storage.ErrBusy) {
+		ns.srv.writeStoreErr(r.Context(), w, err)
+		return
+	}
 	if err != nil {
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "apply import failed", err.Error())
 		return

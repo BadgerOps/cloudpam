@@ -527,7 +527,7 @@ func TestCovApplyFailsWhenPoolCreationFails(t *testing.T) {
 	st := storage.NewMemoryStore()
 	recStore := storage.NewMemoryRecommendationStore(st)
 	failing := &covFailingPoolStore{MemoryStore: st, err: errors.New("disk full")}
-	svc := NewRecommendationService(NewAnalysisService(st), recStore, failing)
+	svc := NewRecommendationService(NewAnalysisService(st), recStore, failing, storePlacer{failing})
 
 	parent, err := st.CreatePool(ctx, domain.CreatePool{
 		Name: "Corp", CIDR: "10.0.0.0/24", Type: domain.PoolTypeSupernet, Description: "corp",

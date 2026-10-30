@@ -344,7 +344,7 @@ func TestAIApplyPlanCreatesHierarchyCov(t *testing.T) {
 	body := `{"plan":{"pools":[
 		{"ref":"root","name":"AI Root","cidr":"10.0.0.0/16","type":"supernet"},
 		{"ref":"child","name":"AI Child","cidr":"10.0.1.0/24","type":"subnet","parent_ref":"root"},
-		{"ref":"weird","name":"AI Weird","cidr":"10.0.2.0/24","type":"bogus-type"}
+		{"ref":"weird","name":"AI Weird","cidr":"10.1.2.0/24","type":"bogus-type"}
 	]}}`
 	rr := assertStatusCov(t, doReqCov(t, ai.srv.mux, http.MethodPost, "/api/v1/ai/sessions/sess-9/apply-plan", body), http.StatusOK)
 

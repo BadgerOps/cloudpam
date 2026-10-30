@@ -126,6 +126,18 @@ func TestRecommendationStorePersistsEveryFieldAcrossRestart(t *testing.T) {
 	}
 }
 
+type lockedPlacer struct{ s *Store }
+
+func (p lockedPlacer) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
+	var out domain.Pool
+	err := p.s.WithPlacementLock(ctx, func(ps storage.PlacementStore) error {
+		var err error
+		out, err = ps.CreatePool(ctx, in)
+		return err
+	})
+	return out, err
+}
+
 func TestRecommendationServiceRoundTripsThroughPostgres(t *testing.T) {
 	resetDB(t)
 	ctx := context.Background()
@@ -136,7 +148,7 @@ func TestRecommendationServiceRoundTripsThroughPostgres(t *testing.T) {
 	}
 	mustCreatePool(t, s, "child", "10.0.0.0/26", &parent.ID)
 
-	svc := planning.NewRecommendationService(planning.NewAnalysisService(s), s, s)
+	svc := planning.NewRecommendationService(planning.NewAnalysisService(s), s, s, lockedPlacer{s})
 	first, err := svc.Generate(ctx, domain.GenerateRecommendationsRequest{PoolIDs: []int64{parent.ID}})
 	if err != nil {
 		t.Fatalf("first generate: %v", err)
