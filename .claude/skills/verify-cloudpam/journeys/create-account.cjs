@@ -45,4 +45,37 @@ module.exports = async ({ page, login, api, shot, aria, note }) => {
   await shot('04-account-deleted');
   const after = await api('GET', '/api/v1/accounts');
   assert.ok(!after.body.some((a) => a.key === key), 'deleted key absent from GET /api/v1/accounts');
+
+  const seedKey = 'aws:111111111111';
+  const seedBefore = after.body.find((a) => a.key === seedKey);
+  assert.ok(seedBefore, 'seeded prod-platform account present');
+  const renamed = `prod-platform-${id}`;
+  const seedRow = page.getByRole('row', { name: /prod-platform/ });
+  await seedRow.getByRole('button', { name: 'Edit' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Edit Account' });
+  await dialog.waitFor();
+  assert.equal(await dialog.getByLabel('Key (required)').inputValue(), seedKey, 'edit form pre-filled with the key');
+  assert.equal(await dialog.getByLabel('Key (required)').isEditable(), false, 'key is read-only on edit');
+  assert.equal(await dialog.getByLabel('Name (required)').inputValue(), seedBefore.name, 'edit form pre-filled with the name');
+  await dialog.getByLabel('Name (required)').fill(renamed);
+  await dialog.getByLabel('Regions').fill('us-east-1, us-west-2');
+  await shot('05-edit-filled');
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await page.getByText(`Updated ${renamed}`).waitFor({ timeout: 10000 });
+  await dialog.waitFor({ state: 'detached' });
+  const editedRow = page.getByRole('row', { name: new RegExp(renamed) });
+  await editedRow.getByRole('cell', { name: 'us-east-1, us-west-2' }).waitFor();
+  await editedRow.getByRole('cell', { name: 'just now' }).waitFor();
+  await shot('06-account-edited');
+  await aria('06-account-edited');
+
+  const edited = await api('GET', '/api/v1/accounts');
+  const seedAfter = edited.body.find((a) => a.key === seedKey);
+  assert.equal(seedAfter.name, renamed, 'GET /api/v1/accounts shows the new name');
+  assert.deepEqual(seedAfter.regions, ['us-east-1', 'us-west-2'], 'GET /api/v1/accounts shows the new regions');
+  assert.equal(seedAfter.provider, seedBefore.provider, 'untouched provider preserved');
+  assert.equal(seedAfter.id, seedBefore.id, 'same account id');
+  note(`edit ${seedKey}: ${JSON.stringify(seedBefore)} -> ${JSON.stringify(seedAfter)}`);
+  const audit = await api('GET', '/api/v1/audit?action=update&resource_type=account');
+  note(`audit update/account -> ${audit.status} ${JSON.stringify(audit.body)}`);
 };
