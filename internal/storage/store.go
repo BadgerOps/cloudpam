@@ -688,32 +688,10 @@ func (m *MemoryStore) Search(ctx context.Context, req domain.SearchRequest) (dom
 		}
 	}
 
-	// Paginate
-	total := len(items)
-	page := req.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := req.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
-	if pageSize > 200 {
-		pageSize = 200
-	}
-
-	start := (page - 1) * pageSize
-	if start > total {
-		start = total
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-
+	window, page, pageSize := SearchPage(items, req.Page, req.PageSize)
 	return domain.SearchResponse{
-		Items:    items[start:end],
-		Total:    total,
+		Items:    window,
+		Total:    len(items),
 		Page:     page,
 		PageSize: pageSize,
 	}, nil
