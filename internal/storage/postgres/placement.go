@@ -15,13 +15,14 @@ import (
 	"cloudpam/internal/storage"
 )
 
-// placementLockWait and placementIdleLimit are vars so tests can shorten them.
-// PostgreSQL counts the time between ListPools and the first INSERT as idle, so the
-// idle limit bounds the in-process overlap check. The two run one after the other,
-// and together with the 5s commit margin they fit inside the 15s HTTP write timeout
-// in cmd/cloudpam/main.go: a placement that would outrun the response is rolled back
-// and reported busy instead of committing after the client has given up.
+// These are vars so tests can shorten them. placementDeadline bounds the whole
+// placement: the lock wait, the list, the overlap check and every insert. With the 5s
+// commit margin it fits inside the 15s HTTP write timeout in cmd/cloudpam/main.go, so a
+// placement that would outrun the response is rolled back and reported busy instead of
+// committing after the client has given up. lock_timeout and the idle limit are
+// server-side backstops for a client that stops making progress.
 var (
+	placementDeadline  = 10 * time.Second
 	placementLockWait  = "5s"
 	placementIdleLimit = "5s"
 )
@@ -38,32 +39,35 @@ var _ storage.PlacementLocker = (*Store)(nil)
 // the lock, the reads, and the inserts share one session. If that session ends, PostgreSQL drops
 // the lock and the inserts together.
 func (s *Store) WithPlacementLock(ctx context.Context, fn func(storage.PlacementStore) error) error {
+	work, cancel := context.WithTimeout(ctx, placementDeadline)
+	defer cancel()
+
 	// READ COMMITTED is pinned, not inherited from default_transaction_isolation. Under REPEATABLE
 	// READ or SERIALIZABLE the snapshot is taken before the lock wait ends, so ListPools would miss
 	// the pools the previous holder just committed.
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := s.pool.BeginTx(work, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return err
+		return placementBusy(ctx, err)
 	}
 	defer func() { _ = endTx(ctx, tx.Rollback) }()
 
-	if _, err := tx.Exec(ctx, `SELECT set_config('lock_timeout', $1, true), set_config('idle_in_transaction_session_timeout', $2, true)`,
+	if _, err := tx.Exec(work, `SELECT set_config('lock_timeout', $1, true), set_config('idle_in_transaction_session_timeout', $2, true)`,
 		placementLockWait, placementIdleLimit); err != nil {
-		return err
+		return placementBusy(ctx, err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('cloudpam/pool-placement/' || $1::text, 0))`, s.orgID); err != nil {
-		if sqlState(err) == lockNotAvailable {
-			return fmt.Errorf("pool placement lock not acquired within %s: %w", placementLockWait, storage.ErrBusy)
-		}
-		return err
+	if _, err := tx.Exec(work, `SELECT pg_advisory_xact_lock(hashtextextended('cloudpam/pool-placement/' || $1::text, 0))`, s.orgID); err != nil {
+		return placementBusy(ctx, err)
 	}
-	if err := fn(placementTx{tx: tx, orgID: s.orgID}); err != nil {
-		return busyIfIdleKilled(err)
+	if err := fn(placementTx{tx: tx, orgID: s.orgID, work: work, caller: ctx}); err != nil {
+		return placementBusy(ctx, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return busyIfIdleKilled(endTx(ctx, tx.Commit))
+	if err := work.Err(); err != nil {
+		return placementBusy(ctx, err)
+	}
+	return placementBusy(ctx, endTx(ctx, tx.Commit))
 }
 
 func sqlState(err error) string {
@@ -74,11 +78,22 @@ func sqlState(err error) string {
 	return ""
 }
 
-// busyIfIdleKilled maps the server ending the session for idling in the transaction to
-// ErrBusy: nothing was stored and the caller may retry.
-func busyIfIdleKilled(err error) error {
-	if err != nil && sqlState(err) == idleInTxTimeout {
+// placementBusy maps every way a placement runs out of time to ErrBusy: a lock wait past
+// lock_timeout on any statement, the server ending the session for idling, or the
+// placement deadline. In each case nothing was stored and the caller may retry. A
+// cancellation that came from the caller is returned as is.
+func placementBusy(caller context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	switch sqlState(err) {
+	case lockNotAvailable:
+		return fmt.Errorf("pool placement waited longer than %s for a lock: %w", placementLockWait, storage.ErrBusy)
+	case idleInTxTimeout:
 		return fmt.Errorf("pool placement session ended after idling %s: %w", placementIdleLimit, storage.ErrBusy)
+	}
+	if errors.Is(err, context.DeadlineExceeded) && caller.Err() == nil {
+		return fmt.Errorf("pool placement did not finish within %s: %w", placementDeadline, storage.ErrBusy)
 	}
 	return err
 }
@@ -94,29 +109,33 @@ func endTx(ctx context.Context, end func(context.Context) error) error {
 	return nil
 }
 
+// placementTx runs its statements on work, the deadline-bounded context derived from the
+// caller's, so every statement of the placement shares one budget.
 type placementTx struct {
-	tx    pgx.Tx
-	orgID string
+	tx     pgx.Tx
+	orgID  string
+	work   context.Context
+	caller context.Context
 }
 
-func (t placementTx) ListPools(ctx context.Context) ([]domain.Pool, error) {
-	return listPools(ctx, t.tx, t.orgID)
+func (t placementTx) ListPools(context.Context) ([]domain.Pool, error) {
+	return listPools(t.work, t.tx, t.orgID)
 }
 
 // CreatePool runs each insert in its own savepoint. A failed INSERT aborts the whole PostgreSQL
 // transaction, and the rest of a schema/apply batch must still be stored.
-func (t placementTx) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
-	sp, err := t.tx.Begin(ctx)
+func (t placementTx) CreatePool(_ context.Context, in domain.CreatePool) (domain.Pool, error) {
+	sp, err := t.tx.Begin(t.work)
 	if err != nil {
-		return domain.Pool{}, busyIfIdleKilled(err)
+		return domain.Pool{}, placementBusy(t.caller, err)
 	}
-	p, err := createPool(ctx, sp, t.orgID, in)
+	p, err := createPool(t.work, sp, t.orgID, in)
 	if err != nil {
-		_ = sp.Rollback(ctx)
-		return domain.Pool{}, busyIfIdleKilled(err)
+		_ = sp.Rollback(t.work)
+		return domain.Pool{}, placementBusy(t.caller, err)
 	}
-	if err := sp.Commit(ctx); err != nil {
-		return domain.Pool{}, busyIfIdleKilled(err)
+	if err := sp.Commit(t.work); err != nil {
+		return domain.Pool{}, placementBusy(t.caller, err)
 	}
 	return p, nil
 }

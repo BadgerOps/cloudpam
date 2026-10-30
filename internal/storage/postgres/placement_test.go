@@ -203,12 +203,7 @@ func TestWithPlacementLock_IdleHolderIsEndedAndReportsBusy(t *testing.T) {
 			return err
 		}
 		time.Sleep(600 * time.Millisecond)
-		// Like place(): a per-entry error is recorded, only a busy store stops the batch.
-		_, err := ps.CreatePool(context.Background(), domain.CreatePool{Name: "late", CIDR: "10.1.0.0/16"})
-		if errors.Is(err, storage.ErrBusy) {
-			return err
-		}
-		return nil
+		return placeLike(ps, domain.CreatePool{Name: "late", CIDR: "10.1.0.0/16"})
 	})
 	if !errors.Is(err, storage.ErrBusy) {
 		t.Fatalf("want storage.ErrBusy after the idle limit, got %v", err)
@@ -219,6 +214,78 @@ func TestWithPlacementLock_IdleHolderIsEndedAndReportsBusy(t *testing.T) {
 	}
 	if len(pools) != 0 {
 		t.Fatalf("ended placement stored %v", cidrs(pools))
+	}
+}
+
+// placeLike mirrors place(): a per-entry error is recorded, only a busy store stops the batch.
+func placeLike(ps storage.PlacementStore, in domain.CreatePool) error {
+	_, err := ps.CreatePool(context.Background(), in)
+	if errors.Is(err, storage.ErrBusy) {
+		return err
+	}
+	return nil
+}
+
+func TestWithPlacementLock_InsertLockWaitIsBusyAndStoresNothing(t *testing.T) {
+	resetDB(t)
+	old := placementLockWait
+	placementLockWait = "200ms"
+	t.Cleanup(func() { placementLockWait = old })
+
+	blocker, err := testDB.store.pool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin blocker: %v", err)
+	}
+	t.Cleanup(func() { _ = blocker.Rollback(context.Background()) })
+	if _, err := createPool(context.Background(), blocker, testDB.store.orgID, domain.CreatePool{Name: "pending", CIDR: "10.2.0.0/16"}); err != nil {
+		t.Fatalf("uncommitted insert: %v", err)
+	}
+
+	err = testDB.store.WithPlacementLock(context.Background(), func(ps storage.PlacementStore) error {
+		if _, err := ps.CreatePool(context.Background(), domain.CreatePool{Name: "first", CIDR: "10.1.0.0/16"}); err != nil {
+			return err
+		}
+		return placeLike(ps, domain.CreatePool{Name: "blocked", CIDR: "10.2.0.0/16"})
+	})
+	if !errors.Is(err, storage.ErrBusy) {
+		t.Fatalf("want storage.ErrBusy from the blocked insert, got %v", err)
+	}
+	_ = blocker.Rollback(context.Background())
+	pools, err := testDB.store.ListPools(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(pools) != 0 {
+		t.Fatalf("a batch stopped by a lock wait still stored %v", cidrs(pools))
+	}
+}
+
+func TestWithPlacementLock_DeadlineIsBusyAndStoresNothing(t *testing.T) {
+	resetDB(t)
+	old := placementDeadline
+	placementDeadline = 300 * time.Millisecond
+	t.Cleanup(func() { placementDeadline = old })
+
+	caller := context.Background()
+	err := testDB.store.WithPlacementLock(caller, func(ps storage.PlacementStore) error {
+		if _, err := ps.CreatePool(caller, domain.CreatePool{Name: "first", CIDR: "10.1.0.0/16"}); err != nil {
+			return err
+		}
+		time.Sleep(500 * time.Millisecond)
+		return placeLike(ps, domain.CreatePool{Name: "late", CIDR: "10.2.0.0/16"})
+	})
+	if !errors.Is(err, storage.ErrBusy) {
+		t.Fatalf("want storage.ErrBusy after the placement deadline, got %v", err)
+	}
+	if caller.Err() != nil {
+		t.Fatal("the caller's context must not be cancelled by the store's deadline")
+	}
+	pools, err := testDB.store.ListPools(context.Background())
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(pools) != 0 {
+		t.Fatalf("a placement past its deadline still stored %v", cidrs(pools))
 	}
 }
 
