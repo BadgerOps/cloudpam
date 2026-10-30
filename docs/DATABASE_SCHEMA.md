@@ -645,6 +645,8 @@ END;
 
 ## Migration Strategy
 
+On PostgreSQL the migrator holds a database-wide advisory lock (`cloudpam/migrations`) for the whole pass, so replicas that start together serialize and the later ones find every version already applied.
+
 ### Version Table
 
 ```sql
