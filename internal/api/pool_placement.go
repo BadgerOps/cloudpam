@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 
@@ -85,6 +86,9 @@ func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy,
 			in.ParentID = &id
 		}
 		p, err := ps.CreatePool(ctx, in)
+		if errors.Is(err, storage.ErrBusy) {
+			return nil, err
+		}
 		if err != nil {
 			out[i].Err = err
 			continue

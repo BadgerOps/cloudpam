@@ -203,8 +203,12 @@ func TestWithPlacementLock_IdleHolderIsEndedAndReportsBusy(t *testing.T) {
 			return err
 		}
 		time.Sleep(600 * time.Millisecond)
+		// Like place(): a per-entry error is recorded, only a busy store stops the batch.
 		_, err := ps.CreatePool(context.Background(), domain.CreatePool{Name: "late", CIDR: "10.1.0.0/16"})
-		return err
+		if errors.Is(err, storage.ErrBusy) {
+			return err
+		}
+		return nil
 	})
 	if !errors.Is(err, storage.ErrBusy) {
 		t.Fatalf("want storage.ErrBusy after the idle limit, got %v", err)

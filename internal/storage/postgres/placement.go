@@ -17,12 +17,13 @@ import (
 
 // placementLockWait and placementIdleLimit are vars so tests can shorten them.
 // PostgreSQL counts the time between ListPools and the first INSERT as idle, so the
-// idle limit bounds the in-process overlap check. It stays under the 15s HTTP write
-// timeout in cmd/cloudpam/main.go: a check that would outrun the response is rolled
-// back and reported busy instead of committing after the client has given up.
+// idle limit bounds the in-process overlap check. The two run one after the other,
+// and together with the 5s commit margin they fit inside the 15s HTTP write timeout
+// in cmd/cloudpam/main.go: a placement that would outrun the response is rolled back
+// and reported busy instead of committing after the client has given up.
 var (
-	placementLockWait  = "10s"
-	placementIdleLimit = "10s"
+	placementLockWait  = "5s"
+	placementIdleLimit = "5s"
 )
 
 const (
@@ -107,15 +108,15 @@ func (t placementTx) ListPools(ctx context.Context) ([]domain.Pool, error) {
 func (t placementTx) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
 	sp, err := t.tx.Begin(ctx)
 	if err != nil {
-		return domain.Pool{}, err
+		return domain.Pool{}, busyIfIdleKilled(err)
 	}
 	p, err := createPool(ctx, sp, t.orgID, in)
 	if err != nil {
 		_ = sp.Rollback(ctx)
-		return domain.Pool{}, err
+		return domain.Pool{}, busyIfIdleKilled(err)
 	}
 	if err := sp.Commit(ctx); err != nil {
-		return domain.Pool{}, err
+		return domain.Pool{}, busyIfIdleKilled(err)
 	}
 	return p, nil
 }
