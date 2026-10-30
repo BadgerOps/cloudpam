@@ -17,8 +17,8 @@ type schemaPoolEntry struct {
 	Ref       string `json:"ref"`
 	Name      string `json:"name"`
 	CIDR      string `json:"cidr"`
-	Type      string `json:"type"`
-	ParentRef string `json:"parent_ref"`
+	Type      string `json:"type,omitempty"`
+	ParentRef string `json:"parent_ref,omitempty"`
 }
 
 type schemaCheckRequest struct {
@@ -42,9 +42,9 @@ type schemaCheckResponse struct {
 
 type schemaApplyRequest struct {
 	Pools         []schemaPoolEntry `json:"pools"`
-	Status        string            `json:"status"`
-	Tags          map[string]string `json:"tags"`
-	SkipConflicts bool              `json:"skip_conflicts"`
+	Status        string            `json:"status,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
+	SkipConflicts bool              `json:"skip_conflicts,omitempty"`
 }
 
 type schemaApplyResponse struct {
