@@ -35,6 +35,7 @@ jobs:
             prom/prometheus:v2.48.0 check config /etc/prometheus/prometheus.yml
       - name: Check Grafana provisioning and dashboards parse
         run: |
+          python3 -m pip install --quiet --user 'pyyaml==6.0.2'
           python3 - <<'PY'
           import glob, json, yaml
           for f in glob.glob('deploy/grafana/provisioning/**/*.yaml', recursive=True):

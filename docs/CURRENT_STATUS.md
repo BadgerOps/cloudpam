@@ -118,11 +118,10 @@ The Discovery UI at `/discovery` has four tabs: Resources, Network, Sync History
 These are the gaps that most contradict the product's stated Postgres, multi-cloud, and operator-console story. Each item has an open GitHub issue in the range #266 to #314.
 
 1. Analysis UI, or fold gaps/fragmentation/compliance into pool detail and the dashboard.
-2. Fix the observability compose volume paths.
-3. Operator UI holes: account edit, cascade delete, schema policy in Configuration, and Log Destinations vs env docs.
-4. Admin-managed AI provider settings instead of more chat features.
-5. GCP in the discovery agent (or document that GCP sync is in-process only).
-6. Larger programs: true multi-tenancy, IPv6, MFA, per-org quotas, incremental sync, vendor SIEM, Graphēon shell.
+2. Operator UI holes: account edit, cascade delete, schema policy in Configuration, and Log Destinations vs env docs.
+3. Admin-managed AI provider settings instead of more chat features.
+4. GCP in the discovery agent (or document that GCP sync is in-process only).
+5. Larger programs: true multi-tenancy, IPv6, MFA, per-org quotas, incremental sync, vendor SIEM, Graphēon shell.
 
 ---
 

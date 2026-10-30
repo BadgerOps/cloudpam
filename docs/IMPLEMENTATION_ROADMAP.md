@@ -61,7 +61,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 - [x] Observability framework (see [OBSERVABILITY.md](OBSERVABILITY.md)):
   - [x] Structured logging with slog (JSON output)
   - [x] Prometheus metrics at `/metrics` (hand-rolled registry, not the OpenTelemetry metrics SDK)
-  - [x] Distributed tracing — opt-in OpenTelemetry OTLP/HTTP export (`CLOUDPAM_TRACING_ENABLED`, 0.23.0); no Jaeger deployment is wired
+  - [x] Distributed tracing — opt-in OpenTelemetry OTLP/HTTP export (`CLOUDPAM_TRACING_ENABLED`, 0.23.0); Jaeger ships only in the optional local compose stack below
   - [x] Health check endpoints (`/healthz`, `/readyz`)
 - [x] Local observability stack — [docker-compose.observability.yml](../deploy/docker-compose.observability.yml) starts Prometheus, Grafana (provisioned request dashboard), and Jaeger from a clean checkout. It ships no log pipeline. Vector is deployed by the Kubernetes DaemonSet, and the sample `deploy/vector/vector.toml` needs updating for Vector 0.34.1 (its `encoding.codec` form is rejected)
 
