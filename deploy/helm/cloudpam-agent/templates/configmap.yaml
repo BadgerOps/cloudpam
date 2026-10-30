@@ -8,7 +8,7 @@ data:
   agent.yaml: |
     server_url: {{ .Values.config.serverUrl | quote }}
     account_id: {{ .Values.config.accountId }}
-    agent_name: {{ .Values.config.agentName | default (include "cloudpam-agent.fullname" .) | quote }}
+    agent_name: {{ .Values.config.agentName | default (printf "%s-%s" .Release.Namespace (include "cloudpam-agent.fullname" .)) | quote }}
     sync_interval: {{ .Values.config.syncInterval | quote }}
     heartbeat_interval: {{ .Values.config.heartbeatInterval | quote }}
     {{- if .Values.config.awsRegions }}

@@ -1188,7 +1188,7 @@ helm install cloudpam-agent deploy/helm/cloudpam-agent \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/cloudpam-discovery
 ```
 
-The agent name defaults to the chart full name (`<release>-cloudpam-agent`), so the agent keeps one registration across pod restarts. For AWS Organizations discovery, set `config.awsOrg.enabled=true` and `config.awsOrg.roleName`. The agent has no HTTP port, so the chart defines no probes; its health is the heartbeat shown on the Discovery page.
+The agent name defaults to `<namespace>-<release>-cloudpam-agent`, so the agent keeps one registration across pod restarts and two releases in different namespaces do not share one. The agent derives its ID from the server URL, this name, and the account ID, so set `config.agentName` to a value unique across clusters when more than one cluster reports to the same account. For AWS Organizations discovery, set `config.awsOrg.enabled=true` and `config.awsOrg.roleName`. The agent has no HTTP port, so the chart defines no probes; its health is the heartbeat shown on the Discovery page.
 
 ### Upgrade from chart 0.1.x
 
