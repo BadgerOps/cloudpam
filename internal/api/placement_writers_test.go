@@ -190,8 +190,34 @@ func TestDiscoveryImportApply_ChildOutsideParentIsItemError(t *testing.T) {
 
 func TestDiscoveryImportApply_OverlappingSiblingIsItemError(t *testing.T) {
 	d, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:2", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "dev-space", CIDR: "10.0.0.0/8", AccountID: &other.ID}); err != nil {
+		t.Fatal(err)
+	}
+	vpc := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, "vpc-1", "10.1.0.0/16", nil)
+	upsertDiscoveredForImportTest(t, ds, vpc)
+
+	resp := applyDiscoveryImportForTest(t, d, account.ID, vpc.ID)
+
+	if resp.PoolsCreated != 0 || !hasErrorContaining(resp.Errors, "overlaps") {
+		t.Fatalf("want no pool created and an overlap error, got %+v", resp)
+	}
+	if storedCIDRs(t, st)["10.1.0.0/16"] {
+		t.Fatal("a pool overlapping another account's top-level pool was stored")
+	}
+}
+
+func TestDiscoveryImportApply_VPCGoesUnderDeepestContainingPool(t *testing.T) {
+	d, st, ds, _ := setupDiscoveryTestServer()
 	root := createRootPool(t, d.srv, "10.0.0.0/8")
-	createChildPool(t, d.srv, root.ID, "10.1.0.0/16")
+	region := createChildPool(t, d.srv, root.ID, "10.1.0.0/16")
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
 	if err != nil {
 		t.Fatal(err)
@@ -201,11 +227,15 @@ func TestDiscoveryImportApply_OverlappingSiblingIsItemError(t *testing.T) {
 
 	resp := applyDiscoveryImportForTest(t, d, account.ID, vpc.ID)
 
-	if resp.PoolsCreated != 0 || !hasErrorContaining(resp.Errors, "overlaps") {
-		t.Fatalf("want no pool created and an overlap error, got %+v", resp)
+	if resp.PoolsCreated != 1 || len(resp.Errors) != 0 {
+		t.Fatalf("want the vpc created, got %+v", resp)
 	}
-	if storedCIDRs(t, st)["10.1.0.0/17"] {
-		t.Fatal("an overlapping sibling was stored")
+	pool, ok, err := st.GetPool(t.Context(), resp.CreatedPoolIDs[0])
+	if err != nil || !ok {
+		t.Fatalf("get created pool: ok=%v err=%v", ok, err)
+	}
+	if pool.ParentID == nil || *pool.ParentID != region.ID {
+		t.Fatalf("vpc parent = %v, want the /16 pool %d", pool.ParentID, region.ID)
 	}
 }
 
