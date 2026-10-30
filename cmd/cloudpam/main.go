@@ -26,6 +26,7 @@ import (
 	"cloudpam/internal/observability"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/planning/llm"
+	"cloudpam/internal/storage"
 
 	"github.com/google/uuid"
 )
@@ -94,6 +95,11 @@ func main() {
 
 	// Select storage based on build tags and env (see store_*.go in this package).
 	store := selectStore(logger)
+	if _, ok := store.(storage.PlacementLocker); ok {
+		logger.Info("placement guard: postgres advisory lock")
+	} else {
+		logger.Info("placement guard: process mutex")
+	}
 
 	// Initialize metrics
 	metricsCfg := observability.MetricsConfigFromEnv()

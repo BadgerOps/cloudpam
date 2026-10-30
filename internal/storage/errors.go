@@ -22,6 +22,10 @@ var (
 
 	// ErrDuplicateIssuer indicates that an OIDC provider with the same issuer URL already exists.
 	ErrDuplicateIssuer = errors.New("duplicate issuer URL")
+
+	// ErrBusy indicates that a lock the operation needs stayed held elsewhere past its wait limit.
+	// Nothing was changed, and retrying may succeed.
+	ErrBusy = errors.New("busy")
 )
 
 // WrapIfConflict wraps a database error as ErrConflict if it represents a

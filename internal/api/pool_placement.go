@@ -2,10 +2,14 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
+	"sync"
+	"time"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 type overlapPolicy int
@@ -40,12 +44,75 @@ func (c *placementConflict) Error() string {
 	return fmt.Sprintf("pool %q (%s) overlaps with existing pool %q (%s)", c.Pool.Name, c.Pool.CIDR, c.With.Name, c.With.CIDR)
 }
 
-func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
-	s.placeMu.Lock()
-	defer s.placeMu.Unlock()
+// placementBudget bounds a placement from the moment it queues on placeGate to its last
+// insert. It is a var so tests can shorten it. With the store's 5s commit margin it fits
+// inside the server's 15s write timeout, so a placement never commits after the client
+// has stopped waiting for the response.
+var placementBudget = 10 * time.Second
 
+func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
+	work, cancel := context.WithTimeout(ctx, placementBudget)
+	defer cancel()
+
+	if err := s.placeGate.acquire(work); err != nil {
+		return nil, busyIfBudgetSpent(ctx, err)
+	}
+	defer s.placeGate.release()
+
+	locker, ok := s.store.(storage.PlacementLocker)
+	if !ok {
+		out, err := place(work, s.store, policy, batch)
+		return out, busyIfBudgetSpent(ctx, err)
+	}
+	var out []placedPool
+	err := locker.WithPlacementLock(work, func(ps storage.PlacementStore) error {
+		var err error
+		out, err = place(work, ps, policy, batch)
+		return err
+	})
+	if err != nil {
+		return nil, busyIfBudgetSpent(ctx, err)
+	}
+	return out, nil
+}
+
+// placementGate serializes placements inside one process. Unlike a mutex, a request
+// waiting for it gives up when its context ends, so the placement budget also bounds the
+// time spent queued behind another placement.
+type placementGate struct {
+	once sync.Once
+	slot chan struct{}
+}
+
+func (g *placementGate) acquire(ctx context.Context) error {
+	g.once.Do(func() { g.slot = make(chan struct{}, 1) })
+	select {
+	case g.slot <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g *placementGate) release() { <-g.slot }
+
+func (g *placementGate) held() bool {
+	g.once.Do(func() { g.slot = make(chan struct{}, 1) })
+	return len(g.slot) == 1
+}
+
+// busyIfBudgetSpent reports the placement budget running out as ErrBusy. A deadline that
+// came from the request itself is returned as is.
+func busyIfBudgetSpent(request context.Context, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) && request.Err() == nil {
+		return fmt.Errorf("pool placement did not finish within %s: %w", placementBudget, storage.ErrBusy)
+	}
+	return err
+}
+
+func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
 	if policy != overlapAllowed {
-		live, err := s.store.ListPools(ctx)
+		live, err := ps.ListPools(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -54,6 +121,9 @@ func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []p
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	out := make([]placedPool, len(batch))
 	stored := make(map[string]int64, len(batch))
 	for i, e := range batch {
@@ -66,7 +136,10 @@ func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []p
 			}
 			in.ParentID = &id
 		}
-		p, err := s.store.CreatePool(ctx, in)
+		p, err := ps.CreatePool(ctx, in)
+		if errors.Is(err, storage.ErrBusy) {
+			return nil, err
+		}
 		if err != nil {
 			out[i].Err = err
 			continue

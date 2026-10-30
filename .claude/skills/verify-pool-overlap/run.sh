@@ -4,17 +4,20 @@
 #   .claude/skills/verify-pool-overlap/run.sh [--out DIR]
 #
 # Runs TLC (pinned through the repo's own nixpkgs rev from flake.lock) on:
-#   one-process.cfg    the code, one server process          expected: HOLDS
-#   duplicate.cfg      the code, same CIDR twice             expected: HOLDS
-#   multi-process.cfg  the code, three processes, one DB     expected: VIOLATED (limitation L1)
+#   one-process.cfg              one process, MemoryStore or SQLite          expected: HOLDS
+#   duplicate.cfg                the same, same CIDR twice                   expected: HOLDS
+#   multi-process.cfg            three replicas on one PostgreSQL database   expected: HOLDS (#267)
+#   multi-process-duplicate.cfg  the same, same CIDR twice                   expected: HOLDS
+#   multi-process-local.cfg      three processes on one SQLite file          expected: VIOLATED (L1, unsupported)
 #
 # Exit codes:
 #   0  every run matched SKILL.md and the covered code is unchanged since the sync commit
 #   4  every run matched, but covered code in the working tree differs from the sync commit, or that
 #      commit is not in this clone: the pass may describe code that no longer exists. Re-read the
 #      changed code, update the model, then the sync commit.
-#   3  multi-process.cfg now HOLDS: a cross-process guard landed, or the model lost the ability to fail.
-#   1  any other mismatch (a rule broken on one process is a bug candidate), or TLC itself failed
+#   3  multi-process-local.cfg now HOLDS: the model lost the ability to fail, or stores without
+#      PlacementLocker now serialize across processes.
+#   1  any other mismatch (a rule broken in a config expected to hold is a bug candidate), or TLC itself failed
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,6 +35,7 @@ SYNC="$(sed -n 's/^sync commit: *\([0-9a-f]\{7,40\}\).*/\1/p' "$HERE/SKILL.md" |
 COVERED=(
   internal/api/pool_handlers.go internal/api/pool_placement.go internal/api/server.go internal/api/schema_handlers.go internal/api/cidr.go
   internal/storage/store.go internal/storage/sqlite/sqlite.go internal/storage/postgres/postgres.go
+  internal/storage/placement.go internal/storage/postgres/placement.go
   migrations/0001_init.sql migrations/postgres/001_core_schema.up.sql
   internal/api/ai_handlers.go internal/api/export_handlers.go internal/api/discovery_handlers.go internal/planning/recommendations.go
 )
@@ -63,23 +67,25 @@ check() {
   else echo "could not read result for $cfg; see $log"; status=1; return; fi
   echo "result: $got   (full TLC output: $log)"
   if [ "$got" = "$expect" ]; then return; fi
-  if [ "$cfg" = multi-process ] && [ "$got" = HOLDS ]; then
-    echo "multi-process.cfg HOLDS: either pool creation is now serialized across processes (update SKILL.md) or the model can no longer fail."
+  if [ "$cfg" = multi-process-local ] && [ "$got" = HOLDS ]; then
+    echo "multi-process-local.cfg HOLDS: either the model can no longer fail, or stores without PlacementLocker now serialize across processes (update SKILL.md)."
     [ "$status" = 1 ] || status=3; return
   fi
-  echo "UNEXPECTED: $cfg gave '$got', expected '$expect'. Replay the trace against the code: a broken rule on one process is a bug candidate."
+  echo "UNEXPECTED: $cfg gave '$got', expected '$expect'. Replay the trace against the code: a broken rule in a config expected to hold is a bug candidate."
   status=1
 }
 check one-process "HOLDS"
 check duplicate "HOLDS"
-check multi-process "VIOLATED (NoOverlappingSiblings)"
+check multi-process "HOLDS"
+check multi-process-duplicate "HOLDS"
+check multi-process-local "VIOLATED (NoOverlappingSiblings)"
 if [ "$status" = 0 ] && [ "$drift" = 1 ]; then status=4; fi
 
 echo
 case $status in
-  0) echo "RESULT: matches SKILL.md at the sync commit. One process keeps siblings apart; L1 (several processes on one database) still stands." ;;
+  0) echo "RESULT: matches SKILL.md at the sync commit. One process, and replicas on PostgreSQL, keep siblings apart; L1 still stands for several processes on one SQLite file." ;;
   4) echo "RESULT: TLC matched SKILL.md, but the covered code drifted, so this pass may be on a stale description. Re-read the diff above before trusting it." ;;
-  3) echo "RESULT: L1 no longer reproduces in the model. Confirm against the code before updating SKILL.md." ;;
+  3) echo "RESULT: the negative control multi-process-local.cfg no longer fails. Confirm against the code before updating SKILL.md." ;;
   *) echo "RESULT: a check did not match. Read the trace with /pstack:statechart and decide: model error or bug in the code." ;;
 esac
 exit $status

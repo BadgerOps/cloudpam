@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	stdhttp "net/http"
 	"net/http/httptest"
@@ -286,11 +287,13 @@ func TestWriteStoreErr(t *testing.T) {
 		name       string
 		err        error
 		wantStatus int
+		retryAfter string
 	}{
-		{"not found", storage.ErrNotFound, stdhttp.StatusNotFound},
-		{"conflict", storage.ErrConflict, stdhttp.StatusConflict},
-		{"validation", storage.ErrValidation, stdhttp.StatusBadRequest},
-		{"unknown", errors.New("something else"), stdhttp.StatusInternalServerError},
+		{"not found", storage.ErrNotFound, stdhttp.StatusNotFound, ""},
+		{"conflict", storage.ErrConflict, stdhttp.StatusConflict, ""},
+		{"validation", storage.ErrValidation, stdhttp.StatusBadRequest, ""},
+		{"busy", fmt.Errorf("placement lock: %w", storage.ErrBusy), stdhttp.StatusServiceUnavailable, "1"},
+		{"unknown", errors.New("something else"), stdhttp.StatusInternalServerError, ""},
 	}
 
 	for _, tt := range tests {
@@ -299,6 +302,9 @@ func TestWriteStoreErr(t *testing.T) {
 			srv.writeStoreErr(t.Context(), rr, tt.err)
 			if rr.Code != tt.wantStatus {
 				t.Errorf("expected status %d, got %d", tt.wantStatus, rr.Code)
+			}
+			if got := rr.Header().Get("Retry-After"); got != tt.retryAfter {
+				t.Errorf("Retry-After = %q, want %q", got, tt.retryAfter)
 			}
 		})
 	}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sync"
 
 	"github.com/getsentry/sentry-go"
 
@@ -31,7 +30,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 type Server struct {
 	mux              *http.ServeMux
 	store            storage.Store
-	placeMu          sync.Mutex
+	placeGate        placementGate
 	logger           observability.Logger
 	metrics          *observability.Metrics
 	auditLogger      audit.AuditLogger
@@ -123,6 +122,9 @@ func (s *Server) writeStoreErr(ctx context.Context, w http.ResponseWriter, err e
 		s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
 	case errors.Is(err, storage.ErrValidation):
 		s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
+	case errors.Is(err, storage.ErrBusy):
+		w.Header().Set("Retry-After", "1")
+		s.writeErr(ctx, w, http.StatusServiceUnavailable, err.Error(), "")
 	default:
 		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
 	}
