@@ -53,5 +53,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if resp.Items == nil {
+		resp.Items = []domain.SearchResultItem{}
+	}
+
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -41,8 +41,8 @@ export default function SearchModal({ open, onClose }: SearchModalProps) {
 
   if (!open) return null
 
-  const poolResults = results?.items.filter(i => i.type === 'pool') ?? []
-  const accountResults = results?.items.filter(i => i.type === 'account') ?? []
+  const poolResults = (results?.items ?? []).filter(i => i.type === 'pool')
+  const accountResults = (results?.items ?? []).filter(i => i.type === 'account')
   const hasResults = poolResults.length > 0 || accountResults.length > 0
 
   return (
