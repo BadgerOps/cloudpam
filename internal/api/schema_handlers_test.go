@@ -215,6 +215,15 @@ func TestSchemaCheck_ForwardAndMissingParentRefs(t *testing.T) {
 			wantDetail: "pool 0 (child): child not within parent",
 		},
 		{
+			name: "duplicate ref hides which parent applies",
+			body: `{"pools":[
+				{"ref":"p","name":"Wide","cidr":"10.0.0.0/8","type":"supernet"},
+				{"ref":"c","name":"Child","cidr":"192.168.1.0/24","type":"environment","parent_ref":"p"},
+				{"ref":"p","name":"Narrow","cidr":"192.168.0.0/16","type":"supernet"}
+			]}`,
+			wantDetail: "pool 2 (p): duplicate ref",
+		},
+		{
 			name: "parent_ref that names no entry",
 			body: `{"pools":[
 				{"ref":"root","name":"Root","cidr":"10.50.0.0/16","type":"supernet"},

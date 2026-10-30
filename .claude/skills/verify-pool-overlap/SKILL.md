@@ -105,7 +105,7 @@ Files and functions this verification describes:
 - `migrations/0001_init.sql`: `uniq_pools_parent_cidr`; `migrations/postgres/001_core_schema.up.sql`: `idx_pools_org_cidr`.
 - Bypass list: `ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`.
 
-sync commit: 29233c1
+sync commit: acd7a34ddffb694e9c5913c50d530ab368f82f2b
 
 `run.sh` prints DRIFT and exits 4 when any covered file in the working tree differs from the sync commit. The covered files are the model's sources above plus `internal/api/server.go` (`placeMu`) and the bypass writers (`ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`). When that happens: re-read the code cited above, fix the model if the code's steps changed (new lock, new constraint, new writer), rerun, and only then move the sync commit to a commit on master. A drift on a bypass file means re-reading that writer and updating its entry in the bypass list, not the model: those paths are recorded, not modelled, and the question is whether the writer still skips the check or the lock. If a change made `multi-process.cfg` hold, confirm the guard really spans processes before recording L1 as fixed. Never weaken a rule or widen a skip to make a run pass.
 

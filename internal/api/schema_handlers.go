@@ -284,7 +284,13 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 
 func validateSchemaContainment(pools []schemaPoolEntry) error {
 	cidrByRef := make(map[string]string, len(pools))
-	for _, p := range pools {
+	for i, p := range pools {
+		if p.Ref == "" {
+			continue
+		}
+		if _, dup := cidrByRef[p.Ref]; dup {
+			return fmt.Errorf("pool %d (%s): duplicate ref", i, p.Ref)
+		}
 		cidrByRef[p.Ref] = p.CIDR
 	}
 	for i, p := range pools {
