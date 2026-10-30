@@ -21,6 +21,8 @@ async function main() {
     if (!env[name]) throw new Error(`CLOUDPAM_VERIFY_${name} is not set; run this through cloudpam-verify browser`);
   }
   const label = process.env.CLOUDPAM_VERIFY_LABEL || path.basename(journeyPath, '.cjs');
+  // The label names a directory under the evidence directory; one safe path component, never a path.
+  if (label === '.' || label === '..' || !/^[A-Za-z0-9._-]+$/.test(label)) throw new Error(`refusing label '${label}': it must match ^[A-Za-z0-9._-]+$ and not be . or ..`);
   const baseURL = env.BASE_URL;
   const evidenceDir = path.join(env.EVIDENCE, label);
   fs.mkdirSync(evidenceDir, { recursive: true });

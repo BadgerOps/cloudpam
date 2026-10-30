@@ -40,10 +40,13 @@ nixrun() {
   fi
 }
 
-valid_run_id() {
+# One safe path component: run ids, evidence labels and `api --save` names each name a directory or file
+# under a directory this script owns, so none may be `.`, `..`, or contain a separator.
+valid_name() {
   case "$1" in .|..) return 1;; esac
   [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]]
 }
+valid_run_id() { valid_name "$1"; }
 
 resolve_run() {
   RUN_ID="${CLOUDPAM_VERIFY_RUN_ID:-}"
@@ -119,13 +122,19 @@ json_string() {
 }
 login_body() { printf '{"username":"%s","password":"%s"}' "$(json_string "$USERNAME")" "$(json_string "$PASSWORD")"; }
 
-# `npm run build` rewrites the tracked web/dist/index.html in the caller's checkout. The binary embeds
-# the built copy, so the checkout's file goes back once the binary exists.
-restore_index_html() {
-  if [ -f "$STATE/index.html.orig" ]; then
-    cp "$STATE/index.html.orig" "$REPO_ROOT/web/dist/index.html"
-    rm -f "$STATE/index.html.orig"
-    log "restored the checkout's web/dist/index.html (the built copy is embedded in the binary)"
+# `npm run build` empties web/dist and rewrites the tracked web/dist/index.html in the caller's checkout.
+# The binary embeds the built copy, so the whole directory goes back to what it was once the binary exists:
+# a checkout whose index.html matched its assets keeps matching, and a checkout with no web/dist gets none.
+restore_web_dist() {
+  if [ -d "$STATE/web-dist.orig" ]; then
+    rm -rf "$REPO_ROOT/web/dist"
+    cp -a "$STATE/web-dist.orig" "$REPO_ROOT/web/dist"
+    rm -rf "$STATE/web-dist.orig"
+    log "restored the checkout's web/dist (the built copy is embedded in the binary)"
+  elif [ -f "$STATE/web-dist.absent" ]; then
+    rm -rf "$REPO_ROOT/web/dist"
+    rm -f "$STATE/web-dist.absent"
+    log "removed web/dist again (the checkout had none; the built copy is embedded in the binary)"
   fi
 }
 
@@ -145,8 +154,9 @@ cmd_launch() {
   exec 9>"$RUNS_DIR/build.lock"
   flock 9
   if [ "${CLOUDPAM_VERIFY_SKIP_UI:-0}" != "1" ]; then
-    [ -f "$REPO_ROOT/web/dist/index.html" ] && cp "$REPO_ROOT/web/dist/index.html" "$STATE/index.html.orig"
-    trap restore_index_html EXIT
+    rm -rf "$STATE/web-dist.orig" "$STATE/web-dist.absent"
+    if [ -d "$REPO_ROOT/web/dist" ]; then cp -a "$REPO_ROOT/web/dist" "$STATE/web-dist.orig"; else : > "$STATE/web-dist.absent"; fi
+    trap restore_web_dist EXIT
     log "building UI (ui/ -> web/dist, embedded into the binary)"
     nixrun 'cd "$REPO_ROOT/ui" && ([ -d node_modules ] || npm ci --no-audit --no-fund) && npm run build' >"$STATE/ui-build.log" 2>&1 \
       || { tail -n 40 "$STATE/ui-build.log" >&2; die "ui build failed (see $STATE/ui-build.log)"; }
@@ -165,7 +175,7 @@ cmd_launch() {
   log "building server (-tags sqlite, CGO_ENABLED=0)"
   nixrun 'cd "$REPO_ROOT" && mkdir -p tmp/go-cache && GOCACHE="$REPO_ROOT/tmp/go-cache" CGO_ENABLED=0 go build -tags sqlite -ldflags "-X main.version=$APP_VERSION" -o "$STATE/cloudpam" ./cmd/cloudpam' \
     || die "go build failed"
-  restore_index_html
+  restore_web_dist
   trap - EXIT
   exec 9>&-
 
@@ -269,6 +279,7 @@ cmd_api() {
   load_env
   local save=""
   if [ "${1:-}" = "--save" ]; then save="$2"; shift 2; fi
+  [ -z "$save" ] || valid_name "$save" || die "refusing --save name '$save': it names a file under $EVIDENCE/api, so it must match ^[A-Za-z0-9._-]+$ and not be . or .."
   [ $# -ge 2 ] || die "usage: cloudpam-verify api [--save NAME] METHOD PATH [JSON]"
   http "$1" "$2" "${3:-}"
   echo "$HTTP_STATUS"
@@ -287,6 +298,7 @@ cmd_browser() {
   shift
   local label; label="$(basename "$journey" .cjs)"
   if [ "${1:-}" = "--label" ]; then label="$2"; fi
+  valid_name "$label" || die "refusing label '$label': it names a directory under $EVIDENCE, so it must match ^[A-Za-z0-9._-]+$ and not be . or .."
   journey="$(cd "$(dirname "$journey")" && pwd)/$(basename "$journey")"
   [ -f "$journey" ] || die "journey not found: $journey"
   export CLOUDPAM_VERIFY_BASE_URL="$BASE_URL" CLOUDPAM_VERIFY_EVIDENCE="$EVIDENCE" CLOUDPAM_VERIFY_APP_VERSION="$APP_VERSION" \
