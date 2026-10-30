@@ -1,6 +1,6 @@
 ---
 name: verify-pool-overlap
-description: "Model-check CloudPAM's pool overlap guard with TLA+/TLC: proves whether concurrent POST /api/v1/pools requests can store two overlapping sibling pools. Use before and after touching createPool in internal/api/pool_handlers.go, placePools or placeMu in internal/api/pool_placement.go, store.CreatePool in any storage backend, the pools unique indexes, or when adding any new code path that creates pools."
+description: "Model-check CloudPAM's pool overlap guard with TLA+/TLC: proves whether concurrent POST /api/v1/pools requests, on one process or on several replicas sharing PostgreSQL, can store two overlapping sibling pools. Use before and after touching createPool in internal/api/pool_handlers.go, placePools, place or placeMu in internal/api/pool_placement.go, storage.PlacementLocker (internal/storage/placement.go) or Store.WithPlacementLock (internal/storage/postgres/placement.go), store.CreatePool in any storage backend, the pools unique indexes, or when adding any new code path that creates pools."
 ---
 
 # Verify pool overlap (TLA+ / TLC)
@@ -8,7 +8,7 @@ description: "Model-check CloudPAM's pool overlap guard with TLA+/TLC: proves wh
 **Property.** No two pools under the same parent (or both at top level) ever share or overlap address space.
 **Harm if broken.** CloudPAM hands the same IP range to two consumers, which is the one thing an IPAM exists to prevent.
 
-**Status at the sync commit: the property HOLDS for one server process.** Commit 6b01164 (#262) serialized pool placement behind `Server.placeMu` and made `MemoryStore.CreatePool` refuse an exact duplicate, which fixed the two findings this skill recorded before (F1 concurrent overlap, F2 in-memory duplicate). One known limitation stands, L1 below: several CloudPAM processes on one database are not serialized. Nothing in product code was changed by this skill.
+**Status at the sync commit: the property HOLDS for one server process on any store, and for several replicas on one PostgreSQL database.** Commit 6b01164 (#262) serialized pool placement behind `Server.placeMu` and made `MemoryStore.CreatePool` refuse an exact duplicate, which fixed findings F1 and F2. Commit 47df5c4 (#267) resolved limitation L1 for PostgreSQL: placement now runs inside one transaction that holds a per-organization `pg_advisory_xact_lock`, and that lock spans every replica. L1 stays open for several processes on one SQLite file. That deployment is not supported, and the Helm chart refuses it. Nothing in product code was changed by this skill.
 
 ## Run it
 
@@ -16,14 +16,14 @@ description: "Model-check CloudPAM's pool overlap guard with TLA+/TLC: proves wh
 .claude/skills/verify-pool-overlap/run.sh
 ```
 
-Takes a few seconds after the first Nix fetch. It needs only `nix` and `git` (a full clone: the drift check reads the sync commit). TLC comes from the nixpkgs rev pinned in `flake.lock` (TLC 2.19, tlaplus 1.7.4 at the sync commit).
+It takes a few seconds after the first Nix fetch. It needs only `nix` and `git` (a full clone: the drift check reads the sync commit). TLC comes from the nixpkgs rev pinned in `flake.lock` (TLC 2.19, tlaplus 1.7.4 at the sync commit).
 
 | Exit | Meaning |
 |---|---|
 | 0 | Every config matched the table below and the covered code is unchanged since the sync commit. |
 | 4 | Every config matched, but covered code changed since the sync commit, committed or not (or the commit is missing). The pass may describe code that no longer exists: re-read the diff it prints, update the model, then move the sync commit. |
-| 3 | `multi-process.cfg` now holds: a cross-process guard landed, or the model lost the ability to fail. Confirm in the code before editing this file. |
-| 1 | Any other mismatch, or TLC failed. A rule broken on one process is a bug candidate: replay the trace against the code. Never weaken a rule to get 0. |
+| 3 | `multi-process-local.cfg` now holds. It is the negative control, so either the model lost the ability to fail, or stores without `PlacementLocker` now serialize across processes. Confirm in the code before editing this file. |
+| 1 | Any other mismatch, or TLC failed. A rule broken in a config expected to hold is a bug candidate: replay the trace against the code. Never weaken a rule to get 0. |
 
 Full TLC output lands in `out/<config>.out` (gitignored). Read every trace with the pstack `/pstack:statechart` skill: it shows each invariant violation as its shortest path in plain words, and draws a chart of the states when the check passes. Point it at `PoolCreate.tla` with the config you ran.
 
@@ -33,51 +33,59 @@ To see the guard on the real server, run `.claude/skills/verify-pool-overlap/rep
 
 | Config | Stands for | Expected |
 |---|---|---|
-| `one-process.cfg` | the code, every request on one process: `placePools` holds `placeMu` across `ListPools`, the check and `CreatePool` | all rules hold |
+| `one-process.cfg` | one process on a store without `PlacementLocker` (MemoryStore, SQLite): `placePools` holds `placeMu` across `ListPools`, the check and `CreatePool` | all rules hold |
 | `duplicate.cfg` | the same, with two requests for the same CIDR: the check skips an exact-equal sibling, so the store's `(parent, cidr)` refusal is the only guard | all rules hold |
-| `multi-process.cfg` | the code, each request on a different process sharing one database: each `placeMu` serializes nothing | `NoOverlappingSiblings` violated (L1) |
+| `multi-process.cfg` | three replicas on one PostgreSQL database, one request each: `placeMu` serializes nothing across them, and the advisory lock in `WithPlacementLock` covers the list, the check, the insert and the commit; any holder may lose its session before `COMMIT` | all rules hold (#267) |
+| `multi-process-duplicate.cfg` | the same, with two requests for the same CIDR: `idx_pools_org_cidr` fires inside the transaction, the savepoint turns it into a `409`, and the transaction still commits | all rules hold |
+| `multi-process-local.cfg` | three processes sharing one store without `PlacementLocker` (one SQLite file, unsupported): only the per-process `placeMu` | `NoOverlappingSiblings` violated (L1) |
 
-`multi-process.cfg` also keeps the model honest on every run: its interleaving is exactly what one process would allow without `placeMu`, so if the model ever loses the ability to fail, `run.sh` exits 3.
+`multi-process-local.cfg` keeps the model honest on every run. It is `multi-process.cfg` with `DatabaseLock = FALSE`, and its interleaving is what one process would allow without `placeMu`. If the model ever loses the ability to fail, `run.sh` exits 3.
 
 Rules in `PoolCreate.tla`:
-- `NoOverlappingSiblings`: the property above, over what the store holds.
+- `NoOverlappingSiblings`: the property above, over the committed pools. A row inside an open placement transaction is invisible to every other session, so it is not yet stored.
 - `RejectionsAreJustified`: the guard never rejects a request that had no conflicting sibling.
 - `TypeOK`.
 
-Bounds: three concurrent requests at the top level, CIDRs `10.0.0.0/8`, `10.0.0.0/9`, `10.128.0.0/9` (the /8 and its two disjoint halves), or `10.0.0.0/9` twice in `duplicate.cfg`. The overlap relation is listed by hand in `MC.tla` and matches what `prefixesOverlapIPv4` returns for those CIDRs. Every interleaving is explored (18 distinct states for one process, 20 for the duplicate run). Three requests at one scope is enough because the violation needs only two, and the third gives a rejection path so `RejectionsAreJustified` is not vacuous.
+Bounds: three concurrent requests at the top level, CIDRs `10.0.0.0/8`, `10.0.0.0/9`, `10.128.0.0/9` (the /8 and its two disjoint halves), or `10.0.0.0/9` twice in the duplicate configs. The overlap relation is listed by hand in `MC.tla` and matches what `prefixesOverlapIPv4` returns for those CIDRs. Every interleaving is explored (18 distinct states for one process, 20 for its duplicate run, 68 for three PostgreSQL replicas, 71 for their duplicate run). Three requests at one scope is enough because the violation needs only two, and the third gives a rejection path so `RejectionsAreJustified` is not vacuous.
 
 ## How the model maps to the code
 
-`createPool` (`internal/api/pool_handlers.go`) validates the body, checks the parent with `validateChildCIDR`, then calls `s.placePools(ctx, siblingsOnly, ...)` (`internal/api/pool_placement.go`). Each TLA+ action is one step that no other request on the same process can enter:
+`createPool` (`internal/api/pool_handlers.go`) validates the body, checks the parent with `validateChildCIDR`, then calls `s.placePools(ctx, siblingsOnly, ...)` (`internal/api/pool_placement.go`). `placePools` takes `placeMu`. If the store implements `storage.PlacementLocker` it calls `WithPlacementLock` and runs `place` on the `PlacementStore` it is given; otherwise it runs `place` on the store itself. `DatabaseLock` in the model is that branch: only the PostgreSQL store implements the interface (`internal/storage/postgres/placement.go`). Each TLA+ action is one step that no other placement can enter:
 
 | Action | Code | Why it is one step |
 |---|---|---|
-| `ListAndCheck(r)` | `placePools`: `s.placeMu.Lock()`, `s.store.ListPools(ctx)`, then `checkPlacement` | `ListPools` copies the pool set under the store's read lock (`MemoryStore.ListPools`) or in one `SELECT`; `checkPlacement` reads only that copy. Under `siblingsOnly` it compares pools with the same parent and skips an exact-equal CIDR (`overlapPolicy.compares`). A conflict returns `400 cidr overlaps with existing block`, and the deferred `Unlock` releases the lock in the same step. |
-| `Insert(r)` | `placePools`: `s.store.CreatePool(ctx, in)`, then the deferred `placeMu.Unlock()` | One write. Every store refuses an exact `(parent, cidr)` duplicate with `storage.ErrConflict`, which `createPool` maps to `409`: SQLite through `uniq_pools_parent_cidr` (`migrations/0001_init.sql`), Postgres through `idx_pools_org_cidr` on live `(organization_id, cidr)` rows (`migrations/postgres/001_core_schema.up.sql`, stricter: it also refuses an equal CIDR under another parent), and `MemoryStore.CreatePool` by scanning live pools. |
+| `ListAndCheck(r)` | `placePools`: `s.placeMu.Lock()`. With `DatabaseLock`, `WithPlacementLock` then opens a READ COMMITTED transaction, sets `lock_timeout` and `idle_in_transaction_session_timeout`, and takes `pg_advisory_xact_lock(hashtextextended('cloudpam/pool-placement/' \|\| orgID, 0))`. Then `place`: `ListPools` (`placementTx.ListPools` on PostgreSQL), then `checkPlacement` | Every placement takes `placeMu` first, and a request that waits on either lock has read nothing. `ListPools` copies the pool set under the store's read lock (`MemoryStore.ListPools`) or in one `SELECT`; under READ COMMITTED that `SELECT` takes a new snapshot after the lock is granted, so it sees every pool the previous holder committed. `checkPlacement` reads only that copy. Under `siblingsOnly` it compares pools with the same parent and skips an exact-equal CIDR (`overlapPolicy.compares`). A conflict returns `400 cidr overlaps with existing block`: the deferred `endTx(ctx, tx.Rollback)` frees the advisory lock and the deferred `Unlock` frees `placeMu` in the same step. |
+| `Insert(r)` (`DatabaseLock = FALSE`) | `place`: `s.store.CreatePool(ctx, in)`, then the deferred `placeMu.Unlock()` | One write that commits on its own. SQLite refuses an exact `(parent, cidr)` duplicate through `uniq_pools_parent_cidr` (`migrations/0001_init.sql`) and `MemoryStore.CreatePool` by scanning live pools, both with `storage.ErrConflict`, which `createPool` maps to `409`. |
+| `TxInsert(r)` (`DatabaseLock = TRUE`) | `placementTx.CreatePool`: `createPool` (`internal/storage/postgres/postgres.go`) inside a savepoint (`t.tx.Begin`), `sp.Rollback` on error | One INSERT that no other session sees before `COMMIT`. A duplicate fails `idx_pools_org_cidr` on live `(organization_id, cidr)` rows (`migrations/postgres/001_core_schema.up.sql`, stricter than SQLite: it also refuses an equal CIDR under another parent). The savepoint rollback keeps the transaction usable, and the `409` is reported after the commit. |
+| `Commit(r)` | `WithPlacementLock`: `fn` returned nil and `ctx.Err()` is nil, so `endTx(ctx, tx.Commit)` on a context detached from the request; then the deferred `placeMu.Unlock()` | PostgreSQL marks a transaction committed before it frees the transaction's advisory lock, so the next holder's `ListPools` sees the rows. Nothing happens on the request between the commit and the `Unlock`, so the two are one step. |
+| `SessionLost(r)` | The placement transaction ends without `COMMIT`: the request context is cancelled (the `ctx.Err()` check, or a statement fails on it), `idle_in_transaction_session_timeout` (15s) or `pg_terminate_backend` ends the session, or the process dies. The deferred `endTx(ctx, tx.Rollback)`, or the server, rolls it back | The lock is transaction-scoped and the inserts run in the same transaction, so whatever ends the transaction frees the lock and discards the inserts together. `TestWithPlacementLock_CancelledInsideFnStoresNothing`, `TestWithPlacementLock_TerminatedHolderStoresNothingAndFreesLock` and `TestSchemaApply_CancelledMidBatch_StoresNothing` show this on a real database. |
 
-`holder` in the model is `placeMu`, one per process (`ReqProcess`). It is a field of `Server`, so it serializes requests inside one process only; `net/http` runs each request on its own goroutine, and nothing else orders them. `POST /api/v1/schema/apply` takes the same lock through `placePools` (policy `anyLivePool`, or `overlapAllowed` with `skip_conflicts:true`), so it cannot interleave with `createPool` on one process; it is read, not modelled.
+`holder` in the model is `placeMu`, one per process (`ReqProcess`). It is a field of `Server`, so it serializes requests inside one process only; `net/http` runs each request on its own goroutine, and nothing else orders them. `dbHolder` is the advisory lock. Its key depends only on the store's organization (`s.orgID`), so it is one lock for every process on the database. `uncommitted` holds the rows inserted inside a placement transaction that has not committed, and `pools` is what every other session's `ListPools` sees. `POST /api/v1/schema/apply` takes the same locks through `placePools` (policy `anyLivePool`, or `overlapAllowed` with `skip_conflicts:true`), so it cannot interleave with `createPool`; it is read, not modelled.
 
 Pools are never deleted in the model. The parent-containment half of the promise (`validateChildCIDR`) runs before the lock and is not modelled: `updatePool` cannot change a CIDR, so it has no ordering question, but see "Not covered" for the delete race.
 
-## L1: several processes on one database (multi-process.cfg)
+## L1: several processes on one database (resolved for PostgreSQL)
 
-Commit 6b01164 says it: "placeMu serializes one process only. CloudPAM instances that share one Postgres database are not serialized by it." The Helm chart allows `replicaCount` above 1 with Postgres. Counterexample TLC finds, in the code's words:
+Recorded since this skill was added, and resolved for PostgreSQL by 47df5c4 (#267). Commit 6b01164 had said it: "placeMu serializes one process only. CloudPAM instances that share one Postgres database are not serialized by it." The Helm chart allowed `replicaCount` above 1 with Postgres. The counterexample TLC found, in the code's words:
 
 1. Process 1 serves request A `POST /api/v1/pools {"cidr":"10.0.0.0/8"}`: `placePools` locks its own `placeMu`, `ListPools` returns nothing, `checkPlacement` passes.
 2. Process 2 serves request B `POST /api/v1/pools {"cidr":"10.0.0.0/9"}`: its own `placeMu` is free, `ListPools` returns nothing, `checkPlacement` passes.
 3. A calls `store.CreatePool`: `10.0.0.0/8` stored, 201.
 4. B calls `store.CreatePool`: `10.0.0.0/9` stored, 201. No unique index fires because the CIDRs differ.
 
-Not reproduced live: `repro.sh` runs one process. A fix needs a guard the database enforces (a serializing transaction, an advisory lock, or an exclusion constraint on overlapping CIDRs).
+The fix is a guard the database enforces: the advisory lock in `WithPlacementLock`. `multi-process.cfg` now models it and holds. The tests in 1184847 (`internal/api/pool_placement_postgres_test.go`) reproduced the race with two `api.Server` values on one database, and they pass after 47df5c4.
+
+L1 is still open for stores without `PlacementLocker`: several processes on one SQLite file are serialized by nothing. That deployment is unsupported, and the Helm chart fails with `storage.backend=sqlite runs one replica` when `replicaCount` is above 1. `multi-process-local.cfg` is that case, and TLC still finds the four steps above in it.
 
 ## History
 
 - F1 (concurrent creates stored overlapping siblings) and F2 (the in-memory store accepted the same CIDR twice) were found at 705c4b3 and fixed by 6b01164 (#262). `one-process.cfg` and `duplicate.cfg` are the checks that now hold; `repro.sh` shows both on the binary.
+- L1 (replicas on one database), which 6b01164 itself stated, was fixed for PostgreSQL by 47df5c4 (#267). `multi-process.cfg` and `multi-process-duplicate.cfg` are the checks that now hold.
 
 ## Other writers that bypass the guard entirely (verified by reading, not modelled)
 
-These store pools with no overlap check, so one request can break the property with no concurrency. All but the first also skip `placeMu`, so they can insert between another request's check and insert:
-- `POST /api/v1/schema/apply` with `skip_conflicts:true` (documented bypass: `placePools` with `overlapAllowed` takes the lock but skips the check). With `skip_conflicts:false` it compares against every live pool, not only siblings, also refuses overlaps inside the batch, and never runs `validateChildCIDR`.
+These store pools with no overlap check, so one request can break the property with no concurrency. All but the first also skip `placeMu` and, on PostgreSQL, the advisory lock, so they can insert between another request's `ListPools` and its insert or `COMMIT`, on any replica:
+- `POST /api/v1/schema/apply` with `skip_conflicts:true` (documented bypass: `placePools` with `overlapAllowed` takes the locks but skips the check). With `skip_conflicts:false` it compares against every live pool, not only siblings, also refuses overlaps inside the batch, and never runs `validateChildCIDR`.
 - `POST /api/v1/ai/sessions/{id}/apply-plan` (`internal/api/ai_handlers.go` line 306): no overlap check.
 - `POST /api/v1/import/pools` CSV import (`internal/api/export_handlers.go` line 732): no overlap check.
 - `POST /api/v1/recommendations/{id}/apply` (`internal/planning/recommendations.go` line 117): inserts the CIDR suggested at generation time without rechecking.
@@ -87,34 +95,49 @@ Excluded because they cannot change a CIDR: `PATCH /api/v1/pools/{id}` (`updateP
 
 ## Not covered
 
+- Isolation levels other than READ COMMITTED. `ListAndCheck` reads `pools` at the moment it holds both locks, which is what READ COMMITTED gives. The model cannot express REPEATABLE READ or SERIALIZABLE, where the snapshot comes from the transaction's first statement (`set_config`), before the lock wait ends. `WithPlacementLock` pins READ COMMITTED for that reason, and `TestWithPlacementLock_WaiterSeesHolderPoolsUnderRepeatableReadDefault` guards the pin on a database whose default is REPEATABLE READ.
+- The lock wait limit. A request that waits longer than `placementLockWait` (10s) gets `storage.ErrBusy` and a `503` with `Retry-After: 1` before it lists anything, so it never touches the store.
+- A `COMMIT` whose reply is lost after the server committed: the pools exist, but `createPool` answers `500`. The model's `Commit` always reports `created` or `rejected`, so this case changes only the reported status, not what the store holds.
+- The organization. The model has one; the lock key and `listPools` are both per organization. Two organizations whose keys collide under `hashtextextended` share a lock, which only adds waiting.
 - The ordering between a parent delete and a child create (`GetPool` parent before the lock, then `DeletePool`, then `CreatePool` child) is not modelled.
 - Soft deletes: on SQLite a deleted pool still holds its `(parent, cidr)` in `uniq_pools_parent_cidr` (issue #268); the model has no deletes.
 - IPv4 prefix arithmetic itself (`prefixesOverlapIPv4`, `validateChildCIDR`, `cidrsOverlap`) is taken as correct; the model uses a hand-listed overlap relation.
-- More than three concurrent requests, more than one scope, mixed placements of requests across processes, `schema/apply` as a modelled actor, and the SQL stores' transaction isolation are outside the bound.
+- More than three concurrent requests, more than one scope, two requests on one replica beside a third on another, `schema/apply` batches (several inserts, some refused by their savepoint) as a modelled actor, and a process crash that ends every request on that process at once are outside the bound.
 - The bypass paths above are recorded, not model-checked.
 
 ## Coverage record
 
 Files and functions this verification describes:
 - `internal/api/pool_handlers.go`: `createPool` (validation, `validateChildCIDR`, the `placePools` call and its 400/409 mapping), `updatePool` (confirmed no CIDR field).
-- `internal/api/pool_placement.go`: `placePools`, `checkPlacement`, `overlapPolicy.compares`, `cidrsOverlap`, `sameParent`; `Server.placeMu` (`internal/api/server.go`).
-- `internal/api/schema_handlers.go`: `handleSchemaApply` (same lock; read, not modelled).
+- `internal/api/pool_placement.go`: `placePools`, `place`, `checkPlacement`, `overlapPolicy.compares`, `cidrsOverlap`, `sameParent`.
+- `internal/api/server.go`: `Server.placeMu`, `writeStoreErr` (`409` for `ErrConflict`, `503` for `ErrBusy`).
+- `internal/api/schema_handlers.go`: `handleSchemaApply` (same locks; read, not modelled).
 - `internal/api/cidr.go`: `prefixesOverlapIPv4`, `validateChildCIDR` (taken as the overlap relation).
+- `internal/storage/placement.go`: `PlacementStore`, `PlacementLocker` and its contract.
+- `internal/storage/postgres/placement.go`: `WithPlacementLock`, `endTx`, `placementTx.ListPools`, `placementTx.CreatePool`.
 - `internal/storage/store.go`: `MemoryStore.ListPools`, `MemoryStore.CreatePool` (live `(parent, cidr)` duplicate refused with `ErrConflict`).
-- `internal/storage/sqlite/sqlite.go` and `internal/storage/postgres/postgres.go`: `CreatePool` (plain INSERT, conflict only from the unique index).
+- `internal/storage/sqlite/sqlite.go` and `internal/storage/postgres/postgres.go`: `CreatePool` (plain INSERT, conflict only from the unique index); in `postgres.go` also `listPools` and `createPool`, which the transaction and the pool share.
 - `migrations/0001_init.sql`: `uniq_pools_parent_cidr`; `migrations/postgres/001_core_schema.up.sql`: `idx_pools_org_cidr`.
 - Bypass list: `ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`.
 
-sync commit: e0818fd78bc0d7fbcea6916c2cf6af5c98eecfd4
+sync commit: 47df5c46975ad913857b5f2614ed01b9a9c07258
 
-`run.sh` prints DRIFT and exits 4 when any covered file in the working tree differs from the sync commit. The covered files are the model's sources above plus `internal/api/server.go` (`placeMu`) and the bypass writers (`ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`). When that happens: re-read the code cited above, fix the model if the code's steps changed (new lock, new constraint, new writer), rerun, and only then move the sync commit to a commit on master. A drift on a bypass file means re-reading that writer and updating its entry in the bypass list, not the model: those paths are recorded, not modelled, and the question is whether the writer still skips the check or the lock. If a change made `multi-process.cfg` hold, confirm the guard really spans processes before recording L1 as fixed. Never weaken a rule or widen a skip to make a run pass.
+`run.sh` prints DRIFT and exits 4 when any covered file in the working tree differs from the sync commit. The covered files are the model's sources above plus the bypass writers (`ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`). When that happens: re-read the code cited above, fix the model if the code's steps changed (new lock, new transaction boundary, new constraint, new writer), rerun, and only then move the sync commit to a commit on master. A drift on a bypass file means re-reading that writer and updating its entry in the bypass list, not the model: those paths are recorded, not modelled, and the question is whether the writer still skips the check or the locks. If a change made `multi-process-local.cfg` hold, confirm whether the model can still fail before recording anything. Never weaken a rule or widen a skip to make a run pass.
 
 ## Run record at the sync commit
 
 - `one-process.cfg`: no error (18 distinct states, depth 6).
 - `duplicate.cfg`: no error (20 distinct states, depth 6).
-- `multi-process.cfg`: `NoOverlappingSiblings` violated at depth 5 (26 distinct states), the four steps of L1.
-- Breaks that prove the checks can fail: removing the `holder` guard from `ListAndCheck` (modelling `placeMu` as absent) makes `one-process.cfg` violate `NoOverlappingSiblings` at depth 5; setting `StoreRejectsDuplicate = FALSE` in `duplicate.cfg` (the in-memory store before 6b01164) makes it violate `NoOverlappingSiblings` at depth 5.
+- `multi-process.cfg`: no error (68 distinct states, depth 9).
+- `multi-process-duplicate.cfg`: no error (71 distinct states, depth 9).
+- `multi-process-local.cfg`: `NoOverlappingSiblings` violated at depth 5 (26 distinct states), the four steps of L1.
+- TLC reaches each new path, checked with throwaway invariants: an uncommitted insert, a `SessionLost` after `TxInsert` followed by an overlapping `201` on another replica, and the savepoint `409` in `multi-process-duplicate.cfg`.
+- Breaks that prove the checks can fail:
+  - Removing the `holder` guard from `ListAndCheck` (modelling `placeMu` as absent) makes `one-process.cfg` violate `NoOverlappingSiblings` at depth 5.
+  - `StoreRejectsDuplicate = FALSE` in `duplicate.cfg` (the in-memory store before 6b01164) makes it violate `NoOverlappingSiblings` at depth 5.
+  - Removing `DatabaseLock => dbHolder = NoHolder` from `ListAndCheck` (the advisory lock gone, `placeMu` kept) makes `multi-process.cfg` violate `NoOverlappingSiblings` at depth 7.
+  - Making `SessionLost` free only the advisory lock and leave the request running with its uncommitted insert makes `multi-process.cfg` violate `NoOverlappingSiblings` at depth 8. This is a session-level lock on a connection apart from the inserts: request A inserts `10.0.0.0/8`, loses the lock, B lists on another replica without seeing A's row, inserts `10.0.0.0/9`, and both commit.
+  - `DatabaseLock = TRUE` in `multi-process-local.cfg` makes `run.sh` exit 3.
 - `repro.sh` on the real binary (in-memory store, port 18180): 40 attempts, each with exactly one `201` and seven `400` among eight overlapping sibling creates; the same top-level CIDR twice gave `201` then `409`.
 
 Note: `.gitignore` ignores `.claude/*` but re-includes `.claude/skills/`, so this folder is tracked; its `out/` directory is ignored by the local `.gitignore`.
