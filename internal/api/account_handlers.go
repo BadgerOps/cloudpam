@@ -104,11 +104,17 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
 				return
 			}
+			s.logAudit(ctx, audit.ActionUpdate, audit.ResourceAccount, fmt.Sprintf("%d", a.ID), a.Name, http.StatusOK)
 			writeJSON(w, http.StatusOK, a)
 
 		case http.MethodDelete:
 			if !auth.HasPermissionContext(ctx, role, auth.ResourceAccounts, auth.ActionDelete) {
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+				return
+			}
+			acct, acctFound, err := s.store.GetAccount(ctx, id)
+			if err != nil {
+				s.writeErr(ctx, w, http.StatusInternalServerError, "failed to load account", err.Error())
 				return
 			}
 			var ok bool
@@ -126,6 +132,11 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 				s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
 				return
 			}
+			accountName := ""
+			if acctFound {
+				accountName = acct.Name
+			}
+			s.logAudit(ctx, audit.ActionDelete, audit.ResourceAccount, fmt.Sprintf("%d", id), accountName, http.StatusNoContent)
 			w.WriteHeader(http.StatusNoContent)
 
 		default:

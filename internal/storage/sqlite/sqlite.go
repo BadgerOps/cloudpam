@@ -591,39 +591,9 @@ func (s *Store) GetAccountByKey(ctx context.Context, key string) (*domain.Accoun
 }
 
 func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=? AND deleted_at IS NULL`, id)
-	var a domain.Account
-	var ts string
-	var provider, extid, desc, platform, tier, env sql.NullString
-	var regions, updatedAt sql.NullString
-	if err := row.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Account{}, false, nil
-		}
-		return domain.Account{}, false, err
-	}
-	if provider.Valid {
-		a.Provider = provider.String
-	}
-	if extid.Valid {
-		a.ExternalID = extid.String
-	}
-	if desc.Valid {
-		a.Description = desc.String
-	}
-	if platform.Valid {
-		a.Platform = platform.String
-	}
-	if tier.Valid {
-		a.Tier = tier.String
-	}
-	if env.Valid {
-		a.Environment = env.String
-	}
-	if regions.Valid && regions.String != "" {
-		var arr []string
-		_ = json.Unmarshal([]byte(regions.String), &arr)
-		a.Regions = arr
+	a, ok, err := s.GetAccount(ctx, id)
+	if err != nil || !ok {
+		return domain.Account{}, ok, err
 	}
 	// Apply update
 	if update.Name != "" {
