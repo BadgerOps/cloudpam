@@ -66,8 +66,7 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 5. **`deploy/docker-compose.observability.yml` is broken as checked in.** It mounts `./prometheus/prometheus.yml` and `./grafana/provisioning`; those directories are not in the repo.
 6. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
 7. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
-8. **Audit events shipped to SIEM have empty `IPAddress`.** Handler-level audit helpers do not set source IP; `AuditMiddleware` is not in the production chain. See [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md) §1.4.
-9. **The pool overlap check does not span replicas.** `Server.placeMu` serializes `POST /api/v1/pools` and `POST /api/v1/schema/apply` inside one process only. Two replicas on one PostgreSQL database can each pass the check and store overlapping sibling pools (#267). CSV import, AI plan apply, recommendation apply, and discovery import call `CreatePool` directly and do not take this lock, and schema apply with `skip_conflicts: true` creates the pools without any overlap check.
+8. **The pool overlap check does not span replicas.** `Server.placeMu` serializes `POST /api/v1/pools` and `POST /api/v1/schema/apply` inside one process only. Two replicas on one PostgreSQL database can each pass the check and store overlapping sibling pools (#267). CSV import, AI plan apply, recommendation apply, and discovery import call `CreatePool` directly and do not take this lock, and schema apply with `skip_conflicts: true` creates the pools without any overlap check.
 
 ---
 

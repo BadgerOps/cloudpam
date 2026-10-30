@@ -141,6 +141,8 @@ func NewTestServer(t *testing.T, cfg TestServerConfig) *TestServerComponents {
 		handler = observability.MetricsMiddleware(metrics)(handler)
 	}
 
+	handler = api.ClientIPMiddleware(cfg.TrustedProxies)(handler)
+
 	// Apply request ID middleware
 	handler = api.RequestIDMiddleware()(handler)
 

@@ -810,6 +810,7 @@ func (os *OIDCServer) logOIDCAudit(ctx context.Context, action, resourceType, re
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
 		ResourceName: resourceName,
+		IPAddress:    ClientIPFromContext(ctx),
 		StatusCode:   statusCode,
 	}
 

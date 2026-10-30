@@ -41,6 +41,13 @@ func TestAuditEventsCarryClientIP(t *testing.T) {
 			forwardedFor:   "198.51.100.23",
 			wantIP:         "203.0.113.7",
 		},
+		{
+			name:           "unparsable forwarded header from trusted proxy",
+			trustedProxies: "10.0.0.0/8",
+			remoteAddr:     "10.0.0.5:443",
+			forwardedFor:   "<script>, 198.51.100.23",
+			wantIP:         "10.0.0.5",
+		},
 	}
 
 	for _, tt := range tests {

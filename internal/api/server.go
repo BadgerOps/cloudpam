@@ -158,6 +158,7 @@ func (s *Server) logAuditWithChanges(ctx context.Context, action, resourceType, 
 		ResourceID:   resourceID,
 		ResourceName: resourceName,
 		Changes:      changes,
+		IPAddress:    ClientIPFromContext(ctx),
 		StatusCode:   statusCode,
 	}
 	if reqID := ctx.Value(requestIDContextKey); reqID != nil {
