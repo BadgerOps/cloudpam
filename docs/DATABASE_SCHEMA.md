@@ -699,7 +699,7 @@ migrations/
 
 ### Connection Pooling
 
-- PostgreSQL: Use PgBouncer or built-in pool (20-50 connections)
+- PostgreSQL: Use PgBouncer or built-in pool (20-50 connections). PgBouncer must run in session pooling mode, because transaction pooling breaks both the startup migration lock (a session-level advisory lock) and pgx's prepared statements.
 - SQLite: Single connection with WAL mode
 
 ```sql
