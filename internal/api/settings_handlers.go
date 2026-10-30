@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -81,8 +82,8 @@ func (ss *SettingsServer) handleUpdateSecuritySettings(w http.ResponseWriter, r 
 		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid password_max_length", "must be between min_length and 72")
 		return
 	}
-	if input.LoginRateLimitPerMin < 1 || input.LoginRateLimitPerMin > 60 {
-		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid login_rate_limit_per_minute", "must be between 1 and 60")
+	if input.LoginRateLimitPerMin < domain.MinLoginRateLimitPerMin || input.LoginRateLimitPerMin > domain.MaxLoginRateLimitPerMin {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid login_rate_limit_per_minute", fmt.Sprintf("must be between %d and %d", domain.MinLoginRateLimitPerMin, domain.MaxLoginRateLimitPerMin))
 		return
 	}
 	if input.AccountLockoutAttempts < 0 || input.AccountLockoutAttempts > 100 {

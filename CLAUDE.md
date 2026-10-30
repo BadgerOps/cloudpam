@@ -450,8 +450,9 @@ When adding endpoints:
 - `SENTRY_ENVIRONMENT`: Sentry environment name (default: `production`)
 
 ### Rate Limiting
-- `RATE_LIMIT_RPS`: Requests per second (default: `10.0`; set to `0` to disable)
-- `RATE_LIMIT_BURST`: Burst size (default: `20`)
+- `RATE_LIMIT_RPS`: Requests per second (default: `100`; set to `0` to disable)
+- `RATE_LIMIT_BURST`: Burst size (default: `200`)
+- The global limiter keeps one token bucket per TCP peer address and ignores `X-Forwarded-For`, so clients behind one reverse proxy share a bucket. Only the login limiter honors `CLOUDPAM_TRUSTED_PROXIES`. Behind a proxy, set `RATE_LIMIT_RPS=0` and limit at the ingress.
 
 ### Agent (Org Mode)
 - `CLOUDPAM_AWS_ORG_ENABLED`: Enable AWS Organizations discovery mode

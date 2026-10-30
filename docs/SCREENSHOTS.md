@@ -21,7 +21,7 @@ cd ui && npm install && npm run build && cd ..
 go build -o /tmp/cloudpam-shots ./cmd/cloudpam
 
 # 3. Run it on a scratch port. DEV_MODE=1 is required to opt into the in-memory store;
-#    RATE_LIMIT_RPS=0 keeps the default 10 rps limiter from throttling the capture run.
+#    RATE_LIMIT_RPS=0 keeps the default 100 rps limiter from throttling the capture run.
 DEV_MODE=1 RATE_LIMIT_RPS=0 CLOUDPAM_LOG_LEVEL=warn /tmp/cloudpam-shots -addr :8195 &
 
 # 4. Install the browser (first run only)

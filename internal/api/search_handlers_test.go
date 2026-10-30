@@ -175,6 +175,30 @@ func TestSearchTypeFilter(t *testing.T) {
 	}
 }
 
+func TestSearchNoMatchesReturnsEmptyArray(t *testing.T) {
+	srv, store := setupSearchServer(t)
+	seedSearchData(t, store)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?q=volcano", nil)
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(raw["items"]); got != "[]" {
+		t.Errorf("expected items to be [], got %s", got)
+	}
+	if got := string(raw["total"]); got != "0" {
+		t.Errorf("expected total 0, got %s", got)
+	}
+}
+
 func TestSearchInvalidCIDR(t *testing.T) {
 	srv, store := setupSearchServer(t)
 	seedSearchData(t, store)

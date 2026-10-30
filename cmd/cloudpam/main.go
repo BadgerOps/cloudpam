@@ -273,8 +273,8 @@ func main() {
 	userSrv := api.NewUserServer(srv, keyStore, userStore, sessionStore, auditLogger)
 	userSrv.SetRoleStore(roleStore)
 	loginRL := api.LoginRateLimitMiddleware(api.LoginRateLimitConfig{
-		AttemptsPerMinute: 5,
-		ProxyConfig:       proxyConfig,
+		Settings:    settingsStore,
+		ProxyConfig: proxyConfig,
 	})
 	userSrv.RegisterProtectedUserRoutes(logger.Slog(), api.WithLoginRateLimit(loginRL))
 	dualMW := api.DualAuthMiddleware(keyStore, sessionStore, userStore, true, logger.Slog())
