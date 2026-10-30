@@ -34,15 +34,27 @@ export function usableHosts(prefix: number): number {
   return total - 5 // AWS reserves 5 per subnet
 }
 
+function networkOf(ipNum: number, prefix: number): number {
+  return ipNum - (ipNum % hostCount(prefix))
+}
+
 export function subdivide(cidr: string, newPrefix: number): string[] {
   const parsed = parse(cidr)
+  if (newPrefix < parsed.prefixLen) return []
+  const start = networkOf(parsed.ipNum, parsed.prefixLen)
   const count = Math.pow(2, newPrefix - parsed.prefixLen)
   const blockSize = Math.pow(2, 32 - newPrefix)
   const results: string[] = []
   for (let i = 0; i < count; i++) {
-    results.push(`${toIp(parsed.ipNum + i * blockSize)}/${newPrefix}`)
+    results.push(`${toIp(start + i * blockSize)}/${newPrefix}`)
   }
   return results
+}
+
+export function isWithin(child: string, parent: string): boolean {
+  const c = parse(child)
+  const p = parse(parent)
+  return c.prefixLen > p.prefixLen && networkOf(c.ipNum, p.prefixLen) === networkOf(p.ipNum, p.prefixLen)
 }
 
 export function formatHostCount(count: number): string {
@@ -63,4 +75,11 @@ export interface SchemaNode {
 export function countLeafNodes(node: SchemaNode): number {
   if (!node.children || node.children.length === 0) return 1
   return node.children.reduce((sum, child) => sum + countLeafNodes(child), 0)
+}
+
+export function outsideParent(node: SchemaNode): { child: SchemaNode; parent: SchemaNode }[] {
+  return node.children.flatMap((child) => [
+    ...(isWithin(child.cidr, node.cidr) ? [] : [{ child, parent: node }]),
+    ...outsideParent(child),
+  ])
 }
