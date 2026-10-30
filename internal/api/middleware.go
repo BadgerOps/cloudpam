@@ -401,7 +401,12 @@ func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
 }
 
 // defaultLoginSettingsRefresh is how long the login limiter reuses a resolved limit.
-const defaultLoginSettingsRefresh = 10 * time.Second
+// loginSettingsReadTimeout bounds each refresh read, which runs detached from the
+// request's cancellation so one aborted login cannot change the limit for every IP.
+const (
+	defaultLoginSettingsRefresh = 10 * time.Second
+	loginSettingsReadTimeout    = 2 * time.Second
+)
 
 // LoginRateLimitConfig configures per-IP login rate limiting.
 // Settings supplies login_rate_limit_per_minute. AttemptsPerMinute applies when
@@ -428,16 +433,18 @@ func (cfg LoginRateLimitConfig) fallbackAttempts() int {
 	return domain.DefaultLoginRateLimitPerMin
 }
 
-func (cfg LoginRateLimitConfig) readAttempts(ctx context.Context) int {
-	fallback := cfg.fallbackAttempts()
+func (cfg LoginRateLimitConfig) readAttempts(ctx context.Context) (int, error) {
 	if cfg.Settings == nil {
-		return fallback
+		return cfg.fallbackAttempts(), nil
 	}
 	settings, err := cfg.Settings.GetSecuritySettings(ctx)
-	if err != nil || settings == nil || !validLoginRateLimit(settings.LoginRateLimitPerMin) {
-		return fallback
+	if err != nil {
+		return 0, err
 	}
-	return settings.LoginRateLimitPerMin
+	if settings == nil || !validLoginRateLimit(settings.LoginRateLimitPerMin) {
+		return cfg.fallbackAttempts(), nil
+	}
+	return settings.LoginRateLimitPerMin, nil
 }
 
 type loginLimitCache struct {
@@ -456,13 +463,26 @@ func newLoginLimitCache(cfg LoginRateLimitConfig) *loginLimitCache {
 	return &loginLimitCache{cfg: cfg, ttl: ttl}
 }
 
+// attempts returns the current limit, reading Settings once per ttl. A failed read
+// keeps the last value that was read successfully, or the fallback before any read
+// has succeeded, until the next refresh.
 func (c *loginLimitCache) attempts(ctx context.Context) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if now := time.Now(); !now.Before(c.expires) {
-		c.value = c.cfg.readAttempts(ctx)
-		c.expires = now.Add(c.ttl)
+	now := time.Now()
+	if now.Before(c.expires) {
+		return c.value
 	}
+	readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loginSettingsReadTimeout)
+	defer cancel()
+	value, err := c.cfg.readAttempts(readCtx)
+	switch {
+	case err == nil:
+		c.value = value
+	case c.value == 0:
+		c.value = c.cfg.fallbackAttempts()
+	}
+	c.expires = now.Add(c.ttl)
 	return c.value
 }
 

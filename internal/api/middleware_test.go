@@ -2121,6 +2121,70 @@ func TestLoginRateLimitMiddleware_CachesSettingsWithinRefreshWindow(t *testing.T
 	}
 }
 
+type flakySettingsStore struct {
+	storage.SettingsStore
+	limit int
+	fail  atomic.Bool
+}
+
+func (f *flakySettingsStore) GetSecuritySettings(ctx context.Context) (*domain.SecuritySettings, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f.fail.Load() {
+		return nil, errors.New("settings unavailable")
+	}
+	settings := domain.DefaultSecuritySettings()
+	settings.LoginRateLimitPerMin = f.limit
+	return &settings, nil
+}
+
+func attemptsBeforeLimit(t *testing.T, handler http.Handler, ip string, ctx context.Context) int {
+	t.Helper()
+	for i := 1; i <= domain.MaxLoginRateLimitPerMin+1; i++ {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil).WithContext(ctx)
+		req.RemoteAddr = ip + ":12345"
+		handler.ServeHTTP(rr, req)
+		if rr.Code == http.StatusTooManyRequests {
+			return i - 1
+		}
+	}
+	t.Fatalf("no 429 within %d attempts from %s", domain.MaxLoginRateLimitPerMin+1, ip)
+	return 0
+}
+
+func TestLoginRateLimitMiddleware_KeepsLastGoodLimitWhenRefreshFails(t *testing.T) {
+	store := &flakySettingsStore{limit: 2}
+	handler := LoginRateLimitMiddleware(LoginRateLimitConfig{Settings: store, SettingsRefresh: time.Nanosecond})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	if got := attemptsBeforeLimit(t, handler, "10.0.0.1", context.Background()); got != 2 {
+		t.Fatalf("healthy store: %d attempts allowed, want 2", got)
+	}
+	store.fail.Store(true)
+	if got := attemptsBeforeLimit(t, handler, "10.0.0.2", context.Background()); got != 2 {
+		t.Fatalf("failing store after a good read: %d attempts allowed, want the last good 2", got)
+	}
+}
+
+func TestLoginRateLimitMiddleware_RefreshIgnoresRequestCancellation(t *testing.T) {
+	store := &flakySettingsStore{limit: 2}
+	handler := LoginRateLimitMiddleware(LoginRateLimitConfig{Settings: store, SettingsRefresh: time.Hour})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := attemptsBeforeLimit(t, handler, "10.0.0.3", cancelled); got != 2 {
+		t.Fatalf("cancelled request: %d attempts allowed, want 2", got)
+	}
+	if got := attemptsBeforeLimit(t, handler, "10.0.0.4", context.Background()); got != 2 {
+		t.Fatalf("after a cancelled refresh: %d attempts allowed, want 2", got)
+	}
+}
+
 func TestLoginRateLimitMiddleware_EnforcesSettingRange(t *testing.T) {
 	burst := func(t *testing.T, cfg LoginRateLimitConfig) int {
 		t.Helper()
