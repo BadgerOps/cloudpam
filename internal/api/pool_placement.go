@@ -32,14 +32,6 @@ type placedPool struct {
 	Err  error
 }
 
-type unresolvedParentError struct {
-	Ref string
-}
-
-func (e *unresolvedParentError) Error() string {
-	return fmt.Sprintf("parent_ref %q not yet created", e.Ref)
-}
-
 type placementConflict struct {
 	Pool    domain.CreatePool
 	With    domain.Pool
@@ -186,8 +178,8 @@ func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy,
 		if e.ParentRef != "" {
 			if id, ok := stored[e.ParentRef]; ok {
 				in.ParentID = &id
-			} else {
-				out[i].Err = &unresolvedParentError{Ref: e.ParentRef}
+			} else if in.ParentID == nil {
+				out[i].Err = fmt.Errorf("parent_ref %q not yet created", e.ParentRef)
 				continue
 			}
 		}
