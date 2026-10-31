@@ -808,7 +808,7 @@ const DEFAULT_RESOURCE_COLUMNS: ResourceColumnKey[] = [
   'last_seen',
 ]
 
-function NetworkTab({
+export function NetworkTab({
   selectedAccountId,
   accounts,
   pools,
