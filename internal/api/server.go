@@ -178,6 +178,10 @@ type statusRecorder struct {
 
 func (s *statusRecorder) WriteHeader(code int) { s.status = code; s.ResponseWriter.WriteHeader(code) }
 
+// Unwrap exposes the wrapped writer so http.ResponseController can reach its
+// Flusher and deadline setters (SSE streaming depends on this).
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
 // RegisterProtectedRoutes registers all HTTP routes with RBAC protection.
 // Routes are protected based on the resource and action being performed.
 // Public endpoints (health, metrics, static) remain unprotected.

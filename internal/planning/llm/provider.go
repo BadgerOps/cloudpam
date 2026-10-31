@@ -34,6 +34,9 @@ type StreamEvent struct {
 	Delta        string // incremental text content
 	Done         bool   // true when the stream is finished
 	FinishReason string
+	// Err is set on the final event when the stream ended on a read error
+	// rather than a clean end of stream.
+	Err error
 }
 
 // Provider abstracts an LLM backend (OpenAI, Ollama, vLLM, etc.).
@@ -60,16 +63,24 @@ type Config struct {
 	Temperature float64
 }
 
+// Built-in defaults used when neither the settings store nor the environment
+// sets a value.
+const (
+	DefaultModel       = "gpt-4o"
+	DefaultMaxTokens   = int64(4096)
+	DefaultTemperature = 0.7
+)
+
 // ConfigFromEnv reads LLM configuration from environment variables.
 func ConfigFromEnv() Config {
-	maxTokens := int64(4096)
+	maxTokens := DefaultMaxTokens
 	if v := os.Getenv("CLOUDPAM_LLM_MAX_TOKENS"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			maxTokens = n
 		}
 	}
 
-	temperature := 0.7
+	temperature := DefaultTemperature
 	if v := os.Getenv("CLOUDPAM_LLM_TEMPERATURE"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			temperature = f
@@ -78,7 +89,7 @@ func ConfigFromEnv() Config {
 
 	model := os.Getenv("CLOUDPAM_LLM_MODEL")
 	if model == "" {
-		model = "gpt-4o"
+		model = DefaultModel
 	}
 
 	return Config{

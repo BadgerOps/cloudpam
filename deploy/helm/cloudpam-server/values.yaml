@@ -79,7 +79,9 @@ config:
 
   # AI planning over an OpenAI-compatible API. On when CLOUDPAM_LLM_ENDPOINT or
   # secrets.CLOUDPAM_LLM_API_KEY is set. An endpoint with no key is authless
-  # mode (Ollama, vLLM).
+  # mode (Ollama, vLLM). Admins can also configure the provider from the
+  # Configuration page; storing an API key there needs
+  # secrets.CLOUDPAM_OIDC_ENCRYPTION_KEY.
   CLOUDPAM_LLM_ENDPOINT: ""          # OpenAI
   CLOUDPAM_LLM_MODEL: ""             # gpt-4o
   CLOUDPAM_LLM_MAX_TOKENS: ""        # 4096

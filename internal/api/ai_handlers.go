@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -46,6 +47,13 @@ func (a *AIPlanningServer) RegisterProtectedAIPlanningRoutes(dualMW Middleware, 
 	a.srv.handleOpenAPIRoute("/api/v1/ai/sessions/", dualMW(updateMW(http.HandlerFunc(a.handleSessionByID))))
 }
 
+// aiUnavailableDetail tells an operator how to turn AI planning on.
+const aiUnavailableDetail = "configure a provider under Configuration → AI Provider, or set CLOUDPAM_LLM_API_KEY / CLOUDPAM_LLM_ENDPOINT"
+
+func (a *AIPlanningServer) writeUnavailable(w http.ResponseWriter, r *http.Request) {
+	a.srv.writeErr(r.Context(), w, http.StatusServiceUnavailable, "ai planning not available", aiUnavailableDetail)
+}
+
 // handleChat streams an SSE response for a chat message.
 // POST /api/v1/ai/chat
 func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -54,8 +62,8 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !a.aiSvc.Available() {
-		a.srv.writeErr(r.Context(), w, http.StatusServiceUnavailable, "ai planning not available", "set CLOUDPAM_LLM_API_KEY or CLOUDPAM_LLM_ENDPOINT to enable")
+	if !a.aiSvc.Available(r.Context()) {
+		a.writeUnavailable(w, r)
 		return
 	}
 
@@ -75,6 +83,10 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Start streaming
 	eventCh, err := a.aiSvc.Chat(r.Context(), req.SessionID, req.Message)
+	if errors.Is(err, planning.ErrAIUnavailable) {
+		a.writeUnavailable(w, r)
+		return
+	}
 	if err != nil {
 		a.srv.writeStoreErr(r.Context(), w, err)
 		return
