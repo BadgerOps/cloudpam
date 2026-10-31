@@ -305,3 +305,35 @@ func TestSchemaPlan_ChildOutsideParentRefused(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaCheck_RefusesWhatApplyRefuses(t *testing.T) {
+	cases := []struct {
+		name, body, want string
+	}{
+		{
+			name: "entry without ref",
+			body: `{"pools":[{"name":"a","cidr":"172.16.0.0/16"}]}`,
+			want: "pool 0: ref is required",
+		},
+		{
+			name: "entry with invalid name",
+			body: `{"pools":[{"ref":"a","name":"","cidr":"172.16.0.0/16"}]}`,
+			want: `pool 0 (a): invalid name "": cannot be empty`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, _ := setupTestServer()
+			for _, path := range []string{"/api/v1/schema/apply", "/api/v1/schema/check"} {
+				rr := doJSON(t, srv.mux, stdhttp.MethodPost, path, tc.body, stdhttp.StatusBadRequest)
+				var got apiError
+				if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+					t.Fatalf("%s: unmarshal: %v", path, err)
+				}
+				if got.Error != tc.want {
+					t.Fatalf("%s error = %q, want %q", path, got.Error, tc.want)
+				}
+			}
+		})
+	}
+}

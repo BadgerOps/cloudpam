@@ -154,10 +154,6 @@ type openAPIImportResponse struct {
 	Errors   []string `json:"errors,omitempty"`
 }
 
-type openAPISchemaPlanRequest struct {
-	Pools []domain.CreatePool `json:"pools"`
-}
-
 type openAPISearchResponse struct {
 	Query   string `json:"query"`
 	Results []any  `json:"results"`
@@ -494,7 +490,9 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"CreateAccount", reflect.TypeOf(domain.CreateAccount{})},
 		{"UpdateAccount", reflect.TypeOf(domain.CreateAccount{})},
 		{"ImportResponse", reflect.TypeOf(openAPIImportResponse{})},
-		{"SchemaPlanRequest", reflect.TypeOf(openAPISchemaPlanRequest{})},
+		{"SchemaPoolEntry", reflect.TypeOf(schemaPoolEntry{})},
+		{"SchemaCheckRequest", reflect.TypeOf(schemaCheckRequest{})},
+		{"SchemaApplyRequest", reflect.TypeOf(schemaApplyRequest{})},
 		{"SearchResponse", reflect.TypeOf(openAPISearchResponse{})},
 		{"DiscoveredResource", reflect.TypeOf(domain.DiscoveredResource{})},
 		{"DiscoveryResourcesResponse", reflect.TypeOf(domain.DiscoveryResourcesResponse{})},
@@ -1049,8 +1047,8 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "GET", Path: "/api/v1/export", Summary: "Export pools and accounts as CSV ZIP", Tag: "Export", ResponseSchema: "String", ResponseContentType: "application/zip"},
 		{Method: "POST", Path: "/api/v1/import/accounts", Summary: "Import accounts from CSV", Tag: "Import", RequestSchema: "Object", ResponseSchema: "ImportResponse"},
 		{Method: "POST", Path: "/api/v1/import/pools", Summary: "Import pools from CSV", Tag: "Import", RequestSchema: "Object", ResponseSchema: "ImportResponse"},
-		{Method: "POST", Path: "/api/v1/schema/check", Summary: "Check schema conflicts", Description: "Returns 400 invalid sub-pool cidr when an entry is not inside the entry its parent_ref names.", Tag: "Schema", RequestSchema: "SchemaPlanRequest", ResponseSchema: "Object"},
-		{Method: "POST", Path: "/api/v1/schema/apply", Summary: "Apply schema plan", Description: "Returns 400 invalid sub-pool cidr and creates nothing when an entry is not inside the entry its parent_ref names, whatever skip_conflicts says. With skip_conflicts false, returns 409 and creates nothing when an entry overlaps any existing pool or an earlier entry with the same parent. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Schema", RequestSchema: "SchemaPlanRequest", ResponseSchema: "Object"},
+		{Method: "POST", Path: "/api/v1/schema/check", Summary: "Check schema conflicts", Description: "Returns 400 invalid sub-pool cidr when an entry is not inside the entry its parent_ref names. Entries follow the same validation as apply: ref is required, and name and cidr are validated.", Tag: "Schema", RequestSchema: "SchemaCheckRequest", ResponseSchema: "Object"},
+		{Method: "POST", Path: "/api/v1/schema/apply", Summary: "Apply schema plan", Description: "Returns 400 invalid sub-pool cidr and creates nothing when an entry is not inside the entry its parent_ref names, whatever skip_conflicts says. With skip_conflicts false, returns 409 and creates nothing when an entry overlaps any existing pool or an earlier entry with the same parent. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Schema", RequestSchema: "SchemaApplyRequest", ResponseSchema: "Object"},
 		{Method: "GET", Path: "/api/v1/search", Summary: "Search pools and accounts", Tag: "Search", ResponseSchema: "SearchResponse", Parameters: []openAPIParameter{queryParam("q", "Search query", "string"), queryParam("cidr_contains", "Pools whose CIDR contains this IP or prefix", "string"), queryParam("cidr_within", "Pools contained by this prefix", "string"), queryParam("type", "Optional result type", "string"), queryParam("page", "Page number (1-based; a page past the end is empty)", "integer"), queryParam("page_size", "Page size (default 50, max 200)", "integer")}},
 		{Method: "GET", Path: "/api/v1/discovery/resources", Summary: "List discovered resources", Tag: "Discovery", ResponseSchema: "DiscoveryResourcesResponse", Parameters: discoveryResourceQueryParams()},
 		{Method: "GET", Path: "/api/v1/discovery/resources/{resourceId}", Summary: "Get discovered resource", Tag: "Discovery", ResponseSchema: "DiscoveredResource"},

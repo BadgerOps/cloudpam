@@ -4,13 +4,13 @@ import { useLatestRequest } from '../../hooks/useLatestRequest'
 import type { SchemaPoolEntry, SchemaCheckRequest, SchemaCheckResponse, SchemaConflict } from '../../api/types'
 import type { SchemaNode } from '../utils/cidr'
 
-function flattenSchema(node: SchemaNode, parentRef: string | null = null): SchemaPoolEntry[] {
+export function flattenSchema(node: SchemaNode, parentRef: string | null = null): SchemaPoolEntry[] {
   const entry: SchemaPoolEntry = {
     ref: node.id,
     name: node.name,
     cidr: node.cidr,
     type: node.type,
-    parent_ref: parentRef,
+    ...(parentRef === null ? {} : { parent_ref: parentRef }),
   }
   const result: SchemaPoolEntry[] = [entry]
   for (const child of node.children) {

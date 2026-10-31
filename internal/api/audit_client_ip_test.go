@@ -42,10 +42,24 @@ func TestAuditEventsCarryClientIP(t *testing.T) {
 			wantIP:         "203.0.113.7",
 		},
 		{
-			name:           "unparsable forwarded header from trusted proxy",
+			name:           "client-forged entry before the proxy-appended client",
+			trustedProxies: "10.0.0.0/8",
+			remoteAddr:     "10.0.0.5:443",
+			forwardedFor:   "203.0.113.9, 198.51.100.23",
+			wantIP:         "198.51.100.23",
+		},
+		{
+			name:           "client-forged garbage before the proxy-appended client",
 			trustedProxies: "10.0.0.0/8",
 			remoteAddr:     "10.0.0.5:443",
 			forwardedFor:   "<script>, 198.51.100.23",
+			wantIP:         "198.51.100.23",
+		},
+		{
+			name:           "unparsable entry at the trusted end",
+			trustedProxies: "10.0.0.0/8",
+			remoteAddr:     "10.0.0.5:443",
+			forwardedFor:   "198.51.100.23, <script>",
 			wantIP:         "10.0.0.5",
 		},
 	}
