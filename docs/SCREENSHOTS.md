@@ -97,6 +97,9 @@ timestamp as stale, and stale resources are neither selectable nor importable, s
 
 | File | View |
 |------|------|
+| `pools.png` | `/pools`, after `h1` "Address Pools" |
+| `blocks.png` | `/blocks`, after `h1` "Allocated Blocks" |
+| `accounts.png` | `/accounts`, after `h1` "Cloud Accounts" |
 | `discovery-import-selection.png` | Resources tab with four rows checkbox-selected, selection toolbar and bulk link controls active |
 | `discovery-import-preview.png` | Import preview modal — per-resource action, status (importable / blocked) and evidence |
 | `discovery-network-hierarchy.png` | Merged Network → Hierarchy: managed pools with discovered children and conflict badges |
@@ -113,7 +116,7 @@ Two implementation notes:
 
 ## Viewports
 
-`VIEWPORTS` at the top of the script is the single place viewports are declared. Adding one
+`VIEWPORTS` in `scripts/lib/capture_helpers.js` is the single place viewports are declared. Adding one
 is a one-line change: append an entry and every capture re-runs against it, with `suffix`
 appended to each filename.
 
@@ -123,18 +126,31 @@ classes and there is no mobile navigation — so a narrow capture would document
 layout rather than a reviewable one. Responsive work is tracked in issue #83; uncomment the
 mobile entry once that lands.
 
-## Known rot: the legacy captures
+## Legacy group
 
-`pools.png`, `blocks.png`, `accounts.png`, `analytics.png`, `visualization.png` and
-`bulk-actions-pools.png` predate the Sprint 9 React SPA. Their selectors (`Top-level
-Pools`, `button:has-text("Pools")`, the `⋮` bulk menu) belong to the old Alpine.js UI and
-no longer match anything, so the `legacy` group silently falls back to capturing the
-dashboard for each name and skips two files entirely. The committed PNGs are still the
-older, correct ones — do not regenerate the legacy group until those captures are rewritten
-against the current SPA routes.
+The `legacy` group is the SPA still set. It uses `page.goto` for the routes in
+`ui/src/navigation.ts` and does not click sidebar labels (`button:has-text("Pools")`
+and the old Alpine selectors are gone):
 
-Use `SCREENSHOT_ONLY=discovery` (or `npm run screenshots:discovery`) to avoid overwriting
-them in the meantime.
+| File | Route | Ready selector |
+|------|-------|----------------|
+| `pools.png` | `/pools` | `h1:has-text("Address Pools")` |
+| `blocks.png` | `/blocks` | `h1:has-text("Allocated Blocks")` |
+| `accounts.png` | `/accounts` | `h1:has-text("Cloud Accounts")` |
+
+The sidebar also renders an `h1` ("CloudPAM"), so blocks waits on the page heading
+rather than any `h1`. The release-update banner is dismissed once it appears; that
+check is asynchronous, so the first dismiss waits up to 8s.
+
+`visualization.png`, `bulk-actions-pools.png`, and `analytics.png` are not part of
+the curated blog set. There is no Analytics route in the SPA, and the Alpine
+bulk-menu / IP-space card captures were dropped. Those three files stay in `photos/`
+as historical Git LFS objects and are not regenerated. Add a capture back only if
+the page returns.
+
+`SCREENSHOT_ONLY=legacy` captures the three stills.
+`SCREENSHOT_ONLY=discovery` (or `npm run screenshots:discovery`) captures the
+discovery set.
 
 ## Git LFS
 
