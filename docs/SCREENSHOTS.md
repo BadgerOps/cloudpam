@@ -37,6 +37,9 @@ APP_URL=http://localhost:8195 \
 `npm run screenshots:discovery` captures only the discovery set, which is what you want
 when iterating on the Discovery page.
 
+`just screenshots` (default port 8195) and `just gifs` (default port 8196) wrap the
+build, throwaway server, and capture commands. GIF details are in [Demo GIFs](#demo-gifs).
+
 ## Environment variables
 
 | Variable | Default | Purpose |
@@ -152,10 +155,44 @@ the page returns.
 `SCREENSHOT_ONLY=discovery` (or `npm run screenshots:discovery`) captures the
 discovery set.
 
+## Demo GIFs
+
+`scripts/capture_gifs.js` records three short UI flows and encodes them with **host**
+`ffmpeg` (palettegen / paletteuse). The Nix dev shell does not provide ffmpeg. Install
+it on the OS and leave it off the flake. `ffprobe` comes with that same ffmpeg and is
+how you check duration.
+
+```bash
+nix develop --command just gifs
+```
+
+Inside an existing dev shell, `just gifs` is enough. The recipe checks that `ffmpeg` is
+on `PATH`, builds the UI, starts a throwaway in-memory server on port 8196
+(`DEV_MODE=1`, `RATE_LIMIT_RPS=0`), and runs `npm run gifs`. It uses a different port
+from `just screenshots` so the two can be reasoned about separately. Pass another port
+with `just gifs 8200`.
+
+Credentials match the still capture: `screenshot-admin` / `ScreenshotDev12345!`.
+
+| File | What it shows |
+|------|----------------|
+| `photos/gifs/setup-login.gif` | First-boot setup (`Create Admin Account`), sign-in, then Address Pools |
+| `photos/gifs/create-pool.gif` | `New Pool` → name `Demo App Tier`, CIDR `10.20.10.0/24`, parent Prod East VPC (Corp Supernet if that option is missing), then the new row |
+| `photos/gifs/discovery-import.gif` | Seeded `prod-platform` resources, `Preview Import`, then `Apply import` |
+
+Each clip is aimed at about 8–12 seconds. They are demo-seeded on the throwaway server.
+They are not a recording of a live AWS account.
+
+The pools table lists root pools until the search box has text, so the create-pool clip
+searches for `Demo App Tier` to reveal the child of Prod East VPC. Discovery applies the
+import for real (`Apply import` on the preview modal) and holds on the import summary.
+`KEEP_GIF_RAW=1` keeps the intermediate WebM files in `photos/gifs/raw/`.
+
 ## Git LFS
 
-`.gitattributes` declares `photos/**/*.png` as LFS-tracked, and every PNG under `photos/`
-now is one — `git lfs ls-files` lists all of them.
+`.gitattributes` declares `photos/**/*.png` and `photos/**/*.gif` as LFS-tracked, and
+every PNG under `photos/` is one — `git lfs ls-files` lists all of them. The demo GIFs
+are committed the same way.
 
 Six of them (`accounts`, `analytics`, `blocks`, `bulk-actions-pools`, `pools`,
 `visualization`) predate that and had been committed as plain git blobs, which left

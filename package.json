@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "scripts": {
     "screenshots": "node scripts/capture_screenshots.js",
-    "screenshots:discovery": "SCREENSHOT_ONLY=discovery node scripts/capture_screenshots.js"
+    "screenshots:discovery": "SCREENSHOT_ONLY=discovery node scripts/capture_screenshots.js",
+    "gifs": "node scripts/capture_gifs.js"
   },
   "devDependencies": {
     "playwright": "1.57.0"
