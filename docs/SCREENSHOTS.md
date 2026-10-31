@@ -37,6 +37,9 @@ APP_URL=http://localhost:8195 \
 `npm run screenshots:discovery` captures only the discovery set, which is what you want
 when iterating on the Discovery page.
 
+`just screenshots` (default port 8195) and `just gifs` (default port 8196) wrap the
+build, throwaway server, and capture commands. GIF details are in [Demo GIFs](#demo-gifs).
+
 ## Environment variables
 
 | Variable | Default | Purpose |
@@ -97,6 +100,9 @@ timestamp as stale, and stale resources are neither selectable nor importable, s
 
 | File | View |
 |------|------|
+| `pools.png` | `/pools`, after `h1` "Address Pools" |
+| `blocks.png` | `/blocks`, after `h1` "Allocated Blocks" |
+| `accounts.png` | `/accounts`, after `h1` "Cloud Accounts" |
 | `discovery-import-selection.png` | Resources tab with four rows checkbox-selected, selection toolbar and bulk link controls active |
 | `discovery-import-preview.png` | Import preview modal — per-resource action, status (importable / blocked) and evidence |
 | `discovery-network-hierarchy.png` | Merged Network → Hierarchy: managed pools with discovered children and conflict badges |
@@ -113,7 +119,7 @@ Two implementation notes:
 
 ## Viewports
 
-`VIEWPORTS` at the top of the script is the single place viewports are declared. Adding one
+`VIEWPORTS` in `scripts/lib/capture_helpers.js` is the single place viewports are declared. Adding one
 is a one-line change: append an entry and every capture re-runs against it, with `suffix`
 appended to each filename.
 
@@ -123,23 +129,70 @@ classes and there is no mobile navigation — so a narrow capture would document
 layout rather than a reviewable one. Responsive work is tracked in issue #83; uncomment the
 mobile entry once that lands.
 
-## Known rot: the legacy captures
+## Legacy group
 
-`pools.png`, `blocks.png`, `accounts.png`, `analytics.png`, `visualization.png` and
-`bulk-actions-pools.png` predate the Sprint 9 React SPA. Their selectors (`Top-level
-Pools`, `button:has-text("Pools")`, the `⋮` bulk menu) belong to the old Alpine.js UI and
-no longer match anything, so the `legacy` group silently falls back to capturing the
-dashboard for each name and skips two files entirely. The committed PNGs are still the
-older, correct ones — do not regenerate the legacy group until those captures are rewritten
-against the current SPA routes.
+The `legacy` group is the SPA still set. It uses `page.goto` for the routes in
+`ui/src/navigation.ts` and does not click sidebar labels (`button:has-text("Pools")`
+and the old Alpine selectors are gone):
 
-Use `SCREENSHOT_ONLY=discovery` (or `npm run screenshots:discovery`) to avoid overwriting
-them in the meantime.
+| File | Route | Ready selector |
+|------|-------|----------------|
+| `pools.png` | `/pools` | `h1:has-text("Address Pools")` |
+| `blocks.png` | `/blocks` | `h1:has-text("Allocated Blocks")` |
+| `accounts.png` | `/accounts` | `h1:has-text("Cloud Accounts")` |
+
+The sidebar also renders an `h1` ("CloudPAM"), so blocks waits on the page heading
+rather than any `h1`. The release-update banner is dismissed once it appears; that
+check is asynchronous, so the first dismiss waits up to 8s.
+
+`visualization.png`, `bulk-actions-pools.png`, and `analytics.png` are not part of
+the curated blog set. There is no Analytics route in the SPA, and the Alpine
+bulk-menu / IP-space card captures were dropped. Those three files stay in `photos/`
+as historical Git LFS objects and are not regenerated. Add a capture back only if
+the page returns.
+
+`SCREENSHOT_ONLY=legacy` captures the three stills.
+`SCREENSHOT_ONLY=discovery` (or `npm run screenshots:discovery`) captures the
+discovery set.
+
+## Demo GIFs
+
+`scripts/capture_gifs.js` records three short UI flows and encodes them with **host**
+`ffmpeg` (palettegen / paletteuse). The Nix dev shell does not provide ffmpeg. Install
+it on the OS and leave it off the flake. `ffprobe` comes with that same ffmpeg and is
+how you check duration.
+
+```bash
+nix develop --command just gifs
+```
+
+Inside an existing dev shell, `just gifs` is enough. The recipe checks that `ffmpeg` is
+on `PATH`, builds the UI, starts a throwaway in-memory server on port 8196
+(`DEV_MODE=1`, `RATE_LIMIT_RPS=0`), and runs `npm run gifs`. It uses a different port
+from `just screenshots` so the two can be reasoned about separately. Pass another port
+with `just gifs 8200`.
+
+Credentials match the still capture: `screenshot-admin` / `ScreenshotDev12345!`.
+
+| File | What it shows |
+|------|----------------|
+| `photos/gifs/setup-login.gif` | First-boot setup (`Create Admin Account`), sign-in, then Address Pools |
+| `photos/gifs/create-pool.gif` | `New Pool` → name `Demo App Tier`, CIDR `10.20.10.0/24`, parent Prod East VPC (Corp Supernet if that option is missing), then the new row |
+| `photos/gifs/discovery-import.gif` | Seeded `prod-platform` resources, `Preview Import`, then `Apply import` |
+
+Each clip is aimed at about 8–12 seconds. They are demo-seeded on the throwaway server.
+They are not a recording of a live AWS account.
+
+The pools table lists root pools until the search box has text, so the create-pool clip
+searches for `Demo App Tier` to reveal the child of Prod East VPC. Discovery applies the
+import for real (`Apply import` on the preview modal) and holds on the import summary.
+`KEEP_GIF_RAW=1` keeps the intermediate WebM files in `photos/gifs/raw/`.
 
 ## Git LFS
 
-`.gitattributes` declares `photos/**/*.png` as LFS-tracked, and every PNG under `photos/`
-now is one — `git lfs ls-files` lists all of them.
+`.gitattributes` declares `photos/**/*.png` and `photos/**/*.gif` as LFS-tracked, and
+every PNG under `photos/` is one — `git lfs ls-files` lists all of them. The demo GIFs
+are committed the same way.
 
 Six of them (`accounts`, `analytics`, `blocks`, `bulk-actions-pools`, `pools`,
 `visualization`) predate that and had been committed as plain git blobs, which left

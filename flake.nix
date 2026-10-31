@@ -76,6 +76,7 @@
             git
             nodejs_22
             kubernetes-helm
+            playwright-driver.browsers
           ];
 
           shellHook = ''
@@ -102,6 +103,11 @@
             }
             export PS1='\[\033[1;34m\]cloudpam\[\033[0;33m\]$(__cloudpam_ps1)\[\033[0m\] \w \$ '
             echo "cloudpam dev shell – Go $(go version | awk '{print $3}'), Node $(node --version)"
+
+            export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
+            export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+            export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+            echo "Playwright browsers: $PLAYWRIGHT_BROWSERS_PATH"
           '';
         };
       }

@@ -132,6 +132,47 @@ ui-dev:
 ui-test:
     cd ui && npm test
 
+# Stills against a throwaway in-memory server. See docs/SCREENSHOTS.md.
+screenshots port="8195":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd ui && npm install && npm run build && cd ..
+    npm install
+    go build -o /tmp/cloudpam-shots ./cmd/cloudpam
+    DEV_MODE=1 RATE_LIMIT_RPS=0 CLOUDPAM_LOG_LEVEL=warn /tmp/cloudpam-shots -addr :{{port}} &
+    pid=$!
+    trap 'kill $pid 2>/dev/null || true' EXIT
+    sleep 2
+    if ! (echo >/dev/tcp/127.0.0.1/{{port}}) 2>/dev/null; then
+      echo "cloudpam did not listen on :{{port}}" >&2
+      exit 1
+    fi
+    APP_URL=http://localhost:{{port}} \
+      SCREENSHOT_USERNAME=screenshot-admin \
+      SCREENSHOT_PASSWORD='ScreenshotDev12345!' \
+      npm run screenshots
+
+# Demo GIFs. Host ffmpeg is required; it is not a Nix dev-shell package.
+gifs port="8196":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v ffmpeg >/dev/null || { echo "ffmpeg required on host PATH"; exit 1; }
+    cd ui && npm install && npm run build && cd ..
+    npm install
+    go build -o /tmp/cloudpam-gifs ./cmd/cloudpam
+    DEV_MODE=1 RATE_LIMIT_RPS=0 CLOUDPAM_LOG_LEVEL=warn /tmp/cloudpam-gifs -addr :{{port}} &
+    pid=$!
+    trap 'kill $pid 2>/dev/null || true' EXIT
+    sleep 2
+    if ! (echo >/dev/tcp/127.0.0.1/{{port}}) 2>/dev/null; then
+      echo "cloudpam did not listen on :{{port}}" >&2
+      exit 1
+    fi
+    APP_URL=http://localhost:{{port}} \
+      SCREENSHOT_USERNAME=screenshot-admin \
+      SCREENSHOT_PASSWORD='ScreenshotDev12345!' \
+      npm run gifs
+
 build-full: ui-build build
 
 # Run Go backend and Vite dev server concurrently (Ctrl-C stops both)
