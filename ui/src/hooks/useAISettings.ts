@@ -68,6 +68,9 @@ export function useAISettings(enabled: boolean) {
     try {
       const data = await patch<AIProviderSettings>(SETTINGS_PATH, update)
       if (data) setSettings(data)
+      // A test result describes the settings before this save.
+      setTestResult(null)
+      setTestError(null)
       await refresh()
       return { ok: true }
     } catch (err) {

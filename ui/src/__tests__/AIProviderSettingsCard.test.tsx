@@ -69,6 +69,8 @@ function input(label: string) {
 
 const patches = () => calls.filter(c => c.method === 'PATCH')
 
+const KEY_PROMPT_TEXT = 'Enter the API key again for the new endpoint, or clear the stored key'
+
 describe('AIProviderSettingsCard', () => {
   beforeEach(() => {
     calls.length = 0
@@ -296,6 +298,158 @@ describe('AIProviderSettingsCard', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     })
     expect(await screen.findByText(detail)).toBeTruthy()
+  })
+
+  it('drops a stale test result after a successful save', async () => {
+    const result: AIProviderTestResult = {
+      ok: true, state: 'verified', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o',
+      latency_ms: 120, streaming_supported: true, tested_at: '2026-10-30T12:00:00Z',
+    }
+    serve(settings(), { post: () => json(200, result), patch: () => json(200, settings({ model: 'llama3' })) })
+    await renderCard()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    })
+    expect(await screen.findByText('Reachable · model gpt-4o · streaming yes · 120 ms')).toBeTruthy()
+
+    fireEvent.change(input('Model'), { target: { value: 'llama3' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    expect(patches()[0].body).toEqual({ model: 'llama3' })
+    await waitFor(() => expect(screen.queryByText(/^Reachable/)).toBeNull())
+  })
+
+  it('drops a stale test error after a successful save', async () => {
+    serve(settings(), {
+      post: () => json(500, { error: 'test failed', detail: 'boom' }),
+      patch: () => json(200, settings({ model: 'llama3' })),
+    })
+    await renderCard()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    })
+    expect(await screen.findByText('test failed: boom')).toBeTruthy()
+
+    fireEvent.change(input('Model'), { target: { value: 'llama3' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    await waitFor(() => expect(screen.queryByText('test failed: boom')).toBeNull())
+  })
+
+  describe('after Clear stored key succeeds', () => {
+    const stored = settings({
+      endpoint: 'https://old.example/v1', api_key_configured: true,
+      sources: { ...settings().sources, endpoint: 'database', api_key: 'database' },
+    })
+
+    async function promptForKey() {
+      serve(stored, { patch: () => json(200, stored) })
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      await renderCard()
+      fireEvent.change(input('Endpoint'), { target: { value: 'https://new.example/v1' } })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+      })
+      expect(screen.getByText(KEY_PROMPT_TEXT)).toBeTruthy()
+    }
+
+    async function clearKey() {
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Clear stored key' }))
+      })
+      await waitFor(() => expect(patches()).toHaveLength(1))
+      expect(patches()[0].body).toEqual({ clear_api_key: true })
+    }
+
+    it('hides the re-enter prompt', async () => {
+      await promptForKey()
+      await clearKey()
+      await waitFor(() => expect(screen.queryByText(KEY_PROMPT_TEXT)).toBeNull())
+      expect(screen.queryByLabelText('Clear the stored key with this save')).toBeNull()
+    })
+
+    it('resets the clear-on-save checkbox', async () => {
+      await promptForKey()
+      fireEvent.click(screen.getByLabelText('Clear the stored key with this save'))
+      expect((screen.getByLabelText('Clear the stored key with this save') as HTMLInputElement).checked).toBe(true)
+      await clearKey()
+      await waitFor(() => expect(screen.queryByLabelText('Clear the stored key with this save')).toBeNull())
+    })
+  })
+
+  it('says that Test connection checks the saved settings', async () => {
+    serve(settings())
+    await renderCard()
+    expect(screen.getByText('Tests the saved settings, not unsaved edits.')).toBeTruthy()
+  })
+
+  it('disables Save and Test while a test is pending', async () => {
+    const pending = deferred<Response>()
+    serve(settings(), { post: () => pending.promise })
+    await renderCard()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    })
+    expect((screen.getByRole('button', { name: /Testing/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+    await act(async () => {
+      pending.resolve(json(200, {
+        ok: true, state: 'verified', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o',
+        latency_ms: 1, streaming_supported: true, tested_at: '2026-10-30T12:00:00Z',
+      }))
+    })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false))
+    expect((screen.getByRole('button', { name: 'Test connection' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('disables Test while a save is pending', async () => {
+    const pending = deferred<Response>()
+    serve(settings(), { patch: () => pending.promise })
+    await renderCard()
+    fireEvent.change(input('Model'), { target: { value: 'llama3' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect((screen.getByRole('button', { name: /Saving/ }) as HTMLButtonElement).disabled).toBe(true)
+    const testButton = screen.getByRole('button', { name: 'Test connection' }) as HTMLButtonElement
+    expect(testButton.disabled).toBe(true)
+    fireEvent.click(testButton)
+    expect(calls.filter(c => c.method === 'POST')).toHaveLength(0)
+    await act(async () => {
+      pending.resolve(json(200, settings({ model: 'llama3' })))
+    })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Test connection' }) as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  describe('environment key warning', () => {
+    const ENV_WARNING =
+      'Changing the endpoint stops CLOUDPAM_LLM_API_KEY from applying; enter a key here or leave it empty for an authless endpoint.'
+
+    it('appears when the key comes from the environment and the endpoint changes', async () => {
+      serve(settings({ api_key_configured: true, sources: { ...settings().sources, api_key: 'environment' } }))
+      await renderCard()
+      expect(screen.queryByText(ENV_WARNING)).toBeNull()
+      fireEvent.change(input('Endpoint'), { target: { value: 'https://new.example/v1' } })
+      expect(screen.getByText(ENV_WARNING)).toBeTruthy()
+      // A warning, not a block: Save stays enabled.
+      expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false)
+      fireEvent.change(input('Endpoint'), { target: { value: 'https://api.openai.com/v1' } })
+      expect(screen.queryByText(ENV_WARNING)).toBeNull()
+    })
+
+    it.each(['database', 'none'] as const)('does not appear for a %s key', async source => {
+      serve(settings({
+        api_key_configured: source === 'database',
+        sources: { ...settings().sources, api_key: source },
+      }))
+      await renderCard()
+      fireEvent.change(input('Endpoint'), { target: { value: 'https://new.example/v1' } })
+      expect(screen.queryByText(ENV_WARNING)).toBeNull()
+    })
   })
 
   it('explains that a stored endpoint never uses the environment key', async () => {

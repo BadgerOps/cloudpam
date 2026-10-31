@@ -14,6 +14,9 @@ const STATE_BADGES: Record<AIProviderState, { label: string; className: string }
 
 const KEY_PROMPT = 'Enter the API key again for the new endpoint, or clear the stored key'
 const STORED_ENDPOINT_HINT = 'A stored endpoint never uses CLOUDPAM_LLM_API_KEY; enter a key here or leave empty for an authless endpoint'
+const ENV_KEY_ENDPOINT_WARNING =
+  'Changing the endpoint stops CLOUDPAM_LLM_API_KEY from applying; enter a key here or leave it empty for an authless endpoint.'
+const TEST_HINT = 'Tests the saved settings, not unsaved edits.'
 const STORAGE_UNAVAILABLE = 'Set CLOUDPAM_OIDC_ENCRYPTION_KEY to store an API key here; CLOUDPAM_LLM_API_KEY still works.'
 const CLEAR_KEY_CONFIRM =
   'Clear the stored API key? This does not disable the AI provider: when the endpoint comes from CLOUDPAM_LLM_ENDPOINT or the default, CLOUDPAM_LLM_API_KEY is used if it is set; a stored endpoint runs without a key.'
@@ -131,9 +134,11 @@ export default function AIProviderSettingsCard() {
   const busy = saving || testing
   const formDisabled = !canWrite || busy
   const keyFromDatabase = settings?.sources.api_key === 'database'
+  const endpointChanged = !!form && !!base && form.endpoint.trim() !== base.endpoint.trim()
+  const envKeyWarning = settings?.sources.api_key === 'environment' && endpointChanged
 
   async function handleSave() {
-    if (!settings || !form || !base || saving) return
+    if (!settings || !form || !base || busy) return
     setFormError(null)
     const { update, error: validationError } = buildUpdate(form, base)
     if (validationError) {
@@ -164,9 +169,13 @@ export default function AIProviderSettingsCard() {
   }
 
   async function handleClearKey() {
-    if (saving || !window.confirm(CLEAR_KEY_CONFIRM)) return
+    if (busy || !window.confirm(CLEAR_KEY_CONFIRM)) return
     const result = await clearStoredKey()
-    if (result?.ok) showToast('Stored API key cleared', 'success')
+    if (result?.ok) {
+      setKeyPrompt(false)
+      setClearKeyOnSave(false)
+      showToast('Stored API key cleared', 'success')
+    }
   }
 
   // A rejected endpoint change, or a key the server could not store, belongs
@@ -272,6 +281,9 @@ export default function AIProviderSettingsCard() {
               {settings.sources.endpoint === 'database' && settings.sources.api_key === 'none' && (
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{STORED_ENDPOINT_HINT}</p>
               )}
+              {envKeyWarning && (
+                <p className="mt-1 text-xs text-amber-700 dark:text-amber-300">{ENV_KEY_ENDPOINT_WARNING}</p>
+              )}
               {keyPrompt && (
                 <p className="mt-1 text-xs text-red-600 dark:text-red-400">{KEY_PROMPT}</p>
               )}
@@ -337,7 +349,7 @@ export default function AIProviderSettingsCard() {
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={saving}
+                disabled={busy}
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -345,18 +357,20 @@ export default function AIProviderSettingsCard() {
               </button>
               <button
                 type="button"
-                onClick={() => { void test() }}
-                disabled={testing}
+                onClick={() => { if (!saving) void test() }}
+                disabled={busy}
+                aria-describedby="ai-test-hint"
                 className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
               >
                 {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlugZap className="w-4 h-4" />}
                 {testing ? 'Testing…' : 'Test connection'}
               </button>
+              <span id="ai-test-hint" className="text-xs text-gray-500 dark:text-gray-400">{TEST_HINT}</span>
               {keyFromDatabase && (
                 <button
                   type="button"
                   onClick={handleClearKey}
-                  disabled={saving}
+                  disabled={busy}
                   className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-red-300 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/30"
                 >
                   <Trash2 className="w-4 h-4" />
