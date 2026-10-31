@@ -116,6 +116,10 @@ func (ss *SettingsServer) recordAIProviderTest(ctx context.Context, before *doma
 	doc.LastTestError = resp.Error
 	doc.LastTestModel = resp.Model
 	doc.LastTestFingerprint = fingerprint
+	// A test result is a stored change too, so advance the compare-and-swap
+	// token. Without this, the in-memory store cannot distinguish the new test
+	// result from the document a concurrent PATCH read and may overwrite it.
+	stampAIProviderUpdate(doc, false)
 	err := ss.settingsStore.UpdateAIProviderSettingsIfUnchanged(ctx, before.UpdatedAt, doc)
 	if errors.Is(err, storage.ErrConflict) {
 		ss.logger.InfoContext(ctx, "ai provider settings changed during test; result not stored")

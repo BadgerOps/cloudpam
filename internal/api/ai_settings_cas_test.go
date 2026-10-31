@@ -79,3 +79,19 @@ func TestAISettingsPatchConflictsAfterRepeatedConcurrentWrites(t *testing.T) {
 		t.Fatalf("audit event written for a failed PATCH: %+v", events)
 	}
 }
+
+func TestAISettingsTestResultAdvancesCASToken(t *testing.T) {
+	llmSrv := newFakeOpenAI(t)
+	env := envDefaults()
+	env.Endpoint = llmSrv.URL
+	f := setupAISettings(t, env, true)
+
+	before := f.storedDoc(t).UpdatedAt
+	if got, _ := f.test(t); !got.OK {
+		t.Fatalf("test = %+v", got)
+	}
+	after := f.storedDoc(t).UpdatedAt
+	if !after.After(before) {
+		t.Fatalf("UpdatedAt after test = %v, want after %v", after, before)
+	}
+}
