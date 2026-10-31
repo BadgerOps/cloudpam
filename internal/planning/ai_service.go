@@ -154,32 +154,42 @@ func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage str
 	go func() {
 		defer close(outCh)
 		var fullContent strings.Builder
-		failed := false
+		persisted := false
+		// Persist the assembled assistant message. Runs before the done event
+		// is forwarded, so a client that reads the conversation as soon as it
+		// sees done finds the reply. Uses a background context because the
+		// request context may already be cancelled.
+		persist := func() {
+			if persisted {
+				return
+			}
+			persisted = true
+			_ = s.convStore.AddMessage(context.Background(), domain.ConversationMessage{
+				ID:             uuid.New().String(),
+				ConversationID: sessionID,
+				Role:           "assistant",
+				Content:        fullContent.String(),
+				CreatedAt:      time.Now().UTC(),
+			})
+		}
 
 		for evt := range eventCh {
 			fullContent.WriteString(evt.Delta)
-			outCh <- evt
 			if evt.Err != nil {
-				failed = true
+				// A failed stream is not stored as an answer.
+				outCh <- evt
+				return
 			}
-			if evt.Done || evt.Err != nil {
-				break
+			if evt.Done {
+				persist()
+			}
+			outCh <- evt
+			if evt.Done {
+				return
 			}
 		}
-		if failed {
-			return
-		}
-
-		// Persist assistant message
-		assistantMsg := domain.ConversationMessage{
-			ID:             uuid.New().String(),
-			ConversationID: sessionID,
-			Role:           "assistant",
-			Content:        fullContent.String(),
-			CreatedAt:      time.Now().UTC(),
-		}
-		// Use background context since the request context may be cancelled
-		_ = s.convStore.AddMessage(context.Background(), assistantMsg)
+		// The provider closed the stream without a done event.
+		persist()
 	}()
 
 	return outCh, nil
