@@ -11,7 +11,7 @@ patch or minor version entry for every user-facing change.
 ## [0.23.7] - 2026-10-30
 
 ### Added
-- `DELETE /api/v1/network/objects/{objectId}` deletes a managed network object, and the Discovery Network Objects table has a Delete action with a confirmation. The request returns `204` on success and `404` for an unknown object. It returns `409` while the object still has child objects or is referenced by a network relationship, and the message names what blocks the delete. It needs the `discovery:update` permission and writes a `network_object` audit event. The linked pool and discovered resource are not deleted. (#278)
+- `DELETE /api/v1/network/objects/{objectId}` deletes a managed network object, and the Discovery Network Objects table has a Delete action with a confirmation. The request returns `204` on success and `404` for an unknown object. It returns `409` while the object still has child objects, and the message gives the child count. Network relationships that reference the object as source or target are removed in the same transaction, so placeholder parents created by the `create_placeholder_parent` conflict action can be deleted. It needs the `discovery:update` permission and writes a `network_object` audit event. The linked pool and discovered resource are not deleted. (#278)
 
 ### Changed
 - The server and agent Helm charts advertise application version `0.23.7`. Their chart package versions remain `0.2.1`.
