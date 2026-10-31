@@ -96,8 +96,12 @@ func (s *AIPlanningService) DeleteConversation(ctx context.Context, id string) e
 }
 
 // Chat sends a user message and streams the assistant response. It persists
-// both the user message and the final assistant message. The returned channel
-// receives incremental text deltas; the caller should read until close.
+// the user message and, when the stream completes, the assistant message. A
+// stream that ends with an error event (StreamEvent.Err) is forwarded as is
+// and the partial answer is not persisted: a truncated assistant turn would
+// otherwise be replayed to the provider as if the model had said it. The
+// returned channel receives incremental text deltas; the caller should read
+// until close.
 func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage string) (<-chan llm.StreamEvent, error) {
 	provider, err := s.provider(ctx)
 	if err != nil {
@@ -150,13 +154,20 @@ func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage str
 	go func() {
 		defer close(outCh)
 		var fullContent strings.Builder
+		failed := false
 
 		for evt := range eventCh {
 			fullContent.WriteString(evt.Delta)
 			outCh <- evt
-			if evt.Done {
+			if evt.Err != nil {
+				failed = true
+			}
+			if evt.Done || evt.Err != nil {
 				break
 			}
+		}
+		if failed {
+			return
 		}
 
 		// Persist assistant message

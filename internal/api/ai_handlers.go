@@ -12,6 +12,7 @@ import (
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning"
+	"cloudpam/internal/planning/llm"
 	"cloudpam/internal/storage"
 )
 
@@ -100,7 +101,7 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Extend write deadline for streaming
 	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(time.Now().Add(5 * time.Minute))
+	_ = rc.SetWriteDeadline(time.Now().Add(aiChatStreamTimeout))
 
 	// Flush through the ResponseController rather than a direct type assertion:
 	// middleware wraps the ResponseWriter, and a wrapper that only forwards
@@ -111,6 +112,15 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for evt := range eventCh {
+		if evt.Err != nil {
+			// The provider failed mid-stream (or the stream exceeded its cap).
+			// Tell the client instead of ending the answer as if complete; the
+			// message is sanitized and never carries the provider's body.
+			data, _ := json.Marshal(map[string]string{"error": llm.DiagnoseError(evt.Err, aiChatStreamTimeout)})
+			_, _ = fmt.Fprintf(w, "event: error\ndata: %s\n\n", data)
+			_ = rc.Flush()
+			return
+		}
 		if evt.Done {
 			_, _ = fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 			_ = rc.Flush()
@@ -121,6 +131,10 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 		_ = rc.Flush()
 	}
 }
+
+// aiChatStreamTimeout is the write deadline of one chat stream and the budget
+// reported when a stream times out.
+const aiChatStreamTimeout = 5 * time.Minute
 
 // handleSessions handles session list and create.
 func (a *AIPlanningServer) handleSessions(w http.ResponseWriter, r *http.Request) {

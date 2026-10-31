@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLimitedBodyOverflowErrorIsSticky(t *testing.T) {
@@ -42,10 +43,82 @@ func TestLimitedBodyOverflowErrorIsSticky(t *testing.T) {
 	}
 }
 
+// oversizedOpenAI answers every request with about 4 KiB, as JSON or as SSE.
+func oversizedOpenAI(t *testing.T) *httptest.Server {
+	t.Helper()
+	pad := strings.Repeat("x", 4096)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req openaiRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			for i := 0; i < 8; i++ {
+				_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", pad[:512])
+			}
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q},"finish_reason":"stop"}]}`, pad)
+	}))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// streamErr drains events and returns the error the stream ended with.
+func streamErr(t *testing.T, provider *OpenAIProvider) error {
+	t.Helper()
+	events, err := provider.StreamComplete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+	var out error
+	for evt := range events {
+		if evt.Err != nil {
+			out = evt.Err
+		}
+		if evt.Done {
+			break
+		}
+	}
+	return out
+}
+
+func TestOpenAIProviderResponseAndStreamCapsAreSeparate(t *testing.T) {
+	ts := oversizedOpenAI(t)
+	provider := NewOpenAIProvider(Config{Model: "m", Endpoint: ts.URL + "/v1"})
+	msgs := []Message{{Role: "user", Content: "hi"}}
+
+	prevResp, prevStream := maxResponseBytes, maxStreamBytes
+	t.Cleanup(func() { maxResponseBytes, maxStreamBytes = prevResp, prevStream })
+
+	// Only the stream cap shrunk: the JSON reply still fits, the stream overflows.
+	maxResponseBytes, maxStreamBytes = prevResp, 1024
+	if _, err := provider.Complete(context.Background(), msgs, Options{}); err != nil {
+		t.Fatalf("Complete under the response cap = %v, want nil", err)
+	}
+	err := streamErr(t, provider)
+	if !errors.Is(err, ErrResponseTooLarge) || !errors.Is(err, ErrInvalidResponse) {
+		t.Fatalf("stream err = %v, want ErrResponseTooLarge (and ErrInvalidResponse)", err)
+	}
+	if got := DiagnoseError(err, time.Minute); got != "provider response exceeded the size limit" {
+		t.Fatalf("DiagnoseError = %q", got)
+	}
+
+	// Only the response cap shrunk: the JSON reply overflows, the stream completes.
+	maxResponseBytes, maxStreamBytes = 1024, prevStream
+	if _, err := provider.Complete(context.Background(), msgs, Options{}); !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("Complete err = %v, want ErrResponseTooLarge", err)
+	}
+	if err := streamErr(t, provider); err != nil {
+		t.Fatalf("stream under the stream cap ended with %v, want nil", err)
+	}
+}
+
 func TestOpenAIProviderRejectsOversizedResponses(t *testing.T) {
-	prev := maxResponseBytes
-	maxResponseBytes = 1024
-	t.Cleanup(func() { maxResponseBytes = prev })
+	prev, prevStream := maxResponseBytes, maxStreamBytes
+	maxResponseBytes, maxStreamBytes = 1024, 1024
+	t.Cleanup(func() { maxResponseBytes, maxStreamBytes = prev, prevStream })
 
 	pad := strings.Repeat("x", 4096)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

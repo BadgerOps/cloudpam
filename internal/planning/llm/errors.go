@@ -14,6 +14,10 @@ import (
 // no usable completion.
 var ErrInvalidResponse = errors.New("invalid response from provider")
 
+// ErrResponseTooLarge marks a provider reply or stream that exceeded its size
+// cap. It wraps ErrInvalidResponse, so errors.Is holds for both.
+var ErrResponseTooLarge = fmt.Errorf("%w: response exceeds the size limit", ErrInvalidResponse)
+
 // StatusError reports a non-200 HTTP status from the provider. It deliberately
 // carries no response body: provider bodies can echo request details.
 type StatusError struct {
@@ -54,6 +58,9 @@ func DiagnoseError(err error, timeout time.Duration) string {
 	var netErr net.Error
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
 		return fmt.Sprintf("request timed out after %s", timeout)
+	}
+	if errors.Is(err, ErrResponseTooLarge) {
+		return "provider response exceeded the size limit"
 	}
 	if errors.Is(err, ErrInvalidResponse) {
 		return "invalid response from provider"

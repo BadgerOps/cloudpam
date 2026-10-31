@@ -145,6 +145,23 @@ export function useAIPlanner() {
       },
       onError: (err) => {
         if (!isStreamSessionActive()) return
+        // Keep whatever the model already said visible next to the error; the
+        // server does not persist a partial answer, so this is view-only.
+        const partial = streamingTextRef.current
+        if (partial) {
+          const partialMsg = {
+            id: crypto.randomUUID(),
+            conversation_id: sessionId,
+            role: 'assistant' as const,
+            content: partial,
+            created_at: new Date().toISOString(),
+          }
+          setActiveSession(prev =>
+            prev && prev.id === sessionId
+              ? { ...prev, messages: [...prev.messages, partialMsg] }
+              : prev
+          )
+        }
         setError(err.message)
         setStreaming(false)
         setStreamingText('')

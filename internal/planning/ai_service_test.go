@@ -477,6 +477,42 @@ func TestCovAIServiceChatPropagatesProviderError(t *testing.T) {
 	}
 }
 
+func TestCovAIServiceChatForwardsMidStreamErrorAndDropsPartialAnswer(t *testing.T) {
+	ctx := context.Background()
+	streamFailure := errors.New("connection reset")
+	provider := &covFakeProvider{
+		available: true,
+		events: []llm.StreamEvent{
+			{Delta: "half an "},
+			{Done: true, Err: streamFailure},
+		},
+	}
+	svc, _, _ := covSetupAIService(t, provider)
+
+	conv, _ := svc.CreateConversation(ctx, "session")
+	ch, err := svc.Chat(ctx, conv.ID, "hi")
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	events := covDrain(t, ch)
+	if len(events) != 2 || events[0].Delta != "half an " {
+		t.Fatalf("events = %+v, want the delta then the error event", events)
+	}
+	if !events[1].Done || !errors.Is(events[1].Err, streamFailure) {
+		t.Fatalf("final event = %+v, want Done with the stream error forwarded", events[1])
+	}
+
+	// A partial answer must not be stored as a complete assistant turn: the
+	// next request would send it to the provider as if the model had said it.
+	stored, err := svc.GetConversation(ctx, conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation() error = %v", err)
+	}
+	if len(stored.Messages) != 1 || stored.Messages[0].Role != "user" {
+		t.Fatalf("stored messages = %+v, want just the user message", stored.Messages)
+	}
+}
+
 func TestCovExtractPlan(t *testing.T) {
 	valid := "Sure, here you go:\n```json\n" + `{
   "name": "Prod Plan",

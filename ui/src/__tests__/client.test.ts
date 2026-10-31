@@ -226,3 +226,34 @@ describe('streamPost EOF handling', () => {
     expect(sink.done).toBe(true)
   })
 })
+
+describe('streamPost error events', () => {
+  it('reports an error event with its message and stops reading', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'data: {"delta":"half an "}\n\n',
+      'event: error\ndata: {"error":"provider response exceeded the size limit"}\n\n',
+      'data: {"delta":"never read"}\n\n',
+      'event: done\ndata: {}\n\n',
+    ])))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.deltas).toEqual(['half an '])
+    expect(sink.error?.message).toBe('provider response exceeded the size limit')
+    expect(sink.done).toBe(false)
+  })
+
+  it('falls back to a generic message when the error payload is unusable', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'event: error\ndata: not json\n\n',
+    ])))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.error).not.toBeNull()
+    expect(sink.error?.message.length).toBeGreaterThan(0)
+    expect(sink.done).toBe(false)
+  })
+})

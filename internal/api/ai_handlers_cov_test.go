@@ -24,11 +24,13 @@ import (
 // stubLLMProviderCov is a hermetic LLM provider: it never performs any network
 // I/O and emits a fixed sequence of stream events.
 type stubLLMProviderCov struct {
-	available  bool
-	deltas     []string
-	streamErr  error
-	emitDone   bool
-	lastPrompt []llm.Message
+	available bool
+	deltas    []string
+	streamErr error
+	// midStreamErr ends the stream with an error event after the deltas.
+	midStreamErr error
+	emitDone     bool
+	lastPrompt   []llm.Message
 }
 
 func (p *stubLLMProviderCov) Name() string { return "stub" }
@@ -48,7 +50,10 @@ func (p *stubLLMProviderCov) StreamComplete(_ context.Context, messages []llm.Me
 	for _, d := range p.deltas {
 		ch <- llm.StreamEvent{Delta: d}
 	}
-	if p.emitDone {
+	switch {
+	case p.midStreamErr != nil:
+		ch <- llm.StreamEvent{Done: true, Err: p.midStreamErr}
+	case p.emitDone:
 		ch <- llm.StreamEvent{Done: true, FinishReason: "stop"}
 	}
 	close(ch)

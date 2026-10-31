@@ -116,6 +116,65 @@ describe('useAIPlanner', () => {
     expect(result.current.activeSession?.messages[1].content).toBe('an answer')
   })
 
+  it('keeps the partial answer and reports the error when the stream fails', async () => {
+    mockGet.mockResolvedValueOnce(conversation('a') as never)
+
+    let streamCallbacks: SSECallbacks | undefined
+    mockStreamPost.mockImplementation((_path, _data, callbacks) => {
+      streamCallbacks = callbacks
+      return new Promise<void>(() => {})
+    })
+
+    const { result } = renderHook(() => useAIPlanner())
+
+    await act(async () => {
+      await result.current.selectSession('a')
+    })
+
+    act(() => {
+      void result.current.sendMessage('plan a /16')
+    })
+    await waitFor(() => expect(mockStreamPost).toHaveBeenCalledTimes(1))
+
+    act(() => {
+      streamCallbacks?.onDelta('half an ')
+      streamCallbacks?.onError(new Error('provider response exceeded the size limit'))
+    })
+
+    expect(result.current.streaming).toBe(false)
+    expect(result.current.error).toBe('provider response exceeded the size limit')
+    const messages = result.current.activeSession?.messages ?? []
+    expect(messages.map(m => m.role)).toEqual(['user', 'assistant'])
+    expect(messages[1].content).toBe('half an ')
+  })
+
+  it('does not add an empty assistant message when the stream fails before any text', async () => {
+    mockGet.mockResolvedValueOnce(conversation('a') as never)
+
+    let streamCallbacks: SSECallbacks | undefined
+    mockStreamPost.mockImplementation((_path, _data, callbacks) => {
+      streamCallbacks = callbacks
+      return new Promise<void>(() => {})
+    })
+
+    const { result } = renderHook(() => useAIPlanner())
+
+    await act(async () => {
+      await result.current.selectSession('a')
+    })
+    act(() => {
+      void result.current.sendMessage('plan a /16')
+    })
+    await waitFor(() => expect(mockStreamPost).toHaveBeenCalledTimes(1))
+
+    act(() => {
+      streamCallbacks?.onError(new Error('endpoint unreachable'))
+    })
+
+    expect(result.current.error).toBe('endpoint unreachable')
+    expect(result.current.activeSession?.messages.map(m => m.role)).toEqual(['user'])
+  })
+
   it('ignores a second applyPlan while the first is still in flight', async () => {
     mockGet.mockResolvedValueOnce(conversation('a') as never)
 
