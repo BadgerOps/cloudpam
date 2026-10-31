@@ -135,9 +135,10 @@ func TestProviderStopsAfterThreeRedirects(t *testing.T) {
 	if errors.Is(err, ErrBlockedAddress) {
 		t.Fatalf("redirect limit reported as a blocked address: %v", err)
 	}
-	// The first request plus at most three followed redirects.
-	if got := hits.Load(); got > 4 {
-		t.Fatalf("origin requests = %d, want at most 4", got)
+	// The first request plus exactly three followed redirects; the fourth
+	// redirect is refused without being followed.
+	if got := hits.Load(); got != 4 {
+		t.Fatalf("origin requests = %d, want exactly 4", got)
 	}
 }
 

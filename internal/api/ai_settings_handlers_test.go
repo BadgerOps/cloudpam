@@ -655,6 +655,12 @@ func TestAISettingsPatchStateTransitions(t *testing.T) {
 	doc.State = domain.AIProviderStateVerified
 	doc.LastTestedAt = &tested
 	doc.LastTestModel = "m"
+	// Bind the seeded result to the current configuration, as a real test run would.
+	resolved, err := llm.NewResolver(envDefaults(), f.settings, nil).Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	doc.LastTestFingerprint = resolved.Fingerprint()
 	if err := f.settings.UpdateAIProviderSettings(context.Background(), doc); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -663,9 +669,15 @@ func TestAISettingsPatchStateTransitions(t *testing.T) {
 	if got.State != domain.AIProviderStateVerified || got.LastTestedAt == nil {
 		t.Fatalf("tuning-only PATCH changed state: %+v", got)
 	}
+	if fp := f.storedDoc(t).LastTestFingerprint; fp != resolved.Fingerprint() {
+		t.Fatalf("tuning-only PATCH changed the fingerprint: %q", fp)
+	}
 	got = decodeAISettings(t, f.patch(t, `{"model":"new-model"}`, http.StatusOK))
 	if got.State != domain.AIProviderStateConfigured || got.LastTestedAt != nil || got.LastTestModel != "" {
 		t.Fatalf("material PATCH kept test state: %+v", got)
+	}
+	if fp := f.storedDoc(t).LastTestFingerprint; fp != "" {
+		t.Fatalf("material PATCH kept the test fingerprint: %q", fp)
 	}
 }
 

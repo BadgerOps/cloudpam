@@ -69,7 +69,8 @@ func blockedAddrControl(_, address string, _ syscall.RawConn) error {
 // the dialer. The http.Client keeps its default behaviour of dropping the
 // Authorization header on cross-host redirects.
 func checkRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= maxRedirects {
+	// via holds the initial request plus the redirects followed so far.
+	if len(via) > maxRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxRedirects)
 	}
 	return validateRedirectTarget(req.URL)

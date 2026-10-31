@@ -282,6 +282,12 @@ export async function streamPost(path: string, data: unknown, callbacks: SSECall
 
       if (done) break
     }
+    // EOF after "event: error" but before its data line: the provider failed
+    // and the message never arrived, so this is not a normal completion.
+    if (errorEventPending) {
+      callbacks.onError(new Error('stream ended with an error'))
+      return
+    }
     callbacks.onDone()
   } catch (err) {
     callbacks.onError(err instanceof Error ? err : new Error(String(err)))

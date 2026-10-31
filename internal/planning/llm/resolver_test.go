@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -313,16 +314,42 @@ func TestResolvedFingerprint(t *testing.T) {
 	if resolve(t, rotated, nil).Fingerprint() != fp {
 		t.Fatal("plaintext key material must not be a factor in the fingerprint")
 	}
-	for _, c := range []struct{ name, fp string }{
-		{"endpoint", resolve(t, env, &domain.AIProviderSettings{Endpoint: "http://db:11434/v1"}).Fingerprint()},
-		{"model", resolve(t, env, &domain.AIProviderSettings{Model: "other"}).Fingerprint()},
-		{"key source", resolve(t, env, &domain.AIProviderSettings{APIKeyEncrypted: "enc(db-key)"}).Fingerprint()},
+	// The stored ciphertext is opaque in production; fakeDecrypt's enc(...)
+	// form would contain the plaintext, so this case decrypts by lookup.
+	const dbPlaintext = "db-plaintext-secret"
+	lookupDecrypt := func(c string) (string, error) {
+		if c == "ciphertext-1" {
+			return dbPlaintext, nil
+		}
+		return "", errors.New("decryption failed")
+	}
+	withDBKey, err := NewResolver(env, &fakeSettingsSource{doc: &domain.AIProviderSettings{APIKeyEncrypted: "ciphertext-1"}}, lookupDecrypt).Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if withDBKey.Config.APIKey != dbPlaintext {
+		t.Fatalf("APIKey = %q, want the decrypted database key", withDBKey.Config.APIKey)
+	}
+	for _, c := range []struct {
+		name string
+		res  Resolved
+	}{
+		{"endpoint", resolve(t, env, &domain.AIProviderSettings{Endpoint: "http://db:11434/v1"})},
+		{"model", resolve(t, env, &domain.AIProviderSettings{Model: "other"})},
+		{"key source", withDBKey},
 	} {
-		if c.fp == fp {
+		if c.res.Fingerprint() == fp {
 			t.Fatalf("%s change did not change the fingerprint", c.name)
 		}
-		if strings.Contains(c.fp, "key") {
-			t.Fatalf("%s fingerprint is not opaque: %q", c.name, c.fp)
+		if strings.Contains(c.res.Fingerprint(), dbPlaintext) {
+			t.Fatalf("%s fingerprint carries the plaintext key: %q", c.name, c.res.Fingerprint())
+		}
+		stored, err := json.Marshal(c.res.Stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(stored), dbPlaintext) {
+			t.Fatalf("%s stored document carries the plaintext key: %s", c.name, stored)
 		}
 	}
 	first := resolve(t, env, &domain.AIProviderSettings{APIKeyEncrypted: "enc(db-key)"}).Fingerprint()

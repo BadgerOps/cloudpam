@@ -256,4 +256,18 @@ describe('streamPost error events', () => {
     expect(sink.error?.message.length).toBeGreaterThan(0)
     expect(sink.done).toBe(false)
   })
+
+  it('reports an error when the stream ends right after the error event', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'data: {"delta":"half an "}\n\n',
+      'event: error\n',
+    ])))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.deltas).toEqual(['half an '])
+    expect(sink.error?.message).toBe('stream ended with an error')
+    expect(sink.done).toBe(false)
+  })
 })

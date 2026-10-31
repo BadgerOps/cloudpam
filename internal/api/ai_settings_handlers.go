@@ -209,6 +209,7 @@ func stampAIProviderUpdate(doc *domain.AIProviderSettings, material bool) {
 		doc.LastTestedAt = nil
 		doc.LastTestError = ""
 		doc.LastTestModel = ""
+		doc.LastTestFingerprint = ""
 	}
 	now := time.Now().UTC()
 	if !now.After(doc.UpdatedAt) {
