@@ -20,9 +20,13 @@ patch or minor version entry for every user-facing change.
 - The OIDC client-secret encryption helpers moved to `internal/secrets`; `CLOUDPAM_OIDC_ENCRYPTION_KEY` now also protects AI provider credentials saved from the Configuration page. Existing OIDC secrets keep decrypting. (#283)
 - POST /api/v1/network/relationships rejects a source or target of kind network_object whose object does not exist (400), and the check is atomic with network object deletion, so a relationship can no longer be created against an object being deleted. (#354)
 - The network_object delete audit event records relationships_removed. (#354)
+- PATCH /api/v1/settings/ai writes with compare-and-swap (409 after repeated concurrent changes), rejects unknown fields, and a test result applies only while the effective endpoint, model and key source are the ones tested. (#357)
+- The AI provider client refuses connections and redirects to link-local and metadata addresses, including host names that resolve to them; streaming responses are capped at 64 MiB. (#357)
 
 ### Fixed
 - AI chat failures no longer return the upstream provider's response body to the client or record it on the trace span; the error carries only the HTTP status. Provider responses are capped at 8 MiB. (#283)
+- AI chat reports provider errors that occur mid-stream as an error event instead of ending the answer as if complete. (#357)
+- Sentry events no longer include request query strings. (#357)
 - AI chat streaming works through the request logging middleware again. The middleware's response wrapper did not expose the underlying writer, so every `POST /api/v1/ai/chat` behind it failed with `500 streaming not supported`. (#283)
 - Sentry events and transactions no longer include request bodies or authentication headers. Login, OIDC client-secret, and AI provider key requests previously reached Sentry in clear when `SENTRY_DSN` was set. (#283)
 - SQLite could not read, update, or delete a managed network object that had no `source_discovered_id`; every such request returned `500`. (#278)
