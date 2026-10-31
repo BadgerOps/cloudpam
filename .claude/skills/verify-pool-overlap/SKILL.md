@@ -127,12 +127,13 @@ Files and functions this verification describes:
 - `migrations/0001_init.sql`: `uniq_pools_parent_cidr`; `migrations/postgres/001_core_schema.up.sql`: `idx_pools_org_cidr`.
 - Other writers: `ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`.
 
-sync commit: 404e0a11fdb8d14a6613ecf259834e770325b534
+sync commit: 853d16c9505b135bd562f1b0061f3d7c4fcd239f
 
 `run.sh` prints DRIFT and exits 4 when any covered file in the working tree differs from the sync commit. The covered files are the model's sources above plus the other writers (`ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`). When that happens: re-read the code cited above, fix the model if the code's steps changed (new lock, new transaction boundary, new constraint, new writer), rerun, and only then move the sync commit to a commit on master. A drift on one of the other writers means re-reading it and updating its entry in "Writers besides POST /pools", not the model: those paths are read, not modelled, and the question is whether the writer still places every pool through `placePools`. If a change made `multi-process-local.cfg` hold, confirm whether the model can still fail before recording anything. Never weaken a rule or widen a skip to make a run pass.
 
 ## Run record at the sync commit
 
+- The per-iteration placement-budget check does not change the modelled lock or check ordering; batches remain outside the model bound.
 - `one-process.cfg`: no error (18 distinct states, depth 6).
 - `duplicate.cfg`: no error (20 distinct states, depth 6).
 - `multi-process.cfg`: no error (68 distinct states, depth 9).
