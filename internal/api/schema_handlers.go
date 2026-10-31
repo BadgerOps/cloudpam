@@ -73,13 +73,9 @@ func (s *Server) handleSchemaCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate all proposed CIDRs
 	for i, p := range req.Pools {
-		if err := validation.ValidateCIDRWithOptions(p.CIDR, validation.CIDROptions{
-			MinPrefix: 8,
-			MaxPrefix: 30,
-		}); err != nil {
-			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Name, err), "")
+		if err := validateSchemaEntry(i, p); err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 	}
@@ -172,8 +168,8 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 	// Validate all entries upfront
 	refSet := make(map[string]bool)
 	for i, p := range req.Pools {
-		if p.Ref == "" {
-			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d: ref is required", i), "")
+		if err := validateSchemaEntry(i, p); err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 		if refSet[p.Ref] {
@@ -181,18 +177,6 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		refSet[p.Ref] = true
-
-		if err := validation.ValidateName(p.Name); err != nil {
-			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Ref, err), "")
-			return
-		}
-		if err := validation.ValidateCIDRWithOptions(p.CIDR, validation.CIDROptions{
-			MinPrefix: 8,
-			MaxPrefix: 30,
-		}); err != nil {
-			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Ref, err), "")
-			return
-		}
 		if p.ParentRef != "" && !refSet[p.ParentRef] {
 			// parent_ref must reference an earlier entry in the array (topological order)
 			found := false
@@ -280,6 +264,22 @@ func (s *Server) handleSchemaApply(w http.ResponseWriter, r *http.Request) {
 		resp.Errors = []string{}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func validateSchemaEntry(i int, p schemaPoolEntry) error {
+	if p.Ref == "" {
+		return fmt.Errorf("pool %d: ref is required", i)
+	}
+	if err := validation.ValidateName(p.Name); err != nil {
+		return fmt.Errorf("pool %d (%s): %v", i, p.Ref, err)
+	}
+	if err := validation.ValidateCIDRWithOptions(p.CIDR, validation.CIDROptions{
+		MinPrefix: 8,
+		MaxPrefix: 30,
+	}); err != nil {
+		return fmt.Errorf("pool %d (%s): %v", i, p.Ref, err)
+	}
+	return nil
 }
 
 func validateSchemaContainment(pools []schemaPoolEntry) error {
