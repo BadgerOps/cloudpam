@@ -61,7 +61,7 @@ func TestResolverPrecedence(t *testing.T) {
 			},
 		},
 		{
-			name:    "zero env config falls back to built-in defaults",
+			name:    "zero env config keeps environment temperature 0 and defaults the rest",
 			env:     Config{},
 			wantCfg: Config{Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: 0},
 			wantSources: domain.AIProviderSettingSources{
