@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.23.9] - 2026-10-31
+
+### Changed
+- The server and agent Helm charts advertise application version `0.23.9`. Their chart package versions remain `0.2.1`.
+
+### Fixed
+- CSV pool import treats a parent ID declared in the file as a reference to that row, including when it fails validation, placement, or is skipped as a duplicate. Children report `parent row N failed` instead of falling back to an existing pool with the old ID. Multi-level imports follow dependencies regardless of row order or numeric IDs; IDs absent from the CSV still refer to existing pools. (#351)
+
 ## [0.23.8] - 2026-10-31
 
 ### Added
