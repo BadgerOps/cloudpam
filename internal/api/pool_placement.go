@@ -171,6 +171,9 @@ func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy,
 	out := make([]placedPool, len(batch))
 	stored := make(map[string]int64, len(batch))
 	for i, e := range batch {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		in := e.In
 		if e.ParentRef != "" {
 			if id, ok := stored[e.ParentRef]; ok {
