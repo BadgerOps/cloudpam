@@ -82,6 +82,15 @@ describe('PoolDetailPanel address analysis', () => {
     expect(screen.getByText('+2 more')).toBeTruthy()
   })
 
+  it('lists exactly five available ranges without a more line', async () => {
+    stubAnalysis(() => jsonResponse(gapsWithBlocks(5)), () => jsonResponse(fragWith(10)))
+    renderPanel()
+
+    await waitFor(() => expect(screen.getAllByTestId('available-range')).toHaveLength(5))
+    expect(screen.getByText('10 / 100')).toBeTruthy()
+    expect(screen.queryByText(/more$/)).toBeNull()
+  })
+
   it.each([
     [10, 'Healthy'],
     [35, 'Attention'],
@@ -109,6 +118,19 @@ describe('PoolDetailPanel address analysis', () => {
     expect(screen.getByText('rec 2')).toBeTruthy()
     expect(screen.queryByText('rec 3')).toBeNull()
     expect(screen.getByText('+2 more')).toBeTruthy()
+  })
+
+  it('lists exactly three issues and three recommendations without a more line', async () => {
+    const issues = Array.from({ length: 3 }, (_, i) => ({
+      type: 'scattered' as const, severity: 'warning' as const, cidr: `10.0.${i}.0/24`, pool_id: 7, description: `issue ${i}`,
+    }))
+    const recommendations = ['rec 0', 'rec 1', 'rec 2']
+    stubAnalysis(() => jsonResponse(gapsWithBlocks(1)), () => jsonResponse(fragWith(60, { issues, recommendations })))
+    renderPanel()
+
+    await waitFor(() => expect(screen.getByText('issue 2')).toBeTruthy())
+    expect(screen.getByText('rec 2')).toBeTruthy()
+    expect(screen.queryByText(/more$/)).toBeNull()
   })
 
   it('shows a calm healthy state for a pool without children', async () => {
@@ -155,6 +177,8 @@ describe('PoolDetailPanel address analysis', () => {
     await waitFor(() => expect(screen.getAllByTestId('available-range')).toHaveLength(2))
     const toggle = screen.getByRole('button', { name: /Address Analysis/ })
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.getAttribute('aria-controls')).toBe('pool-analysis-7')
+    expect(document.getElementById('pool-analysis-7')).not.toBeNull()
 
     fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('false')

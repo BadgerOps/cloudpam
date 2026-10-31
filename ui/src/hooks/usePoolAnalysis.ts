@@ -75,9 +75,11 @@ export function usePoolAnalysis(poolId: number | null) {
     load(poolId)
   }, [poolId, load])
 
+  // The clearing in load() runs in an effect, after the first render for a
+  // new pool; filter here so that render never shows the previous pool.
   return {
-    gaps,
-    fragmentation,
+    gaps: gaps?.pool_id === poolId ? gaps : null,
+    fragmentation: fragmentation?.pool_id === poolId ? fragmentation : null,
     loading: gapsLoading || fragmentationLoading,
     gapsError,
     fragmentationError,

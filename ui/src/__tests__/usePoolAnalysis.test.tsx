@@ -106,6 +106,49 @@ describe('usePoolAnalysis', () => {
     expect(result.current.fragmentation?.score).toBe(40)
   })
 
+  it('never paints the previous pool results under a new pool', async () => {
+    const pending = new Map<string, ReturnType<typeof deferred<Response>>>()
+    const fetchMock = vi.fn((url: string, init: RequestInit) => {
+      const d = deferred<Response>()
+      pending.set(`${url} ${init.body}`, d)
+      return d.promise
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    // Record every render, so a stale paint between the rerender and the
+    // clearing effect is visible even though act() flushes effects.
+    const renders: { id: number; gapsPool: number | null; fragPool: number | null }[] = []
+    const { result, rerender } = renderHook(({ id }) => {
+      const value = usePoolAnalysis(id)
+      renders.push({ id, gapsPool: value.gaps?.pool_id ?? null, fragPool: value.fragmentation?.pool_id ?? null })
+      return value
+    }, { initialProps: { id: 7 } })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      pending.get('/api/v1/analysis/gaps {"pool_id":7}')!.resolve(jsonResponse(gaps(7)))
+      pending.get('/api/v1/analysis/fragmentation {"pool_ids":[7]}')!.resolve(jsonResponse(frag(7, 12)))
+    })
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.gaps?.pool_id).toBe(7)
+
+    renders.length = 0
+    rerender({ id: 8 })
+
+    expect(result.current.gaps).toBeNull()
+    expect(result.current.fragmentation).toBeNull()
+    // No render for pool 8 ever carried pool 7's data.
+    expect(renders.filter(r => r.id === 8 && (r.gapsPool !== null || r.fragPool !== null))).toEqual([])
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    await act(async () => {
+      pending.get('/api/v1/analysis/gaps {"pool_id":8}')!.resolve(jsonResponse(gaps(8)))
+      pending.get('/api/v1/analysis/fragmentation {"pool_ids":[8]}')!.resolve(jsonResponse(frag(8, 40)))
+    })
+    await waitFor(() => expect(result.current.gaps?.pool_id).toBe(8))
+    expect(result.current.fragmentation?.pool_id).toBe(8)
+  })
+
   it('reports only the failing half and retry refetches both', async () => {
     let gapsFail = true
     const fetchMock = vi.fn(async (url: string) => {
