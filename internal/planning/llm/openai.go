@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -154,24 +155,26 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 	defer func() { _ = resp.Body.Close() }()
 	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 
+	if resp.StatusCode != http.StatusOK {
+		discardBody(resp.Body)
+		return nil, &StatusError{Status: resp.StatusCode}
+	}
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("api error (status %d): %s", resp.StatusCode, string(respBody))
-	}
-
 	var oaiResp openaiResponse
 	if err := json.Unmarshal(respBody, &oaiResp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
+		return nil, fmt.Errorf("%w: unmarshal response: %w", ErrInvalidResponse, err)
 	}
 	if oaiResp.Error != nil {
-		return nil, fmt.Errorf("api error: %s", oaiResp.Error.Message)
+		// The provider's message can echo request details, so it is not kept.
+		return nil, fmt.Errorf("%w: provider reported an error", ErrInvalidResponse)
 	}
 	if len(oaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in response")
+		return nil, fmt.Errorf("%w: no choices in response", ErrInvalidResponse)
 	}
 
 	span.SetAttributes(
@@ -242,9 +245,9 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 
 	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		discardBody(resp.Body)
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("api error (status %d): %s", resp.StatusCode, string(respBody))
+		return nil, &StatusError{Status: resp.StatusCode}
 	}
 
 	ch := make(chan StreamEvent, 64)
@@ -309,7 +312,11 @@ func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
 			}
 		}
 		if err != nil {
-			ch <- StreamEvent{Done: true}
+			evt := StreamEvent{Done: true}
+			if !errors.Is(err, io.EOF) {
+				evt.Err = err
+			}
+			ch <- evt
 			return
 		}
 	}

@@ -68,7 +68,7 @@ func covSetupAIService(t *testing.T, provider llm.Provider) (*AIPlanningService,
 	t.Helper()
 	st := storage.NewMemoryStore()
 	convStore := storage.NewMemoryConversationStore(st)
-	svc := NewAIPlanningService(NewAnalysisService(st), convStore, st, provider)
+	svc := NewAIPlanningService(NewAnalysisService(st), convStore, st, llm.StaticProviderSource(provider))
 	return svc, st, convStore
 }
 
@@ -85,8 +85,8 @@ func TestCovNewAIPlanningServiceWiresDependencies(t *testing.T) {
 	provider := &covFakeProvider{available: true}
 	svc, st, convStore := covSetupAIService(t, provider)
 
-	if svc.provider != provider {
-		t.Error("provider not stored")
+	if got, err := svc.provider(context.Background()); err != nil || got != provider {
+		t.Errorf("provider not stored: got %v, err %v", got, err)
 	}
 	if svc.mainStore != st {
 		t.Error("main store not stored")
@@ -112,7 +112,7 @@ func TestCovAIServiceAvailable(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, _, _ := covSetupAIService(t, tc.provider)
-			if got := svc.Available(); got != tc.want {
+			if got := svc.Available(context.Background()); got != tc.want {
 				t.Errorf("Available() = %v, want %v", got, tc.want)
 			}
 		})

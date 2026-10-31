@@ -3,6 +3,7 @@ package planning
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -20,27 +21,48 @@ type AIPlanningService struct {
 	analysis  *AnalysisService
 	convStore storage.ConversationStore
 	mainStore storage.Store
-	provider  llm.Provider
+	providers llm.ProviderSource
 }
 
-// NewAIPlanningService creates a new AI planning service.
+// ErrAIUnavailable reports that no usable LLM provider is configured.
+var ErrAIUnavailable = errors.New("ai planning not available")
+
+// NewAIPlanningService creates a new AI planning service. providers is
+// consulted on every operation so settings changes apply without a restart.
 func NewAIPlanningService(
 	analysis *AnalysisService,
 	convStore storage.ConversationStore,
 	mainStore storage.Store,
-	provider llm.Provider,
+	providers llm.ProviderSource,
 ) *AIPlanningService {
 	return &AIPlanningService{
 		analysis:  analysis,
 		convStore: convStore,
 		mainStore: mainStore,
-		provider:  provider,
+		providers: providers,
 	}
 }
 
+// provider resolves the provider for one operation. An unreadable stored key
+// is not fatal: the fallback configuration is used.
+func (s *AIPlanningService) provider(ctx context.Context) (llm.Provider, error) {
+	if s.providers == nil {
+		return nil, ErrAIUnavailable
+	}
+	p, _, err := s.providers.Provider(ctx)
+	if err != nil && !errors.Is(err, llm.ErrStoredKeyUnreadable) {
+		return nil, err
+	}
+	if p == nil || !p.Available() {
+		return nil, ErrAIUnavailable
+	}
+	return p, nil
+}
+
 // Available returns true if the LLM provider is configured and ready.
-func (s *AIPlanningService) Available() bool {
-	return s.provider != nil && s.provider.Available()
+func (s *AIPlanningService) Available(ctx context.Context) bool {
+	_, err := s.provider(ctx)
+	return err == nil
 }
 
 // CreateConversation creates a new conversation.
@@ -77,6 +99,11 @@ func (s *AIPlanningService) DeleteConversation(ctx context.Context, id string) e
 // both the user message and the final assistant message. The returned channel
 // receives incremental text deltas; the caller should read until close.
 func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage string) (<-chan llm.StreamEvent, error) {
+	provider, err := s.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	// Persist user message
 	now := time.Now().UTC()
 	userMsg := domain.ConversationMessage{
@@ -113,7 +140,7 @@ func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage str
 	}
 
 	// Start streaming from LLM
-	eventCh, err := s.provider.StreamComplete(ctx, messages, llm.Options{})
+	eventCh, err := provider.StreamComplete(ctx, messages, llm.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("stream complete: %w", err)
 	}

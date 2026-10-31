@@ -64,7 +64,7 @@ func setupAITestServerCov(t *testing.T, provider llm.Provider) (*AIPlanningServe
 	srv := NewServer(mux, st, logger, nil, nil)
 
 	convStore := storage.NewMemoryConversationStore(st)
-	aiSvc := planning.NewAIPlanningService(planning.NewAnalysisService(st), convStore, st, provider)
+	aiSvc := planning.NewAIPlanningService(planning.NewAnalysisService(st), convStore, st, llm.StaticProviderSource(provider))
 	ai := NewAIPlanningServer(srv, aiSvc, convStore)
 	ai.RegisterAIPlanningRoutes()
 	return ai, st, convStore
@@ -413,7 +413,7 @@ func TestAIApplyPlanSkipsFailedAndOrphanedPoolsCov(t *testing.T) {
 	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: io.Discard})
 	srv := NewServer(mux, st, logger, nil, nil)
 	convStore := storage.NewMemoryConversationStore(base)
-	aiSvc := planning.NewAIPlanningService(planning.NewAnalysisService(st), convStore, st, &stubLLMProviderCov{available: true})
+	aiSvc := planning.NewAIPlanningService(planning.NewAnalysisService(st), convStore, st, llm.StaticProviderSource(&stubLLMProviderCov{available: true}))
 	NewAIPlanningServer(srv, aiSvc, convStore).RegisterAIPlanningRoutes()
 
 	body := `{"plan":{"pools":[

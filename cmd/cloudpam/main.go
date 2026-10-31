@@ -239,7 +239,7 @@ func main() {
 		logger.Info("ai planning disabled (set CLOUDPAM_LLM_API_KEY or CLOUDPAM_LLM_ENDPOINT to enable)")
 	}
 	convStore := selectConversationStore(logger, store)
-	aiService := planning.NewAIPlanningService(analysisService, convStore, store, llmProvider)
+	aiService := planning.NewAIPlanningService(analysisService, convStore, store, llm.NewManager(llm.NewResolver(llmCfg, nil, nil)))
 	aiSrv := api.NewAIPlanningServer(srv, aiService, convStore)
 	logger.Info("ai planning subsystem initialized")
 
