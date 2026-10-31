@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -498,5 +499,51 @@ func TestAIChatStreamsThroughMetricsMiddlewareCov(t *testing.T) {
 	// The stream was flushed rather than buffered until the handler returned.
 	if !rr.Flushed {
 		t.Error("SSE response was never flushed")
+	}
+}
+
+// TestAIChatStreamsThroughLoggingAndAuditMiddlewareCov mounts the chat route
+// behind LoggingMiddleware and AuditMiddleware, both of which wrap the writer in
+// statusRecorder. Without statusRecorder.Unwrap, http.ResponseController could
+// not reach the underlying Flusher and every chat request in production
+// answered 500 "streaming not supported".
+func TestAIChatStreamsThroughLoggingAndAuditMiddlewareCov(t *testing.T) {
+	provider := &stubLLMProviderCov{available: true, deltas: []string{"Here is ", "a plan."}, emitDone: true}
+	ai, _, convStore := setupAITestServerCov(t, provider)
+	conv := newConversationCov(t, convStore, "chat")
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := LoggingMiddleware(logger)(AuditMiddleware(&mockAuditLogger{}, logger)(ai.srv.mux))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/chat",
+		strings.NewReader(`{"session_id":"`+conv+`","message":"Plan a /16 for prod"}`))
+	req.Header.Set("Content-Type", "application/json")
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{`data: {"delta":"Here is "}`, `data: {"delta":"a plan."}`, "event: done"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("SSE body missing %q:\n%s", want, body)
+		}
+	}
+	if !rr.Flushed {
+		t.Error("SSE response was never flushed")
+	}
+}
+
+func TestStatusRecorderFlushesThroughResponseController(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if err := http.NewResponseController(&statusRecorder{ResponseWriter: rec}).Flush(); err != nil {
+		t.Fatalf("Flush through statusRecorder = %v, want nil", err)
+	}
+	if !rec.Flushed {
+		t.Fatal("underlying recorder was not flushed")
 	}
 }
