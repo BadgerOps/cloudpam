@@ -29,13 +29,14 @@ import (
 const ephemeralKeyMessage = "cannot store an api key: CLOUDPAM_OIDC_ENCRYPTION_KEY is not set, so the stored credential would be lost at restart; set the key or use CLOUDPAM_LLM_API_KEY"
 
 type aiSettingsFixture struct {
-	mux      *http.ServeMux
-	srv      *Server
-	settings *storage.MemorySettingsStore
-	audit    *audit.MemoryAuditLogger
-	manager  *llm.Manager
-	key      []byte
-	logs     *syncBuffer
+	mux            *http.ServeMux
+	srv            *Server
+	settingsServer *SettingsServer
+	settings       *storage.MemorySettingsStore
+	audit          *audit.MemoryAuditLogger
+	manager        *llm.Manager
+	key            []byte
+	logs           *syncBuffer
 }
 
 // syncBuffer is a goroutine-safe log sink.
@@ -99,7 +100,15 @@ func newAISettingsFixture(t *testing.T, env llm.Config, storageAvailable bool, k
 	ss := NewSettingsServer(srv, store)
 	ss.SetAIProvider(manager, resolver, key, storageAvailable)
 	ss.RegisterSettingsRoutes()
-	return &aiSettingsFixture{mux: mux, srv: srv, settings: settings, audit: auditLogger, manager: manager, key: key, logs: logs}
+	return &aiSettingsFixture{mux: mux, srv: srv, settingsServer: ss, settings: settings, audit: auditLogger, manager: manager, key: key, logs: logs}
+}
+
+type conflictingAISettingsStore struct {
+	storage.SettingsStore
+}
+
+func (*conflictingAISettingsStore) UpdateAIProviderSettingsIfUnchanged(context.Context, time.Time, *domain.AIProviderSettings) error {
+	return storage.ErrConflict
 }
 
 func (f *aiSettingsFixture) do(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
@@ -336,6 +345,20 @@ func TestAISettingsPatchNoOpSkipsWriteAndAudit(t *testing.T) {
 		if n := countEvents(); n != eventsBefore {
 			t.Errorf("PATCH %s recorded %d audit events, want none", body, n-eventsBefore)
 		}
+	}
+}
+
+func TestAISettingsPatchRejectsConcurrentUpdate(t *testing.T) {
+	f := setupAISettings(t, envDefaults(), true)
+	f.settingsServer.settingsStore = &conflictingAISettingsStore{SettingsStore: f.settings}
+
+	rr := f.patch(t, `{"model":"concurrent-model"}`, http.StatusConflict)
+	got := decodeAPIError(t, rr)
+	if got.Error != "ai provider settings changed concurrently" || got.Detail != "reload and retry" {
+		t.Fatalf("concurrent PATCH error = %+v", got)
+	}
+	if doc := f.storedDoc(t); doc.Model != "" {
+		t.Fatalf("conflicting PATCH stored model %q", doc.Model)
 	}
 }
 

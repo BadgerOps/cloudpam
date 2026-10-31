@@ -66,7 +66,7 @@ func TestAISettingsPatchConflictsAfterRepeatedConcurrentWrites(t *testing.T) {
 	f := setupAISettingsWithStore(t, envDefaults(), true, mem, store)
 
 	rr := f.patch(t, `{"model":"cas-model"}`, http.StatusConflict)
-	if e := decodeAPIError(t, rr); e.Error != "ai provider settings changed concurrently" || e.Detail != "retry the request" {
+	if e := decodeAPIError(t, rr); e.Error != "ai provider settings changed concurrently" || e.Detail != "reload and retry" {
 		t.Fatalf("error = %+v", e)
 	}
 	if n := store.attempts.Load(); n != 3 {

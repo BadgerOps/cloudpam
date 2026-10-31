@@ -190,7 +190,7 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		case errors.Is(err, storage.ErrConflict) && attempt < aiSettingsPatchAttempts:
 			continue
 		case errors.Is(err, storage.ErrConflict):
-			ss.writeErr(ctx, w, http.StatusConflict, "ai provider settings changed concurrently", "retry the request")
+			ss.writeErr(ctx, w, http.StatusConflict, "ai provider settings changed concurrently", "reload and retry")
 			return
 		default:
 			ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to save ai provider settings", err.Error())

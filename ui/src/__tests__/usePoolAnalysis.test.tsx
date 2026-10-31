@@ -181,6 +181,35 @@ describe('usePoolAnalysis', () => {
     expect(callsTo(fetchMock, '/api/v1/analysis/fragmentation')).toHaveLength(2)
   })
 
+  it('never shows the previous pool\'s error for the new pool', async () => {
+    const pending = new Map<string, ReturnType<typeof deferred<Response>>>()
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const key = `${url} ${String(init?.body)}`
+      if (url === '/api/v1/analysis/gaps' && key.includes('"pool_id":7')) {
+        return Promise.resolve(jsonResponse({ error: 'gap analysis failed', detail: 'boom' }, 500))
+      }
+      const d = deferred<Response>()
+      pending.set(key, d)
+      return d.promise
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const renders: Array<{ id: number; gapsError: string | null }> = []
+    const { result, rerender } = renderHook(({ id }: { id: number }) => {
+      const value = usePoolAnalysis(id)
+      renders.push({ id, gapsError: value.gapsError })
+      return value
+    }, { initialProps: { id: 7 } })
+
+    await waitFor(() => expect(result.current.gapsError).toBe('gap analysis failed'))
+
+    rerender({ id: 8 })
+
+    // No render for pool 8 ever carried pool 7's error, not even the first one.
+    expect(renders.filter(r => r.id === 8 && r.gapsError !== null)).toEqual([])
+    expect(result.current.gapsError).toBeNull()
+  })
+
   it('does nothing without a pool', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
