@@ -913,3 +913,50 @@ export interface AgentProvisionResponse {
   server_url: string
   token: string
 }
+
+// --- Analysis types (mirror internal/planning/types.go) ---
+// The Go encoder emits null for nil slices, so every array may be null.
+
+export interface AllocatedBlock {
+  pool_id: number
+  name: string
+  cidr: string
+  utilization_percent: number
+}
+
+export interface AvailableBlock {
+  cidr: string
+  address_count: number
+}
+
+export interface GapAnalysis {
+  pool_id: number
+  pool_name: string
+  parent_cidr: string
+  allocated_blocks: AllocatedBlock[] | null
+  available_blocks: AvailableBlock[] | null
+  total_addresses: number
+  used_addresses: number
+  free_addresses: number
+  utilization_percent: number
+}
+
+export type FragmentationType = 'scattered' | 'oversized' | 'undersized' | 'misaligned'
+
+export type FragmentationSeverity = 'error' | 'warning' | 'info'
+
+export interface FragmentationIssue {
+  type: FragmentationType
+  severity: FragmentationSeverity
+  cidr: string
+  pool_id: number
+  description: string
+}
+
+export interface FragmentationAnalysis {
+  pool_id: number
+  pool_name: string
+  score: number
+  issues: FragmentationIssue[] | null
+  recommendations: string[] | null
+}
