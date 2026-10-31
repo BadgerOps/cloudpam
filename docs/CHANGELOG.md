@@ -22,6 +22,7 @@ patch or minor version entry for every user-facing change.
 ### Fixed
 - AI chat failures no longer return the upstream provider's response body to the client or record it on the trace span; the error carries only the HTTP status. Provider responses are capped at 8 MiB. (#283)
 - AI chat streaming works through the request logging middleware again. The middleware's response wrapper did not expose the underlying writer, so every `POST /api/v1/ai/chat` behind it failed with `500 streaming not supported`. (#283)
+- Sentry events and transactions no longer include request bodies or authentication headers. Login, OIDC client-secret, and AI provider key requests previously reached Sentry in clear when `SENTRY_DSN` was set. (#283)
 - SQLite could not read, update, or delete a managed network object that had no `source_discovered_id`; every such request returned `500`. (#278)
 
 ## [0.23.6] - 2026-10-30

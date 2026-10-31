@@ -51,13 +51,7 @@ func main() {
 	sentryDSN := os.Getenv("SENTRY_DSN")
 	sentryEnabled := false
 	if sentryDSN != "" {
-		err := sentry.Init(sentry.ClientOptions{
-			Dsn:              sentryDSN,
-			Environment:      envOr("SENTRY_ENVIRONMENT", "production"),
-			Release:          envOr("APP_VERSION", "dev"),
-			TracesSampleRate: 1.0, // Capture 100% of transactions for performance monitoring
-			AttachStacktrace: true,
-		})
+		err := sentry.Init(sentryClientOptions(sentryDSN))
 		if err != nil {
 			logger.Warn("sentry initialization failed", "error", err)
 		} else {
