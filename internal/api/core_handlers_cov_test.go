@@ -442,7 +442,7 @@ func TestSchemaCheckAndApplyValidationCov(t *testing.T) {
 	t.Run("check rejects out-of-range prefixes", func(t *testing.T) {
 		for _, cidr := range []string{"10.0.0.0/4", "10.0.0.0/31", "10.0.0.0/32", "not-a-cidr"} {
 			rr := assertStatusCov(t, doReqCov(t, srv.mux, http.MethodPost, "/api/v1/schema/check",
-				`{"pools":[{"name":"p","cidr":"`+cidr+`"}]}`), http.StatusBadRequest)
+				`{"pools":[{"ref":"p","name":"p","cidr":"`+cidr+`"}]}`), http.StatusBadRequest)
 			if e := decodeErrCov(t, rr); !strings.HasPrefix(e.Error, "pool 0") {
 				t.Fatalf("%s: error = %q", cidr, e.Error)
 			}
@@ -451,7 +451,7 @@ func TestSchemaCheckAndApplyValidationCov(t *testing.T) {
 
 	t.Run("check reports containment relationships", func(t *testing.T) {
 		rr := assertStatusCov(t, doReqCov(t, srv.mux, http.MethodPost, "/api/v1/schema/check",
-			`{"pools":[{"name":"inner","cidr":"10.20.1.0/24"},{"name":"outer","cidr":"10.0.0.0/8"},{"name":"clean","cidr":"192.168.0.0/16"}]}`), http.StatusOK)
+			`{"pools":[{"ref":"inner","name":"inner","cidr":"10.20.1.0/24"},{"ref":"outer","name":"outer","cidr":"10.0.0.0/8"},{"ref":"clean","name":"clean","cidr":"192.168.0.0/16"}]}`), http.StatusOK)
 		var resp struct {
 			Conflicts []struct {
 				PlannedCIDR string `json:"planned_cidr"`

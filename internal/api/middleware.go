@@ -386,6 +386,10 @@ func (tc *TrustedProxyConfig) IsTrusted(remoteAddr string) bool {
 	if err != nil {
 		return false
 	}
+	return tc.contains(addr)
+}
+
+func (tc *TrustedProxyConfig) contains(addr netip.Addr) bool {
 	for _, cidr := range tc.CIDRs {
 		if cidr.Contains(addr) {
 			return true
@@ -394,19 +398,31 @@ func (tc *TrustedProxyConfig) IsTrusted(remoteAddr string) bool {
 	return false
 }
 
-// clientKeyWithProxies extracts the client IP, only trusting X-Forwarded-For from trusted proxies.
+// clientKeyWithProxies resolves the client IP. Behind a trusted proxy the
+// client is the rightmost X-Forwarded-For entry that is not itself a trusted
+// proxy. Each proxy appends the peer it saw, so everything left of the last
+// trusted hop is whatever the client sent. An entry that does not parse ends
+// the walk at the peer address, because a trusted proxy writes addresses.
 func clientKeyWithProxies(r *http.Request, proxies *TrustedProxyConfig) string {
-	if proxies != nil && proxies.IsTrusted(r.RemoteAddr) {
-		if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-			parts := strings.SplitN(xff, ",", 2)
-			if addr, ok := forwardedAddr(parts[0]); ok {
-				return addr.String()
-			}
-		}
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
+	}
+	if !proxies.IsTrusted(r.RemoteAddr) {
+		return host
+	}
+	entries := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(entries) - 1; i >= 0; i-- {
+		if strings.TrimSpace(entries[i]) == "" {
+			continue
+		}
+		addr, ok := forwardedAddr(entries[i])
+		if !ok {
+			return host
+		}
+		if !proxies.contains(addr) {
+			return addr.String()
+		}
 	}
 	return host
 }

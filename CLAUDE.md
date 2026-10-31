@@ -452,7 +452,7 @@ When adding endpoints:
 ### Rate Limiting
 - `RATE_LIMIT_RPS`: Requests per second (default: `100`; set to `0` to disable)
 - `RATE_LIMIT_BURST`: Burst size (default: `200`)
-- The global limiter keeps one token bucket per TCP peer address and ignores `X-Forwarded-For`, so clients behind one reverse proxy share a bucket. Only the login limiter honors `CLOUDPAM_TRUSTED_PROXIES`. Behind a proxy, set `RATE_LIMIT_RPS=0` and limit at the ingress.
+- The global limiter keeps one token bucket per TCP peer address and ignores `X-Forwarded-For`, so clients behind one reverse proxy share a bucket. The login limiter and the audit client IP honor `CLOUDPAM_TRUSTED_PROXIES`, and the global limiter does not. Behind a proxy, set `RATE_LIMIT_RPS=0` and limit at the ingress.
 
 ### Agent (Org Mode)
 - `CLOUDPAM_AWS_ORG_ENABLED`: Enable AWS Organizations discovery mode

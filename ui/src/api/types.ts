@@ -3,7 +3,7 @@ export interface SchemaPoolEntry {
   name: string
   cidr: string
   type: string
-  parent_ref: string | null
+  parent_ref?: string
   description?: string
 }
 

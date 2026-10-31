@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"cloudpam/internal/domain"
@@ -291,5 +293,35 @@ func TestSearchCombinedQueryAndCIDR(t *testing.T) {
 	}
 	if resp.Total > 0 && resp.Items[0].Name != "US East" {
 		t.Errorf("expected 'US East', got %q", resp.Items[0].Name)
+	}
+}
+
+func TestSearchHugePageReturnsEmptyPage(t *testing.T) {
+	srv, store := setupSearchServer(t)
+	seedSearchData(t, store)
+
+	for _, tc := range []struct{ page, pageSize int }{{math.MaxInt/200 + 2, 200}, {math.MaxInt, 2}} {
+		page := tc.page
+		target := "/api/v1/search?cidr_within=0.0.0.0/0&page_size=" + strconv.Itoa(tc.pageSize) + "&page=" + strconv.Itoa(page)
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		w := httptest.NewRecorder()
+		srv.mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("page=%d: expected 200, got %d: %s", page, w.Code, w.Body.String())
+		}
+		var resp domain.SearchResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Total != 4 {
+			t.Errorf("page=%d: Total = %d, want 4", page, resp.Total)
+		}
+		if len(resp.Items) != 0 {
+			t.Errorf("page=%d: len(Items) = %d, want 0", page, len(resp.Items))
+		}
+		if resp.Page != page || resp.PageSize != tc.pageSize {
+			t.Errorf("page=%d: echoed page/page_size = %d/%d, want %d/%d", page, resp.Page, resp.PageSize, page, tc.pageSize)
+		}
 	}
 }

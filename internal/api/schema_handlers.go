@@ -18,8 +18,8 @@ type schemaPoolEntry struct {
 	Ref       string `json:"ref"`
 	Name      string `json:"name"`
 	CIDR      string `json:"cidr"`
-	Type      string `json:"type"`
-	ParentRef string `json:"parent_ref"`
+	Type      string `json:"type,omitempty"`
+	ParentRef string `json:"parent_ref,omitempty"`
 }
 
 type schemaCheckRequest struct {
@@ -43,9 +43,9 @@ type schemaCheckResponse struct {
 
 type schemaApplyRequest struct {
 	Pools         []schemaPoolEntry `json:"pools"`
-	Status        string            `json:"status"`
-	Tags          map[string]string `json:"tags"`
-	SkipConflicts bool              `json:"skip_conflicts"`
+	Status        string            `json:"status,omitempty"`
+	Tags          map[string]string `json:"tags,omitempty"`
+	SkipConflicts bool              `json:"skip_conflicts,omitempty"`
 }
 
 type schemaApplyResponse struct {
@@ -74,13 +74,9 @@ func (s *Server) handleSchemaCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate all proposed CIDRs
 	for i, p := range req.Pools {
-		if err := validation.ValidateCIDRWithOptions(p.CIDR, validation.CIDROptions{
-			MinPrefix: 8,
-			MaxPrefix: 30,
-		}); err != nil {
-			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Name, err), "")
+		if err := validateSchemaEntry(i, p); err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 	}
@@ -190,23 +186,12 @@ type poolPlan struct {
 func (s *Server) applyPoolPlan(ctx context.Context, w http.ResponseWriter, plan poolPlan) {
 	refSet := make(map[string]bool)
 	for i, p := range plan.Pools {
-		if p.Ref == "" {
-			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d: ref is required", i), "")
+		if err := validateSchemaEntry(i, p); err != nil {
+			s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
 		if refSet[p.Ref] {
 			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d: duplicate ref %q", i, p.Ref), "")
-			return
-		}
-		if err := validation.ValidateName(p.Name); err != nil {
-			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Ref, err), "")
-			return
-		}
-		if err := validation.ValidateCIDRWithOptions(p.CIDR, validation.CIDROptions{
-			MinPrefix: 8,
-			MaxPrefix: 30,
-		}); err != nil {
-			s.writeErr(ctx, w, http.StatusBadRequest, fmt.Sprintf("pool %d (%s): %v", i, p.Ref, err), "")
 			return
 		}
 		if p.ParentRef != "" && !refSet[p.ParentRef] {
@@ -287,6 +272,22 @@ func (s *Server) applyPoolPlan(ctx context.Context, w http.ResponseWriter, plan 
 		resp.Errors = []string{}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func validateSchemaEntry(i int, p schemaPoolEntry) error {
+	if p.Ref == "" {
+		return fmt.Errorf("pool %d: ref is required", i)
+	}
+	if err := validation.ValidateName(p.Name); err != nil {
+		return fmt.Errorf("pool %d (%s): %v", i, p.Ref, err)
+	}
+	if err := validation.ValidateCIDRWithOptions(p.CIDR, validation.CIDROptions{
+		MinPrefix: 8,
+		MaxPrefix: 30,
+	}); err != nil {
+		return fmt.Errorf("pool %d (%s): %v", i, p.Ref, err)
+	}
+	return nil
 }
 
 func validateSchemaContainment(pools []schemaPoolEntry) error {
