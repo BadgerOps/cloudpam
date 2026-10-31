@@ -204,42 +204,52 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 }
 
 // DeleteNetworkObject counts children, removes the relationships that
-// reference the object, and deletes it in one transaction. A concurrent child
-// insert waits on the single connection (or, with SQLITE_MAX_OPEN_CONNS>1, is
-// serialized behind this write transaction), so it lands either before the
-// count or after the delete. The parent_object_id ON DELETE SET NULL action
-// never fires: children block.
-func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
+// reference the object, and deletes it in one transaction. On the default
+// single connection a concurrent child insert waits, so it lands either before
+// the count or after the delete. With SQLITE_MAX_OPEN_CONNS>1 the transaction
+// reads before it writes, so an insert that commits between the count and the
+// first write makes this transaction fail with SQLITE_BUSY and nothing is
+// deleted. Either way the parent_object_id ON DELETE SET NULL action never
+// fires: children block.
+func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	var exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM network_objects WHERE id = ?)`, id).Scan(&exists); err != nil {
-		return err
+		return 0, err
 	}
 	if !exists {
-		return fmt.Errorf("network object not found: %w", storage.ErrNotFound)
+		return 0, fmt.Errorf("network object not found: %w", storage.ErrNotFound)
 	}
 	var children int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM network_objects WHERE parent_object_id = ?`, id).Scan(&children); err != nil {
-		return err
+		return 0, err
 	}
 	if err := storage.NetworkObjectHasChildrenError(children); err != nil {
-		return err
+		return 0, err
 	}
 	idText := strconv.FormatInt(id, 10)
-	if _, err := tx.ExecContext(ctx, `DELETE FROM network_relationships
+	res, err := tx.ExecContext(ctx, `DELETE FROM network_relationships
 		WHERE (source_kind = ? AND source_id = ?) OR (target_kind = ? AND target_id = ?)`,
-		domain.NetworkEntityKindObject, idText, domain.NetworkEntityKindObject, idText); err != nil {
-		return err
+		domain.NetworkEntityKindObject, idText, domain.NetworkEntityKindObject, idText)
+	if err != nil {
+		return 0, err
+	}
+	removed, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM network_objects WHERE id = ?`, id); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(removed), nil
 }
 
 func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {
@@ -302,9 +312,20 @@ func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.Net
 	return out, rows.Err()
 }
 
+// UpsertNetworkRelationship checks that every network object the relationship
+// names exists and writes the row in one transaction. On the default single
+// connection a concurrent DeleteNetworkObject runs either before the check,
+// which then fails, or after the commit, which then removes the new
+// relationship. With SQLITE_MAX_OPEN_CONNS>1 this transaction reads before it
+// writes, so a delete that commits in between makes the write fail with
+// SQLITE_BUSY instead of queueing behind it; either way no orphan is stored.
 func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateNetworkRelationship) (domain.NetworkRelationship, error) {
 	if in.Type == "" || in.SourceKind == "" || in.SourceID == "" || in.TargetKind == "" || in.TargetID == "" {
 		return domain.NetworkRelationship{}, fmt.Errorf("relationship type, source, and target are required: %w", storage.ErrValidation)
+	}
+	objectIDs, err := storage.NetworkRelationshipObjectIDs(in)
+	if err != nil {
+		return domain.NetworkRelationship{}, err
 	}
 	if in.ID == "" {
 		in.ID = generatedNetworkRelationshipID(in)
@@ -318,7 +339,23 @@ func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateN
 	}
 	evidence, _ := json.Marshal(in.Evidence)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO network_relationships
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.NetworkRelationship{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, objectID := range objectIDs {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM network_objects WHERE id = ?)`, objectID).Scan(&exists); err != nil {
+			return domain.NetworkRelationship{}, err
+		}
+		if !exists {
+			return domain.NetworkRelationship{}, storage.NetworkObjectRefNotFound(strconv.FormatInt(objectID, 10))
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO network_relationships
 		(id, type, source_kind, source_id, target_kind, target_id, confidence, reason, evidence, resolution_state, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -334,6 +371,9 @@ func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateN
 			updated_at = excluded.updated_at`,
 		in.ID, string(in.Type), in.SourceKind, in.SourceID, in.TargetKind, in.TargetID, in.Confidence, in.Reason, string(evidence), in.ResolutionState, now, now, requestedState)
 	if err != nil {
+		return domain.NetworkRelationship{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return domain.NetworkRelationship{}, err
 	}
 	rels, err := s.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{})

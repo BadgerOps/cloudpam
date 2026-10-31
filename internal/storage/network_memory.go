@@ -183,12 +183,12 @@ func (m *MemoryNetworkStore) UpdateNetworkObject(_ context.Context, id int64, up
 	return cloneNetworkObject(obj), true, nil
 }
 
-func (m *MemoryNetworkStore) DeleteNetworkObject(_ context.Context, id int64) error {
+func (m *MemoryNetworkStore) DeleteNetworkObject(_ context.Context, id int64) (int, error) {
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
 
 	if _, ok := m.objects[id]; !ok {
-		return fmt.Errorf("network object not found: %w", ErrNotFound)
+		return 0, fmt.Errorf("network object not found: %w", ErrNotFound)
 	}
 	children := 0
 	for _, obj := range m.objects {
@@ -197,17 +197,19 @@ func (m *MemoryNetworkStore) DeleteNetworkObject(_ context.Context, id int64) er
 		}
 	}
 	if err := NetworkObjectHasChildrenError(children); err != nil {
-		return err
+		return 0, err
 	}
 	idText := strconv.FormatInt(id, 10)
+	removed := 0
 	for relID, rel := range m.relationships {
 		if (rel.SourceKind == domain.NetworkEntityKindObject && rel.SourceID == idText) ||
 			(rel.TargetKind == domain.NetworkEntityKindObject && rel.TargetID == idText) {
 			delete(m.relationships, relID)
+			removed++
 		}
 	}
 	delete(m.objects, id)
-	return nil
+	return removed, nil
 }
 
 func (m *MemoryNetworkStore) ListNetworkRelationships(_ context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {
@@ -258,6 +260,10 @@ func (m *MemoryNetworkStore) UpsertNetworkRelationship(_ context.Context, in dom
 	if in.Type == "" || in.SourceKind == "" || in.SourceID == "" || in.TargetKind == "" || in.TargetID == "" {
 		return domain.NetworkRelationship{}, fmt.Errorf("relationship type, source, and target are required: %w", ErrValidation)
 	}
+	objectIDs, err := NetworkRelationshipObjectIDs(in)
+	if err != nil {
+		return domain.NetworkRelationship{}, err
+	}
 	id := in.ID
 	if id == "" {
 		id = networkRelationshipID(in)
@@ -273,6 +279,14 @@ func (m *MemoryNetworkStore) UpsertNetworkRelationship(_ context.Context, in dom
 
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
+
+	// Checked under the same lock DeleteNetworkObject writes under, so a
+	// relationship cannot be stored against an object being deleted.
+	for _, objectID := range objectIDs {
+		if _, ok := m.objects[objectID]; !ok {
+			return domain.NetworkRelationship{}, NetworkObjectRefNotFound(strconv.FormatInt(objectID, 10))
+		}
+	}
 
 	now := time.Now().UTC()
 	rel := domain.NetworkRelationship{

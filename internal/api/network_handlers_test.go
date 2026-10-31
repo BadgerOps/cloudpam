@@ -1331,6 +1331,8 @@ func TestNetworkObjectDeleteRemovesObjectAndRecordsAudit(t *testing.T) {
 	}
 	obj := createNetworkObjectForDeleteTest(t, discSrv, fmt.Sprintf(`{"object_type":"vpc","account_id":%d,"name":"doomed-vpc"}`, account.ID))
 	path := fmt.Sprintf("/api/v1/network/objects/%d", obj.ID)
+	relBody := fmt.Sprintf(`{"id":"rel-doomed","type":"contains","source_kind":"network_object","source_id":"%d","target_kind":"pool","target_id":"42"}`, obj.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", relBody, http.StatusCreated)
 
 	rr := doJSON(t, discSrv.srv.mux, http.MethodDelete, path, "", http.StatusNoContent)
 	if rr.Body.Len() != 0 {
@@ -1344,6 +1346,9 @@ func TestNetworkObjectDeleteRemovesObjectAndRecordsAudit(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Action != audit.ActionDelete || events[0].ResourceName != "doomed-vpc" || events[0].StatusCode != http.StatusNoContent {
 		t.Fatalf("expected one delete audit event for doomed-vpc, got %+v", events)
+	}
+	if events[0].Changes == nil || fmt.Sprint(events[0].Changes.After["relationships_removed"]) != "1" {
+		t.Fatalf("delete audit event should record relationships_removed=1, got changes %+v", events[0].Changes)
 	}
 }
 
@@ -1493,5 +1498,17 @@ func TestNetworkObjectDeleteAppearsInOpenAPISpec(t *testing.T) {
 	responses := asMap(t, op["responses"], "delete responses")
 	if _, ok := responses["204"]; !ok {
 		t.Fatalf("delete should advertise 204, got responses %v", responses)
+	}
+}
+
+func TestNetworkRelationshipPostRejectsMissingObject(t *testing.T) {
+	discSrv, _, _, _ := setupDiscoveryTestServer()
+	body := `{"id":"rel-missing","type":"contains","source_kind":"network_object","source_id":"424242","target_kind":"pool","target_id":"7"}`
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", body, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "network object 424242 not found") {
+		t.Fatalf("400 body should name the missing object, got %s", rr.Body.String())
+	}
+	if rels := listNetworkRelationshipsForDeleteTest(t, discSrv); containsRelationshipID(rels, "rel-missing") {
+		t.Fatalf("rejected relationship must not be stored, got %+v", rels)
 	}
 }

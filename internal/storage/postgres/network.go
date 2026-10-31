@@ -198,38 +198,42 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 // FOR KEY SHARE lock on the same row for its parent_object_id foreign key, so
 // it waits until this transaction ends and then fails its FK check. Children
 // block deletion, so the ON DELETE SET NULL action never fires.
-func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
+func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var locked int64
 	err = tx.QueryRow(ctx, `SELECT id FROM network_objects WHERE id = $1 AND organization_id = $2 FOR UPDATE`, id, s.orgID).Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("network object not found: %w", storage.ErrNotFound)
+		return 0, fmt.Errorf("network object not found: %w", storage.ErrNotFound)
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var children int
 	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM network_objects WHERE parent_object_id = $1 AND organization_id = $2`, id, s.orgID).Scan(&children); err != nil {
-		return err
+		return 0, err
 	}
 	if err := storage.NetworkObjectHasChildrenError(children); err != nil {
-		return err
+		return 0, err
 	}
 	idText := strconv.FormatInt(id, 10)
-	if _, err := tx.Exec(ctx, `DELETE FROM network_relationships
+	tag, err := tx.Exec(ctx, `DELETE FROM network_relationships
 		WHERE organization_id = $1 AND ((source_kind = $2 AND source_id = $3) OR (target_kind = $2 AND target_id = $3))`,
-		s.orgID, domain.NetworkEntityKindObject, idText); err != nil {
-		return err
+		s.orgID, domain.NetworkEntityKindObject, idText)
+	if err != nil {
+		return 0, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM network_objects WHERE id = $1 AND organization_id = $2`, id, s.orgID); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {
@@ -290,9 +294,19 @@ func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.Net
 	return out, rows.Err()
 }
 
+// UpsertNetworkRelationship locks every network object the relationship names
+// FOR KEY SHARE, then writes the row in the same transaction. DeleteNetworkObject
+// takes FOR UPDATE on the object row, which conflicts with FOR KEY SHARE, so the
+// two serialize: the upsert either finds no row (ErrValidation) because the
+// delete committed first, or commits first and the delete then removes the
+// fresh relationship.
 func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateNetworkRelationship) (domain.NetworkRelationship, error) {
 	if in.Type == "" || in.SourceKind == "" || in.SourceID == "" || in.TargetKind == "" || in.TargetID == "" {
 		return domain.NetworkRelationship{}, fmt.Errorf("relationship type, source, and target are required: %w", storage.ErrValidation)
+	}
+	objectIDs, err := storage.NetworkRelationshipObjectIDs(in)
+	if err != nil {
+		return domain.NetworkRelationship{}, err
 	}
 	if in.ID == "" {
 		in.ID = generatedNetworkRelationshipID(in)
@@ -306,7 +320,24 @@ func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateN
 	}
 	evidence, _ := json.Marshal(in.Evidence)
 	now := time.Now().UTC()
-	_, err := s.pool.Exec(ctx, `INSERT INTO network_relationships
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return domain.NetworkRelationship{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, objectID := range objectIDs {
+		var locked int64
+		err := tx.QueryRow(ctx, `SELECT id FROM network_objects WHERE id = $1 AND organization_id = $2 FOR KEY SHARE`, objectID, s.orgID).Scan(&locked)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.NetworkRelationship{}, storage.NetworkObjectRefNotFound(strconv.FormatInt(objectID, 10))
+		}
+		if err != nil {
+			return domain.NetworkRelationship{}, err
+		}
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO network_relationships
 		(id, organization_id, type, source_kind, source_id, target_kind, target_id, confidence, reason, evidence, resolution_state, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13)
 		ON CONFLICT(organization_id, id) DO UPDATE SET
@@ -322,6 +353,9 @@ func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateN
 			updated_at = EXCLUDED.updated_at`,
 		in.ID, s.orgID, string(in.Type), in.SourceKind, in.SourceID, in.TargetKind, in.TargetID, in.Confidence, in.Reason, string(evidence), in.ResolutionState, now, now, requestedState)
 	if err != nil {
+		return domain.NetworkRelationship{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return domain.NetworkRelationship{}, err
 	}
 	rels, err := s.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{})

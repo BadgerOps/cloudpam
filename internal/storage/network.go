@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"cloudpam/internal/domain"
 )
@@ -15,15 +16,48 @@ type NetworkStore interface {
 	CreateNetworkObject(ctx context.Context, in domain.CreateNetworkObject) (domain.NetworkObject, error)
 	UpdateNetworkObject(ctx context.Context, id int64, update domain.UpdateNetworkObject) (domain.NetworkObject, bool, error)
 	// DeleteNetworkObject removes an object together with every network
-	// relationship that references it as source or target, atomically. It
-	// returns ErrNotFound when the object does not exist and ErrConflict while
-	// child objects still name it as their parent. Linked pools and discovered
-	// resources are left untouched.
-	DeleteNetworkObject(ctx context.Context, id int64) error
+	// relationship that references it as source or target, atomically, and
+	// returns how many relationships were removed. It returns ErrNotFound when
+	// the object does not exist and ErrConflict while child objects still name
+	// it as their parent. Linked pools and discovered resources are left
+	// untouched.
+	DeleteNetworkObject(ctx context.Context, id int64) (removed int, err error)
 
 	ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error)
+	// UpsertNetworkRelationship creates or replaces a relationship. When the
+	// source or target kind is NetworkEntityKindObject the object must exist,
+	// else it returns ErrValidation; the check is atomic with
+	// DeleteNetworkObject. Pool and discovered-resource references are not
+	// checked.
 	UpsertNetworkRelationship(ctx context.Context, in domain.CreateNetworkRelationship) (domain.NetworkRelationship, error)
 	UpdateNetworkRelationshipState(ctx context.Context, id string, state string, reason string) (domain.NetworkRelationship, bool, error)
+}
+
+// NetworkRelationshipObjectIDs returns the ids of the network objects a
+// relationship names as source or target, in that order. An id must be the
+// canonical decimal form of a positive integer ("7", not "07", "+7" or
+// "0007"): backends store the reference text as given and DeleteNetworkObject
+// matches it against strconv.FormatInt, so any other spelling would outlive
+// its object. Anything else yields NetworkObjectRefNotFound.
+func NetworkRelationshipObjectIDs(in domain.CreateNetworkRelationship) ([]int64, error) {
+	var ids []int64
+	for _, ref := range [][2]string{{in.SourceKind, in.SourceID}, {in.TargetKind, in.TargetID}} {
+		if ref[0] != domain.NetworkEntityKindObject {
+			continue
+		}
+		id, err := strconv.ParseInt(ref[1], 10, 64)
+		if err != nil || id < 1 || strconv.FormatInt(id, 10) != ref[1] {
+			return nil, NetworkObjectRefNotFound(ref[1])
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// NetworkObjectRefNotFound is the ErrValidation a backend returns when a
+// relationship names a network object that does not exist.
+func NetworkObjectRefNotFound(id string) error {
+	return fmt.Errorf("network object %s not found: %w", id, ErrValidation)
 }
 
 // NetworkObjectHasChildrenError returns the ErrConflict a backend reports when

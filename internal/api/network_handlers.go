@@ -245,11 +245,13 @@ func (ns *NetworkServer) handleNetworkObjectSubroutes(w http.ResponseWriter, r *
 			ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "network object not found", "")
 			return
 		}
-		if err := ns.networkStore.DeleteNetworkObject(r.Context(), id); err != nil {
+		removed, err := ns.networkStore.DeleteNetworkObject(r.Context(), id)
+		if err != nil {
 			ns.srv.writeStoreErr(r.Context(), w, err)
 			return
 		}
-		ns.srv.logAudit(r.Context(), audit.ActionDelete, audit.ResourceNetworkObject, strconv.FormatInt(id, 10), obj.Name, http.StatusNoContent)
+		ns.srv.logAuditWithChanges(r.Context(), audit.ActionDelete, audit.ResourceNetworkObject, strconv.FormatInt(id, 10), obj.Name,
+			&audit.Changes{After: map[string]any{"relationships_removed": removed}}, http.StatusNoContent)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch, http.MethodDelete}, ", "))

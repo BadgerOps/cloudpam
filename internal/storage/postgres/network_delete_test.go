@@ -37,7 +37,7 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 
 	t.Run("unreferenced object is deleted", func(t *testing.T) {
 		obj := newObject(t, domain.CreateNetworkObject{Name: "lone-vpc"})
-		if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject: %v", err)
 		}
 		if _, found, err := s.GetNetworkObject(ctx, obj.ID); err != nil || found {
@@ -46,7 +46,7 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 	})
 
 	t.Run("unknown id is not found", func(t *testing.T) {
-		if err := s.DeleteNetworkObject(ctx, 999999); !errors.Is(err, storage.ErrNotFound) {
+		if _, err := s.DeleteNetworkObject(ctx, 999999); !errors.Is(err, storage.ErrNotFound) {
 			t.Fatalf("error = %v, want ErrNotFound", err)
 		}
 	})
@@ -54,17 +54,17 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 	t.Run("object with a child conflicts and the child keeps its parent", func(t *testing.T) {
 		parent := newObject(t, domain.CreateNetworkObject{Name: "parent-vpc"})
 		child := newObject(t, domain.CreateNetworkObject{Name: "child-subnet", ParentObjectID: &parent.ID})
-		if err := s.DeleteNetworkObject(ctx, parent.ID); !errors.Is(err, storage.ErrConflict) {
+		if _, err := s.DeleteNetworkObject(ctx, parent.ID); !errors.Is(err, storage.ErrConflict) {
 			t.Fatalf("error = %v, want ErrConflict", err)
 		}
 		got, found, err := s.GetNetworkObject(ctx, child.ID)
 		if err != nil || !found || got.ParentObjectID == nil || *got.ParentObjectID != parent.ID {
 			t.Fatalf("child after blocked delete = %+v found=%v err=%v, want parent %d kept", got, found, err, parent.ID)
 		}
-		if err := s.DeleteNetworkObject(ctx, child.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, child.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject(child): %v", err)
 		}
-		if err := s.DeleteNetworkObject(ctx, parent.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, parent.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject(parent) after child removed: %v", err)
 		}
 	})
@@ -88,7 +88,7 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 			if _, err := s.UpsertNetworkRelationship(ctx, rel); err != nil {
 				t.Fatalf("UpsertNetworkRelationship: %v", err)
 			}
-			if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
+			if _, err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 				t.Fatalf("DeleteNetworkObject: %v", err)
 			}
 			if rels := relationshipIDs(t, rel.ID); len(rels) != 0 {
@@ -109,7 +109,7 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 				t.Fatalf("UpsertNetworkRelationship(%s): %v", rel.ID, err)
 			}
 		}
-		if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject: %v", err)
 		}
 		if rels := relationshipIDs(t, "rel-other-object", "rel-pool-same-id"); len(rels) != 2 {
@@ -124,7 +124,7 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 		if _, err := s.UpsertNetworkRelationship(ctx, rel); err != nil {
 			t.Fatalf("UpsertNetworkRelationship: %v", err)
 		}
-		err := s.DeleteNetworkObject(ctx, parent.ID)
+		_, err := s.DeleteNetworkObject(ctx, parent.ID)
 		if !errors.Is(err, storage.ErrConflict) {
 			t.Fatalf("error = %v, want ErrConflict", err)
 		}
@@ -145,16 +145,22 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 		}
 		storeB := &Store{pool: testDB.pool, orgID: orgB}
 		obj := newObject(t, domain.CreateNetworkObject{Name: "org-a-vpc"})
-		if _, err := storeB.UpsertNetworkRelationship(ctx, domain.CreateNetworkRelationship{ID: "rel-other-org", Type: domain.NetworkRelationshipContains, SourceKind: domain.NetworkEntityKindObject, SourceID: strconv.FormatInt(obj.ID, 10), TargetKind: "pool", TargetID: "1"}); err != nil {
-			t.Fatalf("create org-b relationship: %v", err)
+		// UpsertNetworkRelationship now rejects an object id from another
+		// organization, so seed the row directly: the delete must still scope
+		// its relationship cleanup to its own organization.
+		if _, err := testDB.pool.Exec(ctx, `INSERT INTO network_relationships
+			(id, organization_id, type, source_kind, source_id, target_kind, target_id, created_at, updated_at)
+			VALUES ('rel-other-org', $1, $2, $3, $4, 'pool', '1', NOW(), NOW())`,
+			orgB, string(domain.NetworkRelationshipContains), domain.NetworkEntityKindObject, strconv.FormatInt(obj.ID, 10)); err != nil {
+			t.Fatalf("seed org-b relationship: %v", err)
 		}
-		if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject: %v", err)
 		}
 		if rels, err := storeB.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{IDs: []string{"rel-other-org"}}); err != nil || len(rels) != 1 {
 			t.Fatalf("org-b relationship after org-a delete = %+v err=%v, want it kept", rels, err)
 		}
-		if err := storeB.DeleteNetworkObject(ctx, obj.ID); !errors.Is(err, storage.ErrNotFound) {
+		if _, err := storeB.DeleteNetworkObject(ctx, obj.ID); !errors.Is(err, storage.ErrNotFound) {
 			t.Fatalf("cross-org delete error = %v, want ErrNotFound", err)
 		}
 	})
@@ -170,7 +176,7 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 			t.Fatalf("upsert discovered resource: %v", err)
 		}
 		obj := newObject(t, domain.CreateNetworkObject{Name: "linked-vpc", PoolID: &pool.ID, SourceDiscoveredID: &resourceID})
-		if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject: %v", err)
 		}
 		if _, found, err := s.GetPool(ctx, pool.ID); err != nil || !found {
@@ -178,6 +184,29 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 		}
 		if _, err := s.GetDiscoveredResource(ctx, resourceID); err != nil {
 			t.Fatalf("linked discovered resource after delete: %v, want it kept", err)
+		}
+	})
+
+	t.Run("returns the number of relationships removed", func(t *testing.T) {
+		lone := newObject(t, domain.CreateNetworkObject{Name: "count-lone"})
+		removed, err := s.DeleteNetworkObject(ctx, lone.ID)
+		if err != nil || removed != 0 {
+			t.Fatalf("DeleteNetworkObject(lone) = %d, %v, want 0 relationships removed", removed, err)
+		}
+		obj := newObject(t, domain.CreateNetworkObject{Name: "count-vpc"})
+		idText := strconv.FormatInt(obj.ID, 10)
+		for _, rel := range []domain.CreateNetworkRelationship{
+			{ID: "rel-count-source", Type: domain.NetworkRelationshipContains, SourceKind: domain.NetworkEntityKindObject, SourceID: idText, TargetKind: "pool", TargetID: "7"},
+			{ID: "rel-count-target", Type: domain.NetworkRelationshipContains, SourceKind: "pool", SourceID: "8", TargetKind: domain.NetworkEntityKindObject, TargetID: idText},
+			{ID: "rel-count-other-kind", Type: domain.NetworkRelationshipContains, SourceKind: "pool", SourceID: idText, TargetKind: "pool", TargetID: "9"},
+		} {
+			if _, err := s.UpsertNetworkRelationship(ctx, rel); err != nil {
+				t.Fatalf("UpsertNetworkRelationship(%s): %v", rel.ID, err)
+			}
+		}
+		removed, err = s.DeleteNetworkObject(ctx, obj.ID)
+		if err != nil || removed != 2 {
+			t.Fatalf("DeleteNetworkObject(vpc) = %d, %v, want 2 relationships removed", removed, err)
 		}
 	})
 }

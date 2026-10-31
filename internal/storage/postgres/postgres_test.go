@@ -109,11 +109,19 @@ func TestNetworkStorePostgresScopesRelationshipsAndObjectRefsByOrganization(t *t
 		t.Fatalf("create account B: %v", err)
 	}
 
+	objectA, err := storeA.CreateNetworkObject(ctx, domain.CreateNetworkObject{AccountID: accountA.ID, Name: "vpc-a"})
+	if err != nil {
+		t.Fatalf("create network object A: %v", err)
+	}
+	objectB, err := storeB.CreateNetworkObject(ctx, domain.CreateNetworkObject{AccountID: accountB.ID, Name: "vpc-b"})
+	if err != nil {
+		t.Fatalf("create network object B: %v", err)
+	}
 	if _, err := storeA.UpsertNetworkRelationship(ctx, domain.CreateNetworkRelationship{
 		ID:         "shared-id",
 		Type:       domain.NetworkRelationshipContains,
 		SourceKind: "network_object",
-		SourceID:   "1",
+		SourceID:   fmt.Sprintf("%d", objectA.ID),
 		TargetKind: "pool",
 		TargetID:   "1",
 		Reason:     "org-a",
@@ -124,7 +132,7 @@ func TestNetworkStorePostgresScopesRelationshipsAndObjectRefsByOrganization(t *t
 		ID:         "shared-id",
 		Type:       domain.NetworkRelationshipContains,
 		SourceKind: "network_object",
-		SourceID:   "1",
+		SourceID:   fmt.Sprintf("%d", objectB.ID),
 		TargetKind: "pool",
 		TargetID:   "1",
 		Reason:     "org-b",
