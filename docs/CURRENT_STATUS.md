@@ -20,7 +20,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 | Discovery: Azure | Missing | Account keys accept `azure:<subscription-uuid>` and the UI offers Azure; there is no collector. Sync fails with `no collector registered for provider` |
 | Drift | Complete | Detect, list, resolve, ignore. No automatic reconciliation suggestions |
 | Network objects | Complete | Merged network view, conflicts, persisted objects and relationships. `DELETE` returns `409` while child objects name the object as their parent; relationships that reference it are removed with it |
-| Analysis engine | Complete as API | `POST /api/v1/analysis`, `/gaps`, `/fragmentation`, `/compliance`. `/fragmentation` and the full report score fragmentation for only the first pool. **No UI** |
+| Analysis engine | Complete as API | `POST /api/v1/analysis`, `/gaps`, `/fragmentation`, `/compliance`. `/fragmentation` and the full report score fragmentation for only the first pool. Gaps and fragmentation are shown in the pool detail panel (#281); compliance results and a dedicated Analysis page have **no UI** |
 | Recommendations | Partial | Allocation and compliance only. Consolidation / resize / reclaim are commented stubs. Stored in a table on SQLite and PostgreSQL (#315) |
 | Schema Planner | Complete, one gap | Templates, conflict check, apply. Terraform export writes `cloudpam_pool` resources (0.23.1). Apply does not check that a child CIDR sits inside its declared parent (#284) |
 | Terraform provider | Complete for v1 | `cloudpam_pool` and `cloudpam_account` resources plus matching data sources. Not discovery, drift, users, or AI. See [TERRAFORM_PROVIDER.md](TERRAFORM_PROVIDER.md) |
@@ -75,7 +75,7 @@ These backend capabilities exist and the SPA does not expose them (or exposes th
 
 | Capability | API | UI |
 |------------|-----|----|
-| Gap / fragmentation / compliance analysis | `POST /api/v1/analysis*` | No page, no client |
+| Gap / fragmentation / compliance analysis | `POST /api/v1/analysis*` | Gaps and fragmentation are shown in the pool detail panel (#281). Compliance and the full report have no client, and there is no Analysis page |
 | Candidate subnet enumeration | `GET /api/v1/pools/{id}/blocks?new_prefix_len=` | Unused. Blocks page lists assigned pools via `GET /api/v1/blocks` |
 | Account edit | `PATCH /api/v1/accounts/{id}` | `useAccounts` is list/create/delete only. Create form omits regions, environment, description, `external_id` |
 | Cascade delete | `DELETE …?force=true` | UI never sends `force`; parents with children return 409 |
@@ -115,7 +115,7 @@ The Discovery UI at `/discovery` has four tabs: Resources, Network, Sync History
 
 These are the gaps that most contradict the product's stated Postgres, multi-cloud, and operator-console story. Each item has an open GitHub issue in the range #266 to #314.
 
-1. Analysis UI, or fold gaps/fragmentation/compliance into pool detail and the dashboard.
+1. Analysis UI: gaps and fragmentation are in the pool detail panel (#281); compliance results and a dedicated Analysis page remain.
 2. Operator UI holes: account edit, cascade delete, schema policy in Configuration, and Log Destinations vs env docs.
 3. Admin-managed AI provider settings instead of more chat features.
 4. GCP in the discovery agent (or document that GCP sync is in-process only).
