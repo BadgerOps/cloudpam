@@ -122,8 +122,16 @@ func testResultStale(resolved llm.Resolved) bool {
 func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var req domain.UpdateAIProviderSettingsRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
-		ss.writeErr(ctx, w, http.StatusBadRequest, "invalid request body", "expected a json object")
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	// A misspelled field ("apikey") would otherwise be ignored and the caller
+	// would believe the value was saved.
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		detail := "expected a json object"
+		if msg := err.Error(); strings.HasPrefix(msg, "json: unknown field") {
+			detail = strings.TrimPrefix(msg, "json: ") // unknown field "apikey"
+		}
+		ss.writeErr(ctx, w, http.StatusBadRequest, "invalid request body", detail)
 		return
 	}
 	if field, detail := validateAIProviderUpdate(&req); field != "" {
