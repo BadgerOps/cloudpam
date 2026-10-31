@@ -69,7 +69,9 @@ describe('NetworkObjectTable delete action', () => {
     expect(confirmSpy).toHaveBeenCalledTimes(1)
     const message = confirmSpy.mock.calls[0][0] as string
     expect(message).toContain('Delete "prod-vpc" (10.0.0.0/16)?')
-    expect(message).toContain('not deleted')
+    expect(message).toContain(
+      'Relationships that reference it are removed. The linked pool and discovered resource are not deleted.',
+    )
     expect(onDelete).not.toHaveBeenCalled()
   })
 
@@ -102,7 +104,9 @@ describe('NetworkObjectTable delete action', () => {
   it('shows the dependency message when the server returns 409', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const onDelete = vi.fn().mockRejectedValue(
-      new ApiRequestError(409, { error: 'conflict: network object has 2 child objects' }),
+      new ApiRequestError(409, {
+        error: 'conflict: network object has 2 child objects; delete or re-parent them first',
+      }),
     )
     const onDeleted = vi.fn()
     renderTable({ canDelete: true, onDelete, onDeleted })
@@ -113,7 +117,7 @@ describe('NetworkObjectTable delete action', () => {
     await waitFor(() => {
       expect(
         screen.getByText(
-          'Remove or resolve its child objects and relationships first. conflict: network object has 2 child objects',
+          'Delete or re-parent its child objects first. conflict: network object has 2 child objects; delete or re-parent them first',
         ),
       ).toBeTruthy()
     })

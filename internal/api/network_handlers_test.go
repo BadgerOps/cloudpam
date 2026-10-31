@@ -1352,7 +1352,7 @@ func TestNetworkObjectDeleteUnknownIDReturnsNotFound(t *testing.T) {
 	doJSON(t, discSrv.srv.mux, http.MethodDelete, "/api/v1/network/objects/424242", "", http.StatusNotFound)
 }
 
-func TestNetworkObjectDeleteConflictsWhileReferenced(t *testing.T) {
+func TestNetworkObjectDeleteConflictsOnlyWhileChildrenExist(t *testing.T) {
 	discSrv, st, _, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
 	if err != nil {
@@ -1361,29 +1361,121 @@ func TestNetworkObjectDeleteConflictsWhileReferenced(t *testing.T) {
 
 	parent := createNetworkObjectForDeleteTest(t, discSrv, fmt.Sprintf(`{"object_type":"vpc","account_id":%d,"name":"parent-vpc"}`, account.ID))
 	createNetworkObjectForDeleteTest(t, discSrv, fmt.Sprintf(`{"object_type":"subnet","account_id":%d,"name":"child-subnet","parent_object_id":%d}`, account.ID, parent.ID))
+	parentRel := fmt.Sprintf(`{"id":"rel-parent","type":"contains","source_kind":"network_object","source_id":"%d","target_kind":"pool","target_id":"42"}`, parent.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", parentRel, http.StatusCreated)
 	rr := doJSON(t, discSrv.srv.mux, http.MethodDelete, fmt.Sprintf("/api/v1/network/objects/%d", parent.ID), "", http.StatusConflict)
-	if !strings.Contains(rr.Body.String(), "child object") {
-		t.Fatalf("conflict body should name the child objects: %s", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "child object") || strings.Contains(rr.Body.String(), "relationship") {
+		t.Fatalf("conflict body should name only the child objects: %s", rr.Body.String())
+	}
+	doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/objects/%d", parent.ID), "", http.StatusOK)
+	if rels := listNetworkRelationshipsForDeleteTest(t, discSrv); !containsRelationshipID(rels, "rel-parent") {
+		t.Fatalf("blocked delete must keep the relationship, got %+v", rels)
+	}
+	events, err := discSrv.srv.auditLogger.GetByResource(t.Context(), audit.ResourceNetworkObject, fmt.Sprintf("%d", parent.ID))
+	if err != nil {
+		t.Fatalf("get audit events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("blocked delete must not be audited: %+v", events)
 	}
 
 	related := createNetworkObjectForDeleteTest(t, discSrv, fmt.Sprintf(`{"object_type":"network","account_id":%d,"name":"related-net"}`, account.ID))
-	relBody := fmt.Sprintf(`{"type":"contains","source_kind":"pool","source_id":"42","target_kind":"network_object","target_id":"%d"}`, related.ID)
+	relBody := fmt.Sprintf(`{"id":"rel-related","type":"contains","source_kind":"pool","source_id":"42","target_kind":"network_object","target_id":"%d"}`, related.ID)
 	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", relBody, http.StatusCreated)
-	rr = doJSON(t, discSrv.srv.mux, http.MethodDelete, fmt.Sprintf("/api/v1/network/objects/%d", related.ID), "", http.StatusConflict)
-	if !strings.Contains(rr.Body.String(), "relationship") {
-		t.Fatalf("conflict body should name the relationship: %s", rr.Body.String())
+	doJSON(t, discSrv.srv.mux, http.MethodDelete, fmt.Sprintf("/api/v1/network/objects/%d", related.ID), "", http.StatusNoContent)
+	doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/objects/%d", related.ID), "", http.StatusNotFound)
+	if rels := listNetworkRelationshipsForDeleteTest(t, discSrv); containsRelationshipID(rels, "rel-related") || !containsRelationshipID(rels, "rel-parent") {
+		t.Fatalf("delete should remove only the deleted object's relationships, got %+v", rels)
+	}
+}
+
+func TestNetworkObjectDeletePlaceholderParentRemovesItsRelationships(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "prod-pool", CIDR: "10.91.0.0/16", AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
 	}
 
-	for _, id := range []int64{parent.ID, related.ID} {
-		doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/objects/%d", id), "", http.StatusOK)
-		events, err := discSrv.srv.auditLogger.GetByResource(t.Context(), audit.ResourceNetworkObject, fmt.Sprintf("%d", id))
-		if err != nil {
-			t.Fatalf("get audit events: %v", err)
-		}
-		if len(events) != 0 {
-			t.Fatalf("blocked delete must not be audited: %+v", events)
+	now := time.Now().UTC()
+	subnetID := uuid.New()
+	parent := "vpc-placeholder"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:               subnetID,
+		AccountID:        account.ID,
+		Provider:         "aws",
+		Region:           "us-east-1",
+		ResourceType:     domain.ResourceTypeSubnet,
+		ResourceID:       "subnet-1",
+		Name:             "orphan-subnet",
+		CIDR:             "10.91.1.0/24",
+		ParentResourceID: &parent,
+		Status:           domain.DiscoveryStatusActive,
+		DiscoveredAt:     now,
+		LastSeenAt:       now,
+	})
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/conflicts?conflict_type=missing_parent", "", http.StatusOK)
+	var conflicts domain.NetworkConflictListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &conflicts); err != nil {
+		t.Fatalf("unmarshal conflicts: %v", err)
+	}
+	if conflicts.Total != 1 {
+		t.Fatalf("expected missing-parent conflict, got %+v", conflicts)
+	}
+	body := fmt.Sprintf(`{"discovered_id":"%s","name":"placeholder-vpc","reason":"parent not yet scanned"}`, subnetID)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, fmt.Sprintf("/api/v1/network/conflicts/%s/actions/create_placeholder_parent", conflicts.Items[0].ID), body, http.StatusOK)
+	var action domain.NetworkConflictActionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &action); err != nil {
+		t.Fatalf("unmarshal action: %v", err)
+	}
+	if action.NetworkObject == nil || len(action.Relationships) != 2 {
+		t.Fatalf("expected a placeholder object with two relationships, got %+v", action)
+	}
+	before := listNetworkRelationshipsForDeleteTest(t, discSrv)
+	for _, rel := range action.Relationships {
+		if !containsRelationshipID(before, rel.ID) {
+			t.Fatalf("placeholder relationship %s not listed before delete: %+v", rel.ID, before)
 		}
 	}
+
+	doJSON(t, discSrv.srv.mux, http.MethodDelete, fmt.Sprintf("/api/v1/network/objects/%d", action.NetworkObject.ID), "", http.StatusNoContent)
+
+	doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/objects/%d", action.NetworkObject.ID), "", http.StatusNotFound)
+	after := listNetworkRelationshipsForDeleteTest(t, discSrv)
+	for _, rel := range action.Relationships {
+		if containsRelationshipID(after, rel.ID) {
+			t.Fatalf("placeholder relationship %s still listed after delete: %+v", rel.ID, after)
+		}
+	}
+	if _, err := ds.GetDiscoveredResource(t.Context(), subnetID); err != nil {
+		t.Fatalf("discovered resource after delete: %v, want it kept", err)
+	}
+	if _, found, err := st.GetPool(t.Context(), pool.ID); err != nil || !found {
+		t.Fatalf("pool after delete: found=%v err=%v, want it kept", found, err)
+	}
+}
+
+func listNetworkRelationshipsForDeleteTest(t *testing.T, discSrv *DiscoveryServer) []domain.NetworkRelationship {
+	t.Helper()
+	rr := doJSON(t, discSrv.srv.mux, http.MethodGet, "/api/v1/network/relationships", "", http.StatusOK)
+	var out domain.NetworkRelationshipListResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("unmarshal relationships: %v", err)
+	}
+	return out.Items
+}
+
+func containsRelationshipID(rels []domain.NetworkRelationship, id string) bool {
+	for _, rel := range rels {
+		if rel.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNetworkObjectDeleteAppearsInOpenAPISpec(t *testing.T) {

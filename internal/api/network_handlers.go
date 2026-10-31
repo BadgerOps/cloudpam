@@ -775,9 +775,9 @@ func (ns *NetworkServer) handleNetworkConflictPlaceholderParentAction(w http.Res
 	}
 	relationships := ns.persistNetworkConflictActionRelationships(r.Context(), "create_placeholder_parent", *conflict, []domain.CreateNetworkRelationship{
 		{
-			ID:              relationshipIDForConflict(conflict.ID, "network_object", fmt.Sprintf("%d", obj.ID), "discovered", req.DiscoveredID.String()),
+			ID:              relationshipIDForConflict(conflict.ID, domain.NetworkEntityKindObject, fmt.Sprintf("%d", obj.ID), "discovered", req.DiscoveredID.String()),
 			Type:            domain.NetworkRelationshipContains,
-			SourceKind:      "network_object",
+			SourceKind:      domain.NetworkEntityKindObject,
 			SourceID:        fmt.Sprintf("%d", obj.ID),
 			TargetKind:      "discovered",
 			TargetID:        req.DiscoveredID.String(),
@@ -787,11 +787,11 @@ func (ns *NetworkServer) handleNetworkConflictPlaceholderParentAction(w http.Res
 			ResolutionState: "open",
 		},
 		{
-			ID:              relationshipIDForConflict(conflict.ID, "discovered", req.DiscoveredID.String(), "network_object", fmt.Sprintf("%d", obj.ID)),
+			ID:              relationshipIDForConflict(conflict.ID, "discovered", req.DiscoveredID.String(), domain.NetworkEntityKindObject, fmt.Sprintf("%d", obj.ID)),
 			Type:            domain.NetworkRelationshipMissingParent,
 			SourceKind:      "discovered",
 			SourceID:        req.DiscoveredID.String(),
-			TargetKind:      "network_object",
+			TargetKind:      domain.NetworkEntityKindObject,
 			TargetID:        fmt.Sprintf("%d", obj.ID),
 			Confidence:      0.75,
 			Reason:          networkActionReason("create_placeholder_parent", req.Reason, actionDetails),
@@ -927,7 +927,7 @@ func (ns *NetworkServer) relationshipEndpointBelongsToAccount(ctx context.Contex
 		}
 		pool, found, err := ns.store.GetPool(ctx, poolID)
 		return err == nil && found && pool.AccountID != nil && *pool.AccountID == accountID
-	case "network_object":
+	case domain.NetworkEntityKindObject:
 		objectID, err := strconv.ParseInt(id, 10, 64)
 		if err != nil || ns.networkStore == nil {
 			return false
@@ -1255,7 +1255,7 @@ func networkNodeFromNetworkObject(obj domain.NetworkObject, accounts map[int64]d
 	nodeID := networkObjectNodeID(obj.ID)
 	node := domain.NetworkNode{
 		ID:                 nodeID,
-		Kind:               "network_object",
+		Kind:               domain.NetworkEntityKindObject,
 		ObjectType:         string(obj.ObjectType),
 		Name:               obj.Name,
 		CIDR:               obj.CIDR,

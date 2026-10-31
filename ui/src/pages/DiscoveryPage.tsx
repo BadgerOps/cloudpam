@@ -1649,7 +1649,7 @@ export function NetworkObjectTable({
     if (!onDelete || pendingDeleteRef.current.has(object.id)) return
     const address = object.cidr || object.ip_address
     const label = address ? `"${object.name}" (${address})` : `"${object.name}"`
-    if (!window.confirm(`Delete ${label}? The linked pool and discovered resource are not deleted.`)) return
+    if (!window.confirm(`Delete ${label}? Relationships that reference it are removed. The linked pool and discovered resource are not deleted.`)) return
     pendingDeleteRef.current.add(object.id)
     setPendingDeleteIDs(new Set(pendingDeleteRef.current))
     try {
@@ -1659,7 +1659,7 @@ export function NetworkObjectTable({
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Delete failed'
       if (err instanceof ApiRequestError && err.status === 409) {
-        showToast(`Remove or resolve its child objects and relationships first. ${message}`, 'error')
+        showToast(`Delete or re-parent its child objects first. ${message}`, 'error')
       } else {
         showToast(message, 'error')
       }

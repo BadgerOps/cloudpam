@@ -203,9 +203,12 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 	return obj, true, err
 }
 
-// DeleteNetworkObject counts dependants and deletes in one transaction, so a
-// child created concurrently either lands before the count or fails its write.
-// The parent_object_id ON DELETE SET NULL action never fires: children block.
+// DeleteNetworkObject counts children, removes the relationships that
+// reference the object, and deletes it in one transaction. A concurrent child
+// insert waits on the single connection (or, with SQLITE_MAX_OPEN_CONNS>1, is
+// serialized behind this write transaction), so it lands either before the
+// count or after the delete. The parent_object_id ON DELETE SET NULL action
+// never fires: children block.
 func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -220,17 +223,17 @@ func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
 	if !exists {
 		return fmt.Errorf("network object not found: %w", storage.ErrNotFound)
 	}
-	var children, relationships int
+	var children int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM network_objects WHERE parent_object_id = ?`, id).Scan(&children); err != nil {
 		return err
 	}
-	idText := strconv.FormatInt(id, 10)
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM network_relationships
-		WHERE (source_kind = ? AND source_id = ?) OR (target_kind = ? AND target_id = ?)`,
-		domain.NetworkEntityKindObject, idText, domain.NetworkEntityKindObject, idText).Scan(&relationships); err != nil {
+	if err := storage.NetworkObjectHasChildrenError(children); err != nil {
 		return err
 	}
-	if err := storage.NetworkObjectInUseError(children, relationships); err != nil {
+	idText := strconv.FormatInt(id, 10)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM network_relationships
+		WHERE (source_kind = ? AND source_id = ?) OR (target_kind = ? AND target_id = ?)`,
+		domain.NetworkEntityKindObject, idText, domain.NetworkEntityKindObject, idText); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM network_objects WHERE id = ?`, id); err != nil {

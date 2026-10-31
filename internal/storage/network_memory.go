@@ -196,16 +196,15 @@ func (m *MemoryNetworkStore) DeleteNetworkObject(_ context.Context, id int64) er
 			children++
 		}
 	}
+	if err := NetworkObjectHasChildrenError(children); err != nil {
+		return err
+	}
 	idText := strconv.FormatInt(id, 10)
-	relationships := 0
-	for _, rel := range m.relationships {
+	for relID, rel := range m.relationships {
 		if (rel.SourceKind == domain.NetworkEntityKindObject && rel.SourceID == idText) ||
 			(rel.TargetKind == domain.NetworkEntityKindObject && rel.TargetID == idText) {
-			relationships++
+			delete(m.relationships, relID)
 		}
-	}
-	if err := NetworkObjectInUseError(children, relationships); err != nil {
-		return err
 	}
 	delete(m.objects, id)
 	return nil
