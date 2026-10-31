@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -259,5 +260,26 @@ func TestMemoryRecommendationStoreExtra_DeletePendingForPool(t *testing.T) {
 	}
 	if _, total, err = s.ListRecommendations(ctx, domain.RecommendationFilters{}); err != nil || total != len(survivors) {
 		t.Errorf("total = %d (err %v), want %d", total, err, len(survivors))
+	}
+}
+
+func TestMemoryRecommendationStoreExtra_PageNearMaxIntIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	s := newRecStoreForExtraTests()
+	for i, id := range []string{"r-a", "r-b", "r-c"} {
+		mustCreateRecExtra(t, s, domain.Recommendation{
+			ID: id, PoolID: 3, Type: domain.RecommendationTypeAllocation, Status: domain.RecommendationStatusPending,
+			Priority: domain.RecommendationPriorityHigh, Title: id, SuggestedCIDR: "10.0.5.0/24",
+			CreatedAt: extraRecBase.Add(time.Duration(i) * time.Minute), UpdatedAt: extraRecBase,
+		})
+	}
+	for _, page := range []int{math.MaxInt, math.MaxInt/200 + 2} {
+		items, total, err := s.ListRecommendations(ctx, domain.RecommendationFilters{Page: page, PageSize: 2})
+		if err != nil {
+			t.Fatalf("page=%d: %v", page, err)
+		}
+		if total != 3 || len(items) != 0 {
+			t.Errorf("page=%d: total=%d len=%d, want 3/0", page, total, len(items))
+		}
 	}
 }

@@ -68,24 +68,7 @@ func (m *MemoryDriftStore) ListDriftItems(_ context.Context, filters domain.Drif
 
 	total := len(filtered)
 
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
-	start := (page - 1) * pageSize
-	if start > total {
-		return []domain.DriftItem{}, total, nil
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-
-	return cloneDriftItems(filtered[start:end]), total, nil
+	return cloneDriftItems(PageSlice(filtered, filters.Page, filters.PageSize)), total, nil
 }
 
 func (m *MemoryDriftStore) UpdateDriftStatus(_ context.Context, id string, status domain.DriftStatus, ignoreReason string) error {

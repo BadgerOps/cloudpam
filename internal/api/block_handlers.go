@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 type blockInfo struct {
@@ -224,10 +225,7 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 	total := len(items)
 	// Paginate
 	if pageSize > 0 {
-		start := (page - 1) * pageSize
-		if start > total {
-			start = total
-		}
+		start := storage.PageOffset(page, pageSize, total)
 		end := start + pageSize
 		if end > total {
 			end = total
@@ -292,7 +290,9 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 	limit := 0
 	if pageSize > 0 {
 		limit = pageSize
-		offset = (page - 1) * pageSize
+		// An IPv4 pool splits into at most maxIPv4Blocks, so a page past that
+		// bound clamps to an empty window instead of wrapping negative.
+		offset = storage.PageOffset(page, pageSize, maxIPv4Blocks)
 	}
 	blocks, hosts, total, err := computeSubnetsIPv4Window(pool.CIDR, npl, offset, limit)
 	if err != nil {

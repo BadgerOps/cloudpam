@@ -104,20 +104,14 @@ func (rs *RecommendationServer) handleList(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	filters.Page, filters.PageSize = storage.RequestPage(filters.Page, filters.PageSize)
 	items, total, err := rs.recStore.ListRecommendations(r.Context(), filters)
 	if err != nil {
 		rs.srv.writeStoreErr(r.Context(), w, err)
 		return
 	}
 
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
+	page, pageSize := filters.Page, filters.PageSize
 
 	writeJSON(w, http.StatusOK, domain.RecommendationsListResponse{
 		Items:    items,

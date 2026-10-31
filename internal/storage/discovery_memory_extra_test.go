@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -675,5 +676,26 @@ func TestMemoryDiscoveryStoreExtra_DeleteAgentDetachesItsSyncJobs(t *testing.T) 
 	}
 	if gotUnowned.AgentID != nil {
 		t.Errorf("unowned job AgentID = %v, want nil", *gotUnowned.AgentID)
+	}
+}
+
+func TestMemoryDiscoveryStoreExtra_PageNearMaxIntIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	s := newDiscoveryStoreForExtraTests()
+	for i, id := range []string{"vpc-a", "vpc-b", "vpc-c"} {
+		mustUpsertDiscoveredExtra(t, s, domain.DiscoveredResource{
+			AccountID: 1, Provider: "aws", Region: "us-east-1", ResourceType: domain.ResourceTypeVPC,
+			ResourceID: id, CIDR: "10.0.0.0/16", Status: domain.DiscoveryStatusActive,
+			DiscoveredAt: extraDiscoveryBase.Add(time.Duration(i) * time.Minute), LastSeenAt: extraDiscoveryBase,
+		})
+	}
+	for _, page := range []int{math.MaxInt, math.MaxInt/200 + 2} {
+		items, total, err := s.ListDiscoveredResources(ctx, 1, domain.DiscoveryFilters{Page: page, PageSize: 2})
+		if err != nil {
+			t.Fatalf("page=%d: %v", page, err)
+		}
+		if total != 3 || len(items) != 0 {
+			t.Errorf("page=%d: total=%d len=%d, want 3/0", page, total, len(items))
+		}
 	}
 }

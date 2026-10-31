@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -318,5 +319,25 @@ func TestMemoryDriftStoreExtra_DeleteOpenForAccount(t *testing.T) {
 	}
 	if _, total, err = s.ListDriftItems(ctx, domain.DriftFilters{}); err != nil || total != len(survivors) {
 		t.Errorf("total = %d (err %v), want %d", total, err, len(survivors))
+	}
+}
+
+func TestMemoryDriftStoreExtra_PageNearMaxIntIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	s := newDriftStoreForExtraTests()
+	for i, id := range []string{"d-a", "d-b", "d-c"} {
+		mustCreateDriftExtra(t, s, domain.DriftItem{
+			ID: id, AccountID: 1, Type: domain.DriftTypeUnmanaged, Severity: domain.DriftSeverityWarning,
+			Status: domain.DriftStatusOpen, Title: id, DetectedAt: extraDriftBase.Add(time.Duration(i) * time.Minute), UpdatedAt: extraDriftBase,
+		})
+	}
+	for _, page := range []int{math.MaxInt, math.MaxInt/200 + 2} {
+		items, total, err := s.ListDriftItems(ctx, domain.DriftFilters{Page: page, PageSize: 2})
+		if err != nil {
+			t.Fatalf("page=%d: %v", page, err)
+		}
+		if total != 3 || len(items) != 0 {
+			t.Errorf("page=%d: total=%d len=%d, want 3/0", page, total, len(items))
+		}
 	}
 }

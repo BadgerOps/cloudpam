@@ -121,6 +121,7 @@ func (d *DiscoveryServer) handleResources(w http.ResponseWriter, r *http.Request
 
 	page, _ := strconv.Atoi(q.Get("page"))
 	pageSize, _ := strconv.Atoi(q.Get("page_size"))
+	page, pageSize = storage.RequestPage(page, pageSize)
 
 	filters := domain.DiscoveryFilters{
 		Provider:     q.Get("provider"),
@@ -141,13 +142,6 @@ func (d *DiscoveryServer) handleResources(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list resources failed", err.Error())
 		return
-	}
-
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 50
 	}
 
 	if items == nil {

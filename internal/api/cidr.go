@@ -55,6 +55,10 @@ func prefixesOverlapIPv4(a, b netip.Prefix) bool {
 // still see how many blocks exist and page through them.
 const MaxSubnetExpansion = 65536
 
+// maxIPv4Blocks bounds how many blocks any IPv4 pool can split into (a /0
+// into /32s), which is the largest offset a block page can start at.
+const maxIPv4Blocks = 1 << 32
+
 func computeSubnetsIPv4Window(parentCIDR string, newPrefixLen int, offset, limit int) ([]string, uint64, int, error) {
 	pp, err := netip.ParsePrefix(parentCIDR)
 	if err != nil {

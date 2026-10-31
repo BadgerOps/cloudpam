@@ -1045,14 +1045,14 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "GET", Path: "/api/v1/pools/{poolId}", Summary: "Get pool", Tag: "Pools", ResponseSchema: "Pool"},
 		{Method: "PATCH", Path: "/api/v1/pools/{poolId}", Summary: "Update pool metadata", Tag: "Pools", RequestSchema: "UpdatePool", ResponseSchema: "Pool"},
 		{Method: "DELETE", Path: "/api/v1/pools/{poolId}", Summary: "Delete pool", Tag: "Pools", ResponseDescription: "Pool deleted", Parameters: []openAPIParameter{queryParam("force", "Force recursive delete where supported", "boolean")}},
-		{Method: "GET", Path: "/api/v1/pools/{poolId}/blocks", Summary: "Enumerate candidate blocks", Tag: "Blocks", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("new_prefix_len", "Requested block prefix length", "integer"), queryParam("page", "Page number", "integer"), queryParam("page_size", "Page size, or \"all\". Omitting it (or passing \"all\") expands the whole pool, which is rejected with 400 above 65536 blocks; paginate instead.", "integer")}},
+		{Method: "GET", Path: "/api/v1/pools/{poolId}/blocks", Summary: "Enumerate candidate blocks", Tag: "Blocks", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("new_prefix_len", "Requested block prefix length", "integer"), queryParam("page", "Page number (1-based; a page past the end is empty)", "integer"), queryParam("page_size", "Page size, or \"all\". Omitting it (or passing \"all\") expands the whole pool, which is rejected with 400 above 65536 blocks; paginate instead.", "integer")}},
 		{Method: "GET", Path: "/api/v1/pools/{poolId}/stats", Summary: "Get pool utilization statistics", Tag: "Pools", ResponseSchema: "PoolStats"},
 		{Method: "GET", Path: "/api/v1/accounts", Summary: "List accounts", Tag: "Accounts", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/accounts", Summary: "Create account", Tag: "Accounts", RequestSchema: "CreateAccount", SuccessStatus: "201", ResponseSchema: "Account", ResponseDescription: "Account created"},
 		{Method: "GET", Path: "/api/v1/accounts/{accountId}", Summary: "Get account", Tag: "Accounts", ResponseSchema: "Account"},
 		{Method: "PATCH", Path: "/api/v1/accounts/{accountId}", Summary: "Update account", Tag: "Accounts", RequestSchema: "UpdateAccount", ResponseSchema: "Account"},
 		{Method: "DELETE", Path: "/api/v1/accounts/{accountId}", Summary: "Delete account", Tag: "Accounts", ResponseDescription: "Account deleted"},
-		{Method: "GET", Path: "/api/v1/blocks", Summary: "List assigned blocks", Tag: "Blocks", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("q", "Search query", "string"), queryParam("pool_id", "Pool ID", "integer"), queryParam("account_id", "Account ID", "integer"), queryParam("page", "Page number", "integer"), queryParam("page_size", "Page size", "integer")}},
+		{Method: "GET", Path: "/api/v1/blocks", Summary: "List assigned blocks", Tag: "Blocks", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("q", "Search query", "string"), queryParam("pool_id", "Pool ID", "integer"), queryParam("account_id", "Account ID", "integer"), queryParam("page", "Page number (1-based; a page past the end is empty)", "integer"), queryParam("page_size", "Page size (default 50, max 500, or \"all\")", "integer")}},
 		{Method: "GET", Path: "/api/v1/export", Summary: "Export pools and accounts as CSV ZIP", Tag: "Export", ResponseSchema: "String", ResponseContentType: "application/zip"},
 		{Method: "POST", Path: "/api/v1/import/accounts", Summary: "Import accounts from CSV", Tag: "Import", RequestSchema: "Object", ResponseSchema: "ImportResponse"},
 		{Method: "POST", Path: "/api/v1/import/pools", Summary: "Import pools from CSV", Description: "Checks each row's parent, containment and sibling overlap as POST /api/v1/pools does, under the same lock. A row whose parent_id is missing, that is not inside its parent, or that overlaps a pool with the same parent is reported in errors and not stored, and the other rows are imported. A row identical to an existing pool under the same parent counts as skipped. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds. If the whole import exceeds the placement budget, the response is 503 with Retry-After; on SQLite the rows stored before that remain.", Tag: "Import", RequestSchema: "Object", ResponseSchema: "ImportResponse"},
@@ -1202,8 +1202,8 @@ func discoveryResourceQueryParams() []openAPIParameter {
 		queryParam("status", "Discovery status", "string"),
 		queryParam("q", "Search by name, resource ID, or CIDR", "string"),
 		queryParam("linked", "Filter linked/unlinked resources", "boolean"),
-		queryParam("page", "Page number", "integer"),
-		queryParam("page_size", "Page size", "integer"),
+		queryParam("page", "Page number (1-based; a page past the end is empty)", "integer"),
+		queryParam("page_size", "Page size (default 50, max 200)", "integer"),
 	}
 }
 
@@ -1251,8 +1251,8 @@ func networkRelationshipQueryParams() []openAPIParameter {
 
 func paginatedFilterParams(names ...string) []openAPIParameter {
 	params := []openAPIParameter{
-		queryParam("page", "Page number", "integer"),
-		queryParam("page_size", "Page size", "integer"),
+		queryParam("page", "Page number (1-based; a page past the end is empty)", "integer"),
+		queryParam("page_size", "Page size (default 50, max 200)", "integer"),
 	}
 	for _, name := range names {
 		typ := "string"

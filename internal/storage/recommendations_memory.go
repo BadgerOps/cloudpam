@@ -69,24 +69,7 @@ func (m *MemoryRecommendationStore) ListRecommendations(_ context.Context, filte
 
 	total := len(filtered)
 
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
-	start := (page - 1) * pageSize
-	if start > total {
-		return []domain.Recommendation{}, total, nil
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-
-	return cloneRecommendations(filtered[start:end]), total, nil
+	return cloneRecommendations(PageSlice(filtered, filters.Page, filters.PageSize)), total, nil
 }
 
 func (m *MemoryRecommendationStore) UpdateRecommendationStatus(_ context.Context, id string, status domain.RecommendationStatus, dismissReason string, appliedPoolID *int64) error {

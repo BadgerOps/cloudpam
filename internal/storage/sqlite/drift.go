@@ -84,15 +84,8 @@ func (s *Store) ListDriftItems(ctx context.Context, filters domain.DriftFilters)
 		return nil, 0, err
 	}
 
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
-	offset := (page - 1) * pageSize
+	page, pageSize := storage.NormalizePage(filters.Page, filters.PageSize)
+	offset := storage.PageOffset(page, pageSize, total)
 
 	query := fmt.Sprintf(
 		`SELECT id, account_id, resource_id, pool_id, type, severity, status, title, description, resource_cidr, pool_cidr, details, ignore_reason, resolved_at, detected_at, updated_at

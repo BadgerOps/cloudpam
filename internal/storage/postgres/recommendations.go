@@ -79,15 +79,8 @@ func (s *Store) ListRecommendations(ctx context.Context, filters domain.Recommen
 		return nil, 0, err
 	}
 
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
-	offset := (page - 1) * pageSize
+	page, pageSize := storage.NormalizePage(filters.Page, filters.PageSize)
+	offset := storage.PageOffset(page, pageSize, total)
 
 	// One Generate batch shares a created_at, so id makes the order total and
 	// paging through a batch neither repeats nor skips a row.

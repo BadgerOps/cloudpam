@@ -75,25 +75,7 @@ func (m *MemoryDiscoveryStore) ListDiscoveredResources(_ context.Context, accoun
 
 	total := len(filtered)
 
-	// Paginate
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
-	start := (page - 1) * pageSize
-	if start > total {
-		return []domain.DiscoveredResource{}, total, nil
-	}
-	end := start + pageSize
-	if end > total {
-		end = total
-	}
-
-	return cloneDiscoveredResources(filtered[start:end]), total, nil
+	return cloneDiscoveredResources(PageSlice(filtered, filters.Page, filters.PageSize)), total, nil
 }
 
 func (m *MemoryDiscoveryStore) GetDiscoveredResource(_ context.Context, id uuid.UUID) (*domain.DiscoveredResource, error) {
