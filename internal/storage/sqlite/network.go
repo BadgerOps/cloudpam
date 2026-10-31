@@ -204,11 +204,13 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 }
 
 // DeleteNetworkObject counts children, removes the relationships that
-// reference the object, and deletes it in one transaction. A concurrent child
-// insert waits on the single connection (or, with SQLITE_MAX_OPEN_CONNS>1, is
-// serialized behind this write transaction), so it lands either before the
-// count or after the delete. The parent_object_id ON DELETE SET NULL action
-// never fires: children block.
+// reference the object, and deletes it in one transaction. On the default
+// single connection a concurrent child insert waits, so it lands either before
+// the count or after the delete. With SQLITE_MAX_OPEN_CONNS>1 the transaction
+// reads before it writes, so an insert that commits between the count and the
+// first write makes this transaction fail with SQLITE_BUSY and nothing is
+// deleted. Either way the parent_object_id ON DELETE SET NULL action never
+// fires: children block.
 func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
