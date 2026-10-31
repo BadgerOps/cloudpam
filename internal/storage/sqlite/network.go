@@ -311,11 +311,12 @@ func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.Net
 }
 
 // UpsertNetworkRelationship checks that every network object the relationship
-// names exists and writes the row in one transaction. Writes serialize on the
-// single connection (or behind the write transaction with
-// SQLITE_MAX_OPEN_CONNS>1), so a concurrent DeleteNetworkObject runs either
-// before the check, which then fails, or after the commit, which then removes
-// the new relationship.
+// names exists and writes the row in one transaction. On the default single
+// connection a concurrent DeleteNetworkObject runs either before the check,
+// which then fails, or after the commit, which then removes the new
+// relationship. With SQLITE_MAX_OPEN_CONNS>1 this transaction reads before it
+// writes, so a delete that commits in between makes the write fail with
+// SQLITE_BUSY instead of queueing behind it; either way no orphan is stored.
 func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateNetworkRelationship) (domain.NetworkRelationship, error) {
 	if in.Type == "" || in.SourceKind == "" || in.SourceID == "" || in.TargetKind == "" || in.TargetID == "" {
 		return domain.NetworkRelationship{}, fmt.Errorf("relationship type, source, and target are required: %w", storage.ErrValidation)

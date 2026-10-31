@@ -34,8 +34,11 @@ type NetworkStore interface {
 }
 
 // NetworkRelationshipObjectIDs returns the ids of the network objects a
-// relationship names as source or target, in that order. An id that is not a
-// positive integer cannot name an object and yields NetworkObjectRefNotFound.
+// relationship names as source or target, in that order. An id must be the
+// canonical decimal form of a positive integer ("7", not "07", "+7" or
+// "0007"): backends store the reference text as given and DeleteNetworkObject
+// matches it against strconv.FormatInt, so any other spelling would outlive
+// its object. Anything else yields NetworkObjectRefNotFound.
 func NetworkRelationshipObjectIDs(in domain.CreateNetworkRelationship) ([]int64, error) {
 	var ids []int64
 	for _, ref := range [][2]string{{in.SourceKind, in.SourceID}, {in.TargetKind, in.TargetID}} {
@@ -43,7 +46,7 @@ func NetworkRelationshipObjectIDs(in domain.CreateNetworkRelationship) ([]int64,
 			continue
 		}
 		id, err := strconv.ParseInt(ref[1], 10, 64)
-		if err != nil || id < 1 {
+		if err != nil || id < 1 || strconv.FormatInt(id, 10) != ref[1] {
 			return nil, NetworkObjectRefNotFound(ref[1])
 		}
 		ids = append(ids, id)

@@ -49,6 +49,22 @@ func TestMemoryNetworkStore_UpsertNetworkRelationshipObjectRefs(t *testing.T) {
 		}
 	})
 
+	t.Run("non-canonical object id is a validation error", func(t *testing.T) {
+		s := newNetworkStoreForExtraTests()
+		obj := mustCreateNetworkObjectExtra(t, s, domain.CreateNetworkObject{AccountID: 1, Name: "vpc"})
+		padded := "0" + strconv.FormatInt(obj.ID, 10)
+		_, err := s.UpsertNetworkRelationship(ctx, rel(domain.NetworkEntityKindObject, padded, "pool", "7"))
+		if !errors.Is(err, ErrValidation) {
+			t.Fatalf("error = %v, want ErrValidation", err)
+		}
+		if !strings.Contains(err.Error(), "network object "+padded+" not found") {
+			t.Fatalf("error message = %q, want it to name the missing object", err)
+		}
+		if rels, _ := s.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{}); len(rels) != 0 {
+			t.Fatalf("relationships after rejected upsert = %+v, want none", rels)
+		}
+	})
+
 	t.Run("existing object succeeds on both sides", func(t *testing.T) {
 		s := newNetworkStoreForExtraTests()
 		src := mustCreateNetworkObjectExtra(t, s, domain.CreateNetworkObject{AccountID: 1, Name: "vpc"})

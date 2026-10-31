@@ -65,6 +65,24 @@ func TestSQLiteUpsertNetworkRelationshipObjectRefs(t *testing.T) {
 		}
 	})
 
+	t.Run("non-canonical object id is a validation error", func(t *testing.T) {
+		obj, err := s.CreateNetworkObject(ctx, domain.CreateNetworkObject{AccountID: account.ID, Name: "padded-vpc"})
+		if err != nil {
+			t.Fatalf("CreateNetworkObject(padded-vpc): %v", err)
+		}
+		padded := "0" + strconv.FormatInt(obj.ID, 10)
+		_, err = s.UpsertNetworkRelationship(ctx, rel("rel-padded-id", domain.NetworkEntityKindObject, padded, "pool", "7"))
+		if !errors.Is(err, storage.ErrValidation) {
+			t.Fatalf("error = %v, want ErrValidation", err)
+		}
+		if !strings.Contains(err.Error(), "network object "+padded+" not found") {
+			t.Fatalf("error message = %q, want it to name the missing object", err)
+		}
+		if rels := listed(t, "rel-padded-id"); len(rels) != 0 {
+			t.Fatalf("relationships after rejected upsert = %+v, want none", rels)
+		}
+	})
+
 	t.Run("existing object succeeds on both sides", func(t *testing.T) {
 		src, err := s.CreateNetworkObject(ctx, domain.CreateNetworkObject{AccountID: account.ID, Name: "vpc"})
 		if err != nil {
