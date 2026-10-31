@@ -390,8 +390,8 @@ func TestCreatePool_MissingParentIs400(t *testing.T) {
 	}
 }
 
-func TestImportPools_ReimportOfExportReportsFailedParentRows(t *testing.T) {
-	srv, st := setupTestServer()
+func TestImportPools_ReimportOfExportSkipsEveryRow(t *testing.T) {
+	srv, _ := setupTestServer()
 	root := createRootPool(t, srv, "10.0.0.0/8")
 	child := createChildPool(t, srv, root.ID, "10.1.0.0/16")
 	grand := createChildPool(t, srv, child.ID, "10.1.1.0/24")
@@ -400,19 +400,8 @@ func TestImportPools_ReimportOfExportReportsFailedParentRows(t *testing.T) {
 
 	res := importPoolsCSV(t, srv, csv)
 
-	if res.Created != 0 || res.Skipped != 1 || len(res.Errors) != 2 ||
-		!hasErrorContaining(res.Errors, "row 3: parent row 2 failed") ||
-		!hasErrorContaining(res.Errors, "row 4: parent row 3 failed") {
-		t.Fatalf("want duplicate root skipped and descendants refused, got %+v", res)
-	}
-	if n := len(storedCIDRs(t, st)); n != 3 {
-		t.Fatalf("reimport changed the pool count: got %d, want 3", n)
-	}
-	for _, want := range []poolDTO{root, child, grand} {
-		got, ok, err := st.GetPool(t.Context(), want.ID)
-		if err != nil || !ok || got.CIDR != want.CIDR || !sameParent(got.ParentID, want.ParentID) {
-			t.Errorf("existing pool %d changed: got %+v, found=%v, err=%v", want.ID, got, ok, err)
-		}
+	if res.Created != 0 || res.Skipped != 3 || len(res.Errors) != 0 {
+		t.Fatalf("want every row skipped as a duplicate, got %+v", res)
 	}
 }
 

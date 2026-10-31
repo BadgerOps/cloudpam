@@ -329,16 +329,10 @@ func TestPlace(t *testing.T) {
 			pool("p", "", "172.16.0.0/16", nil),
 			pool("c", "p", "172.17.0.0/24", nil),
 		}, "", []string{"stored", "outside"}},
-		{"an unstored parent entry cannot fall back to the stored parent", siblingsOnly, []poolPlacement{
+		{"an unstored parent entry falls back to the stored parent", siblingsOnly, []poolPlacement{
 			pool("r", "", "10.0.0.0/8", nil),
 			pool("c", "r", "10.9.0.0/16", &rootID),
-		}, "", []string{"duplicate", `parent_ref "r" not yet created`}},
-		{"a missing parent ref cannot fall back with skip_conflicts", overlapAllowed, []poolPlacement{
-			pool("c", "missing", "10.9.0.0/16", &rootID),
-		}, "", []string{`parent_ref "missing" not yet created`}},
-		{"a missing parent ref cannot fall back in a plan", anyLivePool, []poolPlacement{
-			pool("c", "missing", "172.16.0.0/16", &rootID),
-		}, "", []string{`parent_ref "missing" not yet created`}},
+		}, "", []string{"duplicate", "stored"}},
 		{"any live pool", anyLivePool, []poolPlacement{pool("n", "", "10.200.0.0/24", nil)}, "overlaps root", nil},
 		{"any live pool, identical", anyLivePool, []poolPlacement{pool("n", "", "192.0.2.0/24", nil)}, "overlaps solo", nil},
 		{"plan siblings overlap", anyLivePool, []poolPlacement{
