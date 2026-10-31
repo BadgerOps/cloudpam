@@ -567,7 +567,6 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		rowNum       int
 		name         string
 		cidr         string
-		oldID        int64  // original ID from CSV (if present)
 		oldParentID  int64  // original parent_id from CSV
 		oldAccountID int64  // original account_id from CSV
 		accountKey   string // account_key for lookup
@@ -579,8 +578,18 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 
 	var rows []poolRow
 	idIdx, hasID := colIdx["id"]
+	parentRows := make(map[int64]int)
 
 	for i, row := range records[1:] {
+		// A declared ID belongs to this file even if its row is later filtered or
+		// fails validation. It must never resolve to an existing pool with that ID.
+		var oldID int64
+		if hasID && idIdx < len(row) {
+			oldID, _ = strconv.ParseInt(strings.TrimSpace(row[idIdx]), 10, 64)
+			if oldID != 0 {
+				parentRows[oldID] = i + 2
+			}
+		}
 		if len(row) <= nameIdx || len(row) <= cidrIdx {
 			continue
 		}
@@ -595,13 +604,6 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			rowNum: i + 2,
 			name:   name,
 			cidr:   cidr,
-		}
-
-		// Get original ID if present
-		if hasID && idIdx < len(row) {
-			if v := strings.TrimSpace(row[idIdx]); v != "" {
-				pr.oldID, _ = strconv.ParseInt(v, 10, 64)
-			}
 		}
 
 		// Get parent_id
@@ -639,23 +641,35 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, pr)
 	}
 
-	// Sort rows: no parent first, then by oldParentID to process parents before children
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].oldParentID == 0 && rows[j].oldParentID != 0 {
-			return true
+	// Visit parents before children regardless of CSV order or numeric IDs.
+	// Visiting each row once also bounds cycles: their refs remain unresolved.
+	rowIndex := make(map[int]int, len(rows))
+	for i, pr := range rows {
+		rowIndex[pr.rowNum] = i
+	}
+	ordered := make([]poolRow, 0, len(rows))
+	seen := make([]bool, len(rows))
+	var visit func(int)
+	visit = func(i int) {
+		if seen[i] {
+			return
 		}
-		if rows[i].oldParentID != 0 && rows[j].oldParentID == 0 {
-			return false
+		seen[i] = true
+		if parent, ok := rowIndex[parentRows[rows[i].oldParentID]]; ok {
+			visit(parent)
 		}
-		return rows[i].oldParentID < rows[j].oldParentID
-	})
+		ordered = append(ordered, rows[i])
+	}
+	for i := range rows {
+		visit(i)
+	}
+	rows = ordered
 
 	var created, skipped int
 	var errs []string
 
 	batch := make([]poolPlacement, 0, len(rows))
 	batchRows := make([]int, 0, len(rows))
-	queued := make(map[int64]bool)
 
 	for _, pr := range rows {
 		pool := domain.CreatePool{
@@ -704,19 +718,14 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			pool.Source = domain.PoolSourceManual
 		}
 
-		e := poolPlacement{In: pool}
-		if pr.oldID != 0 {
-			e.Ref = strconv.FormatInt(pr.oldID, 10)
-		}
+		e := poolPlacement{Ref: strconv.Itoa(pr.rowNum), In: pool}
 		if pr.oldParentID != 0 {
-			parentID := pr.oldParentID
-			e.In.ParentID = &parentID
-			if queued[parentID] {
-				e.ParentRef = strconv.FormatInt(parentID, 10)
+			if parentRow, ok := parentRows[pr.oldParentID]; ok {
+				e.ParentRef = strconv.Itoa(parentRow)
+			} else {
+				parentID := pr.oldParentID
+				e.In.ParentID = &parentID
 			}
-		}
-		if pr.oldID != 0 {
-			queued[pr.oldID] = true
 		}
 		batch = append(batch, e)
 		batchRows = append(batchRows, pr.rowNum)
@@ -731,9 +740,13 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 		if res.Err != nil {
 			s.logger.WarnContext(r.Context(), "pools:import create failed",
 				"row", batchRows[i], "name", batch[i].In.Name, "error", res.Err.Error())
-			if errors.Is(res.Err, storage.ErrConflict) {
+			var parent *unresolvedParentError
+			switch {
+			case errors.As(res.Err, &parent):
+				errs = append(errs, fmt.Sprintf("row %d: parent row %s failed", batchRows[i], parent.Ref))
+			case errors.Is(res.Err, storage.ErrConflict):
 				skipped++
-			} else {
+			default:
 				errs = append(errs, fmt.Sprintf("row %d: %v", batchRows[i], res.Err))
 			}
 			continue
