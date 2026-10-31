@@ -117,7 +117,7 @@ describe('NetworkObjectTable delete action', () => {
     await waitFor(() => {
       expect(
         screen.getByText(
-          'Delete or re-parent its child objects first. conflict: network object has 2 child objects; delete or re-parent them first',
+          'Cannot delete prod-vpc: network object has 2 child objects; delete or re-parent them first',
         ),
       ).toBeTruthy()
     })

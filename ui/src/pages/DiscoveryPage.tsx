@@ -1659,7 +1659,7 @@ export function NetworkObjectTable({
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Delete failed'
       if (err instanceof ApiRequestError && err.status === 409) {
-        showToast(`Delete or re-parent its child objects first. ${message}`, 'error')
+        showToast(`Cannot delete ${object.name}: ${message.replace(/^conflict: /, '')}`, 'error')
       } else {
         showToast(message, 'error')
       }
