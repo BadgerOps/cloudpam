@@ -1173,7 +1173,7 @@ helm install cloudpam deploy/helm/cloudpam-server -f values-prod.yaml
 
 Three things to know behind an ingress:
 
-- `CLOUDPAM_TRUSTED_PROXIES` must contain the ingress controller's pod CIDR, or every user shares one login rate limit.
+- `CLOUDPAM_TRUSTED_PROXIES` must list every proxy hop between the client and CloudPAM, load balancer and ingress ranges included, or the first unlisted hop is recorded as the client and every user shares one login rate limit. Keep the list tight, because a client inside a trusted range can choose its own address.
 - The global rate limiter keys on the client address, which is the ingress behind a proxy. Set `RATE_LIMIT_RPS: 0` and limit at the ingress instead.
 - The ingress must send `X-Forwarded-Proto`, or session cookies lose the `Secure` flag.
 

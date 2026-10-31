@@ -1651,81 +1651,101 @@ func TestParseTrustedProxies_Invalid(t *testing.T) {
 	}
 }
 
-func TestClientKeyWithProxies_NoTrustedProxies(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "1.2.3.4:12345"
-	req.Header.Set("X-Forwarded-For", "10.0.0.1")
-
-	// With nil proxies, should use RemoteAddr and ignore XFF
-	got := clientKeyWithProxies(req, nil)
-	if got != "1.2.3.4" {
-		t.Errorf("expected '1.2.3.4', got %q", got)
+func TestClientKeyWithProxies(t *testing.T) {
+	proxies, err := ParseTrustedProxies("10.0.0.0/8, 172.16.0.0/12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name       string
+		proxies    *TrustedProxyConfig
+		remoteAddr string
+		header     []string
+		want       string
+	}{
+		{"nil proxies ignore the header", nil, "1.2.3.4:12345", []string{"10.0.0.1"}, "1.2.3.4"},
+		{"untrusted peer ignores the header", proxies, "5.6.7.8:8080", []string{"203.0.113.9"}, "5.6.7.8"},
+		{"no header gives the peer", proxies, "172.16.0.1:8080", nil, "172.16.0.1"},
+		{"blank header gives the peer", proxies, "172.16.0.1:8080", []string{"  "}, "172.16.0.1"},
+		{"one hop", proxies, "10.0.0.5:9999", []string{"203.0.113.9"}, "203.0.113.9"},
+		{"client-forged entry before the proxy-appended client", proxies, "10.0.0.5:9999", []string{"203.0.113.9, 198.51.100.23"}, "198.51.100.23"},
+		{"client-forged garbage before the proxy-appended client", proxies, "10.0.0.5:9999", []string{"<script>, 198.51.100.23"}, "198.51.100.23"},
+		{"two trusted hops", proxies, "10.0.0.5:9999", []string{"198.51.100.23, 172.16.0.1"}, "198.51.100.23"},
+		{"forged entry behind two trusted hops", proxies, "10.0.0.5:9999", []string{"203.0.113.9, 198.51.100.23, 172.16.0.1"}, "198.51.100.23"},
+		{"every entry is a trusted address", proxies, "10.0.0.5:9999", []string{"10.0.0.1, 172.16.0.1"}, "10.0.0.5"},
+		{"unparsable only entry gives the peer", proxies, "10.0.0.5:9999", []string{"not-an-ip"}, "10.0.0.5"},
+		{"unparsable rightmost entry gives the peer", proxies, "10.0.0.5:9999", []string{"203.0.113.9, not-an-ip"}, "10.0.0.5"},
+		{"bad port gives the peer", proxies, "10.0.0.5:9999", []string{"203.0.113.9:notaport"}, "10.0.0.5"},
+		{"port", proxies, "10.0.0.5:9999", []string{"203.0.113.9:4433"}, "203.0.113.9"},
+		{"ipv6", proxies, "10.0.0.5:9999", []string{"2001:db8::7"}, "2001:db8::7"},
+		{"bracketed ipv6", proxies, "10.0.0.5:9999", []string{"[2001:db8::7]"}, "2001:db8::7"},
+		{"bracketed ipv6 with port", proxies, "10.0.0.5:9999", []string{"[2001:db8::7]:4433"}, "2001:db8::7"},
+		{"ipv6 zone dropped", proxies, "10.0.0.5:9999", []string{"fe80::1%eth0"}, "fe80::1"},
+		{"ipv6 client behind a trusted hop", proxies, "10.0.0.5:9999", []string{"2001:db8::7, 10.0.0.5"}, "2001:db8::7"},
+		{"client-forged ipv6 before the proxy-appended client", proxies, "10.0.0.5:9999", []string{"[2001:db8::7]:4433, 198.51.100.23"}, "198.51.100.23"},
+		{"second header line holds the proxy-appended hop", proxies, "10.0.0.5:9999", []string{"203.0.113.9", "198.51.100.23"}, "198.51.100.23"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = tc.remoteAddr
+			for _, line := range tc.header {
+				req.Header.Add("X-Forwarded-For", line)
+			}
+			if got := clientKeyWithProxies(req, tc.proxies); got != tc.want {
+				t.Errorf("X-Forwarded-For %q from %s: got %q, want %q", tc.header, tc.remoteAddr, got, tc.want)
+			}
+		})
 	}
 }
 
-func TestClientKeyWithProxies_TrustedProxy(t *testing.T) {
-	cfg, _ := ParseTrustedProxies("172.16.0.0/12")
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "172.16.0.1:8080"
-	req.Header.Set("X-Forwarded-For", "10.0.0.1, 172.16.0.1")
-
-	got := clientKeyWithProxies(req, cfg)
-	if got != "10.0.0.1" {
-		t.Errorf("expected '10.0.0.1', got %q", got)
-	}
-}
-
-func TestClientKeyWithProxies_UntrustedProxy(t *testing.T) {
-	cfg, _ := ParseTrustedProxies("172.16.0.0/12")
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "5.6.7.8:8080"
-	req.Header.Set("X-Forwarded-For", "10.0.0.1")
-
-	// 5.6.7.8 is not in 172.16.0.0/12, so XFF should be ignored
-	got := clientKeyWithProxies(req, cfg)
-	if got != "5.6.7.8" {
-		t.Errorf("expected '5.6.7.8', got %q", got)
-	}
-}
-
-func TestClientKeyWithProxies_ForwardedForms(t *testing.T) {
+func TestClientIPMiddleware_TakesRightmostUntrustedEntry(t *testing.T) {
 	proxies, err := ParseTrustedProxies("10.0.0.0/8")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cases := []struct{ header, want string }{
-		{"203.0.113.9", "203.0.113.9"},
-		{"203.0.113.9:4433", "203.0.113.9"},
-		{"2001:db8::7", "2001:db8::7"},
-		{"[2001:db8::7]", "2001:db8::7"},
-		{"[2001:db8::7]:4433", "2001:db8::7"},
-		{"fe80::1%eth0", "fe80::1"},
-		{"2001:db8::7, 10.0.0.5", "2001:db8::7"},
-		{"not-an-ip", "10.0.0.5"},
-		{"203.0.113.9:notaport", "10.0.0.5"},
-	}
-	for _, tc := range cases {
-		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.RemoteAddr = "10.0.0.5:9999"
-		req.Header.Set("X-Forwarded-For", tc.header)
-		if got := clientKeyWithProxies(req, proxies); got != tc.want {
-			t.Errorf("X-Forwarded-For %q: got %q, want %q", tc.header, got, tc.want)
-		}
+	var got string
+	handler := ClientIPMiddleware(proxies)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = ClientIPFromContext(r.Context())
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "10.0.0.5:443"
+	req.Header.Set("X-Forwarded-For", "203.0.113.9, 198.51.100.23")
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got != "198.51.100.23" {
+		t.Errorf("client ip = %q, want the proxy-appended 198.51.100.23", got)
 	}
 }
 
-func TestClientKeyWithProxies_EmptyXFF(t *testing.T) {
-	cfg, _ := ParseTrustedProxies("172.16.0.0/12")
+func TestLoginRateLimitMiddleware_ForgedForwardedForSharesBucket(t *testing.T) {
+	proxies, err := ParseTrustedProxies("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginRL := LoginRateLimitMiddleware(LoginRateLimitConfig{
+		AttemptsPerMinute: 2,
+		ProxyConfig:       proxies,
+	})
+	handler := loginRL(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.RemoteAddr = "172.16.0.1:8080"
-	// No XFF header
+	for i, forged := range []string{"203.0.113.1", "203.0.113.2", "203.0.113.3"} {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		req.RemoteAddr = "10.0.0.5:443"
+		req.Header.Set("X-Forwarded-For", forged+", 198.51.100.23")
+		handler.ServeHTTP(rr, req)
 
-	got := clientKeyWithProxies(req, cfg)
-	if got != "172.16.0.1" {
-		t.Errorf("expected '172.16.0.1', got %q", got)
+		want := http.StatusOK
+		if i == 2 {
+			want = http.StatusTooManyRequests
+		}
+		if rr.Code != want {
+			t.Fatalf("attempt %d with forged leftmost entry %s: got %d, want %d", i+1, forged, rr.Code, want)
+		}
 	}
 }
 

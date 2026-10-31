@@ -47,9 +47,12 @@ config:
   CLOUDPAM_ADMIN_USERNAME: ""
   CLOUDPAM_ADMIN_EMAIL: ""           # <username>@localhost
 
-  # CIDRs whose X-Forwarded-For the login rate limiter trusts. Bare IPs are
-  # rejected; write /32. Set it to the ingress controller's pod CIDR, or every
-  # user shares one login limit.
+  # CIDRs whose X-Forwarded-For the login rate limiter and the audit client IP
+  # trust. Bare IPs are rejected; write /32. List every proxy hop between the
+  # client and CloudPAM (load balancer and ingress ranges), or the first
+  # unlisted hop is recorded as the client and every user shares one login
+  # limit. Keep the list tight, because a client inside a trusted range can
+  # choose its own address.
   CLOUDPAM_TRUSTED_PROXIES: []       # none trusted
   # External https URL written into agent bootstrap tokens. Without it the
   # server builds http://<Host> from the request, ignoring X-Forwarded-Proto.
