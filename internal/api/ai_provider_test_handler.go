@@ -9,6 +9,7 @@ import (
 	"cloudpam/internal/audit"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning/llm"
+	"cloudpam/internal/storage"
 )
 
 // aiProviderTestTimeout bounds one provider test, completion and stream together.
@@ -21,6 +22,14 @@ var aiProviderTestMessages = []llm.Message{{Role: "user", Content: "Reply with t
 // are reported with 200 and ok:false; only store failures return 5xx.
 func (ss *SettingsServer) handleTestAIProvider(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	// Read the stored document before resolving the provider: its UpdatedAt is
+	// the compare-and-swap token that keeps the result from overwriting a PATCH
+	// that lands while the test runs.
+	before, err := ss.settingsStore.GetAIProviderSettings(ctx)
+	if err != nil {
+		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
+		return
+	}
 	provider, resolved, err := ss.aiDeps().providers.Provider(ctx)
 	if err != nil && !errors.Is(err, llm.ErrStoredKeyUnreadable) {
 		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
@@ -44,7 +53,13 @@ func (ss *SettingsServer) handleTestAIProvider(w http.ResponseWriter, r *http.Re
 	}
 
 	runAIProviderTest(ctx, provider, &resp)
-	if err := ss.recordAIProviderTest(ctx, resolved.Stored, &resp); err != nil {
+	if ctx.Err() != nil {
+		// The client went away; the result may reflect the cancellation
+		// rather than the provider, so it is returned but not stored.
+		writeJSON(w, status, resp)
+		return
+	}
+	if err := ss.recordAIProviderTest(ctx, before, &resp); err != nil {
 		status = http.StatusInternalServerError
 		ss.writeErr(ctx, w, status, "failed to save ai provider test result", err.Error())
 		return
@@ -87,21 +102,21 @@ func runAIProviderTest(ctx context.Context, provider llm.Provider, resp *domain.
 	resp.StreamingSupported = received > 0 && !failed
 }
 
-// recordAIProviderTest stores the outcome, unless the provider settings changed
-// while the test ran: then the result describes a configuration that is no
-// longer current and is not recorded.
-func (ss *SettingsServer) recordAIProviderTest(ctx context.Context, tested domain.AIProviderSettings, resp *domain.AIProviderTestResponse) error {
-	doc, err := ss.settingsStore.GetAIProviderSettings(ctx)
-	if err != nil {
-		return err
-	}
-	if doc.Endpoint != tested.Endpoint || doc.Model != tested.Model || doc.APIKeyEncrypted != tested.APIKeyEncrypted {
-		return nil
-	}
+// recordAIProviderTest stores the outcome on the document read before the
+// test, with a compare-and-swap on its UpdatedAt. If the settings changed while
+// the test ran, the result describes a configuration that is no longer current
+// and the write would revert that change, so it is not recorded.
+func (ss *SettingsServer) recordAIProviderTest(ctx context.Context, before *domain.AIProviderSettings, resp *domain.AIProviderTestResponse) error {
+	doc := before.Clone()
 	testedAt := resp.TestedAt
 	doc.State = resp.State
 	doc.LastTestedAt = &testedAt
 	doc.LastTestError = resp.Error
 	doc.LastTestModel = resp.Model
-	return ss.settingsStore.UpdateAIProviderSettings(ctx, doc)
+	err := ss.settingsStore.UpdateAIProviderSettingsIfUnchanged(ctx, before.UpdatedAt, doc)
+	if errors.Is(err, storage.ErrConflict) {
+		ss.logger.InfoContext(ctx, "ai provider settings changed during test; result not stored")
+		return nil
+	}
+	return err
 }

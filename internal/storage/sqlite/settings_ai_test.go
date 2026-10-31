@@ -3,13 +3,46 @@
 package sqlite
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"cloudpam/internal/domain"
 	"cloudpam/internal/secrets"
+	"cloudpam/internal/storage"
 )
+
+func TestAIProviderSettingsCompareAndSwap(t *testing.T) {
+	s := newTestStore(t)
+	ctx := timeoutCtx(t)
+	t1 := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.UTC)
+	t2 := t1.Add(time.Second)
+
+	// A missing row matches only the zero time.
+	if err := s.UpdateAIProviderSettingsIfUnchanged(ctx, t1, &domain.AIProviderSettings{Model: "x", UpdatedAt: t1}); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("non-zero expected on missing row: err = %v, want ErrConflict", err)
+	}
+	if err := s.UpdateAIProviderSettingsIfUnchanged(ctx, time.Time{}, &domain.AIProviderSettings{Model: "a", UpdatedAt: t1}); err != nil {
+		t.Fatalf("zero expected on missing row: %v", err)
+	}
+	if err := s.UpdateAIProviderSettingsIfUnchanged(ctx, time.Time{}, &domain.AIProviderSettings{Model: "zero"}); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("zero expected on stored row: err = %v, want ErrConflict", err)
+	}
+	if err := s.UpdateAIProviderSettingsIfUnchanged(ctx, t1.In(time.FixedZone("x", 3600)), &domain.AIProviderSettings{Model: "b", UpdatedAt: t2}); err != nil {
+		t.Fatalf("matching expected: %v", err)
+	}
+	if err := s.UpdateAIProviderSettingsIfUnchanged(ctx, t1, &domain.AIProviderSettings{Model: "stale", UpdatedAt: t1}); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("stale expected: err = %v, want ErrConflict", err)
+	}
+	got, err := s.GetAIProviderSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetAIProviderSettings: %v", err)
+	}
+	if got.Model != "b" || !got.UpdatedAt.Equal(t2) {
+		t.Fatalf("stored = %+v, want model b at t2", got)
+	}
+}
 
 func TestAIProviderSettingsDefaultsWhenMissing(t *testing.T) {
 	s := newTestStore(t)

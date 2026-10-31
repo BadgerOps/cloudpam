@@ -1,12 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -33,6 +35,32 @@ type aiSettingsFixture struct {
 	audit    *audit.MemoryAuditLogger
 	manager  *llm.Manager
 	key      []byte
+	logs     *syncBuffer
+}
+
+// syncBuffer is a goroutine-safe log sink.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+var apiKeyInBody = regexp.MustCompile(`("api_key"\s*:\s*)"[^"]*"`)
+
+// redactAPIKey hides the api_key value of a request body in failure messages.
+func redactAPIKey(body string) string {
+	return apiKeyInBody.ReplaceAllString(body, `$1"[redacted]"`)
 }
 
 func envDefaults() llm.Config {
@@ -47,7 +75,8 @@ func setupAISettings(t *testing.T, env llm.Config, storageAvailable bool) *aiSet
 	}
 	mux := http.NewServeMux()
 	auditLogger := audit.NewMemoryAuditLogger()
-	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: io.Discard})
+	logs := &syncBuffer{}
+	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: logs})
 	srv := NewServer(mux, storage.NewMemoryStore(), logger, nil, auditLogger)
 	settings := storage.NewMemorySettingsStore()
 	resolver := llm.NewResolver(env, settings, func(c string) (string, error) { return secrets.Decrypt(c, key) })
@@ -55,7 +84,7 @@ func setupAISettings(t *testing.T, env llm.Config, storageAvailable bool) *aiSet
 	ss := NewSettingsServer(srv, settings)
 	ss.SetAIProvider(manager, resolver, key, storageAvailable)
 	ss.RegisterSettingsRoutes()
-	return &aiSettingsFixture{mux: mux, srv: srv, settings: settings, audit: auditLogger, manager: manager, key: key}
+	return &aiSettingsFixture{mux: mux, srv: srv, settings: settings, audit: auditLogger, manager: manager, key: key, logs: logs}
 }
 
 func (f *aiSettingsFixture) do(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
@@ -84,7 +113,7 @@ func (f *aiSettingsFixture) patch(t *testing.T, body string, want int) *httptest
 	t.Helper()
 	rr := f.do(t, http.MethodPatch, "/api/v1/settings/ai", body)
 	if rr.Code != want {
-		t.Fatalf("PATCH %s = %d, want %d: %s", body, rr.Code, want, rr.Body.String())
+		t.Fatalf("PATCH %s = %d, want %d: %s", redactAPIKey(body), rr.Code, want, rr.Body.String())
 	}
 	return rr
 }
@@ -297,6 +326,203 @@ func TestAISettingsPatchClearAPIKey(t *testing.T) {
 			t.Fatalf("after clear = %+v, want no key", got)
 		}
 	})
+}
+
+func decodeAPIError(t *testing.T, rr *httptest.ResponseRecorder) apiError {
+	t.Helper()
+	var body apiError
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	return body
+}
+
+const endpointNeedsKeyDetail = "re-enter api_key or set clear_api_key when changing the endpoint while a stored key exists"
+
+func TestAISettingsPatchEndpointChangeWithStoredKey(t *testing.T) {
+	seed := func(t *testing.T) (*aiSettingsFixture, string) {
+		f := setupAISettings(t, envDefaults(), true)
+		f.patch(t, `{"endpoint":"https://llm-a.example/v1","api_key":"sk-bound-to-a"}`, http.StatusOK)
+		return f, f.storedDoc(t).APIKeyEncrypted
+	}
+
+	t.Run("change without key field is rejected", func(t *testing.T) {
+		f, before := seed(t)
+		for _, body := range []string{`{"endpoint":"https://llm-b.example/v1"}`, `{"endpoint":""}`} {
+			rr := f.patch(t, body, http.StatusBadRequest)
+			got := decodeAPIError(t, rr)
+			if got.Error != "invalid endpoint" || got.Detail != endpointNeedsKeyDetail {
+				t.Fatalf("%s: error = %+v", body, got)
+			}
+			doc := f.storedDoc(t)
+			if doc.Endpoint != "https://llm-a.example/v1" || doc.APIKeyEncrypted != before {
+				t.Fatalf("%s: rejected PATCH changed the store: endpoint %q", body, doc.Endpoint)
+			}
+		}
+	})
+	t.Run("change with a new key stores it", func(t *testing.T) {
+		f, before := seed(t)
+		got := decodeAISettings(t, f.patch(t, `{"endpoint":"https://llm-b.example/v1","api_key":"sk-bound-to-b"}`, http.StatusOK))
+		doc := f.storedDoc(t)
+		if doc.Endpoint != "https://llm-b.example/v1" || doc.APIKeyEncrypted == before {
+			t.Fatal("endpoint change with api_key did not store a new key")
+		}
+		if plain, err := secrets.Decrypt(doc.APIKeyEncrypted, f.key); err != nil || plain != "sk-bound-to-b" {
+			t.Fatalf("stored key does not decrypt to the new key (err %v)", err)
+		}
+		if !got.APIKeyConfigured || got.Sources.APIKey != domain.AISettingSourceDatabase {
+			t.Fatalf("PATCH response = %+v", got)
+		}
+	})
+	t.Run("change with clear_api_key removes the key", func(t *testing.T) {
+		f, _ := seed(t)
+		got := decodeAISettings(t, f.patch(t, `{"endpoint":"https://llm-b.example/v1","clear_api_key":true}`, http.StatusOK))
+		if f.storedDoc(t).APIKeyEncrypted != "" || got.APIKeyConfigured || got.Sources.APIKey != domain.AISettingSourceNone {
+			t.Fatalf("after change + clear = %+v", got)
+		}
+	})
+	t.Run("same endpoint re-sent is not a change", func(t *testing.T) {
+		f, before := seed(t)
+		f.patch(t, `{"endpoint":"  https://llm-a.example/v1 ","model":"m2"}`, http.StatusOK)
+		if doc := f.storedDoc(t); doc.APIKeyEncrypted != before || doc.Model != "m2" {
+			t.Fatal("re-sending the same endpoint touched the key or dropped the update")
+		}
+	})
+	t.Run("change without a stored key is allowed", func(t *testing.T) {
+		env := envDefaults()
+		env.APIKey = "env-key"
+		f := setupAISettings(t, env, true)
+		f.patch(t, `{"endpoint":"https://llm-a.example/v1"}`, http.StatusOK)
+		got := decodeAISettings(t, f.patch(t, `{"endpoint":"https://llm-b.example/v1"}`, http.StatusOK))
+		// D1: a database endpoint never receives the environment key.
+		if got.APIKeyConfigured || got.Sources.APIKey != domain.AISettingSourceNone || got.Sources.Endpoint != domain.AISettingSourceDatabase {
+			t.Fatalf("db endpoint with env key = %+v, want no key", got)
+		}
+	})
+}
+
+func TestAISettingsDatabaseEndpointDoesNotReceiveEnvKey(t *testing.T) {
+	var mu sync.Mutex
+	var auths []string
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		auths = append(auths, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(llmSrv.Close)
+	env := envDefaults()
+	env.APIKey = "sk-env-secret"
+	f := setupAISettings(t, env, true)
+	f.patch(t, `{"endpoint":"`+llmSrv.URL+`"}`, http.StatusOK)
+	f.test(t)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(auths) == 0 {
+		t.Fatal("provider was not called")
+	}
+	for _, a := range auths {
+		if a != "" {
+			t.Fatal("the environment api key was sent to a database-configured endpoint")
+		}
+	}
+}
+
+func TestAISettingsPatchRejectsLinkLocalEndpoints(t *testing.T) {
+	for _, ep := range []string{"http://169.254.169.254/latest", "http://169.254.1.2:11434/v1", "http://[fd00:ec2::254]/v1", "http://[::ffff:169.254.169.254]/v1", "http://[fe80::1]/v1"} {
+		f := setupAISettings(t, envDefaults(), true)
+		got := decodeAPIError(t, f.patch(t, `{"endpoint":"`+ep+`"}`, http.StatusBadRequest))
+		if got.Error != "invalid endpoint" || got.Detail != "link-local and metadata addresses are not allowed" {
+			t.Fatalf("%s: error = %+v", ep, got)
+		}
+	}
+	for _, ep := range []string{"http://127.0.0.1:11434/v1", "http://[::1]:8000/v1", "http://10.1.2.3/v1", "http://192.168.1.5:11434/v1", "http://localhost:11434/v1"} {
+		f := setupAISettings(t, envDefaults(), true)
+		f.patch(t, `{"endpoint":"`+ep+`"}`, http.StatusOK)
+	}
+}
+
+// TestAISettingsTestResultDoesNotRevertConcurrentPatch lands a PATCH while the
+// provider test is in flight; the PATCHed value must survive and the stale
+// result must not be stored.
+func TestAISettingsTestResultDoesNotRevertConcurrentPatch(t *testing.T) {
+	var f *aiSettingsFixture
+	var once sync.Once
+	patchCode := make(chan int, 1)
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() {
+			req := httptest.NewRequest(http.MethodPatch, "/api/v1/settings/ai", strings.NewReader(`{"max_tokens":123}`))
+			rr := httptest.NewRecorder()
+			f.mux.ServeHTTP(rr, req)
+			patchCode <- rr.Code
+		})
+		var body struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"OK\"},\"finish_reason\":\"stop\"}]}\n\n")
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}`)
+	}))
+	t.Cleanup(llmSrv.Close)
+	f = setupAISettings(t, envDefaults(), true)
+	f.patch(t, `{"endpoint":"`+llmSrv.URL+`"}`, http.StatusOK)
+
+	got, _ := f.test(t)
+	if code := <-patchCode; code != http.StatusOK {
+		t.Fatalf("concurrent PATCH = %d", code)
+	}
+	if !got.OK || got.State != domain.AIProviderStateVerified {
+		t.Fatalf("test response = %+v, want the live result", got)
+	}
+	doc := f.storedDoc(t)
+	if doc.MaxTokens != 123 {
+		t.Fatalf("max_tokens = %d, the test result reverted the concurrent PATCH", doc.MaxTokens)
+	}
+	if doc.LastTestedAt != nil || doc.State != domain.AIProviderStateConfigured {
+		t.Fatalf("stale test result was stored: %+v", doc)
+	}
+	if !strings.Contains(f.logs.String(), "ai provider settings changed during test; result not stored") {
+		t.Fatal("conflict was not logged")
+	}
+}
+
+func TestAISettingsTestResultNotStoredAfterClientDisconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Stream {
+			cancel() // the client goes away during the streaming check
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}`)
+	}))
+	t.Cleanup(llmSrv.Close)
+	f := setupAISettings(t, envDefaults(), true)
+	f.patch(t, `{"endpoint":"`+llmSrv.URL+`"}`, http.StatusOK)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/settings/ai/test", nil).WithContext(ctx)
+	rr := httptest.NewRecorder()
+	f.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("POST test = %d: %s", rr.Code, rr.Body.String())
+	}
+	if doc := f.storedDoc(t); doc.LastTestedAt != nil || doc.State != domain.AIProviderStateConfigured {
+		t.Fatalf("result stored after the client disconnected: %+v", doc)
+	}
+}
+
+func TestRedactAPIKeyHelper(t *testing.T) {
+	if got := redactAPIKey(`{"endpoint":"x","api_key" : "sk-hidden"}`); strings.Contains(got, "sk-hidden") {
+		t.Fatalf("redactAPIKey = %q", got)
+	}
 }
 
 func TestAISettingsPatchValidation(t *testing.T) {

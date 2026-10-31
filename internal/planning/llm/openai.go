@@ -16,6 +16,33 @@ import (
 	"cloudpam/internal/observability"
 )
 
+// maxResponseBytes caps how much of one provider response body is read, for
+// both the JSON reply and the whole SSE stream. A variable so tests can shrink it.
+var maxResponseBytes int64 = 8 << 20
+
+// limitedBody reads at most limit bytes and then fails with ErrInvalidResponse,
+// so an oversized reply is reported as an invalid response, not truncated.
+type limitedBody struct {
+	r     io.Reader
+	limit int64
+	read  int64
+}
+
+func newLimitedBody(r io.Reader) *limitedBody {
+	// Read one byte past the limit to tell "exactly at the limit" from "over".
+	return &limitedBody{r: io.LimitReader(r, maxResponseBytes+1), limit: maxResponseBytes}
+}
+
+func (l *limitedBody) Read(p []byte) (int, error) {
+	n, err := l.r.Read(p)
+	l.read += int64(n)
+	if l.read > l.limit {
+		over := int(l.read - l.limit)
+		return n - over, fmt.Errorf("%w: response exceeds %d bytes", ErrInvalidResponse, l.limit)
+	}
+	return n, err
+}
+
 // startCompletionSpan opens a client span around a chat completion call. When
 // tracing is disabled the shared tracer is the OpenTelemetry no-op, so this is
 // an interface call against a network round trip.
@@ -160,7 +187,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 		return nil, &StatusError{Status: resp.StatusCode}
 	}
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(newLimitedBody(resp.Body))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -256,7 +283,7 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 		defer close(ch)
 		defer span.End()
 		defer func() { _ = resp.Body.Close() }()
-		p.readSSEStream(resp.Body, ch)
+		p.readSSEStream(newLimitedBody(resp.Body), ch)
 	}()
 
 	return ch, nil

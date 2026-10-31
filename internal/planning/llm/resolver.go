@@ -5,13 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"cloudpam/internal/domain"
 )
 
 // ErrStoredKeyUnreadable reports a stored API key that could not be decrypted
 // (wrong or missing CLOUDPAM_OIDC_ENCRYPTION_KEY). The resolution that comes
-// with it is still usable: it falls back to the environment key, if any.
+// with it is still usable: it falls back to the environment key when the
+// endpoint is not stored in the database, and runs without a key otherwise.
 var ErrStoredKeyUnreadable = errors.New("stored ai provider api key cannot be decrypted")
 
 // SettingsSource reads the stored AI provider document.
@@ -30,10 +32,18 @@ type Resolved struct {
 // Resolver merges the stored settings over the environment configuration.
 // Precedence per field: non-empty stored value, then environment, then the
 // built-in default.
+//
+// The API key is bound to its endpoint: the environment key is used only when
+// the effective endpoint comes from the environment or the built-in default.
+// A database endpoint only ever receives a database key, so whoever can set
+// the endpoint cannot redirect CLOUDPAM_LLM_API_KEY to a host of their choice.
 type Resolver struct {
 	env     Config
 	source  SettingsSource
 	decrypt func(string) (string, error)
+
+	mu             sync.Mutex
+	lastUnreadable string // last ciphertext warned about, so each is logged once
 }
 
 // NewResolver builds a resolver. env is usually ConfigFromEnv(); source may be
@@ -91,12 +101,11 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 			cfg.APIKey, src.APIKey = key, domain.AISettingSourceDatabase
 		} else {
 			keyErr = ErrStoredKeyUnreadable
-			slog.Default().Warn("stored ai provider api key cannot be decrypted; falling back to CLOUDPAM_LLM_API_KEY if set",
-				"hint", "check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again")
+			r.warnUnreadable(stored.APIKeyEncrypted)
 		}
 	}
 	if cfg.APIKey == "" {
-		if r.env.APIKey != "" {
+		if r.env.APIKey != "" && src.Endpoint != domain.AISettingSourceDatabase {
 			cfg.APIKey, src.APIKey = r.env.APIKey, domain.AISettingSourceEnvironment
 		} else {
 			src.APIKey = domain.AISettingSourceNone
@@ -104,6 +113,20 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 	}
 	out.APIKeyConfigured = cfg.APIKey != ""
 	return out, keyErr
+}
+
+// warnUnreadable logs an undecryptable stored key once per distinct ciphertext
+// rather than on every resolve. The ciphertext itself is never logged.
+func (r *Resolver) warnUnreadable(ciphertext string) {
+	r.mu.Lock()
+	seen := r.lastUnreadable == ciphertext
+	r.lastUnreadable = ciphertext
+	r.mu.Unlock()
+	if seen {
+		return
+	}
+	slog.Default().Warn("stored ai provider api key cannot be decrypted",
+		"hint", "check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again; CLOUDPAM_LLM_API_KEY is used only when the endpoint is not stored in the database")
 }
 
 func (r *Resolver) decryptKey(ciphertext string) (string, error) {

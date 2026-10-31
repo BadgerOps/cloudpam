@@ -16,8 +16,9 @@ import (
 const (
 	aiProviderSettingsID = "ai_provider"
 
-	errEphemeralAPIKey = "cannot store an api key: CLOUDPAM_OIDC_ENCRYPTION_KEY is not set, so the stored credential would be lost at restart; set the key or use CLOUDPAM_LLM_API_KEY"
-	errUnreadableKey   = "stored api key cannot be decrypted; check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again"
+	errEphemeralAPIKey  = "cannot store an api key: CLOUDPAM_OIDC_ENCRYPTION_KEY is not set, so the stored credential would be lost at restart; set the key or use CLOUDPAM_LLM_API_KEY"
+	errUnreadableKey    = "stored api key cannot be decrypted; check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again"
+	errEndpointNeedsKey = "re-enter api_key or set clear_api_key when changing the endpoint while a stored key exists"
 )
 
 // aiProviderDeps is the AI provider wiring for the settings endpoints.
@@ -113,6 +114,13 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
 		return
 	}
+	// The stored key is bound to the stored endpoint: moving the endpoint must
+	// not silently send that key to the new host.
+	if req.Endpoint != nil && strings.TrimSpace(*req.Endpoint) != doc.Endpoint &&
+		doc.APIKeyEncrypted != "" && req.APIKey == nil && !req.ClearAPIKey {
+		ss.writeErr(ctx, w, http.StatusBadRequest, "invalid endpoint", errEndpointNeedsKey)
+		return
+	}
 	var encrypted string
 	if req.APIKey != nil {
 		if encrypted, err = secrets.Encrypt(strings.TrimSpace(*req.APIKey), deps.encKey); err != nil {
@@ -128,7 +136,13 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		doc.LastTestError = ""
 		doc.LastTestModel = ""
 	}
-	doc.UpdatedAt = time.Now().UTC()
+	// UpdatedAt is the compare-and-swap token for test results, so every PATCH
+	// moves it forward, even within the same clock tick.
+	now := time.Now().UTC()
+	if !now.After(doc.UpdatedAt) {
+		now = doc.UpdatedAt.Add(time.Nanosecond)
+	}
+	doc.UpdatedAt = now
 	if err := ss.settingsStore.UpdateAIProviderSettings(ctx, doc); err != nil {
 		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to save ai provider settings", err.Error())
 		return

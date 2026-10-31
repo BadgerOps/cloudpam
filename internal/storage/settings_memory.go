@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"sync"
+	"time"
 
 	"cloudpam/internal/domain"
 )
@@ -81,6 +82,20 @@ func (s *MemorySettingsStore) GetAIProviderSettings(_ context.Context) (*domain.
 func (s *MemorySettingsStore) UpdateAIProviderSettings(_ context.Context, settings *domain.AIProviderSettings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.aiProvider = domain.NormalizeAIProviderSettings(settings.Clone())
+	return nil
+}
+
+func (s *MemorySettingsStore) UpdateAIProviderSettingsIfUnchanged(_ context.Context, expectedUpdatedAt time.Time, settings *domain.AIProviderSettings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var current time.Time
+	if s.aiProvider != nil {
+		current = s.aiProvider.UpdatedAt
+	}
+	if !current.Equal(expectedUpdatedAt) {
+		return ErrConflict
+	}
 	s.aiProvider = domain.NormalizeAIProviderSettings(settings.Clone())
 	return nil
 }
