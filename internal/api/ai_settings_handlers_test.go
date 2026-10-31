@@ -82,6 +82,13 @@ func setupAISettingsWithStore(t *testing.T, env llm.Config, storageAvailable boo
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
+	return newAISettingsFixture(t, env, storageAvailable, key, settings, store)
+}
+
+// newAISettingsFixture is one server over the given encryption key and stores;
+// two fixtures over the same key and store act as two replicas.
+func newAISettingsFixture(t *testing.T, env llm.Config, storageAvailable bool, key []byte, settings *storage.MemorySettingsStore, store storage.SettingsStore) *aiSettingsFixture {
+	t.Helper()
 	mux := http.NewServeMux()
 	auditLogger := audit.NewMemoryAuditLogger()
 	logs := &syncBuffer{}
