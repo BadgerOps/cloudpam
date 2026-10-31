@@ -12,6 +12,7 @@ type MemorySettingsStore struct {
 	mu                  sync.RWMutex
 	security            *domain.SecuritySettings
 	networkSchemaPolicy *domain.NetworkSchemaPolicy
+	aiProvider          *domain.AIProviderSettings
 }
 
 // cloneSecuritySettings deep-copies security settings so store-owned state and
@@ -68,5 +69,18 @@ func (s *MemorySettingsStore) UpdateNetworkSchemaPolicy(_ context.Context, polic
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.networkSchemaPolicy = domain.NormalizeNetworkSchemaPolicy(policy)
+	return nil
+}
+
+func (s *MemorySettingsStore) GetAIProviderSettings(_ context.Context) (*domain.AIProviderSettings, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return domain.NormalizeAIProviderSettings(s.aiProvider.Clone()), nil
+}
+
+func (s *MemorySettingsStore) UpdateAIProviderSettings(_ context.Context, settings *domain.AIProviderSettings) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.aiProvider = domain.NormalizeAIProviderSettings(settings.Clone())
 	return nil
 }
