@@ -6,6 +6,7 @@ import type { SystemInfoResponse, UpdateCheckResponse } from '../api/types'
 import { scheduleFrontendResetAfterUpgrade } from '../utils/upgradeReload'
 import { useAuth } from '../hooks/useAuth'
 import { canOpen } from '../navigation'
+import AIProviderSettingsCard from '../components/AIProviderSettingsCard'
 
 function formatVersion(version: string | null | undefined) {
   if (!version) return 'unknown'
@@ -132,95 +133,99 @@ export default function ConfigurationPage() {
       )}
 
       <div className="grid gap-6 xl:grid-cols-[1.25fr_0.9fr]">
-        <section className="bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-6">
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Release Management</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                Check for new releases and trigger in-app upgrades when supported.
-              </p>
-            </div>
-            <button
-              onClick={() => refreshUpdates(true)}
-              disabled={checking}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            >
-              {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-              Check Now
-            </button>
-          </div>
-
-          <div className="grid gap-4 md:grid-cols-2 mb-4">
-            <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-              <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Current Version</p>
-              <p className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
-                {loading ? '…' : formatVersion(systemInfo?.version)}
-              </p>
-            </div>
-            <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-              <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Latest Release</p>
-              <p className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
-                {loading ? '…' : formatVersion(updateInfo?.latest_version)}
-              </p>
-            </div>
-          </div>
-
-          {updateInfo && (
-            <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-gray-900 dark:text-white">
-                    {updateInfo.update_available
-                      ? `${formatVersion(updateInfo.latest_version)} is available`
-                      : 'This deployment is current'}
-                  </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Checked {formatDate(updateInfo.checked_at)}. Published {formatDate(updateInfo.published_at)}.
-                  </p>
-                </div>
-                {updateInfo.update_available && updateInfo.upgrade_supported && (
-                  <button
-                    onClick={startUpgrade}
-                    disabled={upgradeRunning}
-                    className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-                  >
-                    {upgradeRunning ? 'Upgrading…' : 'Upgrade Now'}
-                  </button>
-                )}
+        <div className="space-y-6 min-w-0">
+          <section className="bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-6">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Release Management</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  Check for new releases and trigger in-app upgrades when supported.
+                </p>
               </div>
+              <button
+                onClick={() => refreshUpdates(true)}
+                disabled={checking}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                Check Now
+              </button>
+            </div>
 
-              {upgradeMessage && (
-                <div className="rounded-lg bg-indigo-50 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300 px-3 py-2 text-sm">
-                  {upgradeMessage}
-                </div>
-              )}
+            <div className="grid gap-4 md:grid-cols-2 mb-4">
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+                <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Current Version</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
+                  {loading ? '…' : formatVersion(systemInfo?.version)}
+                </p>
+              </div>
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+                <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Latest Release</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900 dark:text-white">
+                  {loading ? '…' : formatVersion(updateInfo?.latest_version)}
+                </p>
+              </div>
+            </div>
 
-              {updateInfo.release_notes && (
-                <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 px-4 py-3">
-                  <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Release Notes</p>
-                  <div className="space-y-1 text-sm text-gray-700 dark:text-gray-300">
-                    {updateInfo.release_notes.split('\n').filter(Boolean).slice(0, 8).map((line, idx) => (
-                      <p key={idx}>{line.replace(/^#+\s*/, '').replace(/^- /, '• ')}</p>
-                    ))}
+            {updateInfo && (
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-white">
+                      {updateInfo.update_available
+                        ? `${formatVersion(updateInfo.latest_version)} is available`
+                        : 'This deployment is current'}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Checked {formatDate(updateInfo.checked_at)}. Published {formatDate(updateInfo.published_at)}.
+                    </p>
                   </div>
+                  {updateInfo.update_available && updateInfo.upgrade_supported && (
+                    <button
+                      onClick={startUpgrade}
+                      disabled={upgradeRunning}
+                      className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {upgradeRunning ? 'Upgrading…' : 'Upgrade Now'}
+                    </button>
+                  )}
                 </div>
-              )}
 
-              <div className="flex items-center gap-4 text-sm">
-                <Link to="/changelog" className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-700 dark:text-blue-400">
-                  <FileText className="w-4 h-4" />
-                  Open In-App Changelog
-                </Link>
-                {updateInfo.release_url && (
-                  <a href={updateInfo.release_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-700 dark:text-blue-400">
-                    <ExternalLink className="w-4 h-4" />
-                    Open GitHub Release
-                  </a>
+                {upgradeMessage && (
+                  <div className="rounded-lg bg-indigo-50 text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300 px-3 py-2 text-sm">
+                    {upgradeMessage}
+                  </div>
                 )}
+
+                {updateInfo.release_notes && (
+                  <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 px-4 py-3">
+                    <p className="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">Release Notes</p>
+                    <div className="space-y-1 text-sm text-gray-700 dark:text-gray-300">
+                      {updateInfo.release_notes.split('\n').filter(Boolean).slice(0, 8).map((line, idx) => (
+                        <p key={idx}>{line.replace(/^#+\s*/, '').replace(/^- /, '• ')}</p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-4 text-sm">
+                  <Link to="/changelog" className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-700 dark:text-blue-400">
+                    <FileText className="w-4 h-4" />
+                    Open In-App Changelog
+                  </Link>
+                  {updateInfo.release_url && (
+                    <a href={updateInfo.release_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-blue-600 hover:text-blue-700 dark:text-blue-400">
+                      <ExternalLink className="w-4 h-4" />
+                      Open GitHub Release
+                    </a>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
-        </section>
+            )}
+          </section>
+
+          {hasPermission('settings:read') && <AIProviderSettingsCard />}
+        </div>
 
         <section className="bg-white dark:bg-gray-800 rounded-xl shadow border dark:border-gray-700 p-6">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Configuration Areas</h2>

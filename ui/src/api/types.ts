@@ -960,3 +960,53 @@ export interface FragmentationAnalysis {
   issues: FragmentationIssue[] | null
   recommendations: string[] | null
 }
+
+// AI provider settings (GET/PATCH /api/v1/settings/ai, POST /api/v1/settings/ai/test).
+// The API never returns the API key itself, only whether one is configured.
+export type AIProviderState = 'not_configured' | 'configured' | 'verified' | 'failing'
+export type AISettingSource = 'database' | 'environment' | 'default' | 'none'
+
+export interface AIProviderSettingSources {
+  endpoint: AISettingSource
+  model: AISettingSource
+  api_key: AISettingSource
+  max_tokens: AISettingSource
+  temperature: AISettingSource
+}
+
+export interface AIProviderSettings {
+  endpoint: string
+  model: string
+  max_tokens: number
+  temperature: number
+  api_key_configured: boolean
+  api_key_storage_available: boolean
+  sources: AIProviderSettingSources
+  state: AIProviderState
+  last_tested_at?: string
+  last_test_error?: string
+  last_test_model?: string
+}
+
+// PATCH body. Omitted fields are kept; "" for endpoint/model and 0 for
+// max_tokens clear the stored value.
+export interface UpdateAIProviderSettingsRequest {
+  endpoint?: string
+  model?: string
+  max_tokens?: number
+  temperature?: number
+  clear_temperature?: boolean
+  api_key?: string
+  clear_api_key?: boolean
+}
+
+export interface AIProviderTestResult {
+  ok: boolean
+  state: AIProviderState
+  endpoint: string
+  model: string
+  latency_ms: number
+  streaming_supported: boolean
+  error?: string
+  tested_at: string
+}
