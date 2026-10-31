@@ -93,12 +93,30 @@ func (ss *SettingsServer) aiSettingsResponse(r *http.Request) (*domain.AIProvide
 		resp.LastTestError = errUnreadableKey
 	case !resolved.APIKeyConfigured && strings.TrimSpace(cfg.Endpoint) == "":
 		resp.State = domain.AIProviderStateNotConfigured
+	case testResultStale(resolved):
+		// The last test ran against another endpoint, model or key source
+		// (typically CLOUDPAM_LLM_* changed across a restart), so its verdict
+		// does not describe the current provider. When it was recorded is
+		// still worth showing.
+		resp.State = domain.AIProviderStateConfigured
+		resp.LastTestError = ""
 	case resolved.Stored.State != "":
 		resp.State = resolved.Stored.State
 	default:
 		resp.State = domain.AIProviderStateConfigured
 	}
 	return resp, nil
+}
+
+// testResultStale reports a stored verified or failing result whose
+// fingerprint no longer matches the effective configuration. Documents written
+// before fingerprints were recorded have none and keep their state.
+func testResultStale(resolved llm.Resolved) bool {
+	stored := resolved.Stored
+	if stored.State != domain.AIProviderStateVerified && stored.State != domain.AIProviderStateFailing {
+		return false
+	}
+	return stored.LastTestFingerprint != "" && stored.LastTestFingerprint != resolved.Fingerprint()
 }
 
 func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,8 @@ package llm
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,6 +29,26 @@ type Resolved struct {
 	Sources          domain.AIProviderSettingSources
 	Stored           domain.AIProviderSettings
 	APIKeyConfigured bool
+}
+
+// Fingerprint identifies the configuration a test result applies to: a hex
+// SHA-256 over the effective endpoint, model and key source, plus the stored
+// key ciphertext when the key comes from the database, so re-saving the key
+// changes it. No key material, plaintext or hashed, goes in. A rotation of
+// CLOUDPAM_LLM_API_KEY with the same endpoint and model is therefore not
+// detected and the earlier test result stays in effect; that is accepted.
+func (r Resolved) Fingerprint() string {
+	h := sha256.New()
+	parts := []string{r.Config.Endpoint, r.Config.Model, r.Sources.APIKey}
+	if r.Sources.APIKey == domain.AISettingSourceDatabase {
+		parts = append(parts, r.Stored.APIKeyEncrypted)
+	}
+	for _, part := range parts {
+		// A separator keeps "ab"+"c" apart from "a"+"bc".
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Resolver merges the stored settings over the environment configuration.

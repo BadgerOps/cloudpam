@@ -285,3 +285,49 @@ func TestResolverWarnsOncePerUnreadableCiphertext(t *testing.T) {
 		t.Fatalf("warnings after a new unreadable ciphertext = %d, want 2", got)
 	}
 }
+
+func TestResolvedFingerprint(t *testing.T) {
+	resolve := func(t *testing.T, env Config, doc *domain.AIProviderSettings) Resolved {
+		t.Helper()
+		got, err := NewResolver(env, &fakeSettingsSource{doc: doc}, fakeDecrypt).Resolve(context.Background())
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		return got
+	}
+	env := defaultEnv()
+	env.Endpoint = "http://env:11434/v1"
+	env.APIKey = "env-key"
+	base := resolve(t, env, nil)
+
+	fp := base.Fingerprint()
+	if len(fp) != 64 || strings.ToLower(fp) != fp {
+		t.Fatalf("Fingerprint = %q, want lowercase hex sha-256", fp)
+	}
+	if again := resolve(t, env, nil).Fingerprint(); again != fp {
+		t.Fatalf("same inputs gave %q then %q", fp, again)
+	}
+
+	rotated := env
+	rotated.APIKey = "env-key-rotated"
+	if resolve(t, rotated, nil).Fingerprint() != fp {
+		t.Fatal("plaintext key material must not be a factor in the fingerprint")
+	}
+	for _, c := range []struct{ name, fp string }{
+		{"endpoint", resolve(t, env, &domain.AIProviderSettings{Endpoint: "http://db:11434/v1"}).Fingerprint()},
+		{"model", resolve(t, env, &domain.AIProviderSettings{Model: "other"}).Fingerprint()},
+		{"key source", resolve(t, env, &domain.AIProviderSettings{APIKeyEncrypted: "enc(db-key)"}).Fingerprint()},
+	} {
+		if c.fp == fp {
+			t.Fatalf("%s change did not change the fingerprint", c.name)
+		}
+		if strings.Contains(c.fp, "key") {
+			t.Fatalf("%s fingerprint is not opaque: %q", c.name, c.fp)
+		}
+	}
+	first := resolve(t, env, &domain.AIProviderSettings{APIKeyEncrypted: "enc(db-key)"}).Fingerprint()
+	resaved := resolve(t, env, &domain.AIProviderSettings{APIKeyEncrypted: "enc(db-key-2)"}).Fingerprint()
+	if first == resaved {
+		t.Fatal("re-saving the stored key must change the fingerprint")
+	}
+}

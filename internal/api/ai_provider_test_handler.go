@@ -59,7 +59,7 @@ func (ss *SettingsServer) handleTestAIProvider(w http.ResponseWriter, r *http.Re
 		writeJSON(w, status, resp)
 		return
 	}
-	if err := ss.recordAIProviderTest(ctx, before, &resp); err != nil {
+	if err := ss.recordAIProviderTest(ctx, before, resolved.Fingerprint(), &resp); err != nil {
 		status = http.StatusInternalServerError
 		ss.writeErr(ctx, w, status, "failed to save ai provider test result", err.Error())
 		return
@@ -105,14 +105,17 @@ func runAIProviderTest(ctx context.Context, provider llm.Provider, resp *domain.
 // recordAIProviderTest stores the outcome on the document read before the
 // test, with a compare-and-swap on its UpdatedAt. If the settings changed while
 // the test ran, the result describes a configuration that is no longer current
-// and the write would revert that change, so it is not recorded.
-func (ss *SettingsServer) recordAIProviderTest(ctx context.Context, before *domain.AIProviderSettings, resp *domain.AIProviderTestResponse) error {
+// and the write would revert that change, so it is not recorded. fingerprint
+// is llm.Resolved.Fingerprint of the configuration the test used, so the
+// result is reported only while that configuration is still in effect.
+func (ss *SettingsServer) recordAIProviderTest(ctx context.Context, before *domain.AIProviderSettings, fingerprint string, resp *domain.AIProviderTestResponse) error {
 	doc := before.Clone()
 	testedAt := resp.TestedAt
 	doc.State = resp.State
 	doc.LastTestedAt = &testedAt
 	doc.LastTestError = resp.Error
 	doc.LastTestModel = resp.Model
+	doc.LastTestFingerprint = fingerprint
 	err := ss.settingsStore.UpdateAIProviderSettingsIfUnchanged(ctx, before.UpdatedAt, doc)
 	if errors.Is(err, storage.ErrConflict) {
 		ss.logger.InfoContext(ctx, "ai provider settings changed during test; result not stored")

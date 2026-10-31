@@ -42,7 +42,11 @@ type AIProviderSettings struct {
 	LastTestedAt    *time.Time `json:"last_tested_at,omitempty"`
 	LastTestError   string     `json:"last_test_error,omitempty"` // sanitized
 	LastTestModel   string     `json:"last_test_model,omitempty"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// LastTestFingerprint identifies the effective configuration the last
+	// test ran against (see llm.Resolved.Fingerprint); the result is reported
+	// only while the current configuration still matches it.
+	LastTestFingerprint string    `json:"last_test_fingerprint,omitempty"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // DefaultAIProviderSettings returns an empty document: nothing stored.
@@ -67,6 +71,7 @@ func NormalizeAIProviderSettings(s *AIProviderSettings) *AIProviderSettings {
 	s.APIKeyEncrypted = strings.TrimSpace(s.APIKeyEncrypted)
 	s.LastTestError = strings.TrimSpace(s.LastTestError)
 	s.LastTestModel = strings.TrimSpace(s.LastTestModel)
+	s.LastTestFingerprint = strings.TrimSpace(s.LastTestFingerprint)
 	if s.MaxTokens < 0 {
 		s.MaxTokens = 0
 	}
