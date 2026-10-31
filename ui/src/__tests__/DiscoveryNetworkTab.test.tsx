@@ -16,6 +16,11 @@ const object: NetworkObject = {
 }
 
 const deleteObject = vi.fn()
+const fetchFlat = vi.fn()
+const fetchHierarchy = vi.fn()
+const fetchConflicts = vi.fn()
+const fetchObjects = vi.fn()
+const fetchRelationships = vi.fn()
 const hasPermission = vi.fn()
 const showToast = vi.fn()
 
@@ -29,11 +34,11 @@ vi.mock('../hooks/useNetwork', async (importOriginal) => ({
     relationships: null,
     loading: false,
     error: null,
-    fetchFlat: vi.fn().mockResolvedValue(undefined),
-    fetchHierarchy: vi.fn().mockResolvedValue(undefined),
-    fetchConflicts: vi.fn().mockResolvedValue(undefined),
-    fetchObjects: vi.fn().mockResolvedValue(undefined),
-    fetchRelationships: vi.fn().mockResolvedValue(undefined),
+    fetchFlat,
+    fetchHierarchy,
+    fetchConflicts,
+    fetchObjects,
+    fetchRelationships,
     deleteObject,
     resolveConflict: vi.fn(),
     linkConflict: vi.fn(),
@@ -66,6 +71,9 @@ function renderObjectsMode() {
 
 beforeEach(() => {
   deleteObject.mockReset().mockResolvedValue(undefined)
+  for (const fetcher of [fetchFlat, fetchHierarchy, fetchConflicts, fetchObjects, fetchRelationships]) {
+    fetcher.mockReset().mockResolvedValue(undefined)
+  }
   hasPermission.mockReset()
   showToast.mockReset()
 })
