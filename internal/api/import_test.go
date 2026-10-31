@@ -63,7 +63,7 @@ func TestImportAccounts_MissingRequiredColumns(t *testing.T) {
 
 func TestImportAccounts_Success(t *testing.T) {
 	srv, st := setupTestServer()
-	body := "key,name,provider,description\naws:111,Prod,aws,Production\naws:222,Dev,aws,Development\n"
+	body := "key,name,provider,description\naws:111111111111,Prod,aws,Production\naws:222222222222,Dev,aws,Development\n"
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/import/accounts", strings.NewReader(body))
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
@@ -88,7 +88,7 @@ func TestImportAccounts_Success(t *testing.T) {
 
 func TestImportAccounts_WithOptionalColumns(t *testing.T) {
 	srv, st := setupTestServer()
-	body := "key,name,provider,platform,tier,environment,regions\naws:111,Prod,aws,aws,enterprise,production,us-east-1;us-west-2\n"
+	body := "key,name,provider,platform,tier,environment,regions\naws:111111111111,Prod,aws,aws,enterprise,production,us-east-1;us-west-2\n"
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/import/accounts", strings.NewReader(body))
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)
@@ -110,7 +110,7 @@ func TestImportAccounts_WithOptionalColumns(t *testing.T) {
 
 func TestImportAccounts_EmptyKeyOrName(t *testing.T) {
 	srv, _ := setupTestServer()
-	body := "key,name\n,Prod\naws:222,\n"
+	body := "key,name\n,Prod\naws:222222222222,\n"
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/import/accounts", strings.NewReader(body))
 	rr := httptest.NewRecorder()
 	srv.mux.ServeHTTP(rr, req)

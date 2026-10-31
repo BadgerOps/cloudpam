@@ -15,6 +15,7 @@ import (
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
+	"cloudpam/internal/validation"
 )
 
 // parseExportDatasets returns the set of known datasets named by the datasets
@@ -465,6 +466,15 @@ func (s *Server) handleImportAccounts(w http.ResponseWriter, r *http.Request) {
 			errs = append(errs, fmt.Sprintf("row %d: key and name required", i+2))
 			continue
 		}
+		// Same checks as POST /api/v1/accounts (#350).
+		if err := validation.ValidateAccountKey(key); err != nil {
+			errs = append(errs, fmt.Sprintf("row %d: %v", i+2, err))
+			continue
+		}
+		if err := validation.ValidateName(name); err != nil {
+			errs = append(errs, fmt.Sprintf("row %d: %v", i+2, err))
+			continue
+		}
 
 		acc := domain.CreateAccount{
 			Key:  key,
@@ -578,16 +588,19 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []poolRow
+	var errs []string
 	idIdx, hasID := colIdx["id"]
 
 	for i, row := range records[1:] {
 		if len(row) <= nameIdx || len(row) <= cidrIdx {
+			errs = append(errs, fmt.Sprintf("row %d: insufficient columns", i+2))
 			continue
 		}
 
 		name := strings.TrimSpace(row[nameIdx])
 		cidr := strings.TrimSpace(row[cidrIdx])
 		if name == "" || cidr == "" {
+			errs = append(errs, fmt.Sprintf("row %d: name and cidr required", i+2))
 			continue
 		}
 
@@ -651,7 +664,6 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 	})
 
 	var created, skipped int
-	var errs []string
 
 	batch := make([]poolPlacement, 0, len(rows))
 	batchRows := make([]int, 0, len(rows))
@@ -665,6 +677,15 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			Status:      pr.status,
 			Source:      pr.source,
 			Description: pr.description,
+		}
+
+		// Same field validation as POST /api/v1/pools (#350). Containment and
+		// overlap are still decided by placePools below.
+		if ferr := validatePoolFields(pool); ferr != nil {
+			s.logger.WarnContext(r.Context(), "pools:import invalid "+ferr.Field,
+				"row", pr.rowNum, ferr.Field, ferr.Value, "reason", ferr.Error())
+			errs = append(errs, fmt.Sprintf("row %d: %v", pr.rowNum, ferr))
+			continue
 		}
 
 		// Resolve account_id: prefer account_key lookup, fall back to direct ID
