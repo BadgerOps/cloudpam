@@ -10,10 +10,11 @@ func TestScrubSentryEventRemovesBodiesAndAuthHeaders(t *testing.T) {
 	event := &sentry.Event{
 		Message: "boom",
 		Request: &sentry.Request{
-			URL:     "https://cloudpam.example/api/v1/settings/ai",
-			Method:  "PATCH",
-			Data:    `{"api_key":"sk-x"}`,
-			Cookies: "cloudpam_session=abc",
+			URL:         "https://cloudpam.example/api/v1/settings/ai",
+			Method:      "PATCH",
+			QueryString: "code=oidc-auth-code&state=oidc-state",
+			Data:        `{"api_key":"sk-x"}`,
+			Cookies:     "cloudpam_session=abc",
 			Headers: map[string]string{
 				"Authorization": "Bearer cpk_secret",
 				"cookie":        "cloudpam_session=abc",
@@ -32,6 +33,10 @@ func TestScrubSentryEventRemovesBodiesAndAuthHeaders(t *testing.T) {
 	}
 	if got.Request.Cookies != "" {
 		t.Errorf("Request.Cookies = %q, want empty", got.Request.Cookies)
+	}
+	// The OIDC callback's code and state arrive as query parameters.
+	if got.Request.QueryString != "" {
+		t.Errorf("Request.QueryString = %q, want empty", got.Request.QueryString)
 	}
 	for _, h := range []string{"Authorization", "cookie", "X-Csrf-Token"} {
 		if v, ok := got.Request.Headers[h]; ok {
