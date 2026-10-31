@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { get, post } from '../api/client'
+import { del, get, post } from '../api/client'
 import type {
   NetworkConflict,
   NetworkConflictActionResponse,
@@ -173,6 +173,16 @@ export function useNetworkView() {
     }
   }, [])
 
+  const deleteObject = useCallback(async (id: number) => {
+    await del(`/api/v1/network/objects/${id}`)
+    setObjects((current) => {
+      if (!current) return current
+      const items = current.items.filter((item) => item.id !== id)
+      if (items.length === current.items.length) return current
+      return { ...current, items, total: Math.max(0, current.total - 1) }
+    })
+  }, [])
+
   const resolveConflict = useCallback(
     async (id: string, decision: string, reason?: string) => {
       return post<NetworkConflict>(`/api/v1/network/conflicts/${encodeURIComponent(id)}/resolve`, {
@@ -233,6 +243,7 @@ export function useNetworkView() {
     fetchConflicts,
     fetchObjects,
     fetchRelationships,
+    deleteObject,
     resolveConflict,
     linkConflict,
     importConflict,
