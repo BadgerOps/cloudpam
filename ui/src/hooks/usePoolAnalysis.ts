@@ -3,6 +3,11 @@ import { post } from '../api/client'
 import type { FragmentationAnalysis, GapAnalysis } from '../api/types'
 import { useLatestRequest } from './useLatestRequest'
 
+interface PoolError {
+  poolId: number
+  message: string
+}
+
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback
 }
@@ -17,8 +22,10 @@ export function usePoolAnalysis(poolId: number | null) {
   const [fragmentation, setFragmentation] = useState<FragmentationAnalysis | null>(null)
   const [gapsLoading, setGapsLoading] = useState(poolId !== null)
   const [fragmentationLoading, setFragmentationLoading] = useState(poolId !== null)
-  const [gapsError, setGapsError] = useState<string | null>(null)
-  const [fragmentationError, setFragmentationError] = useState<string | null>(null)
+  // Errors carry the pool they belong to so that, like the results, an error
+  // from the previous pool is never rendered for the current one.
+  const [gapsError, setGapsError] = useState<PoolError | null>(null)
+  const [fragmentationError, setFragmentationError] = useState<PoolError | null>(null)
   const { begin, isCurrent } = useLatestRequest()
 
   const load = useCallback((id: number | null) => {
@@ -47,7 +54,7 @@ export function usePoolAnalysis(poolId: number | null) {
       },
       (err: unknown) => {
         if (!isCurrent(token)) return
-        setGapsError(errorMessage(err, 'Failed to load gap analysis'))
+        setGapsError({ poolId: id, message: errorMessage(err, 'Failed to load gap analysis') })
         setGapsLoading(false)
       },
     )
@@ -59,7 +66,7 @@ export function usePoolAnalysis(poolId: number | null) {
       },
       (err: unknown) => {
         if (!isCurrent(token)) return
-        setFragmentationError(errorMessage(err, 'Failed to load fragmentation analysis'))
+        setFragmentationError({ poolId: id, message: errorMessage(err, 'Failed to load fragmentation analysis') })
         setFragmentationLoading(false)
       },
     )
@@ -81,8 +88,8 @@ export function usePoolAnalysis(poolId: number | null) {
     gaps: gaps?.pool_id === poolId ? gaps : null,
     fragmentation: fragmentation?.pool_id === poolId ? fragmentation : null,
     loading: gapsLoading || fragmentationLoading,
-    gapsError,
-    fragmentationError,
+    gapsError: gapsError?.poolId === poolId ? gapsError.message : null,
+    fragmentationError: fragmentationError?.poolId === poolId ? fragmentationError.message : null,
     retry,
   }
 }
