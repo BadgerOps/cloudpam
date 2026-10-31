@@ -302,9 +302,19 @@ func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.Net
 	return out, rows.Err()
 }
 
+// UpsertNetworkRelationship checks that every network object the relationship
+// names exists and writes the row in one transaction. Writes serialize on the
+// single connection (or behind the write transaction with
+// SQLITE_MAX_OPEN_CONNS>1), so a concurrent DeleteNetworkObject runs either
+// before the check, which then fails, or after the commit, which then removes
+// the new relationship.
 func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateNetworkRelationship) (domain.NetworkRelationship, error) {
 	if in.Type == "" || in.SourceKind == "" || in.SourceID == "" || in.TargetKind == "" || in.TargetID == "" {
 		return domain.NetworkRelationship{}, fmt.Errorf("relationship type, source, and target are required: %w", storage.ErrValidation)
+	}
+	objectIDs, err := storage.NetworkRelationshipObjectIDs(in)
+	if err != nil {
+		return domain.NetworkRelationship{}, err
 	}
 	if in.ID == "" {
 		in.ID = generatedNetworkRelationshipID(in)
@@ -318,7 +328,23 @@ func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateN
 	}
 	evidence, _ := json.Marshal(in.Evidence)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO network_relationships
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.NetworkRelationship{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, objectID := range objectIDs {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM network_objects WHERE id = ?)`, objectID).Scan(&exists); err != nil {
+			return domain.NetworkRelationship{}, err
+		}
+		if !exists {
+			return domain.NetworkRelationship{}, storage.NetworkObjectRefNotFound(strconv.FormatInt(objectID, 10))
+		}
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO network_relationships
 		(id, type, source_kind, source_id, target_kind, target_id, confidence, reason, evidence, resolution_state, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -334,6 +360,9 @@ func (s *Store) UpsertNetworkRelationship(ctx context.Context, in domain.CreateN
 			updated_at = excluded.updated_at`,
 		in.ID, string(in.Type), in.SourceKind, in.SourceID, in.TargetKind, in.TargetID, in.Confidence, in.Reason, string(evidence), in.ResolutionState, now, now, requestedState)
 	if err != nil {
+		return domain.NetworkRelationship{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return domain.NetworkRelationship{}, err
 	}
 	rels, err := s.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{})

@@ -145,8 +145,14 @@ func TestPostgresDeleteNetworkObject(t *testing.T) {
 		}
 		storeB := &Store{pool: testDB.pool, orgID: orgB}
 		obj := newObject(t, domain.CreateNetworkObject{Name: "org-a-vpc"})
-		if _, err := storeB.UpsertNetworkRelationship(ctx, domain.CreateNetworkRelationship{ID: "rel-other-org", Type: domain.NetworkRelationshipContains, SourceKind: domain.NetworkEntityKindObject, SourceID: strconv.FormatInt(obj.ID, 10), TargetKind: "pool", TargetID: "1"}); err != nil {
-			t.Fatalf("create org-b relationship: %v", err)
+		// UpsertNetworkRelationship now rejects an object id from another
+		// organization, so seed the row directly: the delete must still scope
+		// its relationship cleanup to its own organization.
+		if _, err := testDB.pool.Exec(ctx, `INSERT INTO network_relationships
+			(id, organization_id, type, source_kind, source_id, target_kind, target_id, created_at, updated_at)
+			VALUES ('rel-other-org', $1, $2, $3, $4, 'pool', '1', NOW(), NOW())`,
+			orgB, string(domain.NetworkRelationshipContains), domain.NetworkEntityKindObject, strconv.FormatInt(obj.ID, 10)); err != nil {
+			t.Fatalf("seed org-b relationship: %v", err)
 		}
 		if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject: %v", err)

@@ -258,6 +258,10 @@ func (m *MemoryNetworkStore) UpsertNetworkRelationship(_ context.Context, in dom
 	if in.Type == "" || in.SourceKind == "" || in.SourceID == "" || in.TargetKind == "" || in.TargetID == "" {
 		return domain.NetworkRelationship{}, fmt.Errorf("relationship type, source, and target are required: %w", ErrValidation)
 	}
+	objectIDs, err := NetworkRelationshipObjectIDs(in)
+	if err != nil {
+		return domain.NetworkRelationship{}, err
+	}
 	id := in.ID
 	if id == "" {
 		id = networkRelationshipID(in)
@@ -273,6 +277,14 @@ func (m *MemoryNetworkStore) UpsertNetworkRelationship(_ context.Context, in dom
 
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
+
+	// Checked under the same lock DeleteNetworkObject writes under, so a
+	// relationship cannot be stored against an object being deleted.
+	for _, objectID := range objectIDs {
+		if _, ok := m.objects[objectID]; !ok {
+			return domain.NetworkRelationship{}, NetworkObjectRefNotFound(strconv.FormatInt(objectID, 10))
+		}
+	}
 
 	now := time.Now().UTC()
 	rel := domain.NetworkRelationship{

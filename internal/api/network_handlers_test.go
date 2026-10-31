@@ -1495,3 +1495,15 @@ func TestNetworkObjectDeleteAppearsInOpenAPISpec(t *testing.T) {
 		t.Fatalf("delete should advertise 204, got responses %v", responses)
 	}
 }
+
+func TestNetworkRelationshipPostRejectsMissingObject(t *testing.T) {
+	discSrv, _, _, _ := setupDiscoveryTestServer()
+	body := `{"id":"rel-missing","type":"contains","source_kind":"network_object","source_id":"424242","target_kind":"pool","target_id":"7"}`
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", body, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "network object 424242 not found") {
+		t.Fatalf("400 body should name the missing object, got %s", rr.Body.String())
+	}
+	if rels := listNetworkRelationshipsForDeleteTest(t, discSrv); containsRelationshipID(rels, "rel-missing") {
+		t.Fatalf("rejected relationship must not be stored, got %+v", rels)
+	}
+}
