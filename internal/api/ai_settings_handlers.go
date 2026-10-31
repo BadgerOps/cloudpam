@@ -11,10 +11,14 @@ import (
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning/llm"
 	"cloudpam/internal/secrets"
+	"cloudpam/internal/storage"
 )
 
 const (
 	aiProviderSettingsID = "ai_provider"
+
+	// aiSettingsPatchAttempts bounds the compare-and-swap retries of one PATCH.
+	aiSettingsPatchAttempts = 3
 
 	errEphemeralAPIKey  = "cannot store an api key: CLOUDPAM_OIDC_ENCRYPTION_KEY is not set, so the stored credential would be lost at restart; set the key or use CLOUDPAM_LLM_API_KEY"
 	errUnreadableKey    = "stored api key cannot be decrypted; check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again"
@@ -114,55 +118,77 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		return
 	}
 
-	doc, err := ss.settingsStore.GetAIProviderSettings(ctx)
-	if err != nil {
-		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
-		return
-	}
-	// The stored key is bound to the stored endpoint: moving the endpoint must
-	// not silently send that key to the new host.
-	if req.Endpoint != nil && strings.TrimSpace(*req.Endpoint) != doc.Endpoint &&
-		doc.APIKeyEncrypted != "" && req.APIKey == nil && !req.ClearAPIKey {
-		ss.writeErr(ctx, w, http.StatusBadRequest, "invalid endpoint", errEndpointNeedsKey)
-		return
-	}
 	var encrypted string
 	if req.APIKey != nil {
+		var err error
 		if encrypted, err = secrets.Encrypt(strings.TrimSpace(*req.APIKey), deps.encKey); err != nil {
 			// The error never contains the key; keep the response generic anyway.
 			ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to encrypt api key", "")
 			return
 		}
 	}
-	changed, material := applyAIProviderUpdate(doc, &req, encrypted)
-	if len(changed) == 0 {
-		// Nothing to store: keep UpdatedAt (and so any in-flight test result)
-		// and the audit log untouched.
-		ss.writeAISettings(w, r)
-		return
+
+	// Read, apply and write with a compare-and-swap on UpdatedAt, so a PATCH
+	// or test result that lands in between is re-applied over rather than
+	// overwritten. A non-material PATCH would otherwise erase a just-recorded
+	// test result.
+	for attempt := 1; ; attempt++ {
+		doc, err := ss.settingsStore.GetAIProviderSettings(ctx)
+		if err != nil {
+			ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
+			return
+		}
+		// The stored key is bound to the stored endpoint: moving the endpoint must
+		// not silently send that key to the new host.
+		if req.Endpoint != nil && strings.TrimSpace(*req.Endpoint) != doc.Endpoint &&
+			doc.APIKeyEncrypted != "" && req.APIKey == nil && !req.ClearAPIKey {
+			ss.writeErr(ctx, w, http.StatusBadRequest, "invalid endpoint", errEndpointNeedsKey)
+			return
+		}
+		asRead := doc.UpdatedAt
+		changed, material := applyAIProviderUpdate(doc, &req, encrypted)
+		if len(changed) == 0 {
+			// Nothing to store: keep UpdatedAt (and so any in-flight test result)
+			// and the audit log untouched.
+			ss.writeAISettings(w, r)
+			return
+		}
+		stampAIProviderUpdate(doc, material)
+		err = ss.settingsStore.UpdateAIProviderSettingsIfUnchanged(ctx, asRead, doc)
+		switch {
+		case err == nil:
+			ss.logAuditWithChanges(ctx, audit.ActionUpdate, audit.ResourceSettings, aiProviderSettingsID, aiProviderSettingsID,
+				&audit.Changes{After: map[string]any{"changed": changed}}, http.StatusOK)
+			ss.writeAISettings(w, r)
+			return
+		case errors.Is(err, storage.ErrConflict) && attempt < aiSettingsPatchAttempts:
+			continue
+		case errors.Is(err, storage.ErrConflict):
+			ss.writeErr(ctx, w, http.StatusConflict, "ai provider settings changed concurrently", "retry the request")
+			return
+		default:
+			ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to save ai provider settings", err.Error())
+			return
+		}
 	}
+}
+
+// stampAIProviderUpdate resets the test result when the change affects which
+// provider is reached and moves UpdatedAt forward. UpdatedAt is the
+// compare-and-swap token for PATCH and test results, so every stored change
+// moves it, even within the same clock tick.
+func stampAIProviderUpdate(doc *domain.AIProviderSettings, material bool) {
 	if material {
 		doc.State = domain.AIProviderStateConfigured
 		doc.LastTestedAt = nil
 		doc.LastTestError = ""
 		doc.LastTestModel = ""
 	}
-	// UpdatedAt is the compare-and-swap token for test results, so every PATCH
-	// that changes a field moves it forward, even within the same clock tick.
 	now := time.Now().UTC()
 	if !now.After(doc.UpdatedAt) {
 		now = doc.UpdatedAt.Add(time.Nanosecond)
 	}
 	doc.UpdatedAt = now
-	if err := ss.settingsStore.UpdateAIProviderSettings(ctx, doc); err != nil {
-		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to save ai provider settings", err.Error())
-		return
-	}
-
-	ss.logAuditWithChanges(ctx, audit.ActionUpdate, audit.ResourceSettings, aiProviderSettingsID, aiProviderSettingsID,
-		&audit.Changes{After: map[string]any{"changed": changed}}, http.StatusOK)
-
-	ss.writeAISettings(w, r)
 }
 
 // applyAIProviderUpdate applies req to doc. It returns the names of the fields

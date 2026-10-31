@@ -69,6 +69,15 @@ func envDefaults() llm.Config {
 
 func setupAISettings(t *testing.T, env llm.Config, storageAvailable bool) *aiSettingsFixture {
 	t.Helper()
+	settings := storage.NewMemorySettingsStore()
+	return setupAISettingsWithStore(t, env, storageAvailable, settings, settings)
+}
+
+// setupAISettingsWithStore wires the settings endpoints over store while the
+// resolver reads the underlying memory store, so a test can wrap the store the
+// handlers see without changing what the resolver observes.
+func setupAISettingsWithStore(t *testing.T, env llm.Config, storageAvailable bool, settings *storage.MemorySettingsStore, store storage.SettingsStore) *aiSettingsFixture {
+	t.Helper()
 	key, err := secrets.GenerateKey()
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -78,10 +87,9 @@ func setupAISettings(t *testing.T, env llm.Config, storageAvailable bool) *aiSet
 	logs := &syncBuffer{}
 	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: logs})
 	srv := NewServer(mux, storage.NewMemoryStore(), logger, nil, auditLogger)
-	settings := storage.NewMemorySettingsStore()
 	resolver := llm.NewResolver(env, settings, func(c string) (string, error) { return secrets.Decrypt(c, key) })
 	manager := llm.NewManager(resolver)
-	ss := NewSettingsServer(srv, settings)
+	ss := NewSettingsServer(srv, store)
 	ss.SetAIProvider(manager, resolver, key, storageAvailable)
 	ss.RegisterSettingsRoutes()
 	return &aiSettingsFixture{mux: mux, srv: srv, settings: settings, audit: auditLogger, manager: manager, key: key, logs: logs}
