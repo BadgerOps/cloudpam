@@ -286,6 +286,7 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/network/merged` - merged managed + discovered view (GET)
   - `/api/v1/network/conflicts` - overlapping-CIDR conflicts (GET)
   - `/api/v1/network/objects` - network object CRUD (GET/POST/PATCH)
+  - `/api/v1/network/objects/{id}` - network object detail, update, delete (GET/PATCH/DELETE)
   - `/api/v1/network/relationships` - relationship CRUD (GET/POST)
   - `/api/v1/updates` - check for a new release (GET)
   - `/api/v1/updates/upgrade` - trigger self-upgrade (POST)

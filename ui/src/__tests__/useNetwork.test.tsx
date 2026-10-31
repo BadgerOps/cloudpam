@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useNetworkView } from '../hooks/useNetwork'
+import { ApiRequestError } from '../api/client'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -136,5 +137,66 @@ describe('useNetworkView', () => {
         }),
       }),
     )
+  })
+  describe('deleteObject', () => {
+    const objectList = {
+      items: [
+        { id: 41, name: 'keep-vpc', object_type: 'vpc', state: 'active' },
+        { id: 42, name: 'prod-vpc', object_type: 'vpc', state: 'active' },
+      ],
+      total: 2,
+    }
+
+    it('issues DELETE and removes the object from local state', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(objectList))
+        .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      vi.stubGlobal('fetch', fetchMock)
+      const { result } = renderHook(() => useNetworkView())
+
+      await act(async () => {
+        await result.current.fetchObjects()
+      })
+      await act(async () => {
+        await result.current.deleteObject(42)
+      })
+
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        '/api/v1/network/objects/42',
+        expect.objectContaining({ method: 'DELETE', credentials: 'same-origin' }),
+      )
+      expect(result.current.objects?.items.map((item) => item.id)).toEqual([41])
+      expect(result.current.objects?.total).toBe(1)
+    })
+
+    it('rejects with ApiRequestError on 409 and leaves state unchanged', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(objectList))
+        .mockResolvedValueOnce(
+          jsonResponse({ error: 'conflict: network object has 2 child objects' }, 409),
+        )
+      vi.stubGlobal('fetch', fetchMock)
+      const { result } = renderHook(() => useNetworkView())
+
+      await act(async () => {
+        await result.current.fetchObjects()
+      })
+
+      let caught: unknown
+      await act(async () => {
+        try {
+          await result.current.deleteObject(42)
+        } catch (err) {
+          caught = err
+        }
+      })
+
+      expect(caught).toBeInstanceOf(ApiRequestError)
+      expect((caught as ApiRequestError).status).toBe(409)
+      expect(result.current.objects?.items.map((item) => item.id)).toEqual([41, 42])
+      expect(result.current.objects?.total).toBe(2)
+    })
   })
 })

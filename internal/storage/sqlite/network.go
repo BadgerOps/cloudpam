@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -202,6 +203,45 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 	return obj, true, err
 }
 
+// DeleteNetworkObject counts children, removes the relationships that
+// reference the object, and deletes it in one transaction. A concurrent child
+// insert waits on the single connection (or, with SQLITE_MAX_OPEN_CONNS>1, is
+// serialized behind this write transaction), so it lands either before the
+// count or after the delete. The parent_object_id ON DELETE SET NULL action
+// never fires: children block.
+func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM network_objects WHERE id = ?)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("network object not found: %w", storage.ErrNotFound)
+	}
+	var children int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM network_objects WHERE parent_object_id = ?`, id).Scan(&children); err != nil {
+		return err
+	}
+	if err := storage.NetworkObjectHasChildrenError(children); err != nil {
+		return err
+	}
+	idText := strconv.FormatInt(id, 10)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM network_relationships
+		WHERE (source_kind = ? AND source_id = ?) OR (target_kind = ? AND target_id = ?)`,
+		domain.NetworkEntityKindObject, idText, domain.NetworkEntityKindObject, idText); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM network_objects WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {
 	where := []string{"1=1"}
 	args := []any{}
@@ -346,7 +386,8 @@ type scanner interface {
 func scanNetworkObject(row scanner) (domain.NetworkObject, error) {
 	var obj domain.NetworkObject
 	var parentID, poolID sql.NullInt64
-	var sourceID, metadata, createdAt, updatedAt string
+	var sourceID sql.NullString
+	var metadata, createdAt, updatedAt string
 	if err := row.Scan(&obj.ID, &obj.ObjectType, &obj.Provider, &obj.AccountID, &obj.Region, &obj.Name, &obj.CIDR, &obj.IPAddress, &obj.ProviderResourceID, &parentID, &poolID, &sourceID, &obj.State, &metadata, &createdAt, &updatedAt); err != nil {
 		return domain.NetworkObject{}, err
 	}
@@ -356,8 +397,8 @@ func scanNetworkObject(row scanner) (domain.NetworkObject, error) {
 	if poolID.Valid {
 		obj.PoolID = &poolID.Int64
 	}
-	if sourceID != "" {
-		id, err := uuid.Parse(sourceID)
+	if sourceID.Valid && sourceID.String != "" {
+		id, err := uuid.Parse(sourceID.String)
 		if err == nil {
 			obj.SourceDiscoveredID = &id
 		}

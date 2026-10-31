@@ -141,6 +141,7 @@ func TestProtectedFeatureRoutesAuthzCov(t *testing.T) {
 		{"network objects create", http.MethodPost, "/api/v1/network/objects", `{`, string(auth.RoleViewer), string(auth.RoleOperator)},
 		{"network object get", http.MethodGet, "/api/v1/network/objects/1", "", string(auth.RoleAuditor), string(auth.RoleViewer)},
 		{"network object patch", http.MethodPatch, "/api/v1/network/objects/1", `{`, string(auth.RoleViewer), string(auth.RoleOperator)},
+		{"network object delete", http.MethodDelete, "/api/v1/network/objects/1", "", string(auth.RoleViewer), string(auth.RoleOperator)},
 		{"network relationships list", http.MethodGet, "/api/v1/network/relationships", "", string(auth.RoleAuditor), string(auth.RoleViewer)},
 		{"network relationships create", http.MethodPost, "/api/v1/network/relationships", `{`, string(auth.RoleViewer), string(auth.RoleOperator)},
 		{"network relationship resolve", http.MethodPost, "/api/v1/network/relationships/resolve", `{`, string(auth.RoleViewer), string(auth.RoleOperator)},
