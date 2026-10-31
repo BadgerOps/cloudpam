@@ -101,6 +101,42 @@ describe('NetworkObjectTable delete action', () => {
     expect(screen.getByText('Deleted network object prod-vpc')).toBeTruthy()
   })
 
+  it('calls the latest onDeleted when it changes during an in-flight delete', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let resolveDelete: () => void = () => {}
+    const onDelete = vi.fn(
+      () => new Promise<void>((resolve) => {
+        resolveDelete = resolve
+      }),
+    )
+    const staleOnDeleted = vi.fn()
+    const freshOnDeleted = vi.fn()
+    const view = renderTable({ canDelete: true, onDelete, onDeleted: staleOnDeleted })
+
+    fireEvent.click(screen.getByLabelText('Delete network object prod-vpc'))
+    await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1))
+
+    view.rerender(
+      <ToastHarness>
+        <NetworkObjectTable
+          objects={[object]}
+          loading={false}
+          accounts={[]}
+          pools={[]}
+          onShowRelationships={vi.fn()}
+          canDelete
+          onDelete={onDelete}
+          onDeleted={freshOnDeleted}
+        />
+      </ToastHarness>,
+    )
+
+    resolveDelete()
+
+    await waitFor(() => expect(freshOnDeleted).toHaveBeenCalledTimes(1))
+    expect(staleOnDeleted).not.toHaveBeenCalled()
+  })
+
   it('shows the dependency message when the server returns 409', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const onDelete = vi.fn().mockRejectedValue(

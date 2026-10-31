@@ -1644,6 +1644,12 @@ export function NetworkObjectTable({
   const { showToast } = useToast()
   const [pendingDeleteIDs, setPendingDeleteIDs] = useState<Set<number>>(() => new Set())
   const pendingDeleteRef = useRef<Set<number>>(new Set())
+  // Always call the latest onDeleted, so a filter change during an in-flight
+  // delete refreshes with the new filters rather than the ones at click time.
+  const onDeletedRef = useRef(onDeleted)
+  useEffect(() => {
+    onDeletedRef.current = onDeleted
+  }, [onDeleted])
 
   async function handleDelete(object: NetworkObject) {
     if (!onDelete || pendingDeleteRef.current.has(object.id)) return
@@ -1655,7 +1661,7 @@ export function NetworkObjectTable({
     try {
       await onDelete(object)
       showToast(`Deleted network object ${object.name}`, 'success')
-      onDeleted?.()
+      onDeletedRef.current?.()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Delete failed'
       if (err instanceof ApiRequestError && err.status === 409) {
