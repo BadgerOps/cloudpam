@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -137,6 +138,74 @@ func TestProviderStopsAfterThreeRedirects(t *testing.T) {
 	// The first request plus at most three followed redirects.
 	if got := hits.Load(); got > 4 {
 		t.Fatalf("origin requests = %d, want at most 4", got)
+	}
+}
+
+// proxyRecorder is an httptest server standing in for an egress proxy: it
+// counts the requests it receives and answers each with a valid completion.
+func proxyRecorder(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	var hits atomic.Int32
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"via proxy"},"finish_reason":"stop"}]}`)
+	}))
+	t.Cleanup(proxy.Close)
+	return proxy, &hits
+}
+
+// forceProxy makes every provider request select proxy for the test's
+// duration. http.ProxyFromEnvironment caches the environment on first use in
+// a process, so the package-level hook is replaced instead of setting
+// HTTP_PROXY.
+func forceProxy(t *testing.T, proxy *httptest.Server) {
+	t.Helper()
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := proxyFromEnvironment
+	proxyFromEnvironment = func(*http.Request) (*url.URL, error) { return proxyURL, nil }
+	t.Cleanup(func() { proxyFromEnvironment = prev })
+}
+
+func TestProviderRefusesBlockedAddressBeforeProxy(t *testing.T) {
+	proxy, hits := proxyRecorder(t)
+	forceProxy(t, proxy)
+
+	p := NewOpenAIProvider(Config{APIKey: "sk-secret", Model: "m", Endpoint: "http://169.254.169.254/v1"})
+	_, err := p.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
+	if !errors.Is(err, ErrBlockedAddress) {
+		t.Fatalf("Complete err = %v, want ErrBlockedAddress", err)
+	}
+	if strings.Contains(err.Error(), "sk-secret") {
+		t.Fatal("error leaks the api key")
+	}
+	if got := DiagnoseError(err, time.Minute); got != "endpoint resolves to a blocked address" {
+		t.Fatalf("DiagnoseError = %q", got)
+	}
+	if got := hits.Load(); got != 0 {
+		t.Fatalf("proxy requests = %d, want 0: a blocked host must be refused before the proxy is used", got)
+	}
+}
+
+func TestProviderUsesProxyForAllowedHost(t *testing.T) {
+	proxy, hits := proxyRecorder(t)
+	forceProxy(t, proxy)
+
+	// localhost resolves to loopback, which stays allowed. Nothing listens on
+	// the port: the proxy answers, which proves the request went through it.
+	p := NewOpenAIProvider(Config{Model: "m", Endpoint: "http://localhost:9/v1"})
+	resp, err := p.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("Complete through the proxy: %v", err)
+	}
+	if resp.Content != "via proxy" {
+		t.Fatalf("content = %q, want the proxy's reply", resp.Content)
+	}
+	if got := hits.Load(); got != 1 {
+		t.Fatalf("proxy requests = %d, want exactly 1", got)
 	}
 }
 
