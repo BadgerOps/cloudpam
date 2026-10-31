@@ -826,6 +826,14 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 					item.ProposedParentPoolID = parent.PoolID
 				case selectedProviderIDs[parent.ResourceID]:
 					item.Evidence = append(item.Evidence, "parent "+parent.ResourceID+" is selected for import")
+					if _, err := netip.ParsePrefix(res.CIDR); err == nil && parent.CIDR != "" {
+						// Apply places the subnet under the pool created for this parent in the
+						// same run, so preview must apply the same containment rule.
+						if err := validateChildCIDR(parent.CIDR, res.CIDR); err != nil {
+							item.Issues = append(item.Issues, "outside_pool")
+							item.Evidence = append(item.Evidence, fmt.Sprintf("%s is not inside parent %s (%s): %v", res.CIDR, parent.ResourceID, parent.CIDR, err))
+						}
+					}
 				default:
 					item.Issues = append(item.Issues, "missing_parent")
 					item.Evidence = append(item.Evidence, "provider parent "+parent.ResourceID+" is discovered but not linked or selected")
@@ -837,6 +845,7 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 		}
 
 		d.classifyPoolRelationships(&item, res, pools)
+		flagPreviewParentPool(&item, res, poolsByID, req.AccountID)
 		if ids := duplicates[res.CIDR]; len(ids) > 0 {
 			item.Issues = append(item.Issues, "duplicate_cidr")
 			item.DuplicateResourceIDs = ids
@@ -915,6 +924,37 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 			item.ConflictPoolIDs = append(item.ConflictPoolIDs, pool.ID)
 			item.Evidence = append(item.Evidence, fmt.Sprintf("%s overlaps existing pool %d (%s)", res.CIDR, pool.ID, pool.CIDR))
 		}
+	}
+}
+
+// flagPreviewParentPool checks a pre-chosen parent pool (the pool a discovered parent is
+// linked to, or the selected pool) with the same rules apply enforces: the pool must exist,
+// belong to the import account, and contain the resource CIDR as a strict child. Without
+// this a disjoint CIDR is neither contained nor overlapping, so the item would be reported
+// importable and then refused by apply. Items that link an exact pool match do not use the
+// parent, and items whose CIDR is already flagged invalid are left to that issue.
+func flagPreviewParentPool(item *domain.DiscoveryImportPreviewItem, res *domain.DiscoveredResource, poolsByID map[int64]domain.Pool, accountID int64) {
+	if item.ProposedParentPoolID == nil || item.ProposedPoolID != nil {
+		return
+	}
+	if _, err := netip.ParsePrefix(res.CIDR); err != nil {
+		return
+	}
+	parentID := *item.ProposedParentPoolID
+	parent, ok := poolsByID[parentID]
+	if !ok {
+		item.Issues = append(item.Issues, "missing_parent")
+		item.Evidence = append(item.Evidence, fmt.Sprintf("parent pool %d not found", parentID))
+		return
+	}
+	if parent.AccountID != nil && *parent.AccountID != accountID {
+		item.Issues = append(item.Issues, "account_mismatch")
+		item.Evidence = append(item.Evidence, fmt.Sprintf("parent pool %d belongs to account %d", parentID, *parent.AccountID))
+		return
+	}
+	if err := validateChildCIDR(parent.CIDR, res.CIDR); err != nil {
+		item.Issues = append(item.Issues, "outside_pool")
+		item.Evidence = append(item.Evidence, fmt.Sprintf("%s is not inside parent pool %d (%s): %v", res.CIDR, parentID, parent.CIDR, err))
 	}
 }
 
