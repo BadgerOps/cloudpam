@@ -198,38 +198,42 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 // FOR KEY SHARE lock on the same row for its parent_object_id foreign key, so
 // it waits until this transaction ends and then fails its FK check. Children
 // block deletion, so the ON DELETE SET NULL action never fires.
-func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
+func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) (int, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var locked int64
 	err = tx.QueryRow(ctx, `SELECT id FROM network_objects WHERE id = $1 AND organization_id = $2 FOR UPDATE`, id, s.orgID).Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("network object not found: %w", storage.ErrNotFound)
+		return 0, fmt.Errorf("network object not found: %w", storage.ErrNotFound)
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var children int
 	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM network_objects WHERE parent_object_id = $1 AND organization_id = $2`, id, s.orgID).Scan(&children); err != nil {
-		return err
+		return 0, err
 	}
 	if err := storage.NetworkObjectHasChildrenError(children); err != nil {
-		return err
+		return 0, err
 	}
 	idText := strconv.FormatInt(id, 10)
-	if _, err := tx.Exec(ctx, `DELETE FROM network_relationships
+	tag, err := tx.Exec(ctx, `DELETE FROM network_relationships
 		WHERE organization_id = $1 AND ((source_kind = $2 AND source_id = $3) OR (target_kind = $2 AND target_id = $3))`,
-		s.orgID, domain.NetworkEntityKindObject, idText); err != nil {
-		return err
+		s.orgID, domain.NetworkEntityKindObject, idText)
+	if err != nil {
+		return 0, err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM network_objects WHERE id = $1 AND organization_id = $2`, id, s.orgID); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {

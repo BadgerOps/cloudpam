@@ -209,37 +209,45 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 // serialized behind this write transaction), so it lands either before the
 // count or after the delete. The parent_object_id ON DELETE SET NULL action
 // never fires: children block.
-func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
+func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	var exists bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM network_objects WHERE id = ?)`, id).Scan(&exists); err != nil {
-		return err
+		return 0, err
 	}
 	if !exists {
-		return fmt.Errorf("network object not found: %w", storage.ErrNotFound)
+		return 0, fmt.Errorf("network object not found: %w", storage.ErrNotFound)
 	}
 	var children int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM network_objects WHERE parent_object_id = ?`, id).Scan(&children); err != nil {
-		return err
+		return 0, err
 	}
 	if err := storage.NetworkObjectHasChildrenError(children); err != nil {
-		return err
+		return 0, err
 	}
 	idText := strconv.FormatInt(id, 10)
-	if _, err := tx.ExecContext(ctx, `DELETE FROM network_relationships
+	res, err := tx.ExecContext(ctx, `DELETE FROM network_relationships
 		WHERE (source_kind = ? AND source_id = ?) OR (target_kind = ? AND target_id = ?)`,
-		domain.NetworkEntityKindObject, idText, domain.NetworkEntityKindObject, idText); err != nil {
-		return err
+		domain.NetworkEntityKindObject, idText, domain.NetworkEntityKindObject, idText)
+	if err != nil {
+		return 0, err
+	}
+	removed, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM network_objects WHERE id = ?`, id); err != nil {
-		return err
+		return 0, err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(removed), nil
 }
 
 func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {

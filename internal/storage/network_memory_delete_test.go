@@ -16,7 +16,7 @@ func TestMemoryNetworkStore_DeleteNetworkObject(t *testing.T) {
 	t.Run("unreferenced object is deleted", func(t *testing.T) {
 		s := newNetworkStoreForExtraTests()
 		obj := mustCreateNetworkObjectExtra(t, s, domain.CreateNetworkObject{AccountID: 1, Name: "vpc"})
-		if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject: %v", err)
 		}
 		if _, found, err := s.GetNetworkObject(ctx, obj.ID); err != nil || found {
@@ -26,7 +26,7 @@ func TestMemoryNetworkStore_DeleteNetworkObject(t *testing.T) {
 
 	t.Run("unknown id is not found", func(t *testing.T) {
 		s := newNetworkStoreForExtraTests()
-		if err := s.DeleteNetworkObject(ctx, 999); !errors.Is(err, ErrNotFound) {
+		if _, err := s.DeleteNetworkObject(ctx, 999); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("error = %v, want ErrNotFound", err)
 		}
 	})
@@ -35,16 +35,16 @@ func TestMemoryNetworkStore_DeleteNetworkObject(t *testing.T) {
 		s := newNetworkStoreForExtraTests()
 		parent := mustCreateNetworkObjectExtra(t, s, domain.CreateNetworkObject{AccountID: 1, Name: "vpc"})
 		child := mustCreateNetworkObjectExtra(t, s, domain.CreateNetworkObject{AccountID: 1, Name: "subnet", ParentObjectID: &parent.ID})
-		if err := s.DeleteNetworkObject(ctx, parent.ID); !errors.Is(err, ErrConflict) {
+		if _, err := s.DeleteNetworkObject(ctx, parent.ID); !errors.Is(err, ErrConflict) {
 			t.Fatalf("error = %v, want ErrConflict", err)
 		}
 		if _, found, _ := s.GetNetworkObject(ctx, parent.ID); !found {
 			t.Fatal("parent was deleted despite the conflict")
 		}
-		if err := s.DeleteNetworkObject(ctx, child.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, child.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject(child): %v", err)
 		}
-		if err := s.DeleteNetworkObject(ctx, parent.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, parent.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject(parent) after child removed: %v", err)
 		}
 	})
@@ -60,7 +60,7 @@ func TestMemoryNetworkStore_DeleteNetworkObject(t *testing.T) {
 			if _, err := s.UpsertNetworkRelationship(ctx, rel); err != nil {
 				t.Fatalf("UpsertNetworkRelationship: %v", err)
 			}
-			if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
+			if _, err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 				t.Fatalf("DeleteNetworkObject: %v", err)
 			}
 			rels, err := s.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{IDs: []string{rel.ID}})
@@ -84,7 +84,7 @@ func TestMemoryNetworkStore_DeleteNetworkObject(t *testing.T) {
 				t.Fatalf("UpsertNetworkRelationship(%s): %v", rel.ID, err)
 			}
 		}
-		if err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
+		if _, err := s.DeleteNetworkObject(ctx, obj.ID); err != nil {
 			t.Fatalf("DeleteNetworkObject: %v", err)
 		}
 		rels, err := s.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{IDs: []string{"rel-other-object", "rel-pool-same-id"}})
@@ -101,7 +101,7 @@ func TestMemoryNetworkStore_DeleteNetworkObject(t *testing.T) {
 		if _, err := s.UpsertNetworkRelationship(ctx, rel); err != nil {
 			t.Fatalf("UpsertNetworkRelationship: %v", err)
 		}
-		err := s.DeleteNetworkObject(ctx, parent.ID)
+		_, err := s.DeleteNetworkObject(ctx, parent.ID)
 		if !errors.Is(err, ErrConflict) {
 			t.Fatalf("error = %v, want ErrConflict", err)
 		}
@@ -111,6 +111,30 @@ func TestMemoryNetworkStore_DeleteNetworkObject(t *testing.T) {
 		rels, lerr := s.ListNetworkRelationships(ctx, domain.NetworkRelationshipFilters{IDs: []string{rel.ID}})
 		if lerr != nil || len(rels) != 1 {
 			t.Fatalf("relationships after blocked delete = %+v err=%v, want it kept", rels, lerr)
+		}
+	})
+
+	t.Run("returns the number of relationships removed", func(t *testing.T) {
+		s := newNetworkStoreForExtraTests()
+		lone := mustCreateNetworkObjectExtra(t, s, domain.CreateNetworkObject{AccountID: 1, Name: "lone"})
+		removed, err := s.DeleteNetworkObject(ctx, lone.ID)
+		if err != nil || removed != 0 {
+			t.Fatalf("DeleteNetworkObject(lone) = %d, %v, want 0 relationships removed", removed, err)
+		}
+		obj := mustCreateNetworkObjectExtra(t, s, domain.CreateNetworkObject{AccountID: 1, Name: "vpc"})
+		idText := strconv.FormatInt(obj.ID, 10)
+		for _, rel := range []domain.CreateNetworkRelationship{
+			{ID: "rel-count-source", Type: domain.NetworkRelationshipContains, SourceKind: domain.NetworkEntityKindObject, SourceID: idText, TargetKind: "pool", TargetID: "7"},
+			{ID: "rel-count-target", Type: domain.NetworkRelationshipContains, SourceKind: "pool", SourceID: "8", TargetKind: domain.NetworkEntityKindObject, TargetID: idText},
+			{ID: "rel-count-other-kind", Type: domain.NetworkRelationshipContains, SourceKind: "pool", SourceID: idText, TargetKind: "pool", TargetID: "9"},
+		} {
+			if _, err := s.UpsertNetworkRelationship(ctx, rel); err != nil {
+				t.Fatalf("UpsertNetworkRelationship(%s): %v", rel.ID, err)
+			}
+		}
+		removed, err = s.DeleteNetworkObject(ctx, obj.ID)
+		if err != nil || removed != 2 {
+			t.Fatalf("DeleteNetworkObject(vpc) = %d, %v, want 2 relationships removed", removed, err)
 		}
 	})
 }

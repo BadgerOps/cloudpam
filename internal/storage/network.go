@@ -16,11 +16,12 @@ type NetworkStore interface {
 	CreateNetworkObject(ctx context.Context, in domain.CreateNetworkObject) (domain.NetworkObject, error)
 	UpdateNetworkObject(ctx context.Context, id int64, update domain.UpdateNetworkObject) (domain.NetworkObject, bool, error)
 	// DeleteNetworkObject removes an object together with every network
-	// relationship that references it as source or target, atomically. It
-	// returns ErrNotFound when the object does not exist and ErrConflict while
-	// child objects still name it as their parent. Linked pools and discovered
-	// resources are left untouched.
-	DeleteNetworkObject(ctx context.Context, id int64) error
+	// relationship that references it as source or target, atomically, and
+	// returns how many relationships were removed. It returns ErrNotFound when
+	// the object does not exist and ErrConflict while child objects still name
+	// it as their parent. Linked pools and discovered resources are left
+	// untouched.
+	DeleteNetworkObject(ctx context.Context, id int64) (removed int, err error)
 
 	ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error)
 	// UpsertNetworkRelationship creates or replaces a relationship. When the
