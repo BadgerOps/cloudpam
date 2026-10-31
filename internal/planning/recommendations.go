@@ -10,6 +10,7 @@ import (
 
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
+	"cloudpam/internal/validation"
 )
 
 // PoolPlacer creates a pool under CloudPAM's placement guard: parent containment, sibling overlap
@@ -55,7 +56,7 @@ func (s *RecommendationService) Generate(ctx context.Context, req domain.Generat
 		// Gap analysis → allocation recommendations.
 		gap, err := s.analysis.AnalyzeGaps(ctx, pool.ID)
 		if err == nil && gap != nil {
-			for _, block := range gap.AvailableBlocks {
+			for _, block := range allocatableBlocks(pool.CIDR, gap.AvailableBlocks) {
 				score := s.scoreAllocation(block.CIDR, pool, req.DesiredPrefixLen)
 				rec := domain.Recommendation{
 					ID:            uuid.New().String(),
@@ -164,6 +165,39 @@ func (s *RecommendationService) Dismiss(ctx context.Context, id string, reason s
 	rec.Status = domain.RecommendationStatusDismissed
 	rec.DismissReason = reason
 	return rec, nil
+}
+
+// allocatableBlocks turns the free blocks of a pool into blocks a child pool can
+// hold. A child must have a longer prefix than its parent, so the only free block
+// that cannot be allocated as-is is the pool's own range (an empty pool). That
+// block is offered as its two halves; a pool whose halves would exceed the
+// validation prefix bound cannot be split and gets no allocation.
+func allocatableBlocks(poolCIDR string, free []AvailableBlock) []AvailableBlock {
+	parent, err := netip.ParsePrefix(poolCIDR)
+	if err != nil {
+		return free
+	}
+	parent = parent.Masked()
+
+	out := make([]AvailableBlock, 0, len(free)+1)
+	for _, block := range free {
+		p, err := netip.ParsePrefix(block.CIDR)
+		if err != nil || p.Bits() > parent.Bits() {
+			out = append(out, block)
+			continue
+		}
+		halfBits := parent.Bits() + 1
+		if halfBits > validation.MaxPrefixLength {
+			continue
+		}
+		iv := prefixToInterval(parent)
+		halfSize := uint32(1) << (32 - halfBits)
+		for _, start := range []uint32{iv.start, iv.start + halfSize} {
+			half := netip.PrefixFrom(uint32ToIPv4(start), halfBits)
+			out = append(out, AvailableBlock{CIDR: half.String(), AddressCount: prefixAddressCount(half)})
+		}
+	}
+	return out
 }
 
 // scoreAllocation scores an available block (0-100) for allocation quality.

@@ -302,3 +302,67 @@ func TestRecommendationHandler_InvalidBody(t *testing.T) {
 		t.Errorf("expected 400, got %d", rr.Code)
 	}
 }
+
+// The first recommendation on a new, empty pool must be applicable: the
+// generator may not suggest the pool's own CIDR, which PlacePool refuses.
+func TestRecommendationHandler_ApplyFirstRecOnEmptyPool(t *testing.T) {
+	mux, st := setupRecommendationServer()
+
+	pool, err := st.CreatePool(context.Background(), domain.CreatePool{
+		Name: "Fresh", CIDR: "10.0.0.0/24", Type: domain.PoolTypeSupernet,
+		Description: "no children yet",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	genBody := `{"pool_ids":[` + int64Str(pool.ID) + `]}`
+	genReq := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/recommendations/generate", strings.NewReader(genBody))
+	genReq.Header.Set("Content-Type", "application/json")
+	genRR := httptest.NewRecorder()
+	mux.ServeHTTP(genRR, genReq)
+	if genRR.Code != stdhttp.StatusOK {
+		t.Fatalf("generate: expected 200, got %d: %s", genRR.Code, genRR.Body.String())
+	}
+
+	var genResp domain.GenerateRecommendationsResponse
+	if err := json.NewDecoder(genRR.Body).Decode(&genResp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	var allocID, allocCIDR string
+	for _, r := range genResp.Items {
+		if r.Type == domain.RecommendationTypeAllocation {
+			allocID, allocCIDR = r.ID, r.SuggestedCIDR
+			break
+		}
+	}
+	if allocID == "" {
+		t.Fatal("no allocation recommendation found for an empty pool")
+	}
+	if allocCIDR == pool.CIDR {
+		t.Fatalf("generator suggested the pool's own CIDR %s", allocCIDR)
+	}
+
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/recommendations/"+allocID+"/apply", strings.NewReader(`{"name":"First"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("apply: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var rec domain.Recommendation
+	if err := json.NewDecoder(rr.Body).Decode(&rec); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if rec.AppliedPoolID == nil {
+		t.Fatal("applied_pool_id not set")
+	}
+	child, found, err := st.GetPool(context.Background(), *rec.AppliedPoolID)
+	if err != nil || !found {
+		t.Fatalf("applied pool not found: found=%v err=%v", found, err)
+	}
+	if child.CIDR != allocCIDR || child.ParentID == nil || *child.ParentID != pool.ID {
+		t.Errorf("child = %+v, want CIDR %s under pool %d", child, allocCIDR, pool.ID)
+	}
+}
