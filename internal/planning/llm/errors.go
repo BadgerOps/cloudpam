@@ -55,6 +55,11 @@ func DiagnoseError(err error, timeout time.Duration) string {
 	if errors.As(err, &statusErr) {
 		return fmt.Sprintf("provider returned HTTP %d", statusErr.Status)
 	}
+	// The dialer wraps its Control error in a *net.OpError, so this comes
+	// before the generic network cases.
+	if errors.Is(err, ErrBlockedAddress) {
+		return ErrBlockedAddress.Error()
+	}
 	var netErr net.Error
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
 		return fmt.Sprintf("request timed out after %s", timeout)

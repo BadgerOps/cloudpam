@@ -85,11 +85,13 @@ type OpenAIProvider struct {
 	client *http.Client
 }
 
-// NewOpenAIProvider creates a provider for an OpenAI-compatible API.
+// NewOpenAIProvider creates a provider for an OpenAI-compatible API. Its HTTP
+// client refuses connections and redirects to blocked addresses (see
+// IsBlockedAddr) and follows at most three redirects.
 func NewOpenAIProvider(cfg Config) *OpenAIProvider {
 	return &OpenAIProvider{
 		cfg:    cfg,
-		client: &http.Client{},
+		client: newHTTPClient(),
 	}
 }
 

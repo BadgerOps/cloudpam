@@ -470,7 +470,11 @@ func TestAISettingsDatabaseEndpointDoesNotReceiveEnvKey(t *testing.T) {
 }
 
 func TestAISettingsPatchRejectsLinkLocalEndpoints(t *testing.T) {
-	for _, ep := range []string{"http://169.254.169.254/latest", "http://169.254.1.2:11434/v1", "http://[fd00:ec2::254]/v1", "http://[::ffff:169.254.169.254]/v1", "http://[fe80::1]/v1"} {
+	if got := validateAIEndpoint("http://Metadata.Google.Internal./v1"); got != "link-local and metadata addresses are not allowed" {
+		t.Fatalf("validateAIEndpoint(metadata hostname) = %q", got)
+	}
+	for _, ep := range []string{"http://169.254.169.254/latest", "http://169.254.1.2:11434/v1", "http://[fd00:ec2::254]/v1", "http://[::ffff:169.254.169.254]/v1", "http://[fe80::1]/v1",
+		"http://0.0.0.0:11434/v1", "http://[::]:11434/v1", "http://metadata.google.internal/computeMetadata/v1", "http://METADATA.GOOGLE.INTERNAL./v1"} {
 		f := setupAISettings(t, envDefaults(), true)
 		got := decodeAPIError(t, f.patch(t, `{"endpoint":"`+ep+`"}`, http.StatusBadRequest))
 		if got.Error != "invalid endpoint" || got.Detail != "link-local and metadata addresses are not allowed" {
