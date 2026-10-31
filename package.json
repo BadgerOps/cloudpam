@@ -7,7 +7,6 @@
     "screenshots:discovery": "SCREENSHOT_ONLY=discovery node scripts/capture_screenshots.js"
   },
   "devDependencies": {
-    "playwright": "^1.55.1"
+    "playwright": "1.57.0"
   }
 }
-
