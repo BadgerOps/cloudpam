@@ -268,6 +268,9 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/auth/users/{id}/revoke-sessions` - revoke all sessions for a user (POST)
   - `/api/v1/auth/setup` - first-boot admin account creation (POST)
   - `/api/v1/settings/security` - security settings (GET/PATCH)
+  - `/api/v1/settings/ai` - effective AI provider settings with per-field sources; never returns the key (GET, `settings:read`)
+  - `/api/v1/settings/ai` - update AI provider settings; `api_key` is encrypted at rest, 409 when the encryption key is ephemeral (PATCH, `settings:write`)
+  - `/api/v1/settings/ai/test` - test the effective provider and record verified/failing (POST, `settings:write`)
   - `/api/v1/auth/oidc/providers` - list enabled OIDC providers (GET, public)
   - `/api/v1/auth/oidc/login` - initiate OIDC login flow (GET)
   - `/api/v1/auth/oidc/callback` - OIDC callback handler (GET)
@@ -413,7 +416,7 @@ When adding endpoints:
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` — 24 hooks: useAIPlanner, useAccounts, useApiKeys, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useNetwork, useOIDCAdmin, useOIDCProviders, usePendingAction, usePoolAnalysis, usePools, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
+- API hooks in `ui/src/hooks/` — 25 hooks: useAIPlanner, useAISettings, useAccounts, useApiKeys, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useNetwork, useOIDCAdmin, useOIDCProviders, usePendingAction, usePoolAnalysis, usePools, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)
@@ -435,7 +438,7 @@ When adding endpoints:
 - `CLOUDPAM_TRUSTED_PROXIES`: Comma-separated CIDRs for trusted reverse proxies (e.g., `10.0.0.0/8,172.16.0.0/12`)
 
 ### OIDC/SSO
-- `CLOUDPAM_OIDC_ENCRYPTION_KEY`: 32-byte hex-encoded AES-256 key for OIDC client secret encryption (auto-generated with warning if not set)
+- `CLOUDPAM_OIDC_ENCRYPTION_KEY`: 32-byte hex-encoded AES-256 application secret key (`internal/secrets`); encrypts OIDC client secrets and AI provider API keys saved under Configuration → AI Provider (auto-generated with warning if not set; then the AI provider page cannot store an API key)
 - `CLOUDPAM_OIDC_CALLBACK_URL`: OIDC callback URL (default: `http://localhost:8080/api/v1/auth/oidc/callback`)
 
 ### Observability

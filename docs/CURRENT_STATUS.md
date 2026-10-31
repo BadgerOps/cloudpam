@@ -24,7 +24,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 | Recommendations | Partial | Allocation and compliance only. Consolidation / resize / reclaim are commented stubs. Stored in a table on SQLite and PostgreSQL (#315) |
 | Schema Planner | Complete, one gap | Templates, conflict check, apply. Terraform export writes `cloudpam_pool` resources (0.23.1). Apply does not check that a child CIDR sits inside its declared parent (#284) |
 | Terraform provider | Complete for v1 | `cloudpam_pool` and `cloudpam_account` resources plus matching data sources. Not discovery, drift, users, or AI. See [TERRAFORM_PROVIDER.md](TERRAFORM_PROVIDER.md) |
-| AI planning | Complete, optional | OpenAI-compatible backend via `CLOUDPAM_LLM_*`. SSE chat, sessions, plan extract/apply. Env-only config; no admin provider registry |
+| AI planning | Complete, optional | OpenAI-compatible backend via `CLOUDPAM_LLM_*`. SSE chat, sessions, plan extract/apply. Admin-managed provider settings (Configuration → AI Provider, `/api/v1/settings/ai`) with connection test and lifecycle state; env vars are the per-field fallback |
 | Auth | Complete | Local users, sessions, API keys (`Authorization: Bearer cpam_…`), custom-role RBAC, OIDC/SSO with JIT and group mapping. Auth is always on. **No MFA** |
 | Observability | Partial | slog, custom Prometheus `/metrics`, Sentry, opt-in OTLP/HTTP tracing (`CLOUDPAM_TRACING_ENABLED`). Vector sidecar configs exist but are not integrated. `deploy/docker-compose.observability.yml` starts Prometheus, Grafana (provisioned request dashboard), and Jaeger from a clean checkout, with no log pipeline; `deploy/vector/vector.toml` needs updating for Vector 0.34.1 |
 | SIEM | Partial | CEF-over-syslog via `CLOUDPAM_AUDIT_SYSLOG_*`. Log Destinations UI is documentation, not destination CRUD. No Splunk HEC / CloudWatch / Cloud Logging connectors |
@@ -95,9 +95,9 @@ Phase 6 (Graphēon-style top nav and shared primitives) is not started. The shel
 
 **Shipped:** `POST /api/v1/ai/chat` (SSE), `GET/POST /api/v1/ai/sessions`, `GET/DELETE /api/v1/ai/sessions/{id}`, `POST /api/v1/ai/sessions/{id}/apply-plan`. OpenAI-compatible endpoint override covers Ollama, vLLM, and Azure OpenAI.
 
-**Not shipped:** `/api/v1/planning/ai/conversations/...` (that path is a design leftover; do not use it). Native Anthropic provider, provider fallback, admin-managed `/settings/ai`, what-if simulation, risk scoring, plan comparison, cost/growth analytics, conversation title PATCH, plan validate endpoint, plan Terraform export endpoint.
+**Not shipped:** `/api/v1/planning/ai/conversations/...` (that path is a design leftover; do not use it). Native Anthropic provider, provider fallback, what-if simulation, risk scoring, plan comparison, cost/growth analytics, conversation title PATCH, plan validate endpoint, plan Terraform export endpoint.
 
-Enable with `CLOUDPAM_LLM_API_KEY` and/or `CLOUDPAM_LLM_ENDPOINT`. There is no in-app configuration.
+Enable with `CLOUDPAM_LLM_API_KEY` and/or `CLOUDPAM_LLM_ENDPOINT`, or on the Configuration → AI Provider page (saved values override the env vars per field; test the connection there).
 
 ---
 
@@ -117,7 +117,7 @@ These are the gaps that most contradict the product's stated Postgres, multi-clo
 
 1. Analysis UI: gaps and fragmentation are in the pool detail panel (#281); compliance results and a dedicated Analysis page remain.
 2. Operator UI holes: account edit, cascade delete, schema policy in Configuration, and Log Destinations vs env docs.
-3. Admin-managed AI provider settings instead of more chat features.
+3. ~~Admin-managed AI provider settings instead of more chat features.~~ Shipped (#283).
 4. GCP in the discovery agent (or document that GCP sync is in-process only).
 5. Larger programs: true multi-tenancy, IPv6, MFA, per-org quotas, incremental sync, vendor SIEM, Graphēon shell.
 

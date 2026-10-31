@@ -6,5 +6,8 @@
 
 NOTE: secrets.CLOUDPAM_OIDC_ENCRYPTION_KEY is not set. The server makes a new
 key on every start, so saved OIDC providers stop working after a restart.
-Set it to the output of `openssl rand -hex 32` before configuring SSO.
+The same key protects AI provider keys saved from the Configuration page,
+which refuses to store a key until it is set.
+Set it to the output of `openssl rand -hex 32` before configuring SSO or an
+AI provider key.
 {{- end }}

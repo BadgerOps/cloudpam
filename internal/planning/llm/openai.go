@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,37 @@ import (
 
 	"cloudpam/internal/observability"
 )
+
+// maxResponseBytes caps how much of one provider response body is read, for
+// both the JSON reply and the whole SSE stream. A variable so tests can shrink it.
+var maxResponseBytes int64 = 8 << 20
+
+// limitedBody reads at most limit bytes and then fails with ErrInvalidResponse,
+// so an oversized reply is reported as an invalid response, not truncated.
+type limitedBody struct {
+	r     io.Reader
+	limit int64
+	read  int64
+	err   error // sticky overflow error
+}
+
+func newLimitedBody(r io.Reader) *limitedBody {
+	// Read one byte past the limit to tell "exactly at the limit" from "over".
+	return &limitedBody{r: io.LimitReader(r, maxResponseBytes+1), limit: maxResponseBytes}
+}
+
+func (l *limitedBody) Read(p []byte) (int, error) {
+	if l.err != nil {
+		return 0, l.err
+	}
+	n, err := l.r.Read(p)
+	l.read += int64(n)
+	if l.read > l.limit {
+		l.err = fmt.Errorf("%w: response exceeds %d bytes", ErrInvalidResponse, l.limit)
+		return max(n-int(l.read-l.limit), 0), l.err
+	}
+	return n, err
+}
 
 // startCompletionSpan opens a client span around a chat completion call. When
 // tracing is disabled the shared tracer is the OpenTelemetry no-op, so this is
@@ -154,24 +186,26 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 	defer func() { _ = resp.Body.Close() }()
 	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 
-	respBody, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		discardBody(resp.Body)
+		return nil, &StatusError{Status: resp.StatusCode}
+	}
+
+	respBody, err := io.ReadAll(newLimitedBody(resp.Body))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("api error (status %d): %s", resp.StatusCode, string(respBody))
-	}
-
 	var oaiResp openaiResponse
 	if err := json.Unmarshal(respBody, &oaiResp); err != nil {
-		return nil, fmt.Errorf("unmarshal response: %w", err)
+		return nil, fmt.Errorf("%w: unmarshal response: %w", ErrInvalidResponse, err)
 	}
 	if oaiResp.Error != nil {
-		return nil, fmt.Errorf("api error: %s", oaiResp.Error.Message)
+		// The provider's message can echo request details, so it is not kept.
+		return nil, fmt.Errorf("%w: provider reported an error", ErrInvalidResponse)
 	}
 	if len(oaiResp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in response")
+		return nil, fmt.Errorf("%w: no choices in response", ErrInvalidResponse)
 	}
 
 	span.SetAttributes(
@@ -242,9 +276,9 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 
 	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		discardBody(resp.Body)
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("api error (status %d): %s", resp.StatusCode, string(respBody))
+		return nil, &StatusError{Status: resp.StatusCode}
 	}
 
 	ch := make(chan StreamEvent, 64)
@@ -253,7 +287,7 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 		defer close(ch)
 		defer span.End()
 		defer func() { _ = resp.Body.Close() }()
-		p.readSSEStream(resp.Body, ch)
+		p.readSSEStream(newLimitedBody(resp.Body), ch)
 	}()
 
 	return ch, nil
@@ -309,7 +343,11 @@ func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
 			}
 		}
 		if err != nil {
-			ch <- StreamEvent{Done: true}
+			evt := StreamEvent{Done: true}
+			if !errors.Is(err, io.EOF) {
+				evt.Err = err
+			}
+			ch <- evt
 			return
 		}
 	}

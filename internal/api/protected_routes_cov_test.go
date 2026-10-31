@@ -14,6 +14,7 @@ import (
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/planning"
+	"cloudpam/internal/planning/llm"
 	"cloudpam/internal/storage"
 )
 
@@ -235,7 +236,7 @@ func TestUnprotectedAuthAndAIRouteRegistrationCov(t *testing.T) {
 	authSrv.RegisterAuthRoutes()
 
 	convStore := storage.NewMemoryConversationStore(st)
-	aiSvc := planning.NewAIPlanningService(planning.NewAnalysisService(st), convStore, st, &stubLLMProviderCov{available: true})
+	aiSvc := planning.NewAIPlanningService(planning.NewAnalysisService(st), convStore, st, llm.StaticProviderSource(&stubLLMProviderCov{available: true}))
 	NewAIPlanningServer(srv, aiSvc, convStore).RegisterAIPlanningRoutes()
 
 	t.Run("api keys are reachable without rbac", func(t *testing.T) {

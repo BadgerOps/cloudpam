@@ -3,11 +3,90 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+func TestLimitedBodyOverflowErrorIsSticky(t *testing.T) {
+	l := &limitedBody{r: strings.NewReader(strings.Repeat("x", 20)), limit: 10}
+	buf := make([]byte, 6)
+	var firstErr error
+	total := 0
+	for i := 0; i < 5 && firstErr == nil; i++ {
+		n, err := l.Read(buf)
+		if n < 0 {
+			t.Fatalf("read %d returned negative n=%d", i, n)
+		}
+		total += n
+		firstErr = err
+	}
+	if !errors.Is(firstErr, ErrInvalidResponse) {
+		t.Fatalf("first overflow error = %v, want ErrInvalidResponse", firstErr)
+	}
+	if total > 10 {
+		t.Fatalf("returned %d bytes, want at most the 10-byte limit", total)
+	}
+	for i := 0; i < 2; i++ {
+		n, err := l.Read(buf)
+		if n != 0 {
+			t.Fatalf("read after overflow returned n=%d, want 0", n)
+		}
+		if err != firstErr {
+			t.Fatalf("read after overflow returned %v, want the same error %v", err, firstErr)
+		}
+	}
+}
+
+func TestOpenAIProviderRejectsOversizedResponses(t *testing.T) {
+	prev := maxResponseBytes
+	maxResponseBytes = 1024
+	t.Cleanup(func() { maxResponseBytes = prev })
+
+	pad := strings.Repeat("x", 4096)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req openaiRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			for i := 0; i < 8; i++ {
+				_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", pad[:512])
+			}
+			_, _ = io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q},"finish_reason":"stop"}]}`, pad)
+	}))
+	defer ts.Close()
+	provider := NewOpenAIProvider(Config{Model: "m", Endpoint: ts.URL + "/v1"})
+	msgs := []Message{{Role: "user", Content: "hi"}}
+
+	if _, err := provider.Complete(context.Background(), msgs, Options{}); !errors.Is(err, ErrInvalidResponse) {
+		t.Fatalf("Complete err = %v, want ErrInvalidResponse", err)
+	}
+
+	events, err := provider.StreamComplete(context.Background(), msgs, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+	var streamErr error
+	for evt := range events {
+		if evt.Err != nil {
+			streamErr = evt.Err
+		}
+		if evt.Done {
+			break
+		}
+	}
+	if !errors.Is(streamErr, ErrInvalidResponse) {
+		t.Fatalf("stream err = %v, want ErrInvalidResponse", streamErr)
+	}
+}
 
 func TestOpenAIProviderComplete(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -1177,7 +1177,11 @@ Three things to know behind an ingress:
 - The global rate limiter keys on the client address, which is the ingress behind a proxy. Set `RATE_LIMIT_RPS: 0` and limit at the ingress instead.
 - The ingress must send `X-Forwarded-Proto`, or session cookies lose the `Secure` flag.
 
-Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Without it the server generates a key on every start, and saved provider secrets stop decrypting after a restart. The chart never generates this key, because a key generated at render time would rotate on every `helm template` run under tools such as Argo CD.
+Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Without it the server generates a key on every start, and saved provider secrets stop decrypting after a restart. The same key protects AI provider API keys saved from Configuration → AI Provider; without it that page cannot store an API key (use `CLOUDPAM_LLM_API_KEY` instead). The chart never generates this key, because a key generated at render time would rotate on every `helm template` run under tools such as Argo CD.
+
+The `CLOUDPAM_LLM_*` variables are the fallback for AI planning: an endpoint, model, max tokens, or temperature saved on the Configuration → AI Provider page overrides the matching variable, field by field, and takes effect on every replica without a restart. The API key follows the endpoint instead, as described next.
+
+The API key is bound to its endpoint. `CLOUDPAM_LLM_API_KEY` is sent only when the endpoint comes from `CLOUDPAM_LLM_ENDPOINT` or the built-in default; an endpoint saved on the page uses only a key saved on the page, and runs without a key otherwise. Changing or clearing a saved endpoint while a saved key exists requires re-entering the key or clearing it in the same save. These rules stop a key from following an endpoint change silently, but they are not a permission boundary: anyone with the `settings:write` permission decides which endpoint receives the configured key, so treat `settings:write` as equivalent to access to that key.
 
 ### Install the agent
 
