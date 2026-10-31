@@ -44,6 +44,46 @@ func (s gatedListStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
 	return s.MemoryStore.ListPools(ctx)
 }
 
+type slowFirstCreateStore struct {
+	*storage.MemoryStore
+	calls int
+}
+
+func (s *slowFirstCreateStore) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
+	s.calls++
+	if s.calls == 1 {
+		time.Sleep(2 * placementBudget)
+	}
+	return s.MemoryStore.CreatePool(ctx, in)
+}
+
+func TestPlacePools_BudgetStopsBatchBetweenInserts(t *testing.T) {
+	old := placementBudget
+	placementBudget = 20 * time.Millisecond
+	t.Cleanup(func() { placementBudget = old })
+
+	st := &slowFirstCreateStore{MemoryStore: storage.NewMemoryStore()}
+	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: io.Discard})
+	srv := NewServer(stdhttp.NewServeMux(), st, logger, nil, nil)
+	batch := []poolPlacement{
+		{In: domain.CreatePool{Name: "first", CIDR: "10.1.0.0/16"}},
+		{In: domain.CreatePool{Name: "second", CIDR: "10.2.0.0/16"}},
+		{In: domain.CreatePool{Name: "third", CIDR: "10.3.0.0/16"}},
+	}
+
+	_, err := srv.placePools(t.Context(), siblingsOnly, batch)
+	if !errors.Is(err, storage.ErrBusy) {
+		t.Errorf("placePools error = %v, want storage.ErrBusy", err)
+	}
+	pools, err := st.ListPools(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools) != 1 || pools[0].Name != "first" {
+		t.Fatalf("pools stored after the budget expired = %+v, want only first", pools)
+	}
+}
+
 // A request that spends its whole budget, whether queued on the placement gate or inside the store,
 // answers 503 and stores nothing.
 func TestPlacePools_BudgetCoversTheMutexWait(t *testing.T) {
