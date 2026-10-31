@@ -12,6 +12,7 @@ patch or minor version entry for every user-facing change.
 
 ### Added
 - `DELETE /api/v1/network/objects/{objectId}` deletes a managed network object, and the Discovery Network Objects table has a Delete action with a confirmation. The request returns `204` on success and `404` for an unknown object. It returns `409` while the object still has child objects, and the message gives the child count. Network relationships that reference the object as source or target are removed in the same transaction, so placeholder parents created by the `create_placeholder_parent` conflict action can be deleted. It needs the `discovery:update` permission and writes a `network_object` audit event. The linked pool and discovered resource are not deleted. (#278)
+- The pool detail panel on the Address Pools page and the Dashboard has a collapsible Address Analysis section for the selected pool. The gap summary shows free addresses, utilization, the number of available blocks, and up to five available ranges. The fragmentation score is labeled Healthy, Attention, or Severe, with up to three issues and three recommendations. The gap and fragmentation requests load independently, so either one can fail without hiding the other, and a failed request shows its error with a Retry button. The section uses the existing `POST /api/v1/analysis/gaps` and `POST /api/v1/analysis/fragmentation` endpoints and needs the `pools:read` permission. (#281)
 
 ### Changed
 - The server and agent Helm charts advertise application version `0.23.7`. Their chart package versions remain `0.2.1`.
