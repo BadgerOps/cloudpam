@@ -212,17 +212,36 @@ export async function streamPost(path: string, data: unknown, callbacks: SSECall
 
   const decoder = new TextDecoder()
   let buffer = ''
+  // Set by an "event: error" line; the next data line carries the message.
+  let errorEventPending = false
+  let streamError: Error | null = null
 
-  // Returns true when the line signals end of stream.
-  function handleLine(line: string): boolean {
+  // Returns 'done' when the line ends the stream normally, 'error' when the
+  // server reported a provider failure (streamError holds it), else 'next'.
+  function handleLine(line: string): 'next' | 'done' | 'error' {
     const trimmed = line.trim()
-    if (trimmed === '') return false
+    if (trimmed === '') return 'next'
 
-    if (trimmed === 'event: done') return true
+    if (trimmed === 'event: done') return 'done'
+    if (trimmed === 'event: error') {
+      errorEventPending = true
+      return 'next'
+    }
 
     if (trimmed.startsWith('data: ')) {
       const jsonStr = trimmed.slice(6)
-      if (jsonStr === '{}') return true
+      if (errorEventPending) {
+        let message = 'The AI provider failed while answering'
+        try {
+          const parsed = JSON.parse(jsonStr)
+          if (typeof parsed.error === 'string' && parsed.error) message = parsed.error
+        } catch {
+          // keep the generic message
+        }
+        streamError = new Error(message)
+        return 'error'
+      }
+      if (jsonStr === '{}') return 'done'
       try {
         const parsed = JSON.parse(jsonStr)
         if (parsed.delta !== undefined) {
@@ -232,7 +251,7 @@ export async function streamPost(path: string, data: unknown, callbacks: SSECall
         // skip malformed JSON
       }
     }
-    return false
+    return 'next'
   }
 
   try {
@@ -248,13 +267,26 @@ export async function streamPost(path: string, data: unknown, callbacks: SSECall
       buffer = done ? '' : lines.pop() ?? ''
 
       for (const line of lines) {
-        if (handleLine(line)) {
+        const outcome = handleLine(line)
+        if (outcome === 'done') {
           callbacks.onDone()
+          return
+        }
+        if (outcome === 'error') {
+          // Stop reading: nothing after the error event belongs to the answer.
+          await reader.cancel().catch(() => {})
+          callbacks.onError(streamError ?? new Error('The AI provider failed while answering'))
           return
         }
       }
 
       if (done) break
+    }
+    // EOF after "event: error" but before its data line: the provider failed
+    // and the message never arrived, so this is not a normal completion.
+    if (errorEventPending) {
+      callbacks.onError(new Error('stream ended with an error'))
+      return
     }
     callbacks.onDone()
   } catch (err) {

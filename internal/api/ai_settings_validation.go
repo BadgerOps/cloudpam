@@ -3,11 +3,11 @@ package api
 import (
 	"fmt"
 	"math"
-	"net/netip"
 	"net/url"
 	"strings"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/planning/llm"
 )
 
 // validateAIProviderUpdate checks a PATCH body. It returns the offending field
@@ -70,18 +70,12 @@ func validateAIEndpoint(endpoint string) string {
 	return ""
 }
 
-// ec2IPv6Metadata is the IPv6 address of the EC2 instance metadata service.
-var ec2IPv6Metadata = netip.MustParseAddr("fd00:ec2::254")
-
-// isMetadataOrLinkLocal reports a literal IP host in a link-local range
-// (169.254.0.0/16, which holds the cloud metadata services, or fe80::/10) or
-// the EC2 IPv6 metadata address. Loopback and private ranges stay allowed for
-// local Ollama or vLLM. Host names are not resolved.
+// isMetadataOrLinkLocal reports a literal IP host that llm.IsBlockedAddr
+// refuses (link-local ranges, which hold the cloud metadata services, the EC2
+// IPv6 metadata address and the unspecified address) or the GCE metadata host
+// name. Loopback and private ranges stay allowed for local Ollama or vLLM.
+// Other host names are not resolved here; the provider's dialer refuses them
+// at connect time when they resolve to a blocked address.
 func isMetadataOrLinkLocal(host string) bool {
-	addr, err := netip.ParseAddr(host)
-	if err != nil {
-		return false
-	}
-	addr = addr.Unmap().WithZone("")
-	return addr.IsLinkLocalUnicast() || addr == ec2IPv6Metadata
+	return llm.IsBlockedHost(host)
 }

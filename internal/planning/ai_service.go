@@ -96,8 +96,12 @@ func (s *AIPlanningService) DeleteConversation(ctx context.Context, id string) e
 }
 
 // Chat sends a user message and streams the assistant response. It persists
-// both the user message and the final assistant message. The returned channel
-// receives incremental text deltas; the caller should read until close.
+// the user message and, when the stream completes, the assistant message. A
+// stream that ends with an error event (StreamEvent.Err) is forwarded as is
+// and the partial answer is not persisted: a truncated assistant turn would
+// otherwise be replayed to the provider as if the model had said it. The
+// returned channel receives incremental text deltas; the caller should read
+// until close.
 func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage string) (<-chan llm.StreamEvent, error) {
 	provider, err := s.provider(ctx)
 	if err != nil {
@@ -150,25 +154,42 @@ func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage str
 	go func() {
 		defer close(outCh)
 		var fullContent strings.Builder
+		persisted := false
+		// Persist the assembled assistant message. Runs before the done event
+		// is forwarded, so a client that reads the conversation as soon as it
+		// sees done finds the reply. Uses a background context because the
+		// request context may already be cancelled.
+		persist := func() {
+			if persisted {
+				return
+			}
+			persisted = true
+			_ = s.convStore.AddMessage(context.Background(), domain.ConversationMessage{
+				ID:             uuid.New().String(),
+				ConversationID: sessionID,
+				Role:           "assistant",
+				Content:        fullContent.String(),
+				CreatedAt:      time.Now().UTC(),
+			})
+		}
 
 		for evt := range eventCh {
 			fullContent.WriteString(evt.Delta)
+			if evt.Err != nil {
+				// A failed stream is not stored as an answer.
+				outCh <- evt
+				return
+			}
+			if evt.Done {
+				persist()
+			}
 			outCh <- evt
 			if evt.Done {
-				break
+				return
 			}
 		}
-
-		// Persist assistant message
-		assistantMsg := domain.ConversationMessage{
-			ID:             uuid.New().String(),
-			ConversationID: sessionID,
-			Role:           "assistant",
-			Content:        fullContent.String(),
-			CreatedAt:      time.Now().UTC(),
-		}
-		// Use background context since the request context may be cancelled
-		_ = s.convStore.AddMessage(context.Background(), assistantMsg)
+		// The provider closed the stream without a done event.
+		persist()
 	}()
 
 	return outCh, nil

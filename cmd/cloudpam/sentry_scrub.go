@@ -28,14 +28,16 @@ func sentryClientOptions(dsn string) sentry.ClientOptions {
 	}
 }
 
-// scrubSentryEvent removes the request body, cookies and authentication
-// headers. Scope.SetRequest tees request bodies into Request.Data, which would
-// otherwise ship passwords, OIDC client secrets and AI provider keys.
+// scrubSentryEvent removes the request body, query string, cookies and
+// authentication headers. Scope.SetRequest tees request bodies into
+// Request.Data, which would otherwise ship passwords, OIDC client secrets and
+// AI provider keys; the query string carries the OIDC callback's code and state.
 func scrubSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	if event == nil || event.Request == nil {
 		return event
 	}
 	event.Request.Data = ""
+	event.Request.QueryString = ""
 	event.Request.Cookies = ""
 	for name := range event.Request.Headers {
 		if _, ok := sentryScrubbedHeaders[strings.ToLower(name)]; ok {

@@ -16,12 +16,17 @@ import (
 	"cloudpam/internal/observability"
 )
 
-// maxResponseBytes caps how much of one provider response body is read, for
-// both the JSON reply and the whole SSE stream. A variable so tests can shrink it.
-var maxResponseBytes int64 = 8 << 20
+// Caps on how much of one provider response body is read: maxResponseBytes
+// for a JSON reply, maxStreamBytes for a whole SSE stream, whose framing makes
+// it several times larger than the text it carries. Variables so tests can
+// shrink them.
+var (
+	maxResponseBytes int64 = 8 << 20
+	maxStreamBytes   int64 = 64 << 20
+)
 
-// limitedBody reads at most limit bytes and then fails with ErrInvalidResponse,
-// so an oversized reply is reported as an invalid response, not truncated.
+// limitedBody reads at most limit bytes and then fails with
+// ErrResponseTooLarge, so an oversized reply is reported rather than truncated.
 type limitedBody struct {
 	r     io.Reader
 	limit int64
@@ -29,9 +34,9 @@ type limitedBody struct {
 	err   error // sticky overflow error
 }
 
-func newLimitedBody(r io.Reader) *limitedBody {
+func newLimitedBody(r io.Reader, limit int64) *limitedBody {
 	// Read one byte past the limit to tell "exactly at the limit" from "over".
-	return &limitedBody{r: io.LimitReader(r, maxResponseBytes+1), limit: maxResponseBytes}
+	return &limitedBody{r: io.LimitReader(r, limit+1), limit: limit}
 }
 
 func (l *limitedBody) Read(p []byte) (int, error) {
@@ -41,7 +46,7 @@ func (l *limitedBody) Read(p []byte) (int, error) {
 	n, err := l.r.Read(p)
 	l.read += int64(n)
 	if l.read > l.limit {
-		l.err = fmt.Errorf("%w: response exceeds %d bytes", ErrInvalidResponse, l.limit)
+		l.err = fmt.Errorf("%w (%d bytes)", ErrResponseTooLarge, l.limit)
 		return max(n-int(l.read-l.limit), 0), l.err
 	}
 	return n, err
@@ -80,11 +85,13 @@ type OpenAIProvider struct {
 	client *http.Client
 }
 
-// NewOpenAIProvider creates a provider for an OpenAI-compatible API.
+// NewOpenAIProvider creates a provider for an OpenAI-compatible API. Its HTTP
+// client refuses connections and redirects to blocked addresses (see
+// IsBlockedAddr) and follows at most three redirects.
 func NewOpenAIProvider(cfg Config) *OpenAIProvider {
 	return &OpenAIProvider{
 		cfg:    cfg,
-		client: &http.Client{},
+		client: newHTTPClient(),
 	}
 }
 
@@ -191,7 +198,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 		return nil, &StatusError{Status: resp.StatusCode}
 	}
 
-	respBody, err := io.ReadAll(newLimitedBody(resp.Body))
+	respBody, err := io.ReadAll(newLimitedBody(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
@@ -287,7 +294,7 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 		defer close(ch)
 		defer span.End()
 		defer func() { _ = resp.Body.Close() }()
-		p.readSSEStream(newLimitedBody(resp.Body), ch)
+		p.readSSEStream(newLimitedBody(resp.Body, maxStreamBytes), ch)
 	}()
 
 	return ch, nil

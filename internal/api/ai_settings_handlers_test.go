@@ -70,19 +70,34 @@ func envDefaults() llm.Config {
 
 func setupAISettings(t *testing.T, env llm.Config, storageAvailable bool) *aiSettingsFixture {
 	t.Helper()
+	settings := storage.NewMemorySettingsStore()
+	return setupAISettingsWithStore(t, env, storageAvailable, settings, settings)
+}
+
+// setupAISettingsWithStore wires the settings endpoints over store while the
+// resolver reads the underlying memory store, so a test can wrap the store the
+// handlers see without changing what the resolver observes.
+func setupAISettingsWithStore(t *testing.T, env llm.Config, storageAvailable bool, settings *storage.MemorySettingsStore, store storage.SettingsStore) *aiSettingsFixture {
+	t.Helper()
 	key, err := secrets.GenerateKey()
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
+	return newAISettingsFixture(t, env, storageAvailable, key, settings, store)
+}
+
+// newAISettingsFixture is one server over the given encryption key and stores;
+// two fixtures over the same key and store act as two replicas.
+func newAISettingsFixture(t *testing.T, env llm.Config, storageAvailable bool, key []byte, settings *storage.MemorySettingsStore, store storage.SettingsStore) *aiSettingsFixture {
+	t.Helper()
 	mux := http.NewServeMux()
 	auditLogger := audit.NewMemoryAuditLogger()
 	logs := &syncBuffer{}
 	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: logs})
 	srv := NewServer(mux, storage.NewMemoryStore(), logger, nil, auditLogger)
-	settings := storage.NewMemorySettingsStore()
 	resolver := llm.NewResolver(env, settings, func(c string) (string, error) { return secrets.Decrypt(c, key) })
 	manager := llm.NewManager(resolver)
-	ss := NewSettingsServer(srv, settings)
+	ss := NewSettingsServer(srv, store)
 	ss.SetAIProvider(manager, resolver, key, storageAvailable)
 	ss.RegisterSettingsRoutes()
 	return &aiSettingsFixture{mux: mux, srv: srv, settingsServer: ss, settings: settings, audit: auditLogger, manager: manager, key: key, logs: logs}
@@ -485,7 +500,11 @@ func TestAISettingsDatabaseEndpointDoesNotReceiveEnvKey(t *testing.T) {
 }
 
 func TestAISettingsPatchRejectsLinkLocalEndpoints(t *testing.T) {
-	for _, ep := range []string{"http://169.254.169.254/latest", "http://169.254.1.2:11434/v1", "http://[fd00:ec2::254]/v1", "http://[::ffff:169.254.169.254]/v1", "http://[fe80::1]/v1"} {
+	if got := validateAIEndpoint("http://Metadata.Google.Internal./v1"); got != "link-local and metadata addresses are not allowed" {
+		t.Fatalf("validateAIEndpoint(metadata hostname) = %q", got)
+	}
+	for _, ep := range []string{"http://169.254.169.254/latest", "http://169.254.1.2:11434/v1", "http://[fd00:ec2::254]/v1", "http://[::ffff:169.254.169.254]/v1", "http://[fe80::1]/v1",
+		"http://0.0.0.0:11434/v1", "http://[::]:11434/v1", "http://metadata.google.internal/computeMetadata/v1", "http://METADATA.GOOGLE.INTERNAL./v1"} {
 		f := setupAISettings(t, envDefaults(), true)
 		got := decodeAPIError(t, f.patch(t, `{"endpoint":"`+ep+`"}`, http.StatusBadRequest))
 		if got.Error != "invalid endpoint" || got.Detail != "link-local and metadata addresses are not allowed" {
@@ -659,6 +678,12 @@ func TestAISettingsPatchStateTransitions(t *testing.T) {
 	doc.State = domain.AIProviderStateVerified
 	doc.LastTestedAt = &tested
 	doc.LastTestModel = "m"
+	// Bind the seeded result to the current configuration, as a real test run would.
+	resolved, err := llm.NewResolver(envDefaults(), f.settings, nil).Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	doc.LastTestFingerprint = resolved.Fingerprint()
 	if err := f.settings.UpdateAIProviderSettings(context.Background(), doc); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -667,9 +692,15 @@ func TestAISettingsPatchStateTransitions(t *testing.T) {
 	if got.State != domain.AIProviderStateVerified || got.LastTestedAt == nil {
 		t.Fatalf("tuning-only PATCH changed state: %+v", got)
 	}
+	if fp := f.storedDoc(t).LastTestFingerprint; fp != resolved.Fingerprint() {
+		t.Fatalf("tuning-only PATCH changed the fingerprint: %q", fp)
+	}
 	got = decodeAISettings(t, f.patch(t, `{"model":"new-model"}`, http.StatusOK))
 	if got.State != domain.AIProviderStateConfigured || got.LastTestedAt != nil || got.LastTestModel != "" {
 		t.Fatalf("material PATCH kept test state: %+v", got)
+	}
+	if fp := f.storedDoc(t).LastTestFingerprint; fp != "" {
+		t.Fatalf("material PATCH kept the test fingerprint: %q", fp)
 	}
 }
 

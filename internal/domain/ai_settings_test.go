@@ -118,6 +118,18 @@ func TestNormalizeAIProviderSettings(t *testing.T) {
 			},
 		},
 		{
+			name: "trims and clones the test fingerprint",
+			in:   AIProviderSettings{Endpoint: "e", LastTestFingerprint: " abc "},
+			check: func(t *testing.T, got *AIProviderSettings) {
+				if got.LastTestFingerprint != "abc" {
+					t.Fatalf("LastTestFingerprint = %q, want trimmed", got.LastTestFingerprint)
+				}
+				if got.Clone().LastTestFingerprint != "abc" {
+					t.Fatal("Clone dropped LastTestFingerprint")
+				}
+			},
+		},
+		{
 			name: "unknown state with nothing stored is empty",
 			in:   AIProviderSettings{State: "not_configured"},
 			check: func(t *testing.T, got *AIProviderSettings) {

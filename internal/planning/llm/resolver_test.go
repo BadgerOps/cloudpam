@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -283,5 +284,77 @@ func TestResolverWarnsOncePerUnreadableCiphertext(t *testing.T) {
 	_, _ = r.Resolve(context.Background())
 	if got := h.count(); got != 2 {
 		t.Fatalf("warnings after a new unreadable ciphertext = %d, want 2", got)
+	}
+}
+
+func TestResolvedFingerprint(t *testing.T) {
+	resolve := func(t *testing.T, env Config, doc *domain.AIProviderSettings) Resolved {
+		t.Helper()
+		got, err := NewResolver(env, &fakeSettingsSource{doc: doc}, fakeDecrypt).Resolve(context.Background())
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		return got
+	}
+	env := defaultEnv()
+	env.Endpoint = "http://env:11434/v1"
+	env.APIKey = "env-key"
+	base := resolve(t, env, nil)
+
+	fp := base.Fingerprint()
+	if len(fp) != 64 || strings.ToLower(fp) != fp {
+		t.Fatalf("Fingerprint = %q, want lowercase hex sha-256", fp)
+	}
+	if again := resolve(t, env, nil).Fingerprint(); again != fp {
+		t.Fatalf("same inputs gave %q then %q", fp, again)
+	}
+
+	rotated := env
+	rotated.APIKey = "env-key-rotated"
+	if resolve(t, rotated, nil).Fingerprint() != fp {
+		t.Fatal("plaintext key material must not be a factor in the fingerprint")
+	}
+	// The stored ciphertext is opaque in production; fakeDecrypt's enc(...)
+	// form would contain the plaintext, so this case decrypts by lookup.
+	const dbPlaintext = "db-plaintext-secret"
+	lookupDecrypt := func(c string) (string, error) {
+		if c == "ciphertext-1" {
+			return dbPlaintext, nil
+		}
+		return "", errors.New("decryption failed")
+	}
+	withDBKey, err := NewResolver(env, &fakeSettingsSource{doc: &domain.AIProviderSettings{APIKeyEncrypted: "ciphertext-1"}}, lookupDecrypt).Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if withDBKey.Config.APIKey != dbPlaintext {
+		t.Fatalf("APIKey = %q, want the decrypted database key", withDBKey.Config.APIKey)
+	}
+	for _, c := range []struct {
+		name string
+		res  Resolved
+	}{
+		{"endpoint", resolve(t, env, &domain.AIProviderSettings{Endpoint: "http://db:11434/v1"})},
+		{"model", resolve(t, env, &domain.AIProviderSettings{Model: "other"})},
+		{"key source", withDBKey},
+	} {
+		if c.res.Fingerprint() == fp {
+			t.Fatalf("%s change did not change the fingerprint", c.name)
+		}
+		if strings.Contains(c.res.Fingerprint(), dbPlaintext) {
+			t.Fatalf("%s fingerprint carries the plaintext key: %q", c.name, c.res.Fingerprint())
+		}
+		stored, err := json.Marshal(c.res.Stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(stored), dbPlaintext) {
+			t.Fatalf("%s stored document carries the plaintext key: %s", c.name, stored)
+		}
+	}
+	first := resolve(t, env, &domain.AIProviderSettings{APIKeyEncrypted: "enc(db-key)"}).Fingerprint()
+	resaved := resolve(t, env, &domain.AIProviderSettings{APIKeyEncrypted: "enc(db-key-2)"}).Fingerprint()
+	if first == resaved {
+		t.Fatal("re-saving the stored key must change the fingerprint")
 	}
 }
