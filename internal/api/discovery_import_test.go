@@ -861,7 +861,7 @@ func TestDiscoveryResourcesSearchAcrossPages(t *testing.T) {
 	}
 }
 
-func TestDiscoveryImportApplyDeletesCreatedPoolWhenLinkFails(t *testing.T) {
+func TestDiscoveryImportApplyDeletesCreatedSubtreeWhenParentLinkFails(t *testing.T) {
 	discSrv, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
 	if err != nil {
@@ -883,15 +883,31 @@ func TestDiscoveryImportApplyDeletesCreatedPoolWhenLinkFails(t *testing.T) {
 		DiscoveredAt: now,
 		LastSeenAt:   now,
 	})
+	subnetID := uuid.New()
+	parentResourceID := "vpc-link-fails"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:               subnetID,
+		AccountID:        account.ID,
+		Provider:         "aws",
+		Region:           "us-east-1",
+		ResourceType:     domain.ResourceTypeSubnet,
+		ResourceID:       "subnet-under-link-failure",
+		ParentResourceID: &parentResourceID,
+		Name:             "subnet-under-link-failure",
+		CIDR:             "10.33.1.0/24",
+		Status:           domain.DiscoveryStatusActive,
+		DiscoveredAt:     now,
+		LastSeenAt:       now,
+	})
 	discSrv.store = &failLinkDiscoveryStore{DiscoveryStore: ds, failID: vpcID}
 
-	body := fmt.Sprintf("{\"account_id\":%d,\"resource_ids\":[\"%s\"]}", account.ID, vpcID)
+	body := fmt.Sprintf("{\"account_id\":%d,\"resource_ids\":[\"%s\",\"%s\"]}", account.ID, vpcID, subnetID)
 	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
 	var applied domain.DiscoveryImportApplyResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
 		t.Fatalf("unmarshal apply: %v", err)
 	}
-	if applied.PoolsCreated != 0 || applied.ResourcesLinked != 0 || applied.Skipped != 1 {
+	if applied.PoolsCreated != 0 || applied.ResourcesLinked != 0 || applied.Skipped != 2 {
 		t.Fatalf("failed link should skip without completed imports: %+v", applied)
 	}
 	if len(applied.CreatedPoolIDs) != 0 {
@@ -910,6 +926,13 @@ func TestDiscoveryImportApplyDeletesCreatedPoolWhenLinkFails(t *testing.T) {
 	}
 	if res.PoolID != nil {
 		t.Fatalf("link failure should leave resource unlinked, got pool %d", *res.PoolID)
+	}
+	child, err := ds.GetDiscoveredResource(t.Context(), subnetID)
+	if err != nil {
+		t.Fatalf("get child discovered resource: %v", err)
+	}
+	if child.PoolID != nil {
+		t.Fatalf("parent link failure should leave child resource unlinked, got pool %d", *child.PoolID)
 	}
 }
 

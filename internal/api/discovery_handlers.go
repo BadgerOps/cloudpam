@@ -480,6 +480,12 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 	if err != nil {
 		return resp, err
 	}
+	type failedPoolCleanup struct {
+		poolID   int64
+		resource string
+	}
+	failedPools := make(map[int64]bool)
+	var cleanup []failedPoolCleanup
 	for i, c := range creates {
 		item, res := c.item, &c.res
 		if err := placed[i].Err; err != nil {
@@ -490,14 +496,16 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 		pool := placed[i].Pool
 		parentID := pool.ParentID
 		resp.CreatedPoolIDs = append(resp.CreatedPoolIDs, pool.ID)
+		if parentID != nil && failedPools[*parentID] {
+			failedPools[pool.ID] = true
+			cleanup = append(cleanup, failedPoolCleanup{poolID: pool.ID, resource: res.ResourceID})
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: parent pool %d was not linked", res.ResourceID, *parentID))
+			resp.Skipped++
+			continue
+		}
 		if err := d.store.LinkResourceToPool(ctx, item.ResourceID, pool.ID); err != nil {
-			if ok, cleanupErr := d.srv.store.DeletePool(ctx, pool.ID); cleanupErr != nil {
-				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: %v", res.ResourceID, pool.ID, cleanupErr))
-			} else if !ok {
-				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: not found", res.ResourceID, pool.ID))
-			} else {
-				resp.CreatedPoolIDs = resp.CreatedPoolIDs[:len(resp.CreatedPoolIDs)-1]
-			}
+			failedPools[pool.ID] = true
+			cleanup = append(cleanup, failedPoolCleanup{poolID: pool.ID, resource: res.ResourceID})
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
 			resp.Skipped++
 			continue
@@ -530,6 +538,30 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 		resp.ResourcesLinked++
 		resp.Summary.Imported++
 		resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
+	}
+
+	// Every pool in a failed lineage already exists because placement commits the whole batch
+	// before resources are linked. Delete failed subtrees from the leaves upward so a parent is
+	// not retained merely because its newly created children still reference it.
+	removed := make(map[int64]bool, len(cleanup))
+	for i := len(cleanup) - 1; i >= 0; i-- {
+		entry := cleanup[i]
+		if ok, cleanupErr := d.srv.store.DeletePool(ctx, entry.poolID); cleanupErr != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: %v", entry.resource, entry.poolID, cleanupErr))
+		} else if !ok {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: not found", entry.resource, entry.poolID))
+		} else {
+			removed[entry.poolID] = true
+		}
+	}
+	if len(removed) > 0 {
+		kept := resp.CreatedPoolIDs[:0]
+		for _, id := range resp.CreatedPoolIDs {
+			if !removed[id] {
+				kept = append(kept, id)
+			}
+		}
+		resp.CreatedPoolIDs = kept
 	}
 
 	resp.Summary.Skipped = resp.Skipped
