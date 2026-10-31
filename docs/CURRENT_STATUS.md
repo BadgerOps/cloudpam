@@ -19,7 +19,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 | Discovery: GCP | Partial | Server collector for networks, subnetworks, and external IPs. No org mode, no agent, no IaC helpers. Uses Application Default Credentials on the CloudPAM host |
 | Discovery: Azure | Missing | Account keys accept `azure:<subscription-uuid>` and the UI offers Azure; there is no collector. Sync fails with `no collector registered for provider` |
 | Drift | Complete | Detect, list, resolve, ignore. No automatic reconciliation suggestions |
-| Network objects | Complete for create/update | Merged network view, conflicts, persisted objects and relationships. **No delete** (`DELETE` returns 405) |
+| Network objects | Complete | Merged network view, conflicts, persisted objects and relationships. `DELETE` returns `409` while child objects or relationships still reference the object |
 | Analysis engine | Complete as API | `POST /api/v1/analysis`, `/gaps`, `/fragmentation`, `/compliance`. `/fragmentation` and the full report score fragmentation for only the first pool. **No UI** |
 | Recommendations | Partial | Allocation and compliance only. Consolidation / resize / reclaim are commented stubs. Stored in a table on SQLite and PostgreSQL (#315) |
 | Schema Planner | Complete, one gap | Templates, conflict check, apply. Terraform export writes `cloudpam_pool` resources (0.23.1). Apply does not check that a child CIDR sits inside its declared parent (#284) |
@@ -106,7 +106,7 @@ Enable with `CLOUDPAM_LLM_API_KEY` and/or `CLOUDPAM_LLM_ENDPOINT`. There is no i
 
 **Shipped:** AWS + GCP collectors on the server; AWS agent; bootstrap tokens; register / approve / reject; ingest and org ingest; drift detect/resolve/ignore; merged network objects and relationships; schema policy evaluation (request-scoped and persistable via API).
 
-**Not shipped:** Azure collector; GCP in the agent; per-account stored credentials; incremental sync; in-process scheduled sync; collector rate limiter; reconciliation suggestions; network object delete.
+**Not shipped:** Azure collector; GCP in the agent; per-account stored credentials; incremental sync; in-process scheduled sync; collector rate limiter; reconciliation suggestions.
 
 The Discovery UI at `/discovery` has four tabs: Resources, Network, Sync History, Agents. GCP and Azure in the account picker have no matching wizard path; the wizard is AWS-shaped (IAM role, org mode, Terraform/CloudFormation snippets).
 
