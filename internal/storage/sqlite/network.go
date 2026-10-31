@@ -346,7 +346,8 @@ type scanner interface {
 func scanNetworkObject(row scanner) (domain.NetworkObject, error) {
 	var obj domain.NetworkObject
 	var parentID, poolID sql.NullInt64
-	var sourceID, metadata, createdAt, updatedAt string
+	var sourceID sql.NullString
+	var metadata, createdAt, updatedAt string
 	if err := row.Scan(&obj.ID, &obj.ObjectType, &obj.Provider, &obj.AccountID, &obj.Region, &obj.Name, &obj.CIDR, &obj.IPAddress, &obj.ProviderResourceID, &parentID, &poolID, &sourceID, &obj.State, &metadata, &createdAt, &updatedAt); err != nil {
 		return domain.NetworkObject{}, err
 	}
@@ -356,8 +357,8 @@ func scanNetworkObject(row scanner) (domain.NetworkObject, error) {
 	if poolID.Valid {
 		obj.PoolID = &poolID.Int64
 	}
-	if sourceID != "" {
-		id, err := uuid.Parse(sourceID)
+	if sourceID.Valid && sourceID.String != "" {
+		id, err := uuid.Parse(sourceID.String)
 		if err == nil {
 			obj.SourceDiscoveredID = &id
 		}
