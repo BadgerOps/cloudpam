@@ -11,6 +11,7 @@ import (
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning/llm"
 	"cloudpam/internal/secrets"
+	"cloudpam/internal/storage"
 )
 
 const (
@@ -119,6 +120,7 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
 		return
 	}
+	expectedUpdatedAt := doc.UpdatedAt
 	// The stored key is bound to the stored endpoint: moving the endpoint must
 	// not silently send that key to the new host.
 	if req.Endpoint != nil && strings.TrimSpace(*req.Endpoint) != doc.Endpoint &&
@@ -154,7 +156,11 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		now = doc.UpdatedAt.Add(time.Nanosecond)
 	}
 	doc.UpdatedAt = now
-	if err := ss.settingsStore.UpdateAIProviderSettings(ctx, doc); err != nil {
+	if err := ss.settingsStore.UpdateAIProviderSettingsIfUnchanged(ctx, expectedUpdatedAt, doc); err != nil {
+		if errors.Is(err, storage.ErrConflict) {
+			ss.writeErr(ctx, w, http.StatusConflict, "ai provider settings changed concurrently", "reload and retry")
+			return
+		}
 		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to save ai provider settings", err.Error())
 		return
 	}
