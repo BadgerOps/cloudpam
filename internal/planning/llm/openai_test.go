@@ -457,3 +457,82 @@ func TestOpenAIProviderTemperatureOverride(t *testing.T) {
 		t.Errorf("expected configured default temperature 0.7, got %v", got)
 	}
 }
+
+// TestOpenAIProviderStreamStopsAfterFirstDone covers #359: once the chunk
+// carrying finish_reason is forwarded as Done, the reader must stop, close the
+// channel and release the response body even when the server keeps streaming
+// trailing chunks (usage, [DONE] or anything else) that nobody consumes.
+func TestOpenAIProviderStreamStopsAfterFirstDone(t *testing.T) {
+	const trailing = 200 // well beyond the 64-slot channel buffer
+
+	stop := make(chan struct{})
+	disconnected := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`+"\n\n")
+		for i := 0; i < trailing; i++ {
+			_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"late"},"finish_reason":null}]}`+"\n\n")
+		}
+		w.(http.Flusher).Flush()
+		// Never send [DONE]; hold the connection until the client closes the
+		// body (or the test gives up), so a closed body is observable.
+		select {
+		case <-r.Context().Done():
+			close(disconnected)
+		case <-stop:
+		}
+	}))
+	defer ts.Close()
+	defer close(stop)
+
+	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: ts.URL + "/v1"})
+	ch, err := provider.StreamComplete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+
+	var content string
+	doneSeen := 0
+	for evt := range ch {
+		content += evt.Delta
+		if evt.Err != nil {
+			t.Fatalf("unexpected stream error: %v", evt.Err)
+		}
+		if evt.Done {
+			doneSeen++
+			break
+		}
+	}
+	if doneSeen != 1 || content != "done" {
+		t.Fatalf("expected one done event with content %q, got done=%d content=%q", "done", doneSeen, content)
+	}
+
+	// Nothing may follow the first done event, and the channel must close on
+	// its own without the request context being cancelled.
+	extra := 0
+	timeout := time.After(3 * time.Second)
+drain:
+	for {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				break drain
+			}
+			extra++
+			if evt.Done {
+				doneSeen++
+			}
+		case <-timeout:
+			t.Fatalf("stream channel not closed 3s after the first done event (%d extra events, %d done events)", extra, doneSeen)
+		}
+	}
+	if extra != 0 || doneSeen != 1 {
+		t.Fatalf("expected no events after the first done, got %d extra events and %d done events", extra, doneSeen)
+	}
+
+	select {
+	case <-disconnected:
+	case <-time.After(3 * time.Second):
+		t.Fatal("response body was not closed after the first done event")
+	}
+}
