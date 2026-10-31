@@ -1181,6 +1181,8 @@ Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Withou
 
 The `CLOUDPAM_LLM_*` variables are the fallback for AI planning: a value saved on the Configuration → AI Provider page overrides the matching variable, field by field, and takes effect on every replica without a restart.
 
+The API key is bound to its endpoint. `CLOUDPAM_LLM_API_KEY` is sent only when the endpoint comes from `CLOUDPAM_LLM_ENDPOINT` or the built-in default; an endpoint saved on the page uses only a key saved on the page, and runs without a key otherwise. Changing a saved endpoint while a saved key exists requires re-entering the key or clearing it in the same save. These rules stop a key from following an endpoint change silently, but they are not a permission boundary: anyone with the `settings:write` permission decides which endpoint receives the configured key, so treat `settings:write` as equivalent to access to that key.
+
 ### Install the agent
 
 ```bash
