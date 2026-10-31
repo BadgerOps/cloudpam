@@ -74,6 +74,7 @@ func (ns *NetworkServer) RegisterProtectedNetworkRoutes(dualMW Middleware, logge
 	ns.srv.handleOpenAPIRoute("POST /api/v1/network/objects", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkObjects))))
 	ns.srv.handleOpenAPIRoute("GET /api/v1/network/objects/", dualMW(readMW(http.HandlerFunc(ns.handleNetworkObjectSubroutes))))
 	ns.srv.handleOpenAPIRoute("PATCH /api/v1/network/objects/", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkObjectSubroutes))))
+	ns.srv.handleOpenAPIRoute("DELETE /api/v1/network/objects/", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkObjectSubroutes))))
 	ns.srv.handleOpenAPIRoute("GET /api/v1/network/relationships", dualMW(readMW(http.HandlerFunc(ns.handleNetworkRelationships))))
 	ns.srv.handleOpenAPIRoute("POST /api/v1/network/relationships", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkRelationships))))
 	ns.srv.handleOpenAPIRoute("/api/v1/network/relationships/", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkRelationshipSubroutes))))
@@ -234,8 +235,24 @@ func (ns *NetworkServer) handleNetworkObjectSubroutes(w http.ResponseWriter, r *
 			return
 		}
 		writeJSON(w, http.StatusOK, obj)
+	case http.MethodDelete:
+		obj, found, err := ns.networkStore.GetNetworkObject(r.Context(), id)
+		if err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "get network object failed", err.Error())
+			return
+		}
+		if !found {
+			ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "network object not found", "")
+			return
+		}
+		if err := ns.networkStore.DeleteNetworkObject(r.Context(), id); err != nil {
+			ns.srv.writeStoreErr(r.Context(), w, err)
+			return
+		}
+		ns.srv.logAudit(r.Context(), audit.ActionDelete, audit.ResourceNetworkObject, strconv.FormatInt(id, 10), obj.Name, http.StatusNoContent)
+		w.WriteHeader(http.StatusNoContent)
 	default:
-		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch}, ", "))
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch, http.MethodDelete}, ", "))
 		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
@@ -758,9 +775,9 @@ func (ns *NetworkServer) handleNetworkConflictPlaceholderParentAction(w http.Res
 	}
 	relationships := ns.persistNetworkConflictActionRelationships(r.Context(), "create_placeholder_parent", *conflict, []domain.CreateNetworkRelationship{
 		{
-			ID:              relationshipIDForConflict(conflict.ID, "network_object", fmt.Sprintf("%d", obj.ID), "discovered", req.DiscoveredID.String()),
+			ID:              relationshipIDForConflict(conflict.ID, domain.NetworkEntityKindObject, fmt.Sprintf("%d", obj.ID), "discovered", req.DiscoveredID.String()),
 			Type:            domain.NetworkRelationshipContains,
-			SourceKind:      "network_object",
+			SourceKind:      domain.NetworkEntityKindObject,
 			SourceID:        fmt.Sprintf("%d", obj.ID),
 			TargetKind:      "discovered",
 			TargetID:        req.DiscoveredID.String(),
@@ -770,11 +787,11 @@ func (ns *NetworkServer) handleNetworkConflictPlaceholderParentAction(w http.Res
 			ResolutionState: "open",
 		},
 		{
-			ID:              relationshipIDForConflict(conflict.ID, "discovered", req.DiscoveredID.String(), "network_object", fmt.Sprintf("%d", obj.ID)),
+			ID:              relationshipIDForConflict(conflict.ID, "discovered", req.DiscoveredID.String(), domain.NetworkEntityKindObject, fmt.Sprintf("%d", obj.ID)),
 			Type:            domain.NetworkRelationshipMissingParent,
 			SourceKind:      "discovered",
 			SourceID:        req.DiscoveredID.String(),
-			TargetKind:      "network_object",
+			TargetKind:      domain.NetworkEntityKindObject,
 			TargetID:        fmt.Sprintf("%d", obj.ID),
 			Confidence:      0.75,
 			Reason:          networkActionReason("create_placeholder_parent", req.Reason, actionDetails),
@@ -910,7 +927,7 @@ func (ns *NetworkServer) relationshipEndpointBelongsToAccount(ctx context.Contex
 		}
 		pool, found, err := ns.store.GetPool(ctx, poolID)
 		return err == nil && found && pool.AccountID != nil && *pool.AccountID == accountID
-	case "network_object":
+	case domain.NetworkEntityKindObject:
 		objectID, err := strconv.ParseInt(id, 10, 64)
 		if err != nil || ns.networkStore == nil {
 			return false
@@ -1238,7 +1255,7 @@ func networkNodeFromNetworkObject(obj domain.NetworkObject, accounts map[int64]d
 	nodeID := networkObjectNodeID(obj.ID)
 	node := domain.NetworkNode{
 		ID:                 nodeID,
-		Kind:               "network_object",
+		Kind:               domain.NetworkEntityKindObject,
 		ObjectType:         string(obj.ObjectType),
 		Name:               obj.Name,
 		CIDR:               obj.CIDR,

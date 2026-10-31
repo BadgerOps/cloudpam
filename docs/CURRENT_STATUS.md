@@ -19,7 +19,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 | Discovery: GCP | Partial | Server collector for networks, subnetworks, and external IPs. No org mode, no agent, no IaC helpers. Uses Application Default Credentials on the CloudPAM host |
 | Discovery: Azure | Missing | Account keys accept `azure:<subscription-uuid>` and the UI offers Azure; there is no collector. Sync fails with `no collector registered for provider` |
 | Drift | Complete | Detect, list, resolve, ignore. No automatic reconciliation suggestions |
-| Network objects | Complete for create/update | Merged network view, conflicts, persisted objects and relationships. **No delete** (`DELETE` returns 405) |
+| Network objects | Complete | Merged network view, conflicts, persisted objects and relationships. `DELETE` returns `409` while child objects name the object as their parent; relationships that reference it are removed with it |
 | Analysis engine | Complete as API | `POST /api/v1/analysis`, `/gaps`, `/fragmentation`, `/compliance`. `/fragmentation` and the full report score fragmentation for only the first pool. **No UI** |
 | Recommendations | Partial | Allocation and compliance only. Consolidation / resize / reclaim are commented stubs. Stored in a table on SQLite and PostgreSQL (#315) |
 | Schema Planner | Complete, one gap | Templates, conflict check, apply. Terraform export writes `cloudpam_pool` resources (0.23.1). Apply does not check that a child CIDR sits inside its declared parent (#284) |
@@ -62,11 +62,10 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 1. **Azure is selectable but cannot sync.** No collector is planned (#273 was closed as not planned). The API keeps accepting `azure` as an account provider, so operators can track Azure accounts and their pools by hand.
 2. **Cloud credentials are the host's, not the account's.** No encrypted per-account secrets, no cloud-connect OAuth. AWS uses the default credential chain / AssumeRole. GCP uses ADC. The standalone agent (`cmd/cloudpam-agent`) hardcodes `aws.New()`, so **GCP cannot run in the agent**.
 3. **Soft delete is one-way.** `deleted_at` is set; there is no restore API or UI.
-4. **Network objects cannot be deleted.**
-5. **The local observability stack ships no logs.** `deploy/docker-compose.observability.yml` starts Prometheus, Grafana, and Jaeger from a clean checkout. Vector runs only in the Kubernetes DaemonSet (`deploy/k8s/vector-daemonset.yaml`), and the sample `deploy/vector/vector.toml` needs updating for Vector 0.34.1 (its `encoding.codec` form is rejected).
-6. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
-7. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
-8. **`skip_conflicts: true` skips the overlap check.** Every endpoint that creates pools lists, checks, and inserts under one lock. On PostgreSQL that lock is a per-organization advisory lock held in one transaction, so replicas on one database cannot both store overlapping siblings. SQLite and the in-memory store use the in-process `Server.placeGate`. Schema apply and AI plan apply with `skip_conflicts: true` still take the lock and check parent containment, but store overlapping pools.
+4. **The local observability stack ships no logs.** `deploy/docker-compose.observability.yml` starts Prometheus, Grafana, and Jaeger from a clean checkout. Vector runs only in the Kubernetes DaemonSet (`deploy/k8s/vector-daemonset.yaml`), and the sample `deploy/vector/vector.toml` needs updating for Vector 0.34.1 (its `encoding.codec` form is rejected).
+5. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
+6. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
+7. **`skip_conflicts: true` skips the overlap check.** Every endpoint that creates pools lists, checks, and inserts under one lock. On PostgreSQL that lock is a per-organization advisory lock held in one transaction, so replicas on one database cannot both store overlapping siblings. SQLite and the in-memory store use the in-process `Server.placeGate`. Schema apply and AI plan apply with `skip_conflicts: true` still take the lock and check parent containment, but store overlapping pools.
 
 ---
 
@@ -106,7 +105,7 @@ Enable with `CLOUDPAM_LLM_API_KEY` and/or `CLOUDPAM_LLM_ENDPOINT`. There is no i
 
 **Shipped:** AWS + GCP collectors on the server; AWS agent; bootstrap tokens; register / approve / reject; ingest and org ingest; drift detect/resolve/ignore; merged network objects and relationships; schema policy evaluation (request-scoped and persistable via API).
 
-**Not shipped:** Azure collector; GCP in the agent; per-account stored credentials; incremental sync; in-process scheduled sync; collector rate limiter; reconciliation suggestions; network object delete.
+**Not shipped:** Azure collector; GCP in the agent; per-account stored credentials; incremental sync; in-process scheduled sync; collector rate limiter; reconciliation suggestions.
 
 The Discovery UI at `/discovery` has four tabs: Resources, Network, Sync History, Agents. GCP and Azure in the account picker have no matching wizard path; the wizard is AWS-shaped (IAM role, org mode, Terraform/CloudFormation snippets).
 

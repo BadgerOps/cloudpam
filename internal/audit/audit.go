@@ -72,6 +72,7 @@ const (
 	ResourceUser            = "user"
 	ResourceSession         = "session"
 	ResourceNetworkConflict = "network_conflict"
+	ResourceNetworkObject   = "network_object"
 )
 
 // Valid actor types.

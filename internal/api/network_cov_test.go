@@ -307,8 +307,8 @@ func TestNetworkObjectsErrorPathsCov(t *testing.T) {
 	})
 
 	t.Run("subroute method not allowed", func(t *testing.T) {
-		rr := assertStatusCov(t, doReqCov(t, mux, http.MethodDelete, "/api/v1/network/objects/1", ""), http.StatusMethodNotAllowed)
-		if allow := rr.Header().Get("Allow"); allow != "GET, PATCH" {
+		rr := assertStatusCov(t, doReqCov(t, mux, http.MethodPut, "/api/v1/network/objects/1", ""), http.StatusMethodNotAllowed)
+		if allow := rr.Header().Get("Allow"); allow != "GET, PATCH, DELETE" {
 			t.Fatalf("Allow = %q", allow)
 		}
 	})

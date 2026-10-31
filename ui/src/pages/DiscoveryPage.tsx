@@ -29,6 +29,8 @@ import { useAccounts } from '../hooks/useAccounts'
 import { usePools } from '../hooks/usePools'
 import { useNetworkView } from '../hooks/useNetwork'
 import { useToast } from '../hooks/useToast'
+import { useAuth } from '../hooks/useAuth'
+import { ApiRequestError } from '../api/client'
 import StatusBadge from '../components/StatusBadge'
 import DiscoveryWizard from '../components/DiscoveryWizard'
 import { formatTimeAgo } from '../utils/format'
@@ -856,9 +858,12 @@ function NetworkTab({
     importConflict,
     createPlaceholderParentConflict,
     resolveNetworkRelationship,
+    deleteObject,
   } = useNetworkView()
   const { previewDiscoveryImport: previewNetworkImport } = useSyncJobs()
   const { showToast } = useToast()
+  const { hasPermission } = useAuth()
+  const canDeleteObjects = hasPermission('discovery:update')
 
   const filters = useMemo(() => ({
     account_id: selectedAccountId ?? undefined,
@@ -1354,6 +1359,9 @@ function NetworkTab({
           accounts={accounts}
           pools={pools}
           onShowRelationships={showRelationshipsForObject}
+          canDelete={canDeleteObjects}
+          onDelete={(object) => deleteObject(object.id)}
+          onDeleted={load}
         />
       ) : mode === 'relationships' ? (
         <NetworkRelationshipTable
@@ -1614,19 +1622,53 @@ function NetworkFlatTable({
   )
 }
 
-function NetworkObjectTable({
+export function NetworkObjectTable({
   objects,
   loading,
   accounts,
   pools,
   onShowRelationships,
+  canDelete = false,
+  onDelete,
+  onDeleted,
 }: {
   objects: NetworkObject[]
   loading: boolean
   accounts: Account[]
   pools: Pool[]
   onShowRelationships: (object: NetworkObject) => void
+  canDelete?: boolean
+  onDelete?: (object: NetworkObject) => Promise<void>
+  onDeleted?: () => void
 }) {
+  const { showToast } = useToast()
+  const [pendingDeleteIDs, setPendingDeleteIDs] = useState<Set<number>>(() => new Set())
+  const pendingDeleteRef = useRef<Set<number>>(new Set())
+
+  async function handleDelete(object: NetworkObject) {
+    if (!onDelete || pendingDeleteRef.current.has(object.id)) return
+    const address = object.cidr || object.ip_address
+    const label = address ? `"${object.name}" (${address})` : `"${object.name}"`
+    if (!window.confirm(`Delete ${label}? Relationships that reference it are removed. The linked pool and discovered resource are not deleted.`)) return
+    pendingDeleteRef.current.add(object.id)
+    setPendingDeleteIDs(new Set(pendingDeleteRef.current))
+    try {
+      await onDelete(object)
+      showToast(`Deleted network object ${object.name}`, 'success')
+      onDeleted?.()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Delete failed'
+      if (err instanceof ApiRequestError && err.status === 409) {
+        showToast(`Cannot delete ${object.name}: ${message.replace(/^conflict: /, '')}`, 'error')
+      } else {
+        showToast(message, 'error')
+      }
+    } finally {
+      pendingDeleteRef.current.delete(object.id)
+      setPendingDeleteIDs(new Set(pendingDeleteRef.current))
+    }
+  }
+
   if (loading) return <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
   return (
     <div className="overflow-x-auto rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
@@ -1679,6 +1721,19 @@ function NetworkObjectTable({
                     <GitBranch className="h-3.5 w-3.5" />
                     Relationships
                   </button>
+                  {canDelete && onDelete && (
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(object)}
+                      disabled={pendingDeleteIDs.has(object.id)}
+                      aria-label={`Delete network object ${object.name}`}
+                      title="Delete"
+                      className="ml-1 inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                    >
+                      {pendingDeleteIDs.has(object.id) ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      Delete
+                    </button>
+                  )}
                 </td>
               </tr>
             )
