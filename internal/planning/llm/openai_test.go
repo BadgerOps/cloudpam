@@ -12,6 +12,36 @@ import (
 	"testing"
 )
 
+func TestLimitedBodyOverflowErrorIsSticky(t *testing.T) {
+	l := &limitedBody{r: strings.NewReader(strings.Repeat("x", 20)), limit: 10}
+	buf := make([]byte, 6)
+	var firstErr error
+	total := 0
+	for i := 0; i < 5 && firstErr == nil; i++ {
+		n, err := l.Read(buf)
+		if n < 0 {
+			t.Fatalf("read %d returned negative n=%d", i, n)
+		}
+		total += n
+		firstErr = err
+	}
+	if !errors.Is(firstErr, ErrInvalidResponse) {
+		t.Fatalf("first overflow error = %v, want ErrInvalidResponse", firstErr)
+	}
+	if total > 10 {
+		t.Fatalf("returned %d bytes, want at most the 10-byte limit", total)
+	}
+	for i := 0; i < 2; i++ {
+		n, err := l.Read(buf)
+		if n != 0 {
+			t.Fatalf("read after overflow returned n=%d, want 0", n)
+		}
+		if err != firstErr {
+			t.Fatalf("read after overflow returned %v, want the same error %v", err, firstErr)
+		}
+	}
+}
+
 func TestOpenAIProviderRejectsOversizedResponses(t *testing.T) {
 	prev := maxResponseBytes
 	maxResponseBytes = 1024

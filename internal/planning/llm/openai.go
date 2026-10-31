@@ -26,6 +26,7 @@ type limitedBody struct {
 	r     io.Reader
 	limit int64
 	read  int64
+	err   error // sticky overflow error
 }
 
 func newLimitedBody(r io.Reader) *limitedBody {
@@ -34,11 +35,14 @@ func newLimitedBody(r io.Reader) *limitedBody {
 }
 
 func (l *limitedBody) Read(p []byte) (int, error) {
+	if l.err != nil {
+		return 0, l.err
+	}
 	n, err := l.r.Read(p)
 	l.read += int64(n)
 	if l.read > l.limit {
-		over := int(l.read - l.limit)
-		return n - over, fmt.Errorf("%w: response exceeds %d bytes", ErrInvalidResponse, l.limit)
+		l.err = fmt.Errorf("%w: response exceeds %d bytes", ErrInvalidResponse, l.limit)
+		return max(n-int(l.read-l.limit), 0), l.err
 	}
 	return n, err
 }
