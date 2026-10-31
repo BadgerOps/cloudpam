@@ -354,6 +354,10 @@ func (d *DiscoveryServer) handleImportApply(w http.ResponseWriter, r *http.Reque
 			d.srv.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
 			return
 		}
+		if errors.Is(err, storage.ErrBusy) {
+			d.srv.writeStoreErr(r.Context(), w, err)
+			return
+		}
 		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "apply import failed", err.Error())
 		return
 	}
@@ -408,7 +412,9 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 		return items[i].ResourceType < items[j].ResourceType
 	})
 
-	createdPoolByProviderID := make(map[string]int64)
+	parentOf := make(map[string]discoveryParent)
+	var creates []discoveryCreate
+	var batch []poolPlacement
 	for _, item := range items {
 		if item.Status != "importable" && !canForceDiscoveryImport(item, opts) {
 			resp.Skipped++
@@ -439,45 +445,67 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 				Evidence:        discoveryRelationshipEvidence(*res, "action=import_link", "pool_id="+fmt.Sprintf("%d", *item.ProposedPoolID)),
 				ResolutionState: string(domain.DriftStatusResolved),
 			})
-			createdPoolByProviderID[res.ResourceID] = *item.ProposedPoolID
+			parentOf[res.ResourceID] = discoveryParent{id: item.ProposedPoolID}
 			resp.ResourcesLinked++
 			resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
 			continue
 		}
 
-		parentID := item.ProposedParentPoolID
-		if parentID == nil && res.ParentResourceID != nil {
-			if id, ok := createdPoolByProviderID[*res.ParentResourceID]; ok {
-				parentID = &id
-			}
+		var parent discoveryParent
+		inRun := false
+		if res.ParentResourceID != nil {
+			parent, inRun = parentOf[*res.ParentResourceID]
 		}
-		if res.ResourceType == domain.ResourceTypeSubnet && res.ParentResourceID != nil && parentID == nil {
+		if !inRun && item.ProposedParentPoolID != nil {
+			parent = discoveryParent{id: item.ProposedParentPoolID}
+		}
+		if res.ResourceType == domain.ResourceTypeSubnet && res.ParentResourceID != nil && parent == (discoveryParent{}) {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: parent %s was not imported or linked", res.ResourceID, *res.ParentResourceID))
 			resp.Skipped++
 			continue
 		}
-		if parentID != nil {
-			if err := d.validateImportParentPool(ctx, req.AccountID, *parentID); err != nil {
+		if parent.id != nil {
+			if err := d.validateImportParentPool(ctx, req.AccountID, *parent.id); err != nil {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: %v", res.ResourceID, err))
 				resp.Skipped++
 				continue
 			}
 		}
-		pool, err := d.createDiscoveredPool(ctx, req.AccountID, *res, parentID)
-		if err != nil {
+		batch = append(batch, poolPlacement{Ref: res.ResourceID, ParentRef: parent.ref, In: discoveredPoolInput(req.AccountID, *res, parent.id)})
+		creates = append(creates, discoveryCreate{item: item, res: *res})
+		parentOf[res.ResourceID] = discoveryParent{ref: res.ResourceID}
+	}
+
+	placed, err := d.srv.placePools(ctx, siblingsOnly, batch)
+	if err != nil {
+		return resp, err
+	}
+	type failedPoolCleanup struct {
+		poolID   int64
+		resource string
+	}
+	failedPools := make(map[int64]bool)
+	var cleanup []failedPoolCleanup
+	for i, c := range creates {
+		item, res := c.item, &c.res
+		if err := placed[i].Err; err != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: create pool: %v", res.ResourceID, err))
 			resp.Skipped++
 			continue
 		}
+		pool := placed[i].Pool
+		parentID := pool.ParentID
 		resp.CreatedPoolIDs = append(resp.CreatedPoolIDs, pool.ID)
+		if parentID != nil && failedPools[*parentID] {
+			failedPools[pool.ID] = true
+			cleanup = append(cleanup, failedPoolCleanup{poolID: pool.ID, resource: res.ResourceID})
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: parent pool %d was not linked", res.ResourceID, *parentID))
+			resp.Skipped++
+			continue
+		}
 		if err := d.store.LinkResourceToPool(ctx, item.ResourceID, pool.ID); err != nil {
-			if ok, cleanupErr := d.srv.store.DeletePool(ctx, pool.ID); cleanupErr != nil {
-				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: %v", res.ResourceID, pool.ID, cleanupErr))
-			} else if !ok {
-				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: not found", res.ResourceID, pool.ID))
-			} else {
-				resp.CreatedPoolIDs = resp.CreatedPoolIDs[:len(resp.CreatedPoolIDs)-1]
-			}
+			failedPools[pool.ID] = true
+			cleanup = append(cleanup, failedPoolCleanup{poolID: pool.ID, resource: res.ResourceID})
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
 			resp.Skipped++
 			continue
@@ -506,11 +534,34 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 				ResolutionState: string(domain.DriftStatusResolved),
 			})
 		}
-		createdPoolByProviderID[res.ResourceID] = pool.ID
 		resp.PoolsCreated++
 		resp.ResourcesLinked++
 		resp.Summary.Imported++
 		resp.LinkedResourceIDs = append(resp.LinkedResourceIDs, item.ResourceID)
+	}
+
+	// Every pool in a failed lineage already exists because placement commits the whole batch
+	// before resources are linked. Delete failed subtrees from the leaves upward so a parent is
+	// not retained merely because its newly created children still reference it.
+	removed := make(map[int64]bool, len(cleanup))
+	for i := len(cleanup) - 1; i >= 0; i-- {
+		entry := cleanup[i]
+		if ok, cleanupErr := d.srv.store.DeletePool(ctx, entry.poolID); cleanupErr != nil {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: %v", entry.resource, entry.poolID, cleanupErr))
+		} else if !ok {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: not found", entry.resource, entry.poolID))
+		} else {
+			removed[entry.poolID] = true
+		}
+	}
+	if len(removed) > 0 {
+		kept := resp.CreatedPoolIDs[:0]
+		for _, id := range resp.CreatedPoolIDs {
+			if !removed[id] {
+				kept = append(kept, id)
+			}
+		}
+		resp.CreatedPoolIDs = kept
 	}
 
 	resp.Summary.Skipped = resp.Skipped
@@ -834,6 +885,7 @@ func addDiscoveryPreviewItem(resp *domain.DiscoveryImportPreviewResponse, item d
 
 func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImportPreviewItem, res *domain.DiscoveredResource, pools []domain.Pool) {
 	bestParentBits := -1
+	parentChosen := item.ProposedParentPoolID != nil
 	for _, pool := range pools {
 		if pool.CIDR == "" || res.CIDR == "" {
 			continue
@@ -852,12 +904,10 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 			if pool.AccountID != nil && *pool.AccountID != res.AccountID {
 				continue
 			}
-			if bits := prefixLength(pool.CIDR); bits > bestParentBits {
+			if bits := prefixLength(pool.CIDR); bits > bestParentBits && !parentChosen {
 				bestParentBits = bits
 				parentID := pool.ID
-				if item.ProposedParentPoolID == nil {
-					item.ProposedParentPoolID = &parentID
-				}
+				item.ProposedParentPoolID = &parentID
 			}
 			continue
 		}
@@ -939,7 +989,17 @@ func (d *DiscoveryServer) listAllDiscoveredResources(ctx context.Context, accoun
 	return out, nil
 }
 
-func (d *DiscoveryServer) createDiscoveredPool(ctx context.Context, accountID int64, res domain.DiscoveredResource, parentID *int64) (domain.Pool, error) {
+type discoveryParent struct {
+	id  *int64
+	ref string
+}
+
+type discoveryCreate struct {
+	item domain.DiscoveryImportPreviewItem
+	res  domain.DiscoveredResource
+}
+
+func discoveredPoolInput(accountID int64, res domain.DiscoveredResource, parentID *int64) domain.CreatePool {
 	poolType := domain.PoolTypeSubnet
 	if res.ResourceType == domain.ResourceTypeVPC {
 		poolType = domain.PoolTypeVPC
@@ -948,7 +1008,7 @@ func (d *DiscoveryServer) createDiscoveredPool(ctx context.Context, accountID in
 	if name == "" {
 		name = res.ResourceID
 	}
-	return d.srv.store.CreatePool(ctx, domain.CreatePool{
+	return domain.CreatePool{
 		Name:      name,
 		CIDR:      res.CIDR,
 		ParentID:  parentID,
@@ -964,7 +1024,7 @@ func (d *DiscoveryServer) createDiscoveredPool(ctx context.Context, accountID in
 			"discovery_region":      res.Region,
 			"discovery_type":        string(res.ResourceType),
 		},
-	})
+	}
 }
 
 func hasAnyIssue(issues []string, targets ...string) bool {
@@ -1042,11 +1102,15 @@ func (d *DiscoveryServer) handleImportDiscoveredSchema(w http.ResponseWriter, r 
 		return
 	}
 
-	resp := d.importDiscoveredPools(r.Context(), body.AccountID, resources)
+	resp, err := d.importDiscoveredPools(r.Context(), body.AccountID, resources)
+	if err != nil {
+		d.srv.writeStoreErr(r.Context(), w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID int64, resources []domain.DiscoveredResource) discoveryImportResponse {
+func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID int64, resources []domain.DiscoveredResource) (discoveryImportResponse, error) {
 	resp := discoveryImportResponse{Errors: []string{}}
 	sort.SliceStable(resources, func(i, j int) bool {
 		if resources[i].ResourceType == resources[j].ResourceType {
@@ -1064,23 +1128,31 @@ func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID i
 	existingPools, err := d.srv.store.ListPools(ctx)
 	if err != nil {
 		resp.Errors = append(resp.Errors, "list pools: "+err.Error())
-		return resp
+		return resp, nil
 	}
 	poolByDiscoveryID := make(map[string]int64)
-	poolByShape := make(map[string]int64)
+	poolByShape := make(map[string]discoveryParent)
 	for _, pool := range existingPools {
 		if pool.Tags != nil {
 			if id := pool.Tags["discovery_resource_id"]; id != "" {
 				poolByDiscoveryID[id] = pool.ID
 			}
 		}
-		poolByShape[poolShapeKey(pool.AccountID, pool.ParentID, string(pool.Type), pool.CIDR)] = pool.ID
+		poolByShape[poolShapeKey(pool.AccountID, discoveryParent{id: pool.ParentID}, string(pool.Type), pool.CIDR)] = discoveryParent{id: &pool.ID}
 	}
 
-	resourceToPool := make(map[string]int64)
+	type pendingLink struct {
+		res     domain.DiscoveredResource
+		entry   int
+		creates bool
+	}
+	var batch []poolPlacement
+	var pending []pendingLink
+	entryOf := make(map[string]int)
+	resourceToPool := make(map[string]discoveryParent)
 	for _, res := range resources {
 		if res.PoolID != nil {
-			resourceToPool[res.ResourceID] = *res.PoolID
+			resourceToPool[res.ResourceID] = discoveryParent{id: res.PoolID}
 			resp.Skipped++
 			continue
 		}
@@ -1099,82 +1171,84 @@ func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID i
 			poolType = domain.PoolTypeVPC
 		}
 
-		var parentID *int64
+		var parent discoveryParent
 		if res.ParentResourceID != nil {
-			if id, ok := resourceToPool[*res.ParentResourceID]; ok {
-				parentID = &id
-			}
+			parent = resourceToPool[*res.ParentResourceID]
 		}
 
 		if id, ok := poolByDiscoveryID[res.ResourceID]; ok {
 			if err := d.store.LinkResourceToPool(ctx, res.ID, id); err != nil {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link existing pool: %v", res.ResourceID, err))
 			} else {
-				resourceToPool[res.ResourceID] = id
+				resourceToPool[res.ResourceID] = discoveryParent{id: &id}
 				resp.ResourcesLinked++
 			}
 			continue
 		}
-		if id, ok := poolByShape[poolShapeKey(&accountID, parentID, string(poolType), res.CIDR)]; ok {
-			if err := d.store.LinkResourceToPool(ctx, res.ID, id); err != nil {
+		shape := poolShapeKey(&accountID, parent, string(poolType), res.CIDR)
+		if match, ok := poolByShape[shape]; ok {
+			if match.ref != "" {
+				resourceToPool[res.ResourceID] = match
+				pending = append(pending, pendingLink{res: res, entry: entryOf[match.ref]})
+				continue
+			}
+			if err := d.store.LinkResourceToPool(ctx, res.ID, *match.id); err != nil {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link matching pool: %v", res.ResourceID, err))
 			} else {
-				resourceToPool[res.ResourceID] = id
+				resourceToPool[res.ResourceID] = match
 				resp.ResourcesLinked++
 			}
 			continue
 		}
 
-		name := strings.TrimSpace(res.Name)
-		if name == "" {
-			name = res.ResourceID
-		}
-		pool, err := d.srv.store.CreatePool(ctx, domain.CreatePool{
-			Name:      name,
-			CIDR:      res.CIDR,
-			ParentID:  parentID,
-			AccountID: &accountID,
-			Type:      poolType,
-			Status:    domain.PoolStatusActive,
-			Source:    domain.PoolSourceDiscovered,
-			Description: fmt.Sprintf("Imported from %s discovery resource %s in %s",
-				res.Provider, res.ResourceID, res.Region),
-			Tags: map[string]string{
-				"discovery_resource_id": res.ResourceID,
-				"discovery_provider":    res.Provider,
-				"discovery_region":      res.Region,
-				"discovery_type":        string(res.ResourceType),
-			},
-		})
+		batch = append(batch, poolPlacement{Ref: res.ResourceID, ParentRef: parent.ref, In: discoveredPoolInput(accountID, res, parent.id)})
+		entryOf[res.ResourceID] = len(batch) - 1
+		pending = append(pending, pendingLink{res: res, entry: len(batch) - 1, creates: true})
+		created := discoveryParent{ref: res.ResourceID}
+		resourceToPool[res.ResourceID] = created
+		poolByShape[shape] = created
+	}
+
+	placed, err := d.srv.placePools(ctx, siblingsOnly, batch)
+	if err != nil {
+		return resp, err
+	}
+	for _, p := range pending {
+		pool, err := placed[p.entry].Pool, placed[p.entry].Err
 		if err != nil {
-			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: create pool: %v", res.ResourceID, err))
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: create pool: %v", p.res.ResourceID, err))
 			resp.Skipped++
 			continue
 		}
-		if err := d.store.LinkResourceToPool(ctx, res.ID, pool.ID); err != nil {
-			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
-		} else {
-			resp.ResourcesLinked++
+		if p.creates {
+			resp.PoolsCreated++
 		}
-		resourceToPool[res.ResourceID] = pool.ID
-		poolByDiscoveryID[res.ResourceID] = pool.ID
-		poolByShape[poolShapeKey(pool.AccountID, pool.ParentID, string(pool.Type), pool.CIDR)] = pool.ID
-		resp.PoolsCreated++
+		if err := d.store.LinkResourceToPool(ctx, p.res.ID, pool.ID); err != nil {
+			action := "link matching pool"
+			if p.creates {
+				action = "link new pool"
+			}
+			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: %s: %v", p.res.ResourceID, action, err))
+			continue
+		}
+		resp.ResourcesLinked++
 	}
-
-	return resp
+	return resp, nil
 }
 
-func poolShapeKey(accountID *int64, parentID *int64, poolType string, cidr string) string {
+func poolShapeKey(accountID *int64, parent discoveryParent, poolType string, cidr string) string {
 	account := int64(0)
-	parent := int64(0)
 	if accountID != nil {
 		account = *accountID
 	}
-	if parentID != nil {
-		parent = *parentID
+	under := "0"
+	switch {
+	case parent.ref != "":
+		under = "ref:" + parent.ref
+	case parent.id != nil:
+		under = strconv.FormatInt(*parent.id, 10)
 	}
-	return fmt.Sprintf("%d|%d|%s|%s", account, parent, poolType, cidr)
+	return fmt.Sprintf("%d|%s|%s|%s", account, under, poolType, cidr)
 }
 
 // handleSync handles POST /api/v1/discovery/sync (trigger) and GET (list jobs)

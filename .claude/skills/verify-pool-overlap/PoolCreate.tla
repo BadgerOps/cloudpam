@@ -4,36 +4,37 @@
 (*                                                                         *)
 (* Code modelled, at the sync commit recorded in SKILL.md:                 *)
 (*                                                                         *)
-(*   createPool (internal/api/pool_handlers.go) validates the body and the *)
-(*   parent, then calls Server.placePools(ctx, siblingsOnly, ...) in       *)
-(*   internal/api/pool_placement.go. placePools takes placeMu, then:       *)
+(*   createPool (internal/api/pool_handlers.go) validates the body, then   *)
+(*   calls Server.placePools(ctx, siblingsOnly, ...) in                    *)
+(*   internal/api/pool_placement.go. placePools takes placeGate, then:     *)
 (*                                                                         *)
 (*   Store without storage.PlacementLocker (MemoryStore, SQLite),          *)
 (*   DatabaseLock = FALSE: place(ctx, s.store, ...) runs on the store.     *)
 (*                                                                         *)
-(*   ListAndCheck(r)  = placeMu.Lock(), ListPools, then checkPlacement on  *)
-(*                      that snapshot. The check compares siblings only    *)
-(*                      (same parent_id, or both top-level) and skips an   *)
-(*                      exact-equal CIDR (overlapPolicy.compares). A       *)
-(*                      conflict returns at once and the deferred Unlock   *)
-(*                      releases placeMu.                                  *)
+(*   ListAndCheck(r)  = placeGate.acquire(), ListPools, then               *)
+(*                      poolIndex.admit on that snapshot. It checks the    *)
+(*                      parent, compares siblings only (same parent_id,    *)
+(*                      or both top-level) and skips an exact-equal CIDR.  *)
+(*                      A refused entry is not inserted, and the deferred  *)
+(*                      release frees placeGate.                           *)
 (*   Insert(r)        = Store.CreatePool, which commits on its own, then   *)
-(*                      the deferred placeMu.Unlock().                     *)
+(*                      the deferred placeGate.release().                  *)
 (*                                                                         *)
 (*   PostgreSQL (Store implements PlacementLocker), DatabaseLock = TRUE:   *)
 (*   Store.WithPlacementLock (internal/storage/postgres/placement.go)      *)
 (*   opens one READ COMMITTED transaction, takes pg_advisory_xact_lock on  *)
 (*   a per-organization key, and runs place() on placementTx.              *)
 (*                                                                         *)
-(*   ListAndCheck(r)  = placeMu.Lock(), BEGIN, pg_advisory_xact_lock,      *)
-(*                      ListPools in the transaction, checkPlacement. A    *)
-(*                      conflict rolls back, which frees the advisory      *)
-(*                      lock, then placeMu is unlocked.                    *)
+(*   ListAndCheck(r)  = placeGate.acquire(), BEGIN, pg_advisory_xact_lock, *)
+(*                      ListPools in the transaction, poolIndex.admit. A   *)
+(*                      refused entry inserts nothing; the empty           *)
+(*                      transaction ends, which frees the advisory lock,   *)
+(*                      then placeGate is released.                        *)
 (*   TxInsert(r)      = placementTx.CreatePool: the INSERT runs in a       *)
 (*                      savepoint of that transaction. No other session    *)
 (*                      sees it before COMMIT.                             *)
 (*   Commit(r)        = endTx(ctx, tx.Commit). The rows become visible,    *)
-(*                      then the advisory lock and placeMu are released.   *)
+(*                      then the advisory lock and placeGate are released. *)
 (*   SessionLost(r)   = the transaction ends without COMMIT: ctx cancelled *)
 (*                      (the ctx.Err() check), the process dies,           *)
 (*                      idle_in_transaction_session_timeout, or            *)
@@ -46,7 +47,7 @@
 (* idx_pools_org_cidr on (organization_id, cidr), which also refuses an    *)
 (* equal CIDR under another parent.                                        *)
 (*                                                                         *)
-(* placeMu is a field of Server, so it serializes requests inside one      *)
+(* placeGate is a field of Server, so it serializes requests inside one    *)
 (* process only. ReqProcess says which process serves each request; all    *)
 (* processes share the one store. The advisory lock key depends only on    *)
 (* the organization, so one dbHolder stands for it across every process.   *)
@@ -70,17 +71,17 @@ VARIABLES
   uncommitted, \* pools inserted inside a placement transaction that has not committed
   pc,          \* per request: "start" | "checked" | "inserted" | "done"
   outcome,     \* per request: "pending" | "created" | "rejected" | "failed"
-  holder,      \* per process: the request holding that Server's placeMu, or NoHolder
+  holder,      \* per process: the request holding that Server's placeGate, or NoHolder
   dbHolder     \* the request holding the organization's placement advisory lock, or NoHolder
 
 vars == <<pools, uncommitted, pc, outcome, holder, dbHolder>>
 
 Pool(r) == [req |-> r, cidr |-> ReqCIDR[r], parent |-> ReqParent[r]]
 
-\* Pools checkPlacement compares against under siblingsOnly: same parent_id, or both top-level.
+\* Pools poolIndex.admit compares against under siblingsOnly: same parent_id, or both top-level.
 Siblings(r, ps) == {p \in ps : p.parent = ReqParent[r]}
 
-\* checkPlacement rejects on overlap but skips an exact-equal CIDR (p.CIDR != e.In.CIDR).
+\* poolIndex.admit rejects on overlap but skips an exact-equal CIDR (s.pool.CIDR != in.CIDR).
 HandlerConflict(r, ps) ==
   \E p \in Siblings(r, ps) : p.cidr # ReqCIDR[r] /\ Overlaps(p.cidr, ReqCIDR[r])
 
@@ -99,9 +100,9 @@ Init ==
   /\ holder = [s \in Processes |-> NoHolder]
   /\ dbHolder = NoHolder
 
-\* placePools: placeMu.Lock(), then (PostgreSQL) BEGIN and the advisory lock, then ListPools and
-\* checkPlacement. One step: the list runs only once both locks are held, and every placement takes
-\* placeMu first, so a request waiting on the advisory lock has read nothing.
+\* placePools: placeGate.acquire(), then (PostgreSQL) BEGIN and the advisory lock, then ListPools and
+\* poolIndex.admit. One step: the list runs only once both locks are held, and every placement takes
+\* placeGate first, so a request waiting on the advisory lock has read nothing.
 ListAndCheck(r) ==
   /\ pc[r] = "start"
   /\ holder[ReqProcess[r]] = NoHolder
@@ -116,7 +117,7 @@ ListAndCheck(r) ==
             /\ UNCHANGED outcome
   /\ UNCHANGED <<pools, uncommitted>>
 
-\* No PlacementLocker: Store.CreatePool commits on its own, then the deferred placeMu.Unlock().
+\* No PlacementLocker: Store.CreatePool commits on its own, then the deferred placeGate.release().
 Insert(r) ==
   /\ ~DatabaseLock
   /\ pc[r] = "checked"

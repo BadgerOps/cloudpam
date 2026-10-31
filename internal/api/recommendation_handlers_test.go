@@ -21,7 +21,7 @@ func setupRecommendationServer() (*stdhttp.ServeMux, *storage.MemoryStore) {
 
 	analysisSvc := planning.NewAnalysisService(st)
 	recStore := storage.NewMemoryRecommendationStore(st)
-	recSvc := planning.NewRecommendationService(analysisSvc, recStore, st)
+	recSvc := planning.NewRecommendationService(analysisSvc, recStore, st, srv)
 	recSrv := NewRecommendationServer(srv, recSvc, recStore)
 	recSrv.RegisterRecommendationRoutes()
 
@@ -199,6 +199,11 @@ func TestRecommendationHandler_Apply(t *testing.T) {
 		Name: "Net", CIDR: "10.0.0.0/24", Type: domain.PoolTypeSupernet,
 		Description: "test",
 	})
+	if _, err := st.CreatePool(context.Background(), domain.CreatePool{
+		Name: "Used", CIDR: "10.0.0.0/26", ParentID: &pool.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	genBody := `{"pool_ids":[` + int64Str(pool.ID) + `]}`
 	genReq := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/recommendations/generate", strings.NewReader(genBody))

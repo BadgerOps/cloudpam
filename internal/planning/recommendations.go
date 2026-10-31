@@ -12,19 +12,27 @@ import (
 	"cloudpam/internal/storage"
 )
 
+// PoolPlacer creates a pool under CloudPAM's placement guard: parent containment, sibling overlap
+// and the placement lock.
+type PoolPlacer interface {
+	PlacePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error)
+}
+
 // RecommendationService generates, applies, and dismisses recommendations.
 type RecommendationService struct {
 	analysis  *AnalysisService
 	store     storage.RecommendationStore
 	mainStore storage.Store
+	placer    PoolPlacer
 }
 
 // NewRecommendationService creates a new RecommendationService.
-func NewRecommendationService(analysis *AnalysisService, store storage.RecommendationStore, mainStore storage.Store) *RecommendationService {
+func NewRecommendationService(analysis *AnalysisService, store storage.RecommendationStore, mainStore storage.Store, placer PoolPlacer) *RecommendationService {
 	return &RecommendationService{
 		analysis:  analysis,
 		store:     store,
 		mainStore: mainStore,
+		placer:    placer,
 	}
 }
 
@@ -114,7 +122,7 @@ func (s *RecommendationService) Apply(ctx context.Context, id string, req domain
 			name = fmt.Sprintf("Allocation %s", rec.SuggestedCIDR)
 		}
 		parentID := rec.PoolID
-		newPool, err := s.mainStore.CreatePool(ctx, domain.CreatePool{
+		newPool, err := s.placer.PlacePool(ctx, domain.CreatePool{
 			Name:      name,
 			CIDR:      rec.SuggestedCIDR,
 			ParentID:  &parentID,

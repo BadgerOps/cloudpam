@@ -8,12 +8,18 @@ import (
 	"cloudpam/internal/storage"
 )
 
+type storePlacer struct{ storage.Store }
+
+func (p storePlacer) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
+	return p.CreatePool(ctx, in)
+}
+
 func setupRecService(t *testing.T) (*RecommendationService, *storage.MemoryStore) {
 	t.Helper()
 	st := storage.NewMemoryStore()
 	recStore := storage.NewMemoryRecommendationStore(st)
 	analysisSvc := NewAnalysisService(st)
-	recSvc := NewRecommendationService(analysisSvc, recStore, st)
+	recSvc := NewRecommendationService(analysisSvc, recStore, st, storePlacer{st})
 	return recSvc, st
 }
 
