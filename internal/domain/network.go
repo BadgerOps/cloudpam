@@ -111,6 +111,10 @@ const (
 	NetworkRelationshipDuplicateOf     NetworkRelationshipType = "duplicate_of"
 )
 
+// NetworkEntityKindObject is the relationship source_kind/target_kind value
+// that refers to a managed network object by its numeric ID.
+const NetworkEntityKindObject = "network_object"
+
 type NetworkRelationship struct {
 	ID              string                  `json:"id"`
 	Type            NetworkRelationshipType `json:"type"`

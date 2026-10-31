@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,6 +189,45 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 	}
 	obj, _, err = s.GetNetworkObject(ctx, id)
 	return obj, true, err
+}
+
+// DeleteNetworkObject locks the object row FOR UPDATE before counting
+// dependants. A concurrent child insert needs a FOR KEY SHARE lock on the same
+// row for its parent_object_id foreign key, so it waits until this transaction
+// ends and then fails its FK check. Children block deletion, so the
+// ON DELETE SET NULL action never fires.
+func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var locked int64
+	err = tx.QueryRow(ctx, `SELECT id FROM network_objects WHERE id = $1 AND organization_id = $2 FOR UPDATE`, id, s.orgID).Scan(&locked)
+	if err == pgx.ErrNoRows {
+		return fmt.Errorf("network object not found: %w", storage.ErrNotFound)
+	}
+	if err != nil {
+		return err
+	}
+	var children, relationships int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM network_objects WHERE parent_object_id = $1`, id).Scan(&children); err != nil {
+		return err
+	}
+	idText := strconv.FormatInt(id, 10)
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM network_relationships
+		WHERE organization_id = $1 AND ((source_kind = $2 AND source_id = $3) OR (target_kind = $2 AND target_id = $3))`,
+		s.orgID, domain.NetworkEntityKindObject, idText).Scan(&relationships); err != nil {
+		return err
+	}
+	if err := storage.NetworkObjectInUseError(children, relationships); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM network_objects WHERE id = $1 AND organization_id = $2`, id, s.orgID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {

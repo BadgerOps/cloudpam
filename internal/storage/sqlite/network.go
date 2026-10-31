@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -200,6 +201,42 @@ func (s *Store) UpdateNetworkObject(ctx context.Context, id int64, update domain
 	}
 	obj, _, err = s.GetNetworkObject(ctx, id)
 	return obj, true, err
+}
+
+// DeleteNetworkObject counts dependants and deletes in one transaction, so a
+// child created concurrently either lands before the count or fails its write.
+// The parent_object_id ON DELETE SET NULL action never fires: children block.
+func (s *Store) DeleteNetworkObject(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM network_objects WHERE id = ?)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("network object not found: %w", storage.ErrNotFound)
+	}
+	var children, relationships int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM network_objects WHERE parent_object_id = ?`, id).Scan(&children); err != nil {
+		return err
+	}
+	idText := strconv.FormatInt(id, 10)
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM network_relationships
+		WHERE (source_kind = ? AND source_id = ?) OR (target_kind = ? AND target_id = ?)`,
+		domain.NetworkEntityKindObject, idText, domain.NetworkEntityKindObject, idText).Scan(&relationships); err != nil {
+		return err
+	}
+	if err := storage.NetworkObjectInUseError(children, relationships); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM network_objects WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListNetworkRelationships(ctx context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {

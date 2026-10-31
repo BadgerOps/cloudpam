@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -180,6 +181,34 @@ func (m *MemoryNetworkStore) UpdateNetworkObject(_ context.Context, id int64, up
 	obj.UpdatedAt = time.Now().UTC()
 	m.objects[id] = obj
 	return cloneNetworkObject(obj), true, nil
+}
+
+func (m *MemoryNetworkStore) DeleteNetworkObject(_ context.Context, id int64) error {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+
+	if _, ok := m.objects[id]; !ok {
+		return fmt.Errorf("network object not found: %w", ErrNotFound)
+	}
+	children := 0
+	for _, obj := range m.objects {
+		if obj.ParentObjectID != nil && *obj.ParentObjectID == id {
+			children++
+		}
+	}
+	idText := strconv.FormatInt(id, 10)
+	relationships := 0
+	for _, rel := range m.relationships {
+		if (rel.SourceKind == domain.NetworkEntityKindObject && rel.SourceID == idText) ||
+			(rel.TargetKind == domain.NetworkEntityKindObject && rel.TargetID == idText) {
+			relationships++
+		}
+	}
+	if err := NetworkObjectInUseError(children, relationships); err != nil {
+		return err
+	}
+	delete(m.objects, id)
+	return nil
 }
 
 func (m *MemoryNetworkStore) ListNetworkRelationships(_ context.Context, filters domain.NetworkRelationshipFilters) ([]domain.NetworkRelationship, error) {

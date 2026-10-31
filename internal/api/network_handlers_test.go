@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/domain"
@@ -1310,4 +1311,95 @@ func hierarchyHasParentChild(nodes []domain.NetworkNode, parentPrefix string, ch
 		}
 	}
 	return false
+}
+
+func createNetworkObjectForDeleteTest(t *testing.T, discSrv *DiscoveryServer, body string) domain.NetworkObject {
+	t.Helper()
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/objects", body, http.StatusCreated)
+	var obj domain.NetworkObject
+	if err := json.Unmarshal(rr.Body.Bytes(), &obj); err != nil {
+		t.Fatalf("unmarshal object: %v", err)
+	}
+	return obj
+}
+
+func TestNetworkObjectDeleteRemovesObjectAndRecordsAudit(t *testing.T) {
+	discSrv, st, _, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	obj := createNetworkObjectForDeleteTest(t, discSrv, fmt.Sprintf(`{"object_type":"vpc","account_id":%d,"name":"doomed-vpc"}`, account.ID))
+	path := fmt.Sprintf("/api/v1/network/objects/%d", obj.ID)
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodDelete, path, "", http.StatusNoContent)
+	if rr.Body.Len() != 0 {
+		t.Fatalf("expected empty body on 204, got %q", rr.Body.String())
+	}
+	doJSON(t, discSrv.srv.mux, http.MethodGet, path, "", http.StatusNotFound)
+
+	events, err := discSrv.srv.auditLogger.GetByResource(t.Context(), audit.ResourceNetworkObject, fmt.Sprintf("%d", obj.ID))
+	if err != nil {
+		t.Fatalf("get network object audit events: %v", err)
+	}
+	if len(events) != 1 || events[0].Action != audit.ActionDelete || events[0].ResourceName != "doomed-vpc" || events[0].StatusCode != http.StatusNoContent {
+		t.Fatalf("expected one delete audit event for doomed-vpc, got %+v", events)
+	}
+}
+
+func TestNetworkObjectDeleteUnknownIDReturnsNotFound(t *testing.T) {
+	discSrv, _, _, _ := setupDiscoveryTestServer()
+	doJSON(t, discSrv.srv.mux, http.MethodDelete, "/api/v1/network/objects/424242", "", http.StatusNotFound)
+}
+
+func TestNetworkObjectDeleteConflictsWhileReferenced(t *testing.T) {
+	discSrv, st, _, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	parent := createNetworkObjectForDeleteTest(t, discSrv, fmt.Sprintf(`{"object_type":"vpc","account_id":%d,"name":"parent-vpc"}`, account.ID))
+	createNetworkObjectForDeleteTest(t, discSrv, fmt.Sprintf(`{"object_type":"subnet","account_id":%d,"name":"child-subnet","parent_object_id":%d}`, account.ID, parent.ID))
+	rr := doJSON(t, discSrv.srv.mux, http.MethodDelete, fmt.Sprintf("/api/v1/network/objects/%d", parent.ID), "", http.StatusConflict)
+	if !strings.Contains(rr.Body.String(), "child object") {
+		t.Fatalf("conflict body should name the child objects: %s", rr.Body.String())
+	}
+
+	related := createNetworkObjectForDeleteTest(t, discSrv, fmt.Sprintf(`{"object_type":"network","account_id":%d,"name":"related-net"}`, account.ID))
+	relBody := fmt.Sprintf(`{"type":"contains","source_kind":"pool","source_id":"42","target_kind":"network_object","target_id":"%d"}`, related.ID)
+	doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/network/relationships", relBody, http.StatusCreated)
+	rr = doJSON(t, discSrv.srv.mux, http.MethodDelete, fmt.Sprintf("/api/v1/network/objects/%d", related.ID), "", http.StatusConflict)
+	if !strings.Contains(rr.Body.String(), "relationship") {
+		t.Fatalf("conflict body should name the relationship: %s", rr.Body.String())
+	}
+
+	for _, id := range []int64{parent.ID, related.ID} {
+		doJSON(t, discSrv.srv.mux, http.MethodGet, fmt.Sprintf("/api/v1/network/objects/%d", id), "", http.StatusOK)
+		events, err := discSrv.srv.auditLogger.GetByResource(t.Context(), audit.ResourceNetworkObject, fmt.Sprintf("%d", id))
+		if err != nil {
+			t.Fatalf("get audit events: %v", err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("blocked delete must not be audited: %+v", events)
+		}
+	}
+}
+
+func TestNetworkObjectDeleteAppearsInOpenAPISpec(t *testing.T) {
+	discSrv, _, _, _ := setupDiscoveryTestServer()
+	var spec map[string]any
+	if err := yaml.Unmarshal(discSrv.srv.openAPISpecYAML(), &spec); err != nil {
+		t.Fatalf("generated OpenAPI is not valid YAML: %v", err)
+	}
+	paths := asMap(t, spec["paths"], "paths")
+	item := asMap(t, paths["/api/v1/network/objects/{objectId}"], "paths./api/v1/network/objects/{objectId}")
+	op := asMap(t, item["delete"], "delete /api/v1/network/objects/{objectId}")
+	if op["summary"] != "Delete managed network object" {
+		t.Fatalf("delete summary = %v", op["summary"])
+	}
+	responses := asMap(t, op["responses"], "delete responses")
+	if _, ok := responses["204"]; !ok {
+		t.Fatalf("delete should advertise 204, got responses %v", responses)
+	}
 }

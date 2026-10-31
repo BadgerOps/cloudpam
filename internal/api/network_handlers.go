@@ -74,6 +74,7 @@ func (ns *NetworkServer) RegisterProtectedNetworkRoutes(dualMW Middleware, logge
 	ns.srv.handleOpenAPIRoute("POST /api/v1/network/objects", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkObjects))))
 	ns.srv.handleOpenAPIRoute("GET /api/v1/network/objects/", dualMW(readMW(http.HandlerFunc(ns.handleNetworkObjectSubroutes))))
 	ns.srv.handleOpenAPIRoute("PATCH /api/v1/network/objects/", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkObjectSubroutes))))
+	ns.srv.handleOpenAPIRoute("DELETE /api/v1/network/objects/", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkObjectSubroutes))))
 	ns.srv.handleOpenAPIRoute("GET /api/v1/network/relationships", dualMW(readMW(http.HandlerFunc(ns.handleNetworkRelationships))))
 	ns.srv.handleOpenAPIRoute("POST /api/v1/network/relationships", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkRelationships))))
 	ns.srv.handleOpenAPIRoute("/api/v1/network/relationships/", dualMW(updateMW(http.HandlerFunc(ns.handleNetworkRelationshipSubroutes))))
@@ -234,8 +235,24 @@ func (ns *NetworkServer) handleNetworkObjectSubroutes(w http.ResponseWriter, r *
 			return
 		}
 		writeJSON(w, http.StatusOK, obj)
+	case http.MethodDelete:
+		obj, found, err := ns.networkStore.GetNetworkObject(r.Context(), id)
+		if err != nil {
+			ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "get network object failed", err.Error())
+			return
+		}
+		if !found {
+			ns.srv.writeErr(r.Context(), w, http.StatusNotFound, "network object not found", "")
+			return
+		}
+		if err := ns.networkStore.DeleteNetworkObject(r.Context(), id); err != nil {
+			ns.srv.writeStoreErr(r.Context(), w, err)
+			return
+		}
+		ns.srv.logAudit(r.Context(), audit.ActionDelete, audit.ResourceNetworkObject, strconv.FormatInt(id, 10), obj.Name, http.StatusNoContent)
+		w.WriteHeader(http.StatusNoContent)
 	default:
-		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch}, ", "))
+		w.Header().Set("Allow", strings.Join([]string{http.MethodGet, http.MethodPatch, http.MethodDelete}, ", "))
 		ns.srv.writeErr(r.Context(), w, http.StatusMethodNotAllowed, "method not allowed", "")
 	}
 }
