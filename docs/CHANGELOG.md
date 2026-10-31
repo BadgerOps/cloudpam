@@ -18,6 +18,8 @@ patch or minor version entry for every user-facing change.
 ### Changed
 - The server and agent Helm charts advertise application version `0.23.7`. Their chart package versions remain `0.2.1`.
 - The OIDC client-secret encryption helpers moved to `internal/secrets`; `CLOUDPAM_OIDC_ENCRYPTION_KEY` now also protects AI provider credentials saved from the Configuration page. Existing OIDC secrets keep decrypting. (#283)
+- POST /api/v1/network/relationships rejects a source or target of kind network_object whose object does not exist (400), and the check is atomic with network object deletion, so a relationship can no longer be created against an object being deleted. (#354)
+- The network_object delete audit event records relationships_removed. (#354)
 
 ### Fixed
 - AI chat failures no longer return the upstream provider's response body to the client or record it on the trace span; the error carries only the HTTP status. Provider responses are capped at 8 MiB. (#283)
