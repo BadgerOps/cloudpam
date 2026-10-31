@@ -291,6 +291,39 @@ func TestAISettingsPatchStoresEncryptedKey(t *testing.T) {
 	}
 }
 
+func TestAISettingsPatchNoOpSkipsWriteAndAudit(t *testing.T) {
+	f := setupAISettings(t, envDefaults(), true)
+	f.patch(t, `{"endpoint":"http://ollama:11434/v1","model":"llama3","max_tokens":2048,"temperature":0.3}`, http.StatusOK)
+	before := f.storedDoc(t)
+	countEvents := func() int {
+		t.Helper()
+		events, _, err := f.audit.List(context.Background(), audit.ListOptions{Limit: 100})
+		if err != nil {
+			t.Fatalf("list audit: %v", err)
+		}
+		return len(events)
+	}
+	eventsBefore := countEvents()
+	wantBody := f.do(t, http.MethodGet, "/api/v1/settings/ai", "").Body.String()
+
+	for _, body := range []string{
+		`{}`,
+		`{"endpoint":"http://ollama:11434/v1","model":"llama3","max_tokens":2048,"temperature":0.3}`,
+		`{"endpoint":" http://ollama:11434/v1 ","clear_api_key":true}`,
+	} {
+		rr := f.patch(t, body, http.StatusOK)
+		if got := rr.Body.String(); got != wantBody {
+			t.Errorf("PATCH %s body = %s, want the GET representation %s", body, got, wantBody)
+		}
+		if after := f.storedDoc(t); !after.UpdatedAt.Equal(before.UpdatedAt) {
+			t.Errorf("PATCH %s moved updated_at from %v to %v", body, before.UpdatedAt, after.UpdatedAt)
+		}
+		if n := countEvents(); n != eventsBefore {
+			t.Errorf("PATCH %s recorded %d audit events, want none", body, n-eventsBefore)
+		}
+	}
+}
+
 func TestAISettingsPatchOmittedKeyPreserves(t *testing.T) {
 	f := setupAISettings(t, envDefaults(), true)
 	f.patch(t, `{"api_key":"sk-keep-me"}`, http.StatusOK)

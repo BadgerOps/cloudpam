@@ -49,6 +49,11 @@ func (ss *SettingsServer) aiDeps() aiProviderDeps {
 }
 
 func (ss *SettingsServer) handleGetAIProviderSettings(w http.ResponseWriter, r *http.Request) {
+	ss.writeAISettings(w, r)
+}
+
+// writeAISettings writes the current GET representation.
+func (ss *SettingsServer) writeAISettings(w http.ResponseWriter, r *http.Request) {
 	resp, err := ss.aiSettingsResponse(r)
 	if err != nil {
 		ss.writeErr(r.Context(), w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
@@ -130,6 +135,12 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		}
 	}
 	changed, material := applyAIProviderUpdate(doc, &req, encrypted)
+	if len(changed) == 0 {
+		// Nothing to store: keep UpdatedAt (and so any in-flight test result)
+		// and the audit log untouched.
+		ss.writeAISettings(w, r)
+		return
+	}
 	if material {
 		doc.State = domain.AIProviderStateConfigured
 		doc.LastTestedAt = nil
@@ -137,7 +148,7 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		doc.LastTestModel = ""
 	}
 	// UpdatedAt is the compare-and-swap token for test results, so every PATCH
-	// moves it forward, even within the same clock tick.
+	// that changes a field moves it forward, even within the same clock tick.
 	now := time.Now().UTC()
 	if !now.After(doc.UpdatedAt) {
 		now = doc.UpdatedAt.Add(time.Nanosecond)
@@ -151,12 +162,7 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 	ss.logAuditWithChanges(ctx, audit.ActionUpdate, audit.ResourceSettings, aiProviderSettingsID, aiProviderSettingsID,
 		&audit.Changes{After: map[string]any{"changed": changed}}, http.StatusOK)
 
-	resp, err := ss.aiSettingsResponse(r)
-	if err != nil {
-		ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, resp)
+	ss.writeAISettings(w, r)
 }
 
 // applyAIProviderUpdate applies req to doc. It returns the names of the fields
