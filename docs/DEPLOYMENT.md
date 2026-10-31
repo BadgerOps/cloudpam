@@ -1125,7 +1125,7 @@ env:
 
 With `existingSecret` the chart creates no Secret, so every key under `secrets` must stay empty. Every key in the existing Secret is injected.
 
-On PostgreSQL you can set `replicaCount` above 1. `POST /api/v1/pools` and `POST /api/v1/schema/apply` take a per-organization advisory lock in the database, so two replicas cannot both store overlapping sibling pools. Each replica logs `placement guard: postgres advisory lock` at startup. A request that waits more than 5 seconds for that lock, or whose placement takes more than 10 seconds in total, returns `503 Service Unavailable` with `Retry-After: 1` and stores nothing.
+On PostgreSQL you can set `replicaCount` above 1. Migrations run under a database-wide advisory lock at startup, so replicas that start together serialize and the later ones find nothing pending. If PgBouncer sits in front of the database, run it in session pooling mode, because transaction pooling can leave the startup migration lock held and block every later replica start, and it also breaks pgx's prepared statements. `POST /api/v1/pools` and `POST /api/v1/schema/apply` take a per-organization advisory lock in the database, so two replicas cannot both store overlapping sibling pools. Each replica logs `placement guard: postgres advisory lock` at startup. A request that waits more than 5 seconds for that lock, or whose placement takes more than 10 seconds in total, returns `503 Service Unavailable` with `Retry-After: 1` and stores nothing.
 
 ### Enable OIDC, AI planning, tracing, and audit forwarding
 
