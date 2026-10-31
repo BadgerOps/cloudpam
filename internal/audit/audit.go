@@ -62,6 +62,7 @@ const (
 	ActionUpdate = "update"
 	ActionDelete = "delete"
 	ActionRead   = "read" // Used only for sensitive operations like key listing
+	ActionTest   = "test" // A connectivity check, such as the AI provider test
 )
 
 // Valid resource types for audit events.
@@ -73,6 +74,7 @@ const (
 	ResourceSession         = "session"
 	ResourceNetworkConflict = "network_conflict"
 	ResourceNetworkObject   = "network_object"
+	ResourceSettings        = "settings"
 )
 
 // Valid actor types.

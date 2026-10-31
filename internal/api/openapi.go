@@ -539,6 +539,10 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"IgnoreDriftRequest", reflect.TypeOf(domain.IgnoreDriftRequest{})},
 		{"SecuritySettings", reflect.TypeOf(domain.SecuritySettings{})},
 		{"NetworkSchemaPolicy", reflect.TypeOf(domain.NetworkSchemaPolicy{})},
+		{"AIProviderSettingsResponse", reflect.TypeOf(domain.AIProviderSettingsResponse{})},
+		{"AIProviderSettingSources", reflect.TypeOf(domain.AIProviderSettingSources{})},
+		{"UpdateAIProviderSettingsRequest", reflect.TypeOf(domain.UpdateAIProviderSettingsRequest{})},
+		{"AIProviderTestResponse", reflect.TypeOf(domain.AIProviderTestResponse{})},
 		{"LoginRequest", reflect.TypeOf(openAPILoginRequest{})},
 		{"LoginResponse", reflect.TypeOf(openAPILoginResponse{})},
 		{"MeResponse", reflect.TypeOf(openAPIMeResponse{})},
@@ -864,6 +868,10 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPatch}, "/api/v1/settings/security")
 	case "/api/v1/settings/network-schema-policy":
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPatch}, "/api/v1/settings/network-schema-policy")
+	case "/api/v1/settings/ai":
+		return routesForMethodsPath([]string{http.MethodGet, http.MethodPatch}, "/api/v1/settings/ai")
+	case "/api/v1/settings/ai/test":
+		return routesForMethodPath(http.MethodPost, "/api/v1/settings/ai/test")
 	case "/api/v1/settings/oidc/providers":
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/settings/oidc/providers")
 	case "/api/v1/settings/oidc/providers/{id}":
@@ -1106,6 +1114,9 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "PATCH", Path: "/api/v1/settings/security", Summary: "Update security settings", Tag: "Settings", RequestSchema: "SecuritySettings", ResponseSchema: "SecuritySettings"},
 		{Method: "GET", Path: "/api/v1/settings/network-schema-policy", Summary: "Get network schema policy", Tag: "Settings", ResponseSchema: "NetworkSchemaPolicy"},
 		{Method: "PATCH", Path: "/api/v1/settings/network-schema-policy", Summary: "Update network schema policy", Tag: "Settings", RequestSchema: "NetworkSchemaPolicy", ResponseSchema: "NetworkSchemaPolicy"},
+		{Method: "GET", Path: "/api/v1/settings/ai", Summary: "Get AI provider settings", Description: "Returns the effective AI provider configuration (stored value, then CLOUDPAM_LLM_* environment variable, then built-in default per field), where each value came from, and the last test result. The API key is never returned; api_key_configured reports whether one is in effect.", Tag: "Settings", ResponseSchema: "AIProviderSettingsResponse"},
+		{Method: "PATCH", Path: "/api/v1/settings/ai", Summary: "Update AI provider settings", Description: "Omitted fields are kept. An empty endpoint or model, or max_tokens 0, clears the stored value; clear_temperature and clear_api_key clear those. A supplied api_key is encrypted at rest. Returns 409 when CLOUDPAM_OIDC_ENCRYPTION_KEY is not set and the request carries an api_key. Changing the endpoint, model or key resets the state to configured.", Tag: "Settings", RequestSchema: "UpdateAIProviderSettingsRequest", ResponseSchema: "AIProviderSettingsResponse"},
+		{Method: "POST", Path: "/api/v1/settings/ai/test", Summary: "Test AI provider", Description: "Sends a short completion and a streaming completion to the effective provider (15s budget) and records the outcome. Returns 200 whatever the provider outcome; read ok and the sanitized error.", Tag: "Settings", ResponseSchema: "AIProviderTestResponse"},
 		{Method: "GET", Path: "/api/v1/auth/login", Summary: "Login", Tag: "Auth", Security: false, RequestSchema: "LoginRequest", ResponseSchema: "LoginResponse"},
 		{Method: "POST", Path: "/api/v1/auth/login", Summary: "Login", Tag: "Auth", Security: false, RequestSchema: "LoginRequest", ResponseSchema: "LoginResponse"},
 		{Method: "POST", Path: "/api/v1/auth/logout", Summary: "Logout", Tag: "Auth", ResponseDescription: "Session cleared"},

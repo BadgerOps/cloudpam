@@ -42,6 +42,19 @@ func TestStatusErrorOmitsResponseBody(t *testing.T) {
 	}
 }
 
+func TestRedactEndpoint(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                   "",
+		"http://ollama:11434/v1":             "http://ollama:11434/v1",
+		"https://user:s3cret@llm.example/v1": "https://xxxxx@llm.example/v1",
+		"https://token@llm.example/v1":       "https://xxxxx@llm.example/v1",
+	} {
+		if got := RedactEndpoint(in); got != want {
+			t.Errorf("RedactEndpoint(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestDiagnoseErrorClasses(t *testing.T) {
 	// Unreachable: a closed listener refuses connections.
 	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"time"
 )
 
@@ -25,6 +26,18 @@ func (e *StatusError) Error() string { return fmt.Sprintf("api error (status %d)
 // be reused, without keeping any of its content.
 func discardBody(r io.Reader) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(r, 64<<10))
+}
+
+// RedactEndpoint returns endpoint with any embedded password masked, for
+// display and logs. PATCH refuses credentials in the URL, but an environment
+// endpoint may still carry them.
+func RedactEndpoint(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.User == nil {
+		return endpoint
+	}
+	u.User = url.User("xxxxx")
+	return u.String()
 }
 
 // DiagnoseError maps a provider error to a short, sanitized message that is

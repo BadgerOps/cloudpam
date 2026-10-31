@@ -466,7 +466,10 @@ func TestParseOIDCEncryptionKeyUsesConfiguredKey(t *testing.T) {
 	t.Setenv("CLOUDPAM_OIDC_ENCRYPTION_KEY", hex.EncodeToString(want))
 
 	var logs bytes.Buffer
-	got := parseOIDCEncryptionKey(bufferedLogger(&logs))
+	got, ephemeral := parseOIDCEncryptionKey(bufferedLogger(&logs))
+	if ephemeral {
+		t.Error("configured key reported as ephemeral")
+	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("parseOIDCEncryptionKey() = %x, want %x", got, want)
 	}
@@ -479,15 +482,18 @@ func TestParseOIDCEncryptionKeyGeneratesAndWarns(t *testing.T) {
 	t.Setenv("CLOUDPAM_OIDC_ENCRYPTION_KEY", "")
 
 	var logs bytes.Buffer
-	first := parseOIDCEncryptionKey(bufferedLogger(&logs))
+	first, ephemeral := parseOIDCEncryptionKey(bufferedLogger(&logs))
+	if !ephemeral {
+		t.Error("auto-generated key not reported as ephemeral")
+	}
 	if len(first) != 32 {
 		t.Fatalf("generated key length = %d, want 32", len(first))
 	}
-	if !strings.Contains(logs.String(), "auto-generated key") {
-		t.Errorf("expected auto-generation warning, got %s", logs.String())
+	if !strings.Contains(logs.String(), "auto-generated key") || !strings.Contains(logs.String(), "AI provider") {
+		t.Errorf("expected auto-generation warning naming OIDC and AI provider secrets, got %s", logs.String())
 	}
 
-	second := parseOIDCEncryptionKey(bufferedLogger(&bytes.Buffer{}))
+	second, _ := parseOIDCEncryptionKey(bufferedLogger(&bytes.Buffer{}))
 	if bytes.Equal(first, second) {
 		t.Error("auto-generated keys must be random, got two identical keys")
 	}

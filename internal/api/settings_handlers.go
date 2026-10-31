@@ -16,6 +16,7 @@ import (
 type SettingsServer struct {
 	*Server
 	settingsStore storage.SettingsStore
+	ai            aiProviderDeps
 }
 
 // NewSettingsServer creates a new SettingsServer.
@@ -36,6 +37,12 @@ func (ss *SettingsServer) RegisterProtectedSettingsRoutes(dualMW func(http.Handl
 		dualMW(adminRead(http.HandlerFunc(ss.handleGetNetworkSchemaPolicy))))
 	ss.handleOpenAPIRoute("PATCH /api/v1/settings/network-schema-policy",
 		dualMW(adminWrite(http.HandlerFunc(ss.handleUpdateNetworkSchemaPolicy))))
+	ss.handleOpenAPIRoute("GET /api/v1/settings/ai",
+		dualMW(adminRead(http.HandlerFunc(ss.handleGetAIProviderSettings))))
+	ss.handleOpenAPIRoute("PATCH /api/v1/settings/ai",
+		dualMW(adminWrite(http.HandlerFunc(ss.handleUpdateAIProviderSettings))))
+	ss.handleOpenAPIRoute("POST /api/v1/settings/ai/test",
+		dualMW(adminWrite(http.HandlerFunc(ss.handleTestAIProvider))))
 }
 
 // RegisterSettingsRoutes registers settings endpoints without RBAC (for tests).
@@ -44,6 +51,9 @@ func (ss *SettingsServer) RegisterSettingsRoutes() {
 	ss.handleOpenAPIRouteFunc("PATCH /api/v1/settings/security", ss.handleUpdateSecuritySettings)
 	ss.handleOpenAPIRouteFunc("GET /api/v1/settings/network-schema-policy", ss.handleGetNetworkSchemaPolicy)
 	ss.handleOpenAPIRouteFunc("PATCH /api/v1/settings/network-schema-policy", ss.handleUpdateNetworkSchemaPolicy)
+	ss.handleOpenAPIRouteFunc("GET /api/v1/settings/ai", ss.handleGetAIProviderSettings)
+	ss.handleOpenAPIRouteFunc("PATCH /api/v1/settings/ai", ss.handleUpdateAIProviderSettings)
+	ss.handleOpenAPIRouteFunc("POST /api/v1/settings/ai/test", ss.handleTestAIProvider)
 }
 
 func (ss *SettingsServer) handleGetSecuritySettings(w http.ResponseWriter, r *http.Request) {

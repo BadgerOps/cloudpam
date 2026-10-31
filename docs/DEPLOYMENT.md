@@ -1177,7 +1177,9 @@ Three things to know behind an ingress:
 - The global rate limiter keys on the client address, which is the ingress behind a proxy. Set `RATE_LIMIT_RPS: 0` and limit at the ingress instead.
 - The ingress must send `X-Forwarded-Proto`, or session cookies lose the `Secure` flag.
 
-Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Without it the server generates a key on every start, and saved provider secrets stop decrypting after a restart. The chart never generates this key, because a key generated at render time would rotate on every `helm template` run under tools such as Argo CD.
+Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Without it the server generates a key on every start, and saved provider secrets stop decrypting after a restart. The same key protects AI provider API keys saved from Configuration → AI Provider; without it that page cannot store an API key (use `CLOUDPAM_LLM_API_KEY` instead). The chart never generates this key, because a key generated at render time would rotate on every `helm template` run under tools such as Argo CD.
+
+The `CLOUDPAM_LLM_*` variables are the fallback for AI planning: a value saved on the Configuration → AI Provider page overrides the matching variable, field by field, and takes effect on every replica without a restart.
 
 ### Install the agent
 

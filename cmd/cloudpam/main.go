@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,9 +23,11 @@ import (
 	"cloudpam/internal/discovery"
 	awscollector "cloudpam/internal/discovery/aws"
 	gcpcollector "cloudpam/internal/discovery/gcp"
+	"cloudpam/internal/domain"
 	"cloudpam/internal/observability"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/planning/llm"
+	"cloudpam/internal/secrets"
 	"cloudpam/internal/storage"
 
 	"github.com/google/uuid"
@@ -230,16 +232,20 @@ func main() {
 	recSrv := api.NewRecommendationServer(srv, recService, recStore)
 	logger.Info("recommendation subsystem initialized")
 
+	// The application secret key and the settings store come before the AI
+	// subsystem: the AI provider is resolved from stored settings (with an
+	// encrypted API key) on every operation.
+	secretKey, secretKeyEphemeral := parseOIDCEncryptionKey(logger)
+	settingsStore := selectSettingsStore(logger, store)
+
 	// Initialize AI planning subsystem
-	llmCfg := llm.ConfigFromEnv()
-	llmProvider := llm.NewOpenAIProvider(llmCfg)
-	if llmProvider.Available() {
-		logger.Info("ai planning enabled", "model", llmCfg.Model, "endpoint", llmCfg.Endpoint)
-	} else {
-		logger.Info("ai planning disabled (set CLOUDPAM_LLM_API_KEY or CLOUDPAM_LLM_ENDPOINT to enable)")
-	}
+	aiResolver := llm.NewResolver(llm.ConfigFromEnv(), settingsStore, func(c string) (string, error) {
+		return secrets.Decrypt(c, secretKey)
+	})
+	aiProviders := llm.NewManager(aiResolver)
+	logAIPlanningStatus(logger, aiProviders)
 	convStore := selectConversationStore(logger, store)
-	aiService := planning.NewAIPlanningService(analysisService, convStore, store, llm.NewManager(llm.NewResolver(llmCfg, nil, nil)))
+	aiService := planning.NewAIPlanningService(analysisService, convStore, store, aiProviders)
 	aiSrv := api.NewAIPlanningServer(srv, aiService, convStore)
 	logger.Info("ai planning subsystem initialized")
 
@@ -250,8 +256,8 @@ func main() {
 	logger.Info("drift detection subsystem initialized")
 
 	// Initialize settings subsystem
-	settingsStore := selectSettingsStore(logger, store)
 	settingsSrv := api.NewSettingsServer(srv, settingsStore)
+	settingsSrv.SetAIProvider(aiProviders, aiResolver, secretKey, !secretKeyEphemeral)
 	srv.SetSettingsStore(settingsStore)
 	logger.Info("settings subsystem initialized")
 
@@ -262,9 +268,8 @@ func main() {
 
 	// OIDC subsystem
 	oidcStore := selectOIDCProviderStore(logger, store)
-	oidcEncKey := parseOIDCEncryptionKey(logger)
 	oidcCallbackURL := os.Getenv("CLOUDPAM_OIDC_CALLBACK_URL")
-	oidcSrv := api.NewOIDCServer(srv, oidcStore, sessionStore, userStore, settingsStore, oidcEncKey, oidcCallbackURL)
+	oidcSrv := api.NewOIDCServer(srv, oidcStore, sessionStore, userStore, settingsStore, secretKey, oidcCallbackURL)
 	logger.Info("oidc subsystem initialized")
 
 	// Update subsystem
@@ -562,31 +567,69 @@ func bootstrapAdmin(logger observability.Logger, userStore auth.UserStore, usern
 	logger.Info("bootstrap admin user created", "username", username)
 }
 
-// parseOIDCEncryptionKey reads a hex-encoded AES-256 key from CLOUDPAM_OIDC_ENCRYPTION_KEY
-// environment variable. If not set, generates a random key (warning: won't survive restarts).
-func parseOIDCEncryptionKey(logger observability.Logger) []byte {
+// logAIPlanningStatus reports at startup whether AI planning is usable with the
+// configuration currently in effect. It never logs the API key.
+func logAIPlanningStatus(logger observability.Logger, providers llm.ProviderSource) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	provider, resolved, err := providers.Provider(ctx)
+	if err != nil && !errors.Is(err, llm.ErrStoredKeyUnreadable) {
+		logger.Warn("ai planning settings could not be read at startup; they are re-read on every AI request", "error", err)
+		return
+	}
+	if provider == nil || !provider.Available() {
+		logger.Info("ai planning disabled (configure under Configuration → AI Provider or set CLOUDPAM_LLM_*)")
+		return
+	}
+	logger.Info("ai planning enabled",
+		"model", resolved.Config.Model,
+		"endpoint", llm.RedactEndpoint(resolved.Config.Endpoint),
+		"source", aiConfigSource(resolved.Sources))
+}
+
+// aiConfigSource summarizes where the effective AI configuration came from.
+func aiConfigSource(s domain.AIProviderSettingSources) string {
+	for _, src := range []string{s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
+		if src == domain.AISettingSourceDatabase {
+			return domain.AISettingSourceDatabase
+		}
+	}
+	for _, src := range []string{s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
+		if src == domain.AISettingSourceEnvironment {
+			return domain.AISettingSourceEnvironment
+		}
+	}
+	return domain.AISettingSourceDefault
+}
+
+// parseOIDCEncryptionKey reads the hex-encoded AES-256 application secret key
+// from CLOUDPAM_OIDC_ENCRYPTION_KEY. It protects OIDC client secrets and AI
+// provider API keys. If not set, it generates a random key and reports it as
+// ephemeral (anything encrypted with it won't survive restarts).
+func parseOIDCEncryptionKey(logger observability.Logger) (key []byte, ephemeral bool) {
 	hexKey := os.Getenv("CLOUDPAM_OIDC_ENCRYPTION_KEY")
 	if hexKey != "" {
 		key, err := hex.DecodeString(hexKey)
 		if err != nil {
-			logger.Error("invalid CLOUDPAM_OIDC_ENCRYPTION_KEY (must be hex-encoded)", "error", err)
+			// The decode error quotes the offending character of the key, so it is not logged.
+			logger.Error("invalid CLOUDPAM_OIDC_ENCRYPTION_KEY (must be hex-encoded)")
 			os.Exit(1)
 		}
 		if len(key) != 32 {
 			logger.Error("CLOUDPAM_OIDC_ENCRYPTION_KEY must be 32 bytes (64 hex chars)", "length", len(key))
 			os.Exit(1)
 		}
-		return key
+		return key, false
 	}
 
 	// Auto-generate key — logs a warning
-	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
-		logger.Error("failed to generate OIDC encryption key", "error", err)
+	key, err := secrets.GenerateKey()
+	if err != nil {
+		logger.Error("failed to generate secret encryption key", "error", err)
 		os.Exit(1)
 	}
-	logger.Warn("CLOUDPAM_OIDC_ENCRYPTION_KEY not set — using auto-generated key (OIDC provider secrets won't survive restarts)")
-	return key
+	logger.Warn("CLOUDPAM_OIDC_ENCRYPTION_KEY not set — using auto-generated key (OIDC provider and AI provider secrets won't survive restarts; the AI provider page cannot store an API key)")
+	return key, true
 }
 
 // runMigrationsCLI executes migration commands.
