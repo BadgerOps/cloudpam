@@ -23,6 +23,9 @@ vi.mock('../hooks/useToast', () => ({
 
 vi.mock('../api/client', () => ({
   get: (...args: unknown[]) => mockGet(...args),
+  // The detail panel requests gap and fragmentation analysis; leave those
+  // pending so these tests only see the pool data they control.
+  post: () => new Promise(() => {}),
 }))
 
 function LocationProbe() {
