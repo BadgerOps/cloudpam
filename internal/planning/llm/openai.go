@@ -300,6 +300,9 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 	return ch, nil
 }
 
+// readSSEStream forwards one StreamEvent per content chunk and exactly one
+// terminal event (Done, with Err set on a read failure), then returns so the
+// caller can close the body and the channel.
 func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
 	buf := make([]byte, 4096)
 	var lineBuf strings.Builder
@@ -342,11 +345,21 @@ func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
 				evt := StreamEvent{
 					Delta: chunk.Choices[0].Delta.Content,
 				}
-				if chunk.Choices[0].FinishReason != nil {
-					evt.FinishReason = *chunk.Choices[0].FinishReason
+				// Some OpenAI-compatible proxies send "finish_reason":"" on
+				// intermediate chunks instead of null; only a non-empty reason
+				// ends the completion.
+				if fr := chunk.Choices[0].FinishReason; fr != nil && *fr != "" {
+					evt.FinishReason = *fr
 					evt.Done = true
 				}
 				ch <- evt
+				if evt.Done {
+					// Done is terminal: consumers stop at the first done event
+					// and never drain, so anything streamed after finish_reason
+					// (usage chunks, the [DONE] sentinel) would block this
+					// goroutine on a full channel until the context ended.
+					return
+				}
 			}
 		}
 		if err != nil {

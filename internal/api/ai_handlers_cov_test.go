@@ -30,7 +30,10 @@ type stubLLMProviderCov struct {
 	// midStreamErr ends the stream with an error event after the deltas.
 	midStreamErr error
 	emitDone     bool
-	lastPrompt   []llm.Message
+	// doneDelta is content carried on the done event itself, as a provider
+	// does when the last token arrives in the finish_reason chunk.
+	doneDelta  string
+	lastPrompt []llm.Message
 }
 
 func (p *stubLLMProviderCov) Name() string { return "stub" }
@@ -54,7 +57,7 @@ func (p *stubLLMProviderCov) StreamComplete(_ context.Context, messages []llm.Me
 	case p.midStreamErr != nil:
 		ch <- llm.StreamEvent{Done: true, Err: p.midStreamErr}
 	case p.emitDone:
-		ch <- llm.StreamEvent{Done: true, FinishReason: "stop"}
+		ch <- llm.StreamEvent{Delta: p.doneDelta, Done: true, FinishReason: "stop"}
 	}
 	close(ch)
 	return ch, nil
@@ -288,6 +291,41 @@ func TestAIChatStreamsSSECov(t *testing.T) {
 	}
 	if !strings.Contains(provider.lastPrompt[0].Content, "10.0.0.0/8") {
 		t.Fatal("system prompt should include the existing pool topology")
+	}
+}
+
+// TestAIChatStreamsDeltaOnDoneCov: when the provider puts the last token on the
+// done event, the client must receive that delta before the done frame, so the
+// streamed answer matches the stored one.
+func TestAIChatStreamsDeltaOnDoneCov(t *testing.T) {
+	provider := &stubLLMProviderCov{
+		available: true,
+		deltas:    []string{"Here is "},
+		doneDelta: "a plan.",
+		emitDone:  true,
+	}
+	ai, _, convStore := setupAITestServerCov(t, provider)
+	conv := newConversationCov(t, convStore, "chat")
+
+	rr := assertStatusCov(t, doReqCov(t, ai.srv.mux, http.MethodPost, "/api/v1/ai/chat",
+		`{"session_id":"`+conv+`","message":"Plan a /16 for prod"}`), http.StatusOK)
+
+	body := rr.Body.String()
+	lastDelta := strings.Index(body, `data: {"delta":"a plan."}`)
+	done := strings.Index(body, "event: done")
+	if lastDelta == -1 {
+		t.Fatalf("SSE body missing the delta carried on the done event:\n%s", body)
+	}
+	if done == -1 || done < lastDelta {
+		t.Fatalf("event: done must follow the last delta (delta at %d, done at %d):\n%s", lastDelta, done, body)
+	}
+
+	stored, err := convStore.GetConversation(t.Context(), conv)
+	if err != nil {
+		t.Fatalf("get conversation: %v", err)
+	}
+	if len(stored.Messages) != 2 || stored.Messages[1].Content != "Here is a plan." {
+		t.Fatalf("stored assistant reply should be %q, got %+v", "Here is a plan.", stored.Messages)
 	}
 }
 

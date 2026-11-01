@@ -121,13 +121,18 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 			_ = rc.Flush()
 			return
 		}
+		// The done event can carry the last token when the provider puts it
+		// in the finish_reason chunk; send it before closing the stream so the
+		// client sees the same reply that was stored.
+		if evt.Delta != "" || !evt.Done {
+			data, _ := json.Marshal(map[string]string{"delta": evt.Delta})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+		}
 		if evt.Done {
 			_, _ = fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 			_ = rc.Flush()
 			break
 		}
-		data, _ := json.Marshal(map[string]string{"delta": evt.Delta})
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 		_ = rc.Flush()
 	}
 }
