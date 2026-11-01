@@ -1062,7 +1062,8 @@ func (s *Store) Search(ctx context.Context, req domain.SearchRequest) (domain.Se
 		}
 	}
 
-	window, page, pageSize := storage.SearchPage(items, req.Page, req.PageSize)
+	page, pageSize := storage.RequestPage(req.Page, req.PageSize)
+	window := storage.PageSlice(items, page, pageSize)
 	return domain.SearchResponse{
 		Items:    window,
 		Total:    len(items),

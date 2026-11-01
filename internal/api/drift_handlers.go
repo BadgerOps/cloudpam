@@ -94,20 +94,14 @@ func (ds *DriftServer) handleList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	filters.Page, filters.PageSize = storage.RequestPage(filters.Page, filters.PageSize)
 	items, total, err := ds.driftStore.ListDriftItems(r.Context(), filters)
 	if err != nil {
 		ds.srv.writeStoreErr(r.Context(), w, err)
 		return
 	}
 
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
+	page, pageSize := filters.Page, filters.PageSize
 
 	// Build summary from current items.
 	summary := domain.DriftSummary{

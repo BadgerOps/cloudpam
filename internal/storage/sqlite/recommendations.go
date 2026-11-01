@@ -77,15 +77,8 @@ func (s *Store) ListRecommendations(ctx context.Context, filters domain.Recommen
 	}
 
 	// Paginate
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
-	offset := (page - 1) * pageSize
+	page, pageSize := storage.NormalizePage(filters.Page, filters.PageSize)
+	offset := storage.PageOffset(page, pageSize, total)
 
 	query := fmt.Sprintf(
 		`SELECT id, pool_id, type, status, priority, title, description, suggested_cidr, rule_id, score, metadata, dismiss_reason, applied_pool_id, created_at, updated_at

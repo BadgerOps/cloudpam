@@ -1,25 +1,60 @@
 package storage
 
-// SearchPage selects the 1-based page of items that a search response
-// returns. Page defaults to 1, pageSize to 50 and is capped at 200. A page
-// past the end is empty rather than an error, so a client can walk pages
-// until items run out.
-func SearchPage[T any](items []T, page, pageSize int) (window []T, p, size int) {
+// Shared paging rules for every list: page is 1-based and defaults to 1,
+// page_size defaults to DefaultPageSize. Client-supplied sizes are capped at
+// MaxPageSize by RequestPage; internal callers that walk a whole list with a
+// larger size go through NormalizePage and are not capped.
+const (
+	DefaultPageSize = 50
+	MaxPageSize     = 200
+)
+
+// NormalizePage applies the shared defaults to a page and page size.
+func NormalizePage(page, pageSize int) (p, size int) {
 	if page < 1 {
 		page = 1
 	}
 	if pageSize < 1 {
-		pageSize = 50
+		pageSize = DefaultPageSize
 	}
-	if pageSize > 200 {
-		pageSize = 200
+	return page, pageSize
+}
+
+// RequestPage normalizes a client-supplied page and page_size and caps the
+// size at MaxPageSize. Handlers pass the result to the store and echo it.
+func RequestPage(page, pageSize int) (p, size int) {
+	page, pageSize = NormalizePage(page, pageSize)
+	if pageSize > MaxPageSize {
+		pageSize = MaxPageSize
 	}
-	total := len(items)
-	start := total
-	// Compare by division so (page-1)*pageSize cannot wrap for a page near MaxInt.
-	if page-1 <= total/pageSize {
-		start = (page - 1) * pageSize
+	return page, pageSize
+}
+
+// PageOffset returns the 0-based offset of a 1-based page in a list of total
+// items, after NormalizePage. A page past the end, including one whose
+// (page-1)*pageSize would wrap around MaxInt, maps to total so the caller
+// yields an empty page rather than a negative slice bound or a negative SQL
+// OFFSET. The check compares by division so the product is only formed when
+// it fits.
+func PageOffset(page, pageSize, total int) int {
+	page, pageSize = NormalizePage(page, pageSize)
+	if page-1 > total/pageSize {
+		return total
 	}
-	end := min(start+pageSize, total)
-	return items[start:end], page, pageSize
+	return (page - 1) * pageSize
+}
+
+// PageSlice selects the 1-based page of items after NormalizePage. A page
+// past the end is empty rather than an error, so a client can walk pages
+// until items run out.
+func PageSlice[T any](items []T, page, pageSize int) []T {
+	page, pageSize = NormalizePage(page, pageSize)
+	start := PageOffset(page, pageSize, len(items))
+	// Compare against the remainder instead of forming start+pageSize, which
+	// wraps for a page size near MaxInt.
+	end := len(items)
+	if pageSize < end-start {
+		end = start + pageSize
+	}
+	return items[start:end]
 }

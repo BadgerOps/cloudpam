@@ -55,6 +55,17 @@ func prefixesOverlapIPv4(a, b netip.Prefix) bool {
 // still see how many blocks exist and page through them.
 const MaxSubnetExpansion = 65536
 
+// ipv4BlockCount returns how many newPrefixLen blocks parentCIDR splits into
+// (2^(new-old)), or 0 when the pair is not a valid IPv4 split; callers that
+// need the reason go through computeSubnetsIPv4Window, which reports it.
+func ipv4BlockCount(parentCIDR string, newPrefixLen int) int {
+	pp, err := netip.ParsePrefix(parentCIDR)
+	if err != nil || !pp.Addr().Is4() || newPrefixLen < pp.Bits() || newPrefixLen > 32 {
+		return 0
+	}
+	return 1 << (newPrefixLen - pp.Bits())
+}
+
 func computeSubnetsIPv4Window(parentCIDR string, newPrefixLen int, offset, limit int) ([]string, uint64, int, error) {
 	pp, err := netip.ParsePrefix(parentCIDR)
 	if err != nil {
@@ -66,8 +77,7 @@ func computeSubnetsIPv4Window(parentCIDR string, newPrefixLen int, offset, limit
 	if newPrefixLen < pp.Bits() || newPrefixLen > 32 {
 		return nil, 0, 0, fmt.Errorf("new_prefix_len must be between %d and 32", pp.Bits())
 	}
-	// number of blocks = 2^(new - old)
-	count := 1 << (newPrefixLen - pp.Bits())
+	count := ipv4BlockCount(parentCIDR, newPrefixLen)
 	base := ipv4ToUint32(pp.Masked().Addr())
 	step := uint32(1) << uint32(32-newPrefixLen)
 	start := 0

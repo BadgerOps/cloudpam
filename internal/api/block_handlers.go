@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"cloudpam/internal/domain"
+	"cloudpam/internal/storage"
 )
 
 type blockInfo struct {
@@ -224,15 +225,7 @@ func (s *Server) handleBlocksList(w http.ResponseWriter, r *http.Request) {
 	total := len(items)
 	// Paginate
 	if pageSize > 0 {
-		start := (page - 1) * pageSize
-		if start > total {
-			start = total
-		}
-		end := start + pageSize
-		if end > total {
-			end = total
-		}
-		items = items[start:end]
+		items = storage.PageSlice(items, page, pageSize)
 	}
 	type resp struct {
 		Items    []row `json:"items"`
@@ -292,7 +285,10 @@ func (s *Server) blocksForPool(w http.ResponseWriter, r *http.Request, id int64)
 	limit := 0
 	if pageSize > 0 {
 		limit = pageSize
-		offset = (page - 1) * pageSize
+		// Page from the real block count so a page past the end yields an
+		// empty window instead of a wrapped offset. An invalid split counts
+		// as 0 blocks here and is rejected with its reason just below.
+		offset = storage.PageOffset(page, pageSize, ipv4BlockCount(pool.CIDR, npl))
 	}
 	blocks, hosts, total, err := computeSubnetsIPv4Window(pool.CIDR, npl, offset, limit)
 	if err != nil {

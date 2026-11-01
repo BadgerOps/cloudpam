@@ -60,15 +60,8 @@ func (s *Store) ListDiscoveredResources(ctx context.Context, accountID int64, fi
 	}
 
 	// Paginate
-	page := filters.Page
-	if page < 1 {
-		page = 1
-	}
-	pageSize := filters.PageSize
-	if pageSize < 1 {
-		pageSize = 50
-	}
-	offset := (page - 1) * pageSize
+	page, pageSize := storage.NormalizePage(filters.Page, filters.PageSize)
+	offset := storage.PageOffset(page, pageSize, total)
 
 	query := fmt.Sprintf(
 		"SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at FROM discovered_resources WHERE %s ORDER BY discovered_at DESC LIMIT ? OFFSET ?",

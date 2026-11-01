@@ -688,7 +688,8 @@ func (m *MemoryStore) Search(ctx context.Context, req domain.SearchRequest) (dom
 		}
 	}
 
-	window, page, pageSize := SearchPage(items, req.Page, req.PageSize)
+	page, pageSize := RequestPage(req.Page, req.PageSize)
+	window := PageSlice(items, page, pageSize)
 	return domain.SearchResponse{
 		Items:    window,
 		Total:    len(items),
