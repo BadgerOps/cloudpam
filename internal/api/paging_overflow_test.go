@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"math"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"strconv"
@@ -18,7 +19,7 @@ import (
 // a page near MaxInt and either panicked on a slice bound or fetched page 1.
 // A page past the end is an empty page that echoes the requested page.
 
-var hugePages = []int{9223372036854775807, 9223372036854775807/200 + 2}
+var hugePages = []int{math.MaxInt, math.MaxInt/200 + 2}
 
 type pagedBody struct {
 	Items    []json.RawMessage `json:"items"`

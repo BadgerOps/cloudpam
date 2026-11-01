@@ -48,6 +48,8 @@ func TestPageOffset(t *testing.T) {
 		{"empty list", 1, 10, 0, 0},
 		{"empty list huge page", math.MaxInt, 10, 0, 0},
 		{"page below one", 0, 10, 25, 0},
+		{"page size below one uses the default", 2, 0, 25, 25},
+		{"page size below one on a long list", 2, 0, 120, 50},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -72,5 +74,19 @@ func TestPageSliceHugePageIsEmpty(t *testing.T) {
 	window := PageSlice(items, 2, 2)
 	if len(window) != 2 || window[0] != 3 {
 		t.Errorf("PageSlice(page=2) = %v, want [3 4]", window)
+	}
+}
+
+func TestPageSliceHugePageSizeDoesNotWrap(t *testing.T) {
+	items := []int{1, 2, 3}
+	for _, tc := range []struct{ page, pageSize, wantLen int }{
+		{1, math.MaxInt, 3},
+		{2, math.MaxInt, 0},
+		{1, math.MaxInt - 1, 3},
+		{2, 2, 1},
+	} {
+		if got := PageSlice(items, tc.page, tc.pageSize); len(got) != tc.wantLen {
+			t.Errorf("PageSlice(page=%d, pageSize=%d) = %v, want %d items", tc.page, tc.pageSize, got, tc.wantLen)
+		}
 	}
 }

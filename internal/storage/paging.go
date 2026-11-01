@@ -31,17 +31,13 @@ func RequestPage(page, pageSize int) (p, size int) {
 }
 
 // PageOffset returns the 0-based offset of a 1-based page in a list of total
-// items. A page past the end, including one whose (page-1)*pageSize would
-// wrap around MaxInt, maps to total so the caller yields an empty page rather
-// than a negative slice bound or a negative SQL OFFSET. The check compares by
-// division so the product is only formed when it fits.
+// items, after NormalizePage. A page past the end, including one whose
+// (page-1)*pageSize would wrap around MaxInt, maps to total so the caller
+// yields an empty page rather than a negative slice bound or a negative SQL
+// OFFSET. The check compares by division so the product is only formed when
+// it fits.
 func PageOffset(page, pageSize, total int) int {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = 1
-	}
+	page, pageSize = NormalizePage(page, pageSize)
 	if page-1 > total/pageSize {
 		return total
 	}
@@ -54,5 +50,11 @@ func PageOffset(page, pageSize, total int) int {
 func PageSlice[T any](items []T, page, pageSize int) []T {
 	page, pageSize = NormalizePage(page, pageSize)
 	start := PageOffset(page, pageSize, len(items))
-	return items[start:min(start+pageSize, len(items))]
+	// Compare against the remainder instead of forming start+pageSize, which
+	// wraps for a page size near MaxInt.
+	end := len(items)
+	if pageSize < end-start {
+		end = start + pageSize
+	}
+	return items[start:end]
 }
