@@ -649,6 +649,22 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			pr.description = strings.TrimSpace(row[idx])
 		}
 
+		// Same field validation as POST /api/v1/pools (#350), applied here so
+		// errors stay in CSV row order and rows holds only valid rows.
+		// Containment and overlap are still decided by placePools below.
+		if ferr := validatePoolFields(domain.CreatePool{
+			Name:   pr.name,
+			CIDR:   pr.cidr,
+			Type:   pr.poolType,
+			Status: pr.status,
+			Source: pr.source,
+		}); ferr != nil {
+			s.logger.WarnContext(r.Context(), "pools:import invalid "+ferr.Field,
+				"row", pr.rowNum, ferr.Field, ferr.Value, "reason", ferr.Error())
+			errs = append(errs, fmt.Sprintf("row %d: %v", pr.rowNum, ferr))
+			continue
+		}
+
 		rows = append(rows, pr)
 	}
 
@@ -677,15 +693,6 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			Status:      pr.status,
 			Source:      pr.source,
 			Description: pr.description,
-		}
-
-		// Same field validation as POST /api/v1/pools (#350). Containment and
-		// overlap are still decided by placePools below.
-		if ferr := validatePoolFields(pool); ferr != nil {
-			s.logger.WarnContext(r.Context(), "pools:import invalid "+ferr.Field,
-				"row", pr.rowNum, ferr.Field, ferr.Value, "reason", ferr.Error())
-			errs = append(errs, fmt.Sprintf("row %d: %v", pr.rowNum, ferr))
-			continue
 		}
 
 		// Resolve account_id: prefer account_key lookup, fall back to direct ID

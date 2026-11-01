@@ -133,7 +133,12 @@ func TestImportPools_MatchesCreatePoolValidation(t *testing.T) {
 			var apiErr struct {
 				Error string `json:"error"`
 			}
-			_ = json.Unmarshal(rr.Body.Bytes(), &apiErr)
+			if err := json.Unmarshal(rr.Body.Bytes(), &apiErr); err != nil {
+				t.Fatalf("unmarshal POST /pools error body %q: %v", rr.Body.String(), err)
+			}
+			if apiErr.Error == "" {
+				t.Fatalf("POST /pools returned no error message: %s", rr.Body.String())
+			}
 			res := importCSV(t, srv, "/api/v1/import/pools", tc.csv)
 			if res.Created != 0 || len(res.Errors) != 1 {
 				t.Fatalf("import: want 0 created and 1 error, got %+v", res)
@@ -166,5 +171,30 @@ func TestImportAccounts_RowsFailingCreateValidationAreReported(t *testing.T) {
 	accs, _ := st.ListAccounts(t.Context())
 	if len(accs) != 1 || accs[0].Key != "aws:123456789012" {
 		t.Fatalf("expected only the valid account stored, got %+v", accs)
+	}
+}
+
+// Parse-time and validation errors are reported in CSV row order, not
+// grouped by which loop found them.
+func TestImportPools_ErrorsKeepRowOrder(t *testing.T) {
+	srv, _ := setupTestServer()
+	body := "name,cidr,parent_id\n" +
+		"ok,10.0.0.0/16,\n" + // row 2: valid
+		",,\n" + // row 3: blank (parse-time error)
+		"bad,not-a-cidr,\n" + // row 4: validation error
+		",,\n" + // row 5: blank (parse-time error)
+		"v6,2001:db8::/32,1\n" // row 6: validation error, with a parent_id so sorting would move it
+	res := importCSV(t, srv, "/api/v1/import/pools", body)
+	if res.Created != 1 {
+		t.Errorf("expected 1 created, got %d", res.Created)
+	}
+	want := []string{"row 3:", "row 4:", "row 5:", "row 6:"}
+	if len(res.Errors) != len(want) {
+		t.Fatalf("expected %d errors, got %d: %q", len(want), len(res.Errors), res.Errors)
+	}
+	for i, prefix := range want {
+		if !strings.HasPrefix(res.Errors[i], prefix) {
+			t.Errorf("errors[%d] = %q, want prefix %q (all: %q)", i, res.Errors[i], prefix, res.Errors)
+		}
 	}
 }
