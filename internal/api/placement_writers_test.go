@@ -166,7 +166,7 @@ func applyDiscoveryImportForTest(t *testing.T, d *DiscoveryServer, accountID int
 	return resp
 }
 
-func TestDiscoveryImportApply_ChildOutsideParentIsItemError(t *testing.T) {
+func TestDiscoveryImportApply_ChildOutsideParentBlockedAtPreviewAndRefusedWhenForced(t *testing.T) {
 	d, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
 	if err != nil {
@@ -198,7 +198,8 @@ func TestDiscoveryImportApply_ChildOutsideParentIsItemError(t *testing.T) {
 		t.Fatal("a subnet outside its vpc pool was stored")
 	}
 
-	// Placement still guards the override path, which may force blocked items through.
+	// AllowBlocked is the forced path (the network-conflict override), which pushes blocked
+	// items past the preview; placement still refuses the subnet there.
 	subnet2 := discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-2", "192.168.2.0/24", &vpcID)
 	upsertDiscoveredForImportTest(t, ds, subnet2)
 	forced, err := d.applyDiscoveryImport(t.Context(), domain.DiscoveryImportApplyRequest{AccountID: account.ID, ResourceIDs: []uuid.UUID{subnet2.ID}}, discoveryImportApplyOptions{AllowBlocked: true})
