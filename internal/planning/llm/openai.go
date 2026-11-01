@@ -345,8 +345,11 @@ func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
 				evt := StreamEvent{
 					Delta: chunk.Choices[0].Delta.Content,
 				}
-				if chunk.Choices[0].FinishReason != nil {
-					evt.FinishReason = *chunk.Choices[0].FinishReason
+				// Some OpenAI-compatible proxies send "finish_reason":"" on
+				// intermediate chunks instead of null; only a non-empty reason
+				// ends the completion.
+				if fr := chunk.Choices[0].FinishReason; fr != nil && *fr != "" {
+					evt.FinishReason = *fr
 					evt.Done = true
 				}
 				ch <- evt

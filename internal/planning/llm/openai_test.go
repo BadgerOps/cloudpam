@@ -536,3 +536,56 @@ drain:
 		t.Fatal("response body was not closed after the first done event")
 	}
 }
+
+// TestOpenAIProviderStreamIgnoresEmptyFinishReason: some OpenAI-compatible
+// proxies send "finish_reason":"" on intermediate chunks instead of null. An
+// empty finish reason is not terminal and must not end the stream.
+func TestOpenAIProviderStreamIgnoresEmptyFinishReason(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, data := range []string{
+			`{"choices":[{"delta":{"content":"Hel"},"finish_reason":""}]}`,
+			`{"choices":[{"delta":{"content":"lo"},"finish_reason":""}]}`,
+			`{"choices":[{"delta":{"content":"!"},"finish_reason":"stop"}]}`,
+			`[DONE]`,
+		} {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+		}
+	}))
+	defer ts.Close()
+
+	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: ts.URL + "/v1"})
+	ch, err := provider.StreamComplete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+
+	var content, finish string
+	doneSeen := 0
+	timeout := time.After(3 * time.Second)
+	for open := true; open; {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				open = false
+				break
+			}
+			if evt.Err != nil {
+				t.Fatalf("unexpected stream error: %v", evt.Err)
+			}
+			content += evt.Delta
+			if evt.Done {
+				doneSeen++
+				finish = evt.FinishReason
+			}
+		case <-timeout:
+			t.Fatal("stream channel not closed within 3s")
+		}
+	}
+	if content != "Hello!" {
+		t.Fatalf("content = %q, want %q (an empty finish_reason must not end the stream)", content, "Hello!")
+	}
+	if doneSeen != 1 || finish != "stop" {
+		t.Fatalf("done events = %d (finish %q), want exactly 1 with finish %q", doneSeen, finish, "stop")
+	}
+}
