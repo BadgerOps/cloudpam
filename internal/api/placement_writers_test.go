@@ -166,7 +166,7 @@ func applyDiscoveryImportForTest(t *testing.T, d *DiscoveryServer, accountID int
 	return resp
 }
 
-func TestDiscoveryImportApply_ChildOutsideParentIsItemError(t *testing.T) {
+func TestDiscoveryImportApply_ChildOutsideParentBlockedAtPreviewAndRefusedWhenForced(t *testing.T) {
 	d, st, ds, _ := setupDiscoveryTestServer()
 	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
 	if err != nil {
@@ -180,11 +180,37 @@ func TestDiscoveryImportApply_ChildOutsideParentIsItemError(t *testing.T) {
 
 	resp := applyDiscoveryImportForTest(t, d, account.ID, vpc.ID, subnet.ID)
 
-	if resp.PoolsCreated != 1 || !hasErrorContaining(resp.Errors, "invalid sub-pool cidr") {
-		t.Fatalf("want the vpc created and an invalid sub-pool cidr error for the subnet, got %+v", resp)
+	// The preview applies the same containment rule as placement, so the subnet is blocked
+	// before apply instead of surfacing as an apply error (#352).
+	if resp.PoolsCreated != 1 || resp.Skipped != 1 || len(resp.Errors) != 0 {
+		t.Fatalf("want the vpc created and the subnet skipped as blocked, got %+v", resp)
+	}
+	var blocked *domain.DiscoveryImportPreviewItem
+	for i := range resp.Preview.Items {
+		if resp.Preview.Items[i].ResourceID == subnet.ID {
+			blocked = &resp.Preview.Items[i]
+		}
+	}
+	if blocked == nil || blocked.Status != "blocked" || !containsString(blocked.Issues, "outside_pool") {
+		t.Fatalf("want the subnet blocked with outside_pool in the preview, got %+v", blocked)
 	}
 	if storedCIDRs(t, st)["192.168.1.0/24"] {
 		t.Fatal("a subnet outside its vpc pool was stored")
+	}
+
+	// AllowBlocked is the forced path (the network-conflict override), which pushes blocked
+	// items past the preview; placement still refuses the subnet there.
+	subnet2 := discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-2", "192.168.2.0/24", &vpcID)
+	upsertDiscoveredForImportTest(t, ds, subnet2)
+	forced, err := d.applyDiscoveryImport(t.Context(), domain.DiscoveryImportApplyRequest{AccountID: account.ID, ResourceIDs: []uuid.UUID{subnet2.ID}}, discoveryImportApplyOptions{AllowBlocked: true})
+	if err != nil {
+		t.Fatalf("forced apply: %v", err)
+	}
+	if forced.PoolsCreated != 0 || !hasErrorContaining(forced.Errors, "invalid sub-pool cidr") {
+		t.Fatalf("want the forced subnet refused with an invalid sub-pool cidr error, got %+v", forced)
+	}
+	if storedCIDRs(t, st)["192.168.2.0/24"] {
+		t.Fatal("a forced subnet outside its vpc pool was stored")
 	}
 }
 

@@ -1118,3 +1118,166 @@ func (s *failLinkDiscoveryStore) LinkResourceToPool(ctx context.Context, resourc
 	}
 	return s.DiscoveryStore.LinkResourceToPool(ctx, resourceID, poolID)
 }
+
+// linkedVPCSubnetPreviewFixture creates an account, a pool with poolCIDR, a discovered VPC
+// linked to that pool, and a discovered subnet of the VPC with subnetCIDR. It returns the
+// account, the pool, and the subnet's discovered resource id.
+func linkedVPCSubnetPreviewFixture(t *testing.T, st *storage.MemoryStore, ds *storage.MemoryDiscoveryStore, poolCIDR, subnetCIDR string) (domain.Account, domain.Pool, uuid.UUID) {
+	t.Helper()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	pool, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "linked", CIDR: poolCIDR, Type: domain.PoolTypeSupernet, AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+
+	now := time.Now().UTC()
+	vpcID := uuid.New()
+	subnetID := uuid.New()
+	parent := "vpc-linked"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   parent,
+		Name:         "linked-vpc",
+		CIDR:         poolCIDR,
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+	if err := ds.LinkResourceToPool(t.Context(), vpcID, pool.ID); err != nil {
+		t.Fatalf("link vpc to pool: %v", err)
+	}
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:               subnetID,
+		AccountID:        account.ID,
+		Provider:         "aws",
+		Region:           "us-east-1",
+		ResourceType:     domain.ResourceTypeSubnet,
+		ResourceID:       "subnet-linked",
+		Name:             "linked-subnet",
+		CIDR:             subnetCIDR,
+		ParentResourceID: &parent,
+		Status:           domain.DiscoveryStatusActive,
+		DiscoveredAt:     now,
+		LastSeenAt:       now,
+	})
+	return account, pool, subnetID
+}
+
+func TestDiscoveryImportPreviewBlocksSubnetOutsideLinkedParentPool(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, pool, subnetID := linkedVPCSubnetPreviewFixture(t, st, ds, "10.0.0.0/16", "192.168.1.0/24")
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s"]}`, account.ID, subnetID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	item := singleDiscoveryPreviewItem(t, rr)
+	if item.Status != "blocked" || item.ProposedAction != "none" || !containsString(item.Issues, "outside_pool") {
+		t.Fatalf("expected subnet outside linked pool %d to be blocked with outside_pool: %+v", pool.ID, item)
+	}
+
+	// Apply must agree with the preview: nothing is created or linked.
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("unmarshal apply: %v", err)
+	}
+	if applied.PoolsCreated != 0 || applied.ResourcesLinked != 0 || applied.Skipped != 1 || len(applied.Errors) != 0 {
+		t.Fatalf("expected apply to skip the blocked subnet without errors: %+v", applied)
+	}
+}
+
+func TestDiscoveryImportPreviewKeepsSubnetInsideLinkedParentPoolImportable(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, pool, subnetID := linkedVPCSubnetPreviewFixture(t, st, ds, "10.0.0.0/16", "10.0.1.0/24")
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s"]}`, account.ID, subnetID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	item := singleDiscoveryPreviewItem(t, rr)
+	if item.Status != "importable" || item.ProposedAction != "create_pool" || item.ProposedParentPoolID == nil || *item.ProposedParentPoolID != pool.ID {
+		t.Fatalf("expected subnet inside linked pool %d to be importable under it: %+v", pool.ID, item)
+	}
+
+	// Whatever the preview reports importable, apply accepts.
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("unmarshal apply: %v", err)
+	}
+	if applied.PoolsCreated != 1 || applied.ResourcesLinked != 1 || applied.Skipped != 0 || len(applied.Errors) != 0 {
+		t.Fatalf("expected apply to create the subnet pool: %+v", applied)
+	}
+	created, found, err := st.GetPool(t.Context(), applied.CreatedPoolIDs[0])
+	if err != nil || !found || created.ParentID == nil || *created.ParentID != pool.ID {
+		t.Fatalf("created pool should sit under linked pool %d: found=%v err=%v pool=%+v", pool.ID, found, err, created)
+	}
+}
+
+func TestDiscoveryImportPreviewBlocksSubnetOutsideSelectedVPC(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+
+	now := time.Now().UTC()
+	vpcID := uuid.New()
+	subnetID := uuid.New()
+	parent := "vpc-selected"
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:           vpcID,
+		AccountID:    account.ID,
+		Provider:     "aws",
+		Region:       "us-east-1",
+		ResourceType: domain.ResourceTypeVPC,
+		ResourceID:   parent,
+		Name:         "selected-vpc",
+		CIDR:         "10.40.0.0/16",
+		Status:       domain.DiscoveryStatusActive,
+		DiscoveredAt: now,
+		LastSeenAt:   now,
+	})
+	upsertDiscoveredForImportTest(t, ds, domain.DiscoveredResource{
+		ID:               subnetID,
+		AccountID:        account.ID,
+		Provider:         "aws",
+		Region:           "us-east-1",
+		ResourceType:     domain.ResourceTypeSubnet,
+		ResourceID:       "subnet-outside",
+		Name:             "outside-subnet",
+		CIDR:             "172.16.1.0/24",
+		ParentResourceID: &parent,
+		Status:           domain.DiscoveryStatusActive,
+		DiscoveredAt:     now,
+		LastSeenAt:       now,
+	})
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s","%s"]}`, account.ID, vpcID, subnetID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	var preview domain.DiscoveryImportPreviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("unmarshal preview: %v", err)
+	}
+	if preview.Importable != 1 || preview.Blocked != 1 {
+		t.Fatalf("expected the VPC importable and the subnet blocked: %+v", preview)
+	}
+	for _, item := range preview.Items {
+		if item.ResourceID == subnetID && (item.Status != "blocked" || !containsString(item.Issues, "outside_pool")) {
+			t.Fatalf("expected subnet outside its selected VPC to be blocked with outside_pool: %+v", item)
+		}
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("unmarshal apply: %v", err)
+	}
+	if applied.PoolsCreated != 1 || applied.ResourcesLinked != 1 || applied.Skipped != 1 || len(applied.Errors) != 0 {
+		t.Fatalf("expected apply to import the VPC and skip the subnet without errors: %+v", applied)
+	}
+}
