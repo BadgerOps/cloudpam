@@ -438,6 +438,47 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pools)
 }
 
+// poolFieldError describes a CreatePool field that fails the validation
+// POST /api/v1/pools applies. Msg and Detail map onto the API error body;
+// Error() joins them for per-row import reports.
+type poolFieldError struct {
+	Field  string
+	Value  string
+	Msg    string
+	Detail string
+}
+
+func (e *poolFieldError) Error() string {
+	if e.Detail != "" {
+		return e.Msg + ": " + e.Detail
+	}
+	return e.Msg
+}
+
+// validatePoolFields runs the field checks every pool creation path must
+// pass: name, CIDR (format, IPv4 only, canonical, reserved ranges, prefix
+// bounds) and the type, status and source enumerations when provided.
+// Containment, overlap and parent existence are placement concerns and are
+// handled by placePools.
+func validatePoolFields(in domain.CreatePool) *poolFieldError {
+	if err := validation.ValidateName(in.Name); err != nil {
+		return &poolFieldError{Field: "name", Value: in.Name, Msg: err.Error()}
+	}
+	if err := validation.ValidateCIDR(in.CIDR); err != nil {
+		return &poolFieldError{Field: "cidr", Value: in.CIDR, Msg: err.Error()}
+	}
+	if in.Type != "" && !domain.IsValidPoolType(in.Type) {
+		return &poolFieldError{Field: "type", Value: string(in.Type), Msg: "invalid pool type", Detail: fmt.Sprintf("valid types: %v", domain.ValidPoolTypes)}
+	}
+	if in.Status != "" && !domain.IsValidPoolStatus(in.Status) {
+		return &poolFieldError{Field: "status", Value: string(in.Status), Msg: "invalid pool status", Detail: fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses)}
+	}
+	if in.Source != "" && !domain.IsValidPoolSource(in.Source) {
+		return &poolFieldError{Field: "source", Value: string(in.Source), Msg: "invalid pool source", Detail: fmt.Sprintf("valid sources: %v", domain.ValidPoolSources)}
+	}
+	return nil
+}
+
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := s.logger
@@ -450,50 +491,14 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.CIDR = strings.TrimSpace(in.CIDR)
 
-	// Validate pool name
-	if err := validation.ValidateName(in.Name); err != nil {
-		logger.WarnContext(ctx, "pools:create invalid name", appendRequestID(ctx, []any{
-			"name", in.Name,
-			"reason", err.Error(),
+	// Field validation shared with CSV import (#350): name, CIDR, type,
+	// status and source are checked the same way on both paths.
+	if ferr := validatePoolFields(in); ferr != nil {
+		logger.WarnContext(ctx, "pools:create invalid "+ferr.Field, appendRequestID(ctx, []any{
+			ferr.Field, ferr.Value,
+			"reason", ferr.Error(),
 		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
-		return
-	}
-
-	// Validate CIDR format, IPv4, reserved ranges, and prefix bounds
-	if err := validation.ValidateCIDR(in.CIDR); err != nil {
-		logger.WarnContext(ctx, "pools:create invalid cidr", appendRequestID(ctx, []any{
-			"cidr", in.CIDR,
-			"reason", err.Error(),
-		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, err.Error(), "")
-		return
-	}
-
-	// Validate pool type if provided
-	if in.Type != "" && !domain.IsValidPoolType(in.Type) {
-		logger.WarnContext(ctx, "pools:create invalid type", appendRequestID(ctx, []any{
-			"type", in.Type,
-		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool type", fmt.Sprintf("valid types: %v", domain.ValidPoolTypes))
-		return
-	}
-
-	// Validate pool status if provided
-	if in.Status != "" && !domain.IsValidPoolStatus(in.Status) {
-		logger.WarnContext(ctx, "pools:create invalid status", appendRequestID(ctx, []any{
-			"status", in.Status,
-		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool status", fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses))
-		return
-	}
-
-	// Validate pool source if provided
-	if in.Source != "" && !domain.IsValidPoolSource(in.Source) {
-		logger.WarnContext(ctx, "pools:create invalid source", appendRequestID(ctx, []any{
-			"source", in.Source,
-		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid pool source", fmt.Sprintf("valid sources: %v", domain.ValidPoolSources))
+		s.writeErr(r.Context(), w, http.StatusBadRequest, ferr.Msg, ferr.Detail)
 		return
 	}
 
