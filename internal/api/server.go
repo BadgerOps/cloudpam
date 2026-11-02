@@ -112,19 +112,17 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
 }
 
-// maxStrictJSONBody bounds a request body decoded by decodeStrictJSON.
 const maxStrictJSONBody = 64 << 10
 
-// decodeStrictJSON decodes the request body into dst, rejecting unknown fields.
-// A misspelled field ("apikey") would otherwise be ignored and the caller would
-// believe the value was saved. On failure it writes a 400 and returns false.
+// decodeStrictJSON rejects unknown fields so a misspelled field ("apikey") is a
+// 400 rather than a silently dropped value.
 func (s *Server) decodeStrictJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxStrictJSONBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		detail := "expected a json object"
 		if msg := err.Error(); strings.HasPrefix(msg, "json: unknown field") {
-			detail = strings.TrimPrefix(msg, "json: ") // unknown field "apikey"
+			detail = strings.TrimPrefix(msg, "json: ")
 		}
 		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", detail)
 		return false

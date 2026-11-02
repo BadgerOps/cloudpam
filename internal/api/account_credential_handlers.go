@@ -52,7 +52,6 @@ func (cs *AccountCredentialServer) RegisterAccountCredentialRoutes() {
 	cs.srv.handleOpenAPIRouteFunc("POST "+accountCredentialPath+"/test", cs.handleTest)
 }
 
-// loadAccount resolves the live account named by the path, writing 400 or 404 otherwise.
 func (cs *AccountCredentialServer) loadAccount(w http.ResponseWriter, r *http.Request) (domain.Account, bool) {
 	ctx := r.Context()
 	id, err := strconv.ParseInt(r.PathValue("accountId"), 10, 64)
@@ -72,8 +71,7 @@ func (cs *AccountCredentialServer) loadAccount(w http.ResponseWriter, r *http.Re
 	return account, true
 }
 
-// writeInternal answers 500 without the error text, which may name storage
-// internals, and keeps the cause in the server log.
+// writeInternal keeps err out of the response: storage error text can name internals.
 func (cs *AccountCredentialServer) writeInternal(ctx context.Context, w http.ResponseWriter, msg string, err error) {
 	cs.srv.logger.ErrorContext(ctx, msg, "error", err)
 	cs.srv.writeErr(ctx, w, http.StatusInternalServerError, msg, "")
@@ -87,8 +85,6 @@ func (cs *AccountCredentialServer) audit(ctx context.Context, action string, acc
 	cs.srv.logAuditWithChanges(ctx, action, audit.ResourceAccountCredential, fmt.Sprintf("%d", account.ID), account.Name, changes, status)
 }
 
-// handleGet returns the stored credential's summary.
-// GET /api/v1/accounts/{accountId}/credentials
 func (cs *AccountCredentialServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	account, ok := cs.loadAccount(w, r)
@@ -106,8 +102,6 @@ func (cs *AccountCredentialServer) handleGet(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// handlePut stores or replaces the account's credential.
-// PUT /api/v1/accounts/{accountId}/credentials
 func (cs *AccountCredentialServer) handlePut(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	account, ok := cs.loadAccount(w, r)
@@ -137,8 +131,6 @@ func (cs *AccountCredentialServer) handlePut(w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// handleDelete removes the account's credential.
-// DELETE /api/v1/accounts/{accountId}/credentials
 func (cs *AccountCredentialServer) handleDelete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	account, ok := cs.loadAccount(w, r)
@@ -157,9 +149,7 @@ func (cs *AccountCredentialServer) handleDelete(w http.ResponseWriter, r *http.R
 	}
 }
 
-// handleTest runs one read-only provider call as the stored credential.
-// A failing credential is a 200 with status failed.
-// POST /api/v1/accounts/{accountId}/credentials/test
+// A credential that fails the provider call is a 200 with status failed, not an error.
 func (cs *AccountCredentialServer) handleTest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	account, ok := cs.loadAccount(w, r)

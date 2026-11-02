@@ -31,7 +31,6 @@ const (
 	credTestExternalID = "LEAK-EXTERNAL-ID-9f3a"
 )
 
-// fakeCredentialCollector is an aws collector whose bound identity call is scripted.
 type fakeCredentialCollector struct {
 	identity string
 	err      error
@@ -123,8 +122,7 @@ func awsCredentialBody(externalID string) string {
 	return string(b)
 }
 
-// gcpCredentialBody returns a PUT body with a fresh service-account key and a
-// marker: one full base64 line of the private key PEM, which no response may contain.
+// marker is one base64 line of the private key: the canary no response may contain.
 func gcpCredentialBody(t *testing.T) (body, marker string) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
@@ -383,7 +381,6 @@ func TestAccountCredentialAuditEvents(t *testing.T) {
 	}
 }
 
-// newProtectedCredentialServer wires the credential routes behind RBAC with one API key of the given scopes.
 func newProtectedCredentialServer(t *testing.T, scopes []string) (*credentialFixture, string) {
 	t.Helper()
 	key, err := secrets.GenerateKey()

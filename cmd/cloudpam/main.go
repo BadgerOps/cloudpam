@@ -205,9 +205,6 @@ func main() {
 		}
 	}
 
-	// The application secret key comes before the subsystems that store
-	// secrets: account credentials for discovery, OIDC client secrets, and
-	// the AI provider API key.
 	secretKey, secretKeyEphemeral := parseOIDCEncryptionKey(logger)
 
 	// Initialize discovery subsystem
@@ -234,9 +231,6 @@ func main() {
 	recSrv := api.NewRecommendationServer(srv, recService, recStore)
 	logger.Info("recommendation subsystem initialized")
 
-	// The settings store comes before the AI subsystem: the AI provider is
-	// resolved from stored settings (with an encrypted API key) on every
-	// operation.
 	settingsStore := selectSettingsStore(logger, store)
 
 	// Initialize AI planning subsystem
