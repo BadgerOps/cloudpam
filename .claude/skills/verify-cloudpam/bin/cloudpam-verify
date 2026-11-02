@@ -24,8 +24,9 @@ export SKILL_DIR REPO_ROOT
 
 VERIFY_USERNAME="${CLOUDPAM_VERIFY_USERNAME:-verify-admin}"
 VERIFY_PASSWORD="${CLOUDPAM_VERIFY_PASSWORD:-VerifyDev12345!}"
-# Fixed dev-only key so the server does not log an auto-generated-key warning on every launch.
-VERIFY_OIDC_KEY="0000000000000000000000000000000000000000000000000000000000000001"
+# A real key is needed to store credentials (OIDC secrets, the AI key, account credentials): the server
+# answers 409 on an auto-generated one. Export CLOUDPAM_OIDC_ENCRYPTION_KEY before launch to use your own.
+VERIFY_OIDC_KEY="${CLOUDPAM_OIDC_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000001}"
 
 log() { printf '[cloudpam-verify] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
@@ -166,7 +167,9 @@ cmd_launch() {
   fi
 
   log "installing Playwright + chromium (repo-root package.json)"
-  nixrun 'cd "$REPO_ROOT" && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && npx playwright install chromium' >"$STATE/playwright-install.log" 2>&1 \
+  # The nix shell points PLAYWRIGHT_BROWSERS_PATH at a read-only store path that already holds the browsers;
+  # `playwright install` would fail writing its lock file there, so the download runs only when they are absent.
+  nixrun 'cd "$REPO_ROOT" && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && if ls "${PLAYWRIGHT_BROWSERS_PATH:-/nonexistent}"/chromium-* >/dev/null 2>&1; then echo "browsers provided at $PLAYWRIGHT_BROWSERS_PATH"; else npx playwright install chromium; fi' >"$STATE/playwright-install.log" 2>&1 \
     || { tail -n 40 "$STATE/playwright-install.log" >&2; die "playwright install failed"; }
 
   GIT_REV="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
@@ -193,9 +196,10 @@ cmd_launch() {
     echo $! > "$STATE/server.pid"
   )
   PID="$(cat "$STATE/server.pid")"
+  OIDC_ENCRYPTION_KEY="$VERIFY_OIDC_KEY"
 
   local name
-  for name in RUN_ID RUN_DIR STATE EVIDENCE BASE_URL PORT PID APP_VERSION GIT_REV USERNAME PASSWORD COOKIES; do
+  for name in RUN_ID RUN_DIR STATE EVIDENCE BASE_URL PORT PID APP_VERSION GIT_REV USERNAME PASSWORD COOKIES OIDC_ENCRYPTION_KEY; do
     printf '%s=%q\n' "$name" "${!name}"
   done > "$ENV_FILE"
 
