@@ -4439,7 +4439,7 @@ ec2:DescribeAddresses`}
         )}
       </div>
 
-      {/* Credential sources */}
+      {/* Where credentials come from */}
       <div className={sectionClass}>
         <button onClick={() => toggle('credentials')} className={headerClass}>
           {openSection === 'credentials' ? (

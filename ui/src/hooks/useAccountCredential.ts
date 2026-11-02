@@ -15,7 +15,7 @@ export type CredentialState =
   | { kind: 'error'; message: string }
 
 export interface CredentialRequestError {
-  status: number // 0 when the request never got an HTTP response
+  status: number
   error: string
   detail?: string
 }
@@ -29,9 +29,6 @@ function toError(err: unknown, fallback: string): CredentialRequestError {
   return { status: 0, error: err instanceof Error ? err.message : fallback }
 }
 
-// useAccountCredential loads and edits the stored discovery credential of one account.
-// A 404 from GET is the `none` state, not an error. save, test and clear each ignore
-// a second call while one is pending (they return null).
 export function useAccountCredential(accountId: number) {
   const [state, setState] = useState<CredentialState>({ kind: 'loading' })
   const [saving, setSaving] = useState(false)
@@ -66,7 +63,6 @@ export function useAccountCredential(accountId: number) {
     setSaving(true)
     try {
       const credential = await putAccountCredential(accountId, req)
-      // A test result describes the credential before this save.
       setTestResult(null)
       setState({ kind: 'stored', credential })
       return { ok: true, value: undefined }

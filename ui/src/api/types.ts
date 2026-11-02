@@ -1011,7 +1011,7 @@ export interface AIProviderTestResult {
   tested_at: string
 }
 
-// --- Account credentials (stored discovery credentials, #275) ---
+// --- Account credential types ---
 
 export type CredentialType = 'aws_assume_role' | 'gcp_service_account'
 
@@ -1034,7 +1034,6 @@ export interface CredentialTestResult extends CredentialTest {
   identity?: string
 }
 
-// The API view of a stored credential. It never carries the secret.
 export interface AccountCredential {
   account_id: number
   type: CredentialType
@@ -1053,9 +1052,6 @@ export interface GCPServiceAccountInput {
   key_json: string
 }
 
-// PUT body. Exactly the object named by type must be set.
-export interface PutAccountCredentialRequest {
-  type: CredentialType
-  aws_assume_role?: AWSAssumeRoleInput
-  gcp_service_account?: GCPServiceAccountInput
-}
+export type PutAccountCredentialRequest =
+  | { type: 'aws_assume_role'; aws_assume_role: AWSAssumeRoleInput }
+  | { type: 'gcp_service_account'; gcp_service_account: GCPServiceAccountInput }

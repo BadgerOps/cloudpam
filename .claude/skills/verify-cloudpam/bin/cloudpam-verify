@@ -24,8 +24,6 @@ export SKILL_DIR REPO_ROOT
 
 VERIFY_USERNAME="${CLOUDPAM_VERIFY_USERNAME:-verify-admin}"
 VERIFY_PASSWORD="${CLOUDPAM_VERIFY_PASSWORD:-VerifyDev12345!}"
-# A real key is needed to store credentials (OIDC secrets, the AI key, account credentials): the server
-# answers 409 on an auto-generated one. Export CLOUDPAM_OIDC_ENCRYPTION_KEY before launch to use your own.
 VERIFY_OIDC_KEY="${CLOUDPAM_OIDC_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000001}"
 
 log() { printf '[cloudpam-verify] %s\n' "$*" >&2; }

@@ -1,9 +1,8 @@
 const assert = require('node:assert/strict');
 const { generateKeyPairSync } = require('node:crypto');
 
-// Stored per-account credentials (#275) on a GCP account. The key is a throwaway RSA key
-// generated here, so the server accepts it and the Test step fails at Google's token
-// endpoint (unreachable or refused), which is the failure path this journey proves.
+const serverTestTimeoutMs = 15000;
+
 module.exports = async ({ page, login, api, shot, aria, note }) => {
   const consoleErrors = [];
   let loggedIn = false;
@@ -19,7 +18,6 @@ module.exports = async ({ page, login, api, shot, aria, note }) => {
   const name = `verify-gcp-${id}`;
   const clientEmail = `cloudpam@${projectId}.iam.gserviceaccount.com`;
   const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' });
-  // One base64 line of the key body: present nowhere but the pasted JSON.
   const keyMarker = pem.split('\n')[2];
   assert.ok(keyMarker.length >= 40, 'key marker is a full base64 line');
   const keyJSON = JSON.stringify({
@@ -92,11 +90,10 @@ module.exports = async ({ page, login, api, shot, aria, note }) => {
 
   await modal.getByRole('button', { name: 'Test', exact: true }).click();
   const result = modal.getByTestId('credential-test-result');
-  // The server gives the provider call 15 seconds before it records a timeout.
-  await result.waitFor({ timeout: 30000 });
+  await result.waitFor({ timeout: 2 * serverTestTimeoutMs });
   const resultText = await result.textContent();
   note(`test result: ${resultText}`);
-  assert.match(resultText, /failed/, 'the throwaway key fails the provider test');
+  assert.match(resultText, /failed/, 'the throwaway key fails the provider test, with or without outbound network');
   leaks(resultText, 'test result text');
   await badge.filter({ hasText: 'Failing' }).waitFor({ timeout: 10000 });
   leaks(await page.content(), 'page HTML after test');
@@ -132,6 +129,5 @@ module.exports = async ({ page, login, api, shot, aria, note }) => {
   note(`audit account_credential events: ${JSON.stringify(events.map((e) => [e.action, e.status_code, e.changes]))}`);
 
   note(`console errors after login: ${consoleErrors.length}`);
-  // Chromium logs the GET that answers 404 while nothing is stored (the modal's none state).
-  assert.deepEqual(consoleErrors, ['Failed to load resource: the server responded with a status of 404 (Not Found)'], 'the only console error is the expected credentials 404');
+  assert.deepEqual(consoleErrors, ['Failed to load resource: the server responded with a status of 404 (Not Found)'], 'the only console error is Chromium logging the credentials GET that answers 404 before anything is stored');
 };

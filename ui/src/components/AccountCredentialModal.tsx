@@ -9,13 +9,11 @@ import { formatTimeAgo } from '../utils/format'
 
 export type CredentialProvider = 'aws' | 'gcp'
 
-const CREDENTIAL_TYPES: Record<CredentialProvider, { type: CredentialType; label: string }> = {
-  aws: { type: 'aws_assume_role', label: 'AWS assumed role' },
-  gcp: { type: 'gcp_service_account', label: 'GCP service account' },
+const CREDENTIAL_TYPE_LABELS: Record<CredentialType, string> = {
+  aws_assume_role: 'AWS assumed role',
+  gcp_service_account: 'GCP service account',
 }
 
-// credentialProvider names the provider a credential can be stored for, or null when
-// the account's provider has no credential type.
 export function credentialProvider(account: Pick<Account, 'provider'>): CredentialProvider | null {
   return account.provider === 'aws' || account.provider === 'gcp' ? account.provider : null
 }
@@ -36,6 +34,7 @@ function badgeKey(credential: AccountCredential | null): BadgeKey {
 }
 
 const KEY_ENV = 'CLOUDPAM_OIDC_ENCRYPTION_KEY'
+const KEY_EPHEMERAL_STATUS = 409
 
 const inputClass = 'w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100'
 const labelClass = 'block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1'
@@ -50,16 +49,13 @@ interface CredentialForm {
 const EMPTY_FORM: CredentialForm = { role_arn: '', external_id: '', key_json: '' }
 
 function toRequest(provider: CredentialProvider, form: CredentialForm): PutAccountCredentialRequest {
-  const type = CREDENTIAL_TYPES[provider].type
   if (provider === 'aws') {
     const external = form.external_id.trim()
-    return { type, aws_assume_role: { role_arn: form.role_arn.trim(), ...(external ? { external_id: external } : {}) } }
+    return { type: 'aws_assume_role', aws_assume_role: { role_arn: form.role_arn.trim(), ...(external ? { external_id: external } : {}) } }
   }
-  return { type, gcp_service_account: { key_json: form.key_json } }
+  return { type: 'gcp_service_account', gcp_service_account: { key_json: form.key_json } }
 }
 
-// SaveError turns the server's refusal into what the operator does next. A 409 means the
-// server runs on an auto-generated key, so the fix is on the server, not in the form.
 function SaveError({ error }: { error: CredentialRequestError }) {
   return (
     <div
@@ -69,7 +65,7 @@ function SaveError({ error }: { error: CredentialRequestError }) {
     >
       <p>{error.error}</p>
       {error.detail && <p className="text-xs">{error.detail}</p>}
-      {error.status === 409 && (
+      {error.status === KEY_EPHEMERAL_STATUS && (
         <p className="text-xs">
           Set <code className={codeClass}>{KEY_ENV}</code> to a 32-byte hex key on the server, restart it, then save again.
         </p>
@@ -140,7 +136,6 @@ export default function AccountCredentialModal({
   const busy = saving || testing || clearing
   const credential = state.kind === 'stored' ? state.credential : null
   const badge = STATE_BADGES[badgeKey(credential)]
-  const typeInfo = CREDENTIAL_TYPES[provider]
 
   useEffect(() => {
     dialogRef.current?.querySelector<HTMLElement>('input, textarea, button')?.focus()
@@ -242,7 +237,7 @@ export default function AccountCredentialModal({
           )}
           {credential && (
             <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 space-y-2">
-              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{typeInfo.label}</div>
+              <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">{CREDENTIAL_TYPE_LABELS[credential.type]}</div>
               <Summary credential={credential} />
             </div>
           )}
