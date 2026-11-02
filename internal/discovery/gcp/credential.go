@@ -1,0 +1,123 @@
+package gcp
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"golang.org/x/oauth2/jwt"
+
+	"cloudpam/internal/discovery"
+	"cloudpam/internal/domain"
+)
+
+var (
+	_ discovery.CredentialAware       = (*Collector)(nil)
+	_ discovery.CredentialedCollector = (*serviceAccountCollector)(nil)
+)
+
+// WithCredential binds the collector to a service account. The token endpoint is always
+// Google's: the stored payload carries no token_uri.
+func (c *Collector) WithCredential(ctx context.Context, _ domain.Account, cred discovery.CredentialPayload) (discovery.CredentialedCollector, error) {
+	sa, ok := cred.(discovery.GCPServiceAccount)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s credential on the gcp collector", discovery.ErrCredentialProviderMismatch, cred.Type())
+	}
+	conf := &jwt.Config{
+		Email:        sa.ClientEmail(),
+		PrivateKey:   sa.PrivateKey(),
+		PrivateKeyID: sa.PrivateKeyID(),
+		Scopes:       []string{computeScope},
+		TokenURL:     google.JWTTokenURL,
+	}
+	// The jwt token source posts with a client taken from this context, not from the
+	// Token() caller, so the probe context and the injected base client go in here.
+	tokenHTTP := &tokenTransport{ctx: ctx, base: http.DefaultTransport}
+	tokenClient := &http.Client{Transport: tokenHTTP}
+	if c.httpClient != nil {
+		if c.httpClient.Transport != nil {
+			tokenHTTP.base = c.httpClient.Transport
+		}
+		tokenClient.Timeout = c.httpClient.Timeout
+	}
+	tokenCtx := context.WithValue(ctx, oauth2.HTTPClient, tokenClient)
+	return &serviceAccountCollector{
+		Collector: &Collector{tokenSource: conf.TokenSource(tokenCtx), httpClient: c.httpClient},
+		email:     sa.ClientEmail(),
+		token:     tokenHTTP,
+	}, nil
+}
+
+// tokenTransport carries the binding context into the token request and keeps the
+// transport error, which the oauth2 jwt source otherwise flattens into text.
+type tokenTransport struct {
+	ctx     context.Context
+	base    http.RoundTripper
+	lastErr error
+}
+
+func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req.WithContext(t.ctx))
+	t.lastErr = err
+	return resp, err
+}
+
+type serviceAccountCollector struct {
+	*Collector
+	email string
+	token *tokenTransport
+}
+
+// Identity fetches a token, then reads the account's project with it.
+func (c *serviceAccountCollector) Identity(ctx context.Context, account domain.Account) (string, error) {
+	project := ProjectID(account)
+	if project == "" {
+		return "", &discovery.ProbeError{Step: "get_project", Code: "no_project_id"}
+	}
+	if _, err := c.tokenSource.Token(); err != nil {
+		return "", c.tokenProbeError(err)
+	}
+	client, err := c.getHTTPClient(ctx)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/projects/%s", computeBaseURL, project), nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get_project: %w", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", &discovery.ProbeError{Step: "get_project", Status: resp.StatusCode}
+	}
+	return c.email, nil
+}
+
+func (c *serviceAccountCollector) tokenProbeError(err error) error {
+	var re *oauth2.RetrieveError
+	if errors.As(err, &re) {
+		pe := &discovery.ProbeError{Step: "token", Code: re.ErrorCode}
+		if re.Response != nil {
+			pe.Status = re.Response.StatusCode
+		}
+		if pe.Code == "" {
+			var body struct {
+				Error string `json:"error"`
+			}
+			_ = json.Unmarshal(re.Body, &body)
+			pe.Code = body.Error
+		}
+		return pe
+	}
+	if c.token.lastErr != nil {
+		return fmt.Errorf("token: %w", c.token.lastErr)
+	}
+	return fmt.Errorf("token: %w", err)
+}

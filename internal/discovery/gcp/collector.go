@@ -107,12 +107,17 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 	return all, nil
 }
 
+// getHTTPClient prefers a token source over an injected client; the injected client then
+// serves as the base transport so a bound collector can still be routed to a test server.
 func (c *Collector) getHTTPClient(ctx context.Context) (*http.Client, error) {
+	if c.tokenSource != nil {
+		if c.httpClient != nil {
+			ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
+		}
+		return oauth2.NewClient(ctx, c.tokenSource), nil
+	}
 	if c.httpClient != nil {
 		return c.httpClient, nil
-	}
-	if c.tokenSource != nil {
-		return oauth2.NewClient(ctx, c.tokenSource), nil
 	}
 	// Use Application Default Credentials
 	ts, err := google.DefaultTokenSource(ctx, computeScope)
