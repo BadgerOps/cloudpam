@@ -218,7 +218,7 @@ The storage layer uses build tags to switch between implementations:
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
-  - Current migrations: `0001_init.sql` through `0021_network_objects_relationships.sql` (21 files; new work starts at `0022`)
+  - Current migrations: `0001_init.sql` through `0022_account_credentials.sql` (22 files; new work starts at `0023`)
 
 - **PostgreSQL Support** (`-tags postgres`)
   - Production-grade database with native CIDR operations
@@ -253,6 +253,10 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/pools/{id}/blocks` - enumerate candidate subnets for a pool
   - `/api/v1/accounts` - account CRUD
   - `/api/v1/accounts/{id}` - single account GET/PATCH/DELETE
+  - `/api/v1/accounts/{id}/credentials` - stored discovery credential summary (GET, `accounts:read`); never returns the payload
+  - `/api/v1/accounts/{id}/credentials` - store or replace the encrypted credential (PUT, `accounts:update`); 409 when the encryption key is ephemeral
+  - `/api/v1/accounts/{id}/credentials` - delete the stored credential (DELETE, `accounts:update`)
+  - `/api/v1/accounts/{id}/credentials/test` - run one read-only call as the stored credential and record the outcome (POST, `accounts:update`)
   - `/api/v1/blocks` - list assigned blocks (sub-pools with filters)
   - `/api/v1/export` - data export as CSV in ZIP
   - `/api/v1/import/{type}` - CSV import for accounts or pools
@@ -439,6 +443,7 @@ When adding endpoints:
 
 ### OIDC/SSO
 - `CLOUDPAM_OIDC_ENCRYPTION_KEY`: 32-byte hex-encoded AES-256 application secret key (`internal/secrets`); encrypts OIDC client secrets and AI provider API keys saved under Configuration → AI Provider (auto-generated with warning if not set; then the AI provider page cannot store an API key)
+  - The same key protects stored per-account discovery credentials (`PUT /api/v1/accounts/{id}/credentials` answers 409 while the key is auto-generated)
 - `CLOUDPAM_OIDC_CALLBACK_URL`: OIDC callback URL (default: `http://localhost:8080/api/v1/auth/oidc/callback`)
 
 ### Observability
@@ -729,7 +734,7 @@ cloudpam/
 │   │   └── llm/            # LLM provider abstraction (OpenAI-compatible)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0021)
+├── migrations/             # SQL migrations (0001-0022)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
@@ -740,6 +745,7 @@ cloudpam/
 │   ├── 0019_account_lockout.sql       # Account lockout state
 │   ├── 0020_rbac_permission_catalog.sql # Custom roles + permission catalog
 │   ├── 0021_network_objects_relationships.sql # Network objects + relationships
+│   ├── 0022_account_credentials.sql   # Per-account encrypted discovery credentials
 │   └── postgres/           # PostgreSQL migrations
 ├── deploy/                 # Deployment configurations
 │   ├── terraform/aws-org-discovery/  # AWS Organizations discovery IAM
