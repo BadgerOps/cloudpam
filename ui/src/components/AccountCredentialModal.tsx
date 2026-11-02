@@ -272,7 +272,7 @@ export default function AccountCredentialModal({
           {canEdit && state.kind !== 'loading' && (
             <form aria-label={credential ? 'Replace credential' : 'Store credential'} onSubmit={handleSave} className="space-y-3 border-t dark:border-gray-700 pt-4">
               <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                {credential ? 'Replace with a new ' : 'Store an '}{typeInfo.label}
+                {credential ? 'Replace the stored credential' : 'Store a credential'}
               </div>
               {saveError && <SaveError error={saveError} />}
               {provider === 'aws' ? (
