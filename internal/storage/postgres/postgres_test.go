@@ -72,6 +72,7 @@ func resetDB(t *testing.T) {
 		"sessions",
 		"users",
 		"pools",
+		"account_credentials",
 		"accounts",
 		"audit_events",
 		"api_tokens",

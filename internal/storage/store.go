@@ -39,6 +39,7 @@ type Store interface {
 	GetAccountByKey(ctx context.Context, key string) (*domain.Account, error)
 	// Search performs a paginated search across pools and accounts.
 	Search(ctx context.Context, req domain.SearchRequest) (domain.SearchResponse, error)
+	AccountCredentialStore
 	// Close releases resources held by the store
 	Close() error
 }
