@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.23.11] - 2026-11-02
+
+### Changed
+- The server and agent Helm charts advertise application version `0.23.11`. Their chart package versions remain `0.2.1`.
+- `POST /api/v1/import/pools` runs the same field validation as `POST /api/v1/pools` (name, CIDR format, IPv4 only, canonical form, reserved ranges, prefix bounds, type, status, source) and reports each failing row as `row N: <message>` while importing the remaining rows. `POST /api/v1/import/accounts` validates `key` and `name` per row the way account create does. Parent-row resolution for child rows is unchanged (#351 is still open). (#350)
+- Every paged list caps `page_size` at 200 at the HTTP boundary and shares one offset guard in `internal/storage/paging.go`. A page past the end returns an empty page that echoes the requested `page` and effective `page_size`. (#347)
+
+### Fixed
+- Recommendations no longer offer an empty pool's own CIDR as an allocation, which apply refused with `400 invalid sub-pool cidr`. An empty pool is offered as its two halves; a pool whose halves would be longer than /30 gets no allocation recommendation. (#348)
+- `POST /api/v1/discovery/import/preview` blocks a subnet whose pre-chosen parent pool (the pool its VPC is linked to, or the selected pool) does not exist, belongs to another account, or does not contain the subnet, with `missing_parent`, `account_mismatch` or `outside_pool` as the issue, instead of showing it as importable and failing at apply. A subnet is also checked against its VPC when both are selected in the same request. (#352)
+- The AI planning SSE reader stops after the first done event, so the `[DONE]` sentinel and trailing usage chunks no longer block the stream until context cancellation. (#359)
+- `GET /api/v1/blocks`, `GET /api/v1/pools/{id}/blocks`, and the discovery, drift and recommendation lists no longer return 500, silently serve page 1, or fail with a negative `OFFSET` on PostgreSQL when `page` is near the integer maximum. (#347)
+
 ## [0.23.10] - 2026-10-31
 
 ### Changed
