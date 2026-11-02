@@ -15,7 +15,6 @@ import (
 	"cloudpam/internal/domain"
 )
 
-// defaultSTSRegion is used when neither the account nor the host config names a region.
 const defaultSTSRegion = "us-east-1"
 
 type stsAPI interface {
@@ -28,8 +27,7 @@ var (
 	_ discovery.CredentialedCollector = (*assumedRoleCollector)(nil)
 )
 
-// WithCredential binds the host collector to an assumed role. The STS call runs as the host
-// identity in the first account region, else the host default, else us-east-1.
+// WithCredential binds the host collector to an assumed role.
 func (c *Collector) WithCredential(ctx context.Context, account domain.Account, cred discovery.CredentialPayload) (discovery.CredentialedCollector, error) {
 	role, ok := cred.(discovery.AWSAssumeRole)
 	if !ok {
@@ -70,13 +68,11 @@ func (c *Collector) stsClient(cfg aws.Config) stsAPI {
 	return sts.NewFromConfig(cfg)
 }
 
-// assumedRoleCollector runs every call as the assumed role; its credsProvider is never nil.
 type assumedRoleCollector struct{ *Collector }
 
-// Identity assumes the role, then asks STS who the resulting credentials are.
 func (c *assumedRoleCollector) Identity(ctx context.Context, account domain.Account) (string, error) {
 	if _, err := c.credsProvider.Retrieve(ctx); err != nil {
-		return "", probeError("assume_role", err)
+		return "", probeError(discovery.ProbeStepAssumeRole, err)
 	}
 	cfg, err := c.stsConfig(ctx, account)
 	if err != nil {
@@ -84,14 +80,12 @@ func (c *assumedRoleCollector) Identity(ctx context.Context, account domain.Acco
 	}
 	out, err := c.stsClient(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		return "", probeError("get_caller_identity", err)
+		return "", probeError(discovery.ProbeStepGetCallerIdentity, err)
 	}
 	return aws.ToString(out.Arn), nil
 }
 
-// probeError keeps only the API error code and HTTP status. Anything else, such as a
-// network failure, is wrapped unchanged so discovery.diagnoseProbe can classify it.
-func probeError(step string, err error) error {
+func probeError(step discovery.ProbeStep, err error) error {
 	pe := &discovery.ProbeError{Step: step}
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {

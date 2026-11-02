@@ -62,7 +62,6 @@ type loadCall struct {
 	creds  awssdk.CredentialsProvider
 }
 
-// credentialHarness wires every seam so no call leaves the process.
 type credentialHarness struct {
 	collector *Collector
 	sts       *fakeSTS
@@ -201,7 +200,7 @@ func TestIdentityReducesProviderFailuresToProbeErrors(t *testing.T) {
 	cases := []struct {
 		name     string
 		arrange  func(f *fakeSTS)
-		wantStep string
+		wantStep discovery.ProbeStep
 		wantCode string
 		wantHTTP int
 	}{

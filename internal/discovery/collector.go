@@ -29,18 +29,27 @@ type CredentialAware interface {
 	WithCredential(ctx context.Context, account domain.Account, cred CredentialPayload) (CredentialedCollector, error)
 }
 
-// CredentialedCollector is a collector bound to one stored credential. Only WithCredential
-// produces one, so Identity can never run as the host identity.
+// CredentialedCollector is a collector bound to one stored credential.
 type CredentialedCollector interface {
 	Collector
 	Identity(ctx context.Context, account domain.Account) (string, error)
 }
 
-// ProbeError is a provider failure reduced to fields safe to store and show. No free-text field.
+// ProbeStep names the provider call that failed.
+type ProbeStep string
+
+const (
+	ProbeStepAssumeRole        ProbeStep = "assume_role"
+	ProbeStepGetCallerIdentity ProbeStep = "get_caller_identity"
+	ProbeStepToken             ProbeStep = "token"
+	ProbeStepGetProject        ProbeStep = "get_project"
+)
+
+// ProbeError is a provider failure reduced to fields safe to store and show.
 type ProbeError struct {
-	Step   string // "assume_role", "get_caller_identity", "token", "get_project"
+	Step   ProbeStep
 	Status int
-	Code   string // clipped to [A-Za-z0-9_.-]{0,64} when rendered
+	Code   string
 }
 
 func (e *ProbeError) Error() string {
@@ -49,11 +58,11 @@ func (e *ProbeError) Error() string {
 	case code != "" && e.Status != 0:
 		return fmt.Sprintf("%s: %s (http %d)", e.Step, code, e.Status)
 	case code != "":
-		return e.Step + ": " + code
+		return string(e.Step) + ": " + code
 	case e.Status != 0:
 		return fmt.Sprintf("%s: http %d", e.Step, e.Status)
 	default:
-		return e.Step + ": failed"
+		return string(e.Step) + ": failed"
 	}
 }
 
@@ -79,7 +88,7 @@ const credentialTestTimeout = 15 * time.Second
 type SyncService struct {
 	store       storage.DiscoveryStore
 	collectors  map[string]Collector
-	credentials *AccountCredentials // nil: every account runs as the host identity
+	credentials *AccountCredentials
 }
 
 // SetCredentials makes Sync and TestCredential honour stored per-account credentials.
@@ -87,8 +96,6 @@ func (s *SyncService) SetCredentials(c *AccountCredentials) {
 	s.credentials = c
 }
 
-// collectorFor returns the host collector only when no credential is stored. An unreadable,
-// mismatched, or unsupported stored credential is an error, never a silent host fallback.
 func (s *SyncService) collectorFor(ctx context.Context, account domain.Account, host Collector) (Collector, error) {
 	if s.credentials == nil {
 		return host, nil
@@ -107,7 +114,6 @@ func (s *SyncService) collectorFor(ctx context.Context, account domain.Account, 
 	return s.bind(ctx, account, host, p)
 }
 
-// bind is the only caller of WithCredential.
 func (s *SyncService) bind(ctx context.Context, account domain.Account, host Collector, p CredentialPayload) (CredentialedCollector, error) {
 	if err := checkProvider(p, account); err != nil {
 		return nil, err
@@ -149,7 +155,6 @@ func (s *SyncService) TestCredential(ctx context.Context, account domain.Account
 	}
 	switch err := s.credentials.recordTest(ctx, rec, result.CredentialTest); {
 	case errors.Is(err, storage.ErrConflict):
-		// The credential was replaced while the probe ran; the result describes the old one.
 		slog.Default().Info("credential test result dropped: credential replaced during test", "account_id", account.ID)
 	case err != nil:
 		return domain.CredentialTestResult{}, fmt.Errorf("record credential test: %w", err)
@@ -169,11 +174,8 @@ func (s *SyncService) probe(ctx context.Context, account domain.Account, rec dom
 	return bound.Identity(ctx, account)
 }
 
-// credentialSentinels are this package's own static texts, safe to show as a test error.
 var credentialSentinels = []error{ErrCredentialUnreadable, ErrCredentialProviderMismatch, ErrCredentialUnsupported}
 
-// diagnoseProbe reduces a probe failure to text safe to store and show. Fail-closed: only
-// *ProbeError fields, a timeout, a cancellation, "endpoint unreachable", or a sentinel.
 func diagnoseProbe(err error) string {
 	var pe *ProbeError
 	var netErr net.Error

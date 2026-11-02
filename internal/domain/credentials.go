@@ -13,7 +13,6 @@ const (
 	CredentialTypeGCPServiceAccount CredentialType = "gcp_service_account"
 )
 
-// credentialTypes is the one table every type-keyed rule derives from.
 var credentialTypes = map[CredentialType]string{
 	CredentialTypeAWSAssumeRole:     "aws",
 	CredentialTypeGCPServiceAccount: "gcp",
@@ -30,7 +29,7 @@ func (t CredentialType) Provider() string {
 	return credentialTypes[t]
 }
 
-// ValidCredentialTypes returns every known type in a stable order, for errors and OpenAPI.
+// ValidCredentialTypes returns every known type in a stable order.
 func ValidCredentialTypes() []CredentialType {
 	out := make([]CredentialType, 0, len(credentialTypes))
 	for t := range credentialTypes {
@@ -69,7 +68,7 @@ type CredentialTestResult struct {
 	Identity string `json:"identity,omitempty"` // assumed-role ARN or service-account email; empty on failure
 }
 
-// AccountCredential is the API view. It has no field that can hold a secret or ciphertext.
+// AccountCredential is the API view.
 type AccountCredential struct {
 	AccountID int64             `json:"account_id"`
 	Type      CredentialType    `json:"type"`
@@ -79,14 +78,13 @@ type AccountCredential struct {
 	UpdatedAt time.Time         `json:"updated_at"`
 }
 
-// AccountCredentialRecord is the stored row. Only storage and discovery.AccountCredentials handle it.
+// AccountCredentialRecord is the stored row.
 type AccountCredentialRecord struct {
 	AccountCredential
 	PayloadEncrypted string `json:"-"`
 }
 
-// SealedAccountCredential is the input to PutAccountCredential. No test or time fields:
-// the store stamps times and clears any previous test result.
+// SealedAccountCredential is the input to PutAccountCredential.
 type SealedAccountCredential struct {
 	AccountID        int64
 	Type             CredentialType

@@ -43,7 +43,6 @@ func testServiceAccount(t *testing.T) discovery.GCPServiceAccount {
 	return sa
 }
 
-// googleStub stands in for the token endpoint and the Compute API.
 type googleStub struct {
 	mu            sync.Mutex
 	tokenStatus   int
@@ -143,7 +142,7 @@ func TestIdentityReducesFailuresToProbeErrors(t *testing.T) {
 		name     string
 		arrange  func(g *googleStub)
 		account  domain.Account
-		wantStep string
+		wantStep discovery.ProbeStep
 		wantCode string
 		wantHTTP int
 	}{

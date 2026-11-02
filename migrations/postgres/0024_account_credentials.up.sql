@@ -1,5 +1,3 @@
--- Migration 0024: per-account stored cloud credentials (postgres parity with migrations/0022_account_credentials.sql)
-
 CREATE TABLE IF NOT EXISTS account_credentials (
     account_id        BIGINT PRIMARY KEY REFERENCES accounts(seq_id) ON DELETE CASCADE,
     type              TEXT NOT NULL,
@@ -13,7 +11,6 @@ CREATE TABLE IF NOT EXISTS account_credentials (
     CHECK ((last_tested_at IS NULL) = (last_test_status IS NULL))
 );
 
--- Accounts are soft-deleted, so the foreign key never fires for them.
 CREATE OR REPLACE FUNCTION drop_account_credential_on_soft_delete()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -24,7 +21,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS account_credentials_drop_on_account_delete ON accounts;
-CREATE TRIGGER account_credentials_drop_on_account_delete
+DROP TRIGGER IF EXISTS account_credentials_drop_on_account_soft_delete ON accounts;
+CREATE TRIGGER account_credentials_drop_on_account_soft_delete
     AFTER UPDATE OF deleted_at ON accounts
     FOR EACH ROW EXECUTE FUNCTION drop_account_credential_on_soft_delete();

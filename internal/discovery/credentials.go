@@ -28,9 +28,9 @@ type CredentialInputError struct{ Field, Detail string }
 
 func (e *CredentialInputError) Error() string { return e.Field + ": " + e.Detail }
 
-// CredentialPayload is a decrypted credential. Sealed: only this package's types implement it.
-// Payload values have no exported fields and implement fmt.Formatter without the secret.
+// CredentialPayload is a decrypted credential.
 type CredentialPayload interface {
+	fmt.Formatter
 	Type() domain.CredentialType
 	Provider() string
 	summary() domain.CredentialSummary
@@ -77,7 +77,7 @@ func (p AWSAssumeRole) Format(f fmt.State, _ rune) {
 	_, _ = fmt.Fprintf(f, "AWSAssumeRole{role_arn:%s has_external_id:%t}", p.roleARN, p.externalID != "")
 }
 
-// GCPServiceAccount keeps only the fields discovery needs. token_uri is dropped at parse.
+// GCPServiceAccount keeps only the fields discovery needs.
 type GCPServiceAccount struct {
 	clientEmail, projectID, privateKeyID string
 	privateKey                           []byte
@@ -167,8 +167,6 @@ func (p GCPServiceAccount) Format(f fmt.State, _ rune) {
 	_, _ = fmt.Fprintf(f, "GCPServiceAccount{client_email:%s project_id:%s private_key_id:%s}", p.clientEmail, p.projectID, p.privateKeyID)
 }
 
-// parseCredentialRequest is the one place a request becomes a payload. Exactly the
-// object named by Type must be set.
 func parseCredentialRequest(req domain.PutAccountCredentialRequest) (CredentialPayload, error) {
 	switch req.Type {
 	case domain.CredentialTypeAWSAssumeRole:
@@ -190,8 +188,6 @@ func parseCredentialRequest(req domain.PutAccountCredentialRequest) (CredentialP
 	}
 }
 
-// checkProvider enforces the type-to-provider rule at save time and at use time,
-// because PATCH /accounts/{id} can change provider after the credential was saved.
 func checkProvider(p CredentialPayload, account domain.Account) error {
 	if p.Provider() != account.Provider {
 		return fmt.Errorf("%w: %s credential on %q account", ErrCredentialProviderMismatch, p.Type(), account.Provider)
@@ -206,8 +202,7 @@ type AccountCredentials struct {
 	durable bool
 }
 
-// NewAccountCredentials builds the vault. durable is false when the key was generated at
-// startup, in which case Put refuses so no credential is stored that a restart would lose.
+// NewAccountCredentials builds the vault. durable is false when the key was generated at startup.
 func NewAccountCredentials(store storage.AccountCredentialStore, key []byte, durable bool) *AccountCredentials {
 	return &AccountCredentials{store: store, key: key, durable: durable}
 }

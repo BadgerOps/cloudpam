@@ -22,8 +22,6 @@ func AssumeRole(ctx context.Context, accountID, roleName, externalID string) (aw
 	return newAssumeRoleProvider(sts.NewFromConfig(cfg), roleARN, externalID, ""), nil
 }
 
-// newAssumeRoleProvider is the one assume-role builder. An empty sessionName keeps the
-// SDK's generated name.
 func newAssumeRoleProvider(client stscreds.AssumeRoleAPIClient, roleARN, externalID, sessionName string) *stscreds.AssumeRoleProvider {
 	return stscreds.NewAssumeRoleProvider(client, roleARN, func(o *stscreds.AssumeRoleOptions) {
 		if externalID != "" {

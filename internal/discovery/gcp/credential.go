@@ -20,8 +20,7 @@ var (
 	_ discovery.CredentialedCollector = (*serviceAccountCollector)(nil)
 )
 
-// WithCredential binds the collector to a service account. The token endpoint is always
-// Google's: the stored payload carries no token_uri.
+// WithCredential binds the collector to a service account.
 func (c *Collector) WithCredential(ctx context.Context, _ domain.Account, cred discovery.CredentialPayload) (discovery.CredentialedCollector, error) {
 	sa, ok := cred.(discovery.GCPServiceAccount)
 	if !ok {
@@ -72,11 +71,10 @@ type serviceAccountCollector struct {
 	token *tokenTransport
 }
 
-// Identity fetches a token, then reads the account's project with it.
 func (c *serviceAccountCollector) Identity(ctx context.Context, account domain.Account) (string, error) {
 	project := ProjectID(account)
 	if project == "" {
-		return "", &discovery.ProbeError{Step: "get_project", Code: "no_project_id"}
+		return "", &discovery.ProbeError{Step: discovery.ProbeStepGetProject, Code: "no_project_id"}
 	}
 	if _, err := c.tokenSource.Token(); err != nil {
 		return "", c.tokenProbeError(err)
@@ -95,7 +93,7 @@ func (c *serviceAccountCollector) Identity(ctx context.Context, account domain.A
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", &discovery.ProbeError{Step: "get_project", Status: resp.StatusCode}
+		return "", &discovery.ProbeError{Step: discovery.ProbeStepGetProject, Status: resp.StatusCode}
 	}
 	return c.email, nil
 }
@@ -103,7 +101,7 @@ func (c *serviceAccountCollector) Identity(ctx context.Context, account domain.A
 func (c *serviceAccountCollector) tokenProbeError(err error) error {
 	var re *oauth2.RetrieveError
 	if errors.As(err, &re) {
-		pe := &discovery.ProbeError{Step: "token", Code: re.ErrorCode}
+		pe := &discovery.ProbeError{Step: discovery.ProbeStepToken, Code: re.ErrorCode}
 		if re.Response != nil {
 			pe.Status = re.Response.StatusCode
 		}

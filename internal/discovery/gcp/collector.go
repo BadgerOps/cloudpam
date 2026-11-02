@@ -107,8 +107,6 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 	return all, nil
 }
 
-// getHTTPClient prefers a token source over an injected client; the injected client then
-// serves as the base transport so a bound collector can still be routed to a test server.
 func (c *Collector) getHTTPClient(ctx context.Context) (*http.Client, error) {
 	if c.tokenSource != nil {
 		if c.httpClient != nil {

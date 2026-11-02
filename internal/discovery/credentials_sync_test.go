@@ -16,8 +16,6 @@ import (
 	"cloudpam/internal/storage"
 )
 
-// fakeAwareCollector is a host collector that can bind to a stored credential. Discover on
-// the host records "host"; Discover on the bound collector records the payload it saw.
 type fakeAwareCollector struct {
 	provider  string
 	ran       []string
@@ -151,12 +149,11 @@ func TestSyncFailsTheJobOnACredentialItCannotUse(t *testing.T) {
 			want: ErrCredentialUnreadable,
 		},
 		{
-			name: "type does not match the provider",
+			name: "provider changed after the credential was saved",
 			arrange: func(t *testing.T, f *syncFixture) domain.Account {
 				account := createAccount(t, f.ms, "aws")
 				f.storeAWS(t, account)
 				f.svc.RegisterCollector(&fakeAwareCollector{provider: "gcp"})
-				// PATCH /accounts/{id} can change provider after the credential was saved.
 				account.Provider = "gcp"
 				return account
 			},
@@ -268,7 +265,6 @@ func TestTestCredentialDropsTheResultWhenTheCredentialWasReplaced(t *testing.T) 
 	account := createAccount(t, f.ms, "aws")
 	f.storeAWS(t, account)
 	f.aws.identity = func(context.Context) (string, error) {
-		// A save lands while the probe is in flight.
 		f.storeAWS(t, account)
 		return "arn:aws:sts::123456789012:assumed-role/CloudPAMDiscovery/cloudpam", nil
 	}

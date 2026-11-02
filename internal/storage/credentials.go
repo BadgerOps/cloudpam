@@ -7,7 +7,6 @@ import (
 )
 
 // AccountCredentialStore persists at most one sealed credential per live account.
-// It never sees plaintext.
 type AccountCredentialStore interface {
 	// GetAccountCredential returns the credential of a live account, or ErrNotFound.
 	GetAccountCredential(ctx context.Context, accountID int64) (domain.AccountCredentialRecord, error)

@@ -23,8 +23,6 @@ const (
 	testExternalID = "ext-secret-7"
 )
 
-// testServiceAccountKey returns a syntactically valid service-account key file.
-// The 1024-bit key keeps the tests fast; the parser only checks the PEM is RSA.
 func testServiceAccountKey(t *testing.T) string {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
@@ -56,8 +54,6 @@ func testKey(t *testing.T) []byte {
 	return key
 }
 
-// requestVariants is one request per credential type. The round-trip test fails when
-// this table, credentialTypes, the DTO branches, and parseCredentialRequest disagree.
 func requestVariants(t *testing.T) map[domain.CredentialType]domain.PutAccountCredentialRequest {
 	t.Helper()
 	return map[domain.CredentialType]domain.PutAccountCredentialRequest{
@@ -94,7 +90,6 @@ func TestEveryRequestVariantRoundTripsThroughPutAndUnseal(t *testing.T) {
 	if len(variants) != len(types) {
 		t.Fatalf("requestVariants covers %d types, credentialTypes has %d", len(variants), len(types))
 	}
-	// Type plus one pointer field per credential type: a new DTO branch must come with a type.
 	if n := reflect.TypeOf(domain.PutAccountCredentialRequest{}).NumField(); n != len(types)+1 {
 		t.Fatalf("PutAccountCredentialRequest has %d fields, want %d (type + one per credential type)", n, len(types)+1)
 	}
