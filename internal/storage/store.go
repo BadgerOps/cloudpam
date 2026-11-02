@@ -51,10 +51,17 @@ type MemoryStore struct {
 	// accounts
 	accounts    map[int64]domain.Account
 	nextAccount int64
+	credentials map[int64]domain.AccountCredentialRecord
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{pools: make(map[int64]domain.Pool), next: 1, accounts: make(map[int64]domain.Account), nextAccount: 1}
+	return &MemoryStore{
+		pools:       make(map[int64]domain.Pool),
+		next:        1,
+		accounts:    make(map[int64]domain.Account),
+		nextAccount: 1,
+		credentials: make(map[int64]domain.AccountCredentialRecord),
+	}
 }
 
 func (m *MemoryStore) ListPools(ctx context.Context) ([]domain.Pool, error) {
@@ -347,6 +354,7 @@ func (m *MemoryStore) DeleteAccount(ctx context.Context, id int64) (bool, error)
 	a.DeletedAt = &now
 	a.UpdatedAt = now
 	m.accounts[id] = a
+	delete(m.credentials, id)
 	return true, nil
 }
 
@@ -395,6 +403,7 @@ func (m *MemoryStore) DeleteAccountCascade(ctx context.Context, id int64) (bool,
 	a.DeletedAt = &now
 	a.UpdatedAt = now
 	m.accounts[id] = a
+	delete(m.credentials, id)
 	return true, nil
 }
 
