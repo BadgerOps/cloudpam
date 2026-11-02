@@ -148,6 +148,7 @@ func (s *SyncService) TestCredential(ctx context.Context, account domain.Account
 	if probeErr != nil {
 		result.Status = domain.CredentialTestFailed
 		result.Error = diagnoseProbe(probeErr)
+		result.Identity = ""
 	}
 
 	if ctx.Err() != nil {
