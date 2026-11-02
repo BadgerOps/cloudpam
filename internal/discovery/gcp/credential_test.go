@@ -180,6 +180,26 @@ func TestIdentityReducesFailuresToProbeErrors(t *testing.T) {
 	}
 }
 
+func TestDiscoverReducesARejectedTokenToAProbeError(t *testing.T) {
+	g, collector := newGoogleStub(t)
+	g.tokenStatus = http.StatusBadRequest
+	g.tokenBody = `{"error":"invalid_grant","error_description":"LEAK-MARKER-9f3a"}`
+	account := domain.Account{Provider: "gcp", Key: "gcp:proj-1"}
+	bound, err := collector.WithCredential(context.Background(), account, testServiceAccount(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = bound.Discover(context.Background(), account)
+	var pe *discovery.ProbeError
+	if !errors.As(err, &pe) || pe.Step != discovery.ProbeStepToken || pe.Code != "invalid_grant" || pe.Status != http.StatusBadRequest {
+		t.Fatalf("Discover() error = %v, want a token ProbeError", err)
+	}
+	if !strings.HasPrefix(err.Error(), "token: ") || strings.Contains(err.Error(), "LEAK-MARKER-9f3a") {
+		t.Fatalf("Discover() error = %q, want the step without the token response body", err.Error())
+	}
+}
+
 func TestIdentityKeepsNetworkFailuresDiagnosable(t *testing.T) {
 	account := domain.Account{Key: "gcp:proj-1"}
 

@@ -98,6 +98,17 @@ func (c *serviceAccountCollector) Identity(ctx context.Context, account domain.A
 	return c.email, nil
 }
 
+// Discover reduces a rejected token request to a ProbeError, because the
+// RetrieveError text carries the token endpoint's response body.
+func (c *serviceAccountCollector) Discover(ctx context.Context, account domain.Account) ([]domain.DiscoveredResource, error) {
+	resources, err := c.Collector.Discover(ctx, account)
+	var re *oauth2.RetrieveError
+	if errors.As(err, &re) {
+		return resources, c.tokenProbeError(err)
+	}
+	return resources, err
+}
+
 func (c *serviceAccountCollector) tokenProbeError(err error) error {
 	var re *oauth2.RetrieveError
 	if errors.As(err, &re) {

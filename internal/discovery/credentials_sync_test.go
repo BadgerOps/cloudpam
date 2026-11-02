@@ -22,6 +22,7 @@ type fakeAwareCollector struct {
 	boundWith []CredentialPayload
 	identity  func(ctx context.Context) (string, error)
 	bindErr   error
+	boundErr  error
 }
 
 func (c *fakeAwareCollector) Provider() string { return c.provider }
@@ -48,6 +49,9 @@ func (c *fakeBoundCollector) Provider() string { return c.host.provider }
 
 func (c *fakeBoundCollector) Discover(context.Context, domain.Account) ([]domain.DiscoveredResource, error) {
 	c.host.ran = append(c.host.ran, "credential:"+string(c.cred.Type()))
+	if c.host.boundErr != nil {
+		return nil, c.host.boundErr
+	}
 	return []domain.DiscoveredResource{{
 		ID: uuid.New(), Provider: c.host.provider, ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-bound",
 		Status: domain.DiscoveryStatusActive, DiscoveredAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
@@ -207,6 +211,37 @@ func TestSyncFailsTheJobOnACredentialItCannotUse(t *testing.T) {
 			stored, err := f.svc.store.GetSyncJob(context.Background(), job.ID)
 			if err != nil || stored.Status != domain.SyncJobStatusFailed {
 				t.Fatalf("stored job = %+v, %v", stored, err)
+			}
+		})
+	}
+}
+
+func TestSyncNamesACredentialRejectedDuringDiscover(t *testing.T) {
+	cases := []struct {
+		name     string
+		boundErr error
+		want     string
+	}{
+		{"probe error", fmt.Errorf("wrapped: %w", &ProbeError{Step: ProbeStepAssumeRole, Status: 403, Code: "AccessDenied"}), "credential: wrapped: assume_role: AccessDenied (http 403)"},
+		{"other failure", errors.New("discover VPCs in region us-east-1: throttled"), "discover VPCs in region us-east-1: throttled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSyncFixture(t)
+			account := createAccount(t, f.ms, "aws")
+			f.storeAWS(t, account)
+			f.aws.boundErr = tc.boundErr
+
+			job, err := f.svc.Sync(context.Background(), account)
+			if err == nil || job == nil || job.Status != domain.SyncJobStatusFailed {
+				t.Fatalf("Sync() = %+v, %v, want a failed job", job, err)
+			}
+			if job.ErrorMessage != tc.want {
+				t.Fatalf("job.ErrorMessage = %q, want %q", job.ErrorMessage, tc.want)
+			}
+			stored, err := f.svc.store.GetSyncJob(context.Background(), job.ID)
+			if err != nil || stored.ErrorMessage != tc.want {
+				t.Fatalf("stored job = %+v, %v, want ErrorMessage %q", stored, err, tc.want)
 			}
 		})
 	}
