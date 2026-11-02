@@ -99,9 +99,14 @@ func ParseGCPServiceAccountKey(keyJSON []byte) (GCPServiceAccount, error) {
 	if key.Type != "service_account" {
 		return GCPServiceAccount{}, &CredentialInputError{Field: field, Detail: `must have "type": "service_account"`}
 	}
-	for name, value := range map[string]string{"client_email": key.ClientEmail, "project_id": key.ProjectID, "private_key": key.PrivateKey} {
-		if strings.TrimSpace(value) == "" {
-			return GCPServiceAccount{}, &CredentialInputError{Field: field, Detail: "must include " + name}
+	required := []struct{ name, value string }{
+		{"client_email", key.ClientEmail},
+		{"project_id", key.ProjectID},
+		{"private_key", key.PrivateKey},
+	}
+	for _, r := range required {
+		if strings.TrimSpace(r.value) == "" {
+			return GCPServiceAccount{}, &CredentialInputError{Field: field, Detail: "must include " + r.name}
 		}
 	}
 	if err := checkRSAPEM([]byte(key.PrivateKey)); err != nil {
