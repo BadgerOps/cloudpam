@@ -53,7 +53,7 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 
 `pool_utilization_cache` exists in SQL and is never written from Go.
 
-`internal/storage/interfaces.go` (`ExtendedStore`, transactions, `FindOverlapping`, `FindGaps`, `MigrateDown`) and `internal/audit/store.go` (`AuditStore` retention APIs) have **no implementations**.
+Audit events are never purged on any backend. Retention enforcement is tracked in #292.
 
 ---
 
