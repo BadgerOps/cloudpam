@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -93,7 +94,11 @@ func suggestFromPreview(item *domain.DriftItem, p domain.DiscoveryImportPreviewI
 	default:
 		reason := "import is blocked: " + strings.Join(p.Issues, ", ")
 		if len(p.ConflictPoolIDs) > 0 {
-			reason = fmt.Sprintf("the CIDR overlaps managed pools %v", p.ConflictPoolIDs)
+			ids := make([]string, len(p.ConflictPoolIDs))
+			for n, id := range p.ConflictPoolIDs {
+				ids[n] = strconv.FormatInt(id, 10)
+			}
+			reason = "the CIDR overlaps managed pools " + strings.Join(ids, ", ")
 		}
 		suggestReview(item, reason)
 	}

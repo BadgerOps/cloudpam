@@ -85,7 +85,7 @@ describe('DriftPage suggestions', () => {
   })
 
   it('offers no apply button for a review suggestion', () => {
-    mockDrift([item({ suggested_action: 'review', suggestion_reason: 'the CIDR overlaps managed pools [4]' })])
+    mockDrift([item({ suggested_action: 'review', suggestion_reason: 'the CIDR overlaps managed pools 4' })])
 
     render(<DriftPage />)
 
