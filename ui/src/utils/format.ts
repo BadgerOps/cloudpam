@@ -15,6 +15,24 @@ export function getHostCount(cidr: string): number {
   return Math.pow(2, 32 - prefix)
 }
 
+const DAYS_PER_MONTH = 30.4375
+
+/** Rounds a runway in days to the coarsest unit a planner reads at a glance. */
+export function formatRunway(days: number): string {
+  if (!isFinite(days) || days < 0) return 'unknown'
+  if (days < 1) return 'less than a day'
+  if (days < 30) {
+    const d = Math.round(days)
+    return d + ' day' + (d === 1 ? '' : 's')
+  }
+  if (days < 365) {
+    const m = Math.max(1, Math.round(days / DAYS_PER_MONTH))
+    return m + ' month' + (m === 1 ? '' : 's')
+  }
+  const y = Math.round((days / 365) * 10) / 10
+  return y + ' year' + (y === 1 ? '' : 's')
+}
+
 export function formatTimeAgo(timestamp: string): string {
   if (!timestamp) return 'unknown'
   const date = new Date(timestamp)

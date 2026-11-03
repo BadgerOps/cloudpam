@@ -329,7 +329,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 - [x] Allocation suggestion algorithm
 - [ ] Consolidation detection — `consolidation`, `resize` and `reclaim` are commented-out types in `internal/domain/recommendations.go`; only allocation and compliance recommendations are generated
 - [x] Compliance fix recommendations
-- [ ] Growth projections (3-12 months) — not yet implemented
+- [x] Growth projections (3-12 months) — `GET /api/v1/pools/{id}/stats` fits a least-squares line through the pool's utilization snapshots from the last 90 days and reports runway, exhaustion date and a 3/6/12-month forecast (`internal/planning/projection.go`); the pool detail panel shows it. Nothing records snapshots yet (#266), so the fit reports `insufficient_history` until a recorder lands
 - [x] Recommendation ranking by impact
 - [x] Auto-applicability detection (apply/dismiss workflow)
 

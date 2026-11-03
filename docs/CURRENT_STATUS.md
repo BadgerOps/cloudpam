@@ -47,7 +47,7 @@ Core pool/account/search `Store` is implemented on memory, SQLite, and PostgreSQ
 | `ConversationStore` | yes | yes | yes |
 | `SettingsStore` / OIDC | yes | yes | yes |
 | `RecommendationStore` | yes | yes (`0011_recommendations.sql`) | yes (`0023_recommendations.up.sql`, #315) |
-| **`UtilizationStore`** | yes | yes (`0015_utilization_snapshots.sql`) | **missing**. No API calls `RecordSnapshot` on any backend |
+| **`UtilizationStore`** | yes | yes (`0015_utilization_snapshots.sql`) | **missing**. `GET /pools/{id}/stats` reads snapshots for its growth projection, but no API or job calls `RecordSnapshot` on any backend |
 
 SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres uses a separate sequence (`001` through `0023_recommendations.up.sql`) and has no utilization-snapshot table.
 

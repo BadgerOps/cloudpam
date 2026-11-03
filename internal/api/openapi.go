@@ -483,6 +483,8 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"SetupResponse", reflect.TypeOf(openAPISetupResponse{})},
 		{"Pool", reflect.TypeOf(domain.Pool{})},
 		{"PoolStats", reflect.TypeOf(domain.PoolStats{})},
+		{"GrowthProjection", reflect.TypeOf(domain.GrowthProjection{})},
+		{"ProjectedUsage", reflect.TypeOf(domain.ProjectedUsage{})},
 		{"PoolWithStats", reflect.TypeOf(domain.PoolWithStats{})},
 		{"CreatePool", reflect.TypeOf(domain.CreatePool{})},
 		{"UpdatePool", reflect.TypeOf(domain.UpdatePool{})},

@@ -22,6 +22,12 @@ vi.mock('../hooks/useToast', () => ({
   useToast: () => mockUseToast(),
 }))
 
+// The detail panel's growth section reads the pool's stats; keep it loading so
+// these tests' get mock answers only the requests they make on purpose.
+vi.mock('../hooks/usePoolProjection', () => ({
+  usePoolProjection: () => ({ projection: null, error: null, loading: true, retry: () => {} }),
+}))
+
 vi.mock('../api/client', async () => ({
   ApiRequestError: (await vi.importActual<typeof import('../api/client')>('../api/client')).ApiRequestError,
   get: (...args: unknown[]) => mockGet(...args),
