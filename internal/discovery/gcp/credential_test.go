@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
@@ -180,6 +182,26 @@ func TestIdentityReducesFailuresToProbeErrors(t *testing.T) {
 	}
 }
 
+func TestDiscoverReducesARejectedTokenToAProbeError(t *testing.T) {
+	g, collector := newGoogleStub(t)
+	g.tokenStatus = http.StatusBadRequest
+	g.tokenBody = `{"error":"invalid_grant","error_description":"LEAK-MARKER-9f3a"}`
+	account := domain.Account{Provider: "gcp", Key: "gcp:proj-1"}
+	bound, err := collector.WithCredential(context.Background(), account, testServiceAccount(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = bound.Discover(context.Background(), account)
+	var pe *discovery.ProbeError
+	if !errors.As(err, &pe) || pe.Step != discovery.ProbeStepToken || pe.Code != "invalid_grant" || pe.Status != http.StatusBadRequest {
+		t.Fatalf("Discover() error = %v, want a token ProbeError", err)
+	}
+	if !strings.HasPrefix(err.Error(), "token: ") || strings.Contains(err.Error(), "LEAK-MARKER-9f3a") {
+		t.Fatalf("Discover() error = %q, want the step without the token response body", err.Error())
+	}
+}
+
 func TestIdentityKeepsNetworkFailuresDiagnosable(t *testing.T) {
 	account := domain.Account{Key: "gcp:proj-1"}
 
@@ -208,7 +230,53 @@ func TestIdentityKeepsNetworkFailuresDiagnosable(t *testing.T) {
 			t.Fatalf("Identity() error = %v, want context.Canceled from the token request", err)
 		}
 	})
+
+	t.Run("client timeout still bounds the token fetch", func(t *testing.T) {
+		untilDone := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		})
+		collector := NewWithHTTPClient(&http.Client{Transport: untilDone, Timeout: 20 * time.Millisecond})
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		bound, _ := collector.WithCredential(ctx, account, testServiceAccount(t))
+		start := time.Now()
+		_, err := bound.Identity(context.Background(), account)
+		if elapsed := time.Since(start); err == nil || elapsed > 100*time.Millisecond {
+			t.Fatalf("Identity() = %v after %s, want the 20ms client timeout to end the token fetch", err, elapsed)
+		}
+	})
+
+	t.Run("token response is read before its request context ends", func(t *testing.T) {
+		bodyTiedToRequest := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body := strings.NewReader(`{"access_token":"tok-1","token_type":"Bearer","expires_in":3600}`)
+			return &http.Response{StatusCode: http.StatusOK, Body: ctxBody{ctx: req.Context(), Reader: body}}, nil
+		})
+		collector := NewWithHTTPClient(&http.Client{Transport: bodyTiedToRequest})
+		bound, _ := collector.WithCredential(context.Background(), account, testServiceAccount(t))
+		if _, err := bound.Identity(context.Background(), account); err != nil {
+			t.Fatalf("Identity() error = %v, want the token read before its request context ends", err)
+		}
+	})
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+type ctxBody struct {
+	ctx context.Context
+	io.Reader
+}
+
+func (b ctxBody) Read(p []byte) (int, error) {
+	if err := b.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return b.Reader.Read(p)
+}
+
+func (ctxBody) Close() error { return nil }
 
 func TestWithCredentialRejectsAForeignPayload(t *testing.T) {
 	_, collector := newGoogleStub(t)

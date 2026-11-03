@@ -39,6 +39,26 @@ func TestDecryptWrongKeyFails(t *testing.T) {
 	}
 }
 
+func TestAssociatedDataBindsTheCiphertext(t *testing.T) {
+	key, _ := GenerateKey()
+	ct, err := EncryptWithAAD("secret", key, []byte("account:1"))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if got, err := DecryptWithAAD(ct, key, []byte("account:1")); err != nil || got != "secret" {
+		t.Fatalf("DecryptWithAAD with its aad = %q, %v", got, err)
+	}
+	if _, err := DecryptWithAAD(ct, key, []byte("account:2")); !errors.Is(err, ErrDecryptionFailed) {
+		t.Fatalf("DecryptWithAAD with another aad err = %v, want ErrDecryptionFailed", err)
+	}
+	if _, err := DecryptWithAAD(ct, key, nil); !errors.Is(err, ErrDecryptionFailed) {
+		t.Fatalf("DecryptWithAAD with nil aad err = %v, want ErrDecryptionFailed", err)
+	}
+	if _, err := Decrypt(ct, key); !errors.Is(err, ErrDecryptionFailed) {
+		t.Fatalf("Decrypt err = %v, want ErrDecryptionFailed", err)
+	}
+}
+
 func TestInvalidKeyLength(t *testing.T) {
 	if _, err := Encrypt("x", []byte("short")); !errors.Is(err, ErrInvalidKey) {
 		t.Fatalf("Encrypt err = %v, want ErrInvalidKey", err)

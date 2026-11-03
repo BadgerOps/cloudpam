@@ -85,6 +85,35 @@ func (c *assumedRoleCollector) Identity(ctx context.Context, account domain.Acco
 	return aws.ToString(out.Arn), nil
 }
 
+// Discover reduces a failed AssumeRole to a ProbeError, because the STS message
+// names the calling identity and the role.
+func (c *assumedRoleCollector) Discover(ctx context.Context, account domain.Account) ([]domain.DiscoveredResource, error) {
+	resources, err := c.Collector.Discover(ctx, account)
+	if op := stsOperationError(err); op != nil {
+		return resources, probeError(discovery.ProbeStepAssumeRole, op)
+	}
+	return resources, err
+}
+
+// stsOperationError searches the whole tree because errors.As stops at the EC2
+// OperationError that wraps the credential failure.
+func stsOperationError(err error) *smithy.OperationError {
+	if op, ok := err.(*smithy.OperationError); ok && op.ServiceID == sts.ServiceID {
+		return op
+	}
+	switch e := err.(type) {
+	case interface{ Unwrap() error }:
+		return stsOperationError(e.Unwrap())
+	case interface{ Unwrap() []error }:
+		for _, inner := range e.Unwrap() {
+			if op := stsOperationError(inner); op != nil {
+				return op
+			}
+		}
+	}
+	return nil
+}
+
 func probeError(step discovery.ProbeStep, err error) error {
 	pe := &discovery.ProbeError{Step: step}
 	var apiErr smithy.APIError
