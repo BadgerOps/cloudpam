@@ -55,6 +55,10 @@ type bucket struct {
 	limiter  *rate.Limiter
 	limit    auth.RateLimit
 	lastSeen time.Time
+	// held counts tokens reserved by credential-bearing requests whose
+	// principal is not yet known. They are unavailable to anyone else until
+	// the request settles.
+	held int
 }
 
 // rateLimiter owns every bucket. A bucket is rebuilt when its limit changes
@@ -75,10 +79,8 @@ func newRateLimiter(defaults RateLimitConfig, logger *slog.Logger) *rateLimiter 
 	return &rateLimiter{defaults: defaults, logger: logger, buckets: make(map[bucketKey]*bucket)}
 }
 
-func (l *rateLimiter) bucket(now time.Time, key bucketKey, limit auth.RateLimit) *rate.Limiter {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
+// bucketLocked returns key's bucket under limit. The caller holds l.mu.
+func (l *rateLimiter) bucketLocked(now time.Time, key bucketKey, limit auth.RateLimit) *bucket {
 	b, ok := l.buckets[key]
 	if !ok || b.limit != limit {
 		b = &bucket{limiter: rate.NewLimiter(rate.Limit(limit.RequestsPerSecond), limit.Burst), limit: limit}
@@ -88,13 +90,18 @@ func (l *rateLimiter) bucket(now time.Time, key bucketKey, limit auth.RateLimit)
 
 	if l.lastSweep.IsZero() || now.Sub(l.lastSweep) > minimumCleanupInterval {
 		for k, stale := range l.buckets {
-			if now.Sub(stale.lastSeen) > rateLimiterVisitorTTL {
+			if stale.held == 0 && now.Sub(stale.lastSeen) > rateLimiterVisitorTTL {
 				delete(l.buckets, k)
 			}
 		}
 		l.lastSweep = now
 	}
-	return b.limiter
+	return b
+}
+
+// available is the tokens nobody has taken or reserved. The caller holds l.mu.
+func (b *bucket) available(now time.Time) float64 {
+	return b.limiter.TokensAt(now) - float64(b.held)
 }
 
 // decision is one bucket's answer for one request.
@@ -105,33 +112,57 @@ type decision struct {
 	resetAt   time.Time
 }
 
+func newDecision(now time.Time, limit auth.RateLimit, allowed bool, available float64) decision {
+	return decision{
+		allowed:   allowed,
+		limit:     limit,
+		remaining: int(math.Max(0, math.Floor(available))),
+		resetAt:   now.Add(time.Duration(float64(time.Second) / limit.RequestsPerSecond)),
+	}
+}
+
 // take charges one token to key's bucket. A limit that is not enabled admits
 // everything and keeps no bucket.
 func (l *rateLimiter) take(now time.Time, key bucketKey, limit auth.RateLimit) decision {
-	return l.decide(now, key, limit, true)
-}
-
-// peek reports whether key's bucket has a token without taking it.
-func (l *rateLimiter) peek(now time.Time, key bucketKey, limit auth.RateLimit) decision {
-	return l.decide(now, key, limit, false)
-}
-
-func (l *rateLimiter) decide(now time.Time, key bucketKey, limit auth.RateLimit, consume bool) decision {
 	if !limit.Enabled() {
 		return decision{allowed: true}
 	}
-	lim := l.bucket(now, key, limit)
-	d := decision{limit: limit, resetAt: now.Add(time.Duration(float64(time.Second) / limit.RequestsPerSecond))}
-	if consume {
-		d.allowed = lim.AllowN(now, 1)
-	} else {
-		d.allowed = lim.TokensAt(now) >= 1
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.bucketLocked(now, key, limit)
+	allowed := b.available(now) >= 1 && b.limiter.AllowN(now, 1)
+	return newDecision(now, limit, allowed, b.available(now))
+}
+
+// hold reserves one token in key's bucket for a request whose principal is
+// not yet known. The returned bucket is nil when nothing was reserved; pass
+// it to settle exactly once.
+func (l *rateLimiter) hold(now time.Time, key bucketKey, limit auth.RateLimit) (decision, *bucket) {
+	if !limit.Enabled() {
+		return decision{allowed: true}, nil
 	}
-	d.remaining = int(math.Floor(lim.TokensAt(now)))
-	if d.remaining < 0 {
-		d.remaining = 0
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.bucketLocked(now, key, limit)
+	if b.available(now) < 1 {
+		return newDecision(now, limit, false, b.available(now)), nil
 	}
-	return d
+	b.held++
+	return newDecision(now, limit, true, b.available(now)), b
+}
+
+// settle ends a hold. With charge it spends the reserved token; without, it
+// returns the token to the bucket.
+func (l *rateLimiter) settle(b *bucket, charge bool) {
+	if b == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b.held--
+	if charge {
+		b.limiter.AllowN(time.Now(), 1)
+	}
 }
 
 func (d decision) retryAfterSeconds() int {
@@ -165,12 +196,21 @@ func (l *rateLimiter) reject(w http.ResponseWriter, r *http.Request, key bucketK
 }
 
 // principalClaim is the outer limiter's hand-off for a request that carries
-// credentials. The auth middleware charges the principal's bucket through it
-// once the credential validates; a request nobody claimed is charged to the
-// IP afterwards, so a rejected credential still costs the address a token.
+// credentials. The request holds a token in its address bucket until the auth
+// middleware charges the principal, which returns the token; a request nobody
+// claimed spends it, so a rejected credential still costs the address.
 type principalClaim struct {
 	limiter *rateLimiter
-	charged bool
+	ip      *bucket
+	settled bool
+}
+
+func (c *principalClaim) settle(chargeIP bool) {
+	if c.settled {
+		return
+	}
+	c.settled = true
+	c.limiter.settle(c.ip, chargeIP)
 }
 
 const principalClaimContextKey contextKey = "rateLimitClaim"
@@ -188,8 +228,8 @@ func hasCredentials(r *http.Request) bool {
 // RateLimitMiddleware enforces a token bucket per principal. A request with
 // no credentials is charged to its client address. A request with
 // credentials is charged to the API key or user that the auth middleware
-// resolves, under the key's own limit when it has one; its address only has
-// to hold a token, and pays one if the credential is rejected. Every limited
+// resolves, under the key's own limit when it has one; its address holds a
+// token until then, and pays it if the credential is rejected. Every limited
 // response carries X-RateLimit-Limit, X-RateLimit-Remaining and
 // X-RateLimit-Reset, and a 429 carries Retry-After.
 //
@@ -214,17 +254,15 @@ func RateLimitMiddleware(cfg RateLimitConfig, logger *slog.Logger) Middleware {
 				return
 			}
 
-			d := l.peek(now, ip, cfg)
+			d, held := l.hold(now, ip, cfg)
 			d.writeHeaders(w)
 			if !d.allowed {
 				l.reject(w, r, ip, d)
 				return
 			}
-			claim := &principalClaim{limiter: l}
+			claim := &principalClaim{limiter: l, ip: held}
+			defer claim.settle(true)
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalClaimContextKey, claim)))
-			if !claim.charged {
-				l.take(time.Now(), ip, cfg)
-			}
 		})
 	}
 }
@@ -242,7 +280,7 @@ func allowPrincipal(w http.ResponseWriter, r *http.Request) bool {
 	if !ok {
 		return true
 	}
-	claim.charged = true
+	claim.settle(false)
 	d := claim.limiter.take(time.Now(), key, limit)
 	d.writeHeaders(w)
 	if !d.allowed {

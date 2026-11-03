@@ -151,3 +151,65 @@ func TestRateLimitAuthWithoutLimiterIsUnlimited(t *testing.T) {
 
 	expectCodes(t, h, principalRequest{bearer: throttled}, http.StatusOK, http.StatusOK, http.StatusOK)
 }
+
+// blockingHandler holds every request it admits until release is closed, so a
+// test can keep requests in flight at once.
+func blockingHandler(entered chan<- struct{}, release <-chan struct{}) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		entered <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	})
+}
+
+func TestRateLimitConcurrentCredentialRequestsCannotOverspendTheAddress(t *testing.T) {
+	const burst, sent = 2, 6
+	entered := make(chan struct{}, sent)
+	release := make(chan struct{})
+	h := RateLimitMiddleware(RateLimitConfig{RequestsPerSecond: 0.001, Burst: burst}, newTestLogger())(blockingHandler(entered, release))
+
+	rejected := make(chan struct{}, sent)
+	for range sent {
+		go func() {
+			if sendAs(h, principalRequest{bearer: "cpam_invalid"}).Code == http.StatusTooManyRequests {
+				rejected <- struct{}{}
+			}
+		}()
+	}
+
+	admitted, refused := 0, 0
+	for admitted+refused < sent {
+		select {
+		case <-entered:
+			admitted++
+		case <-rejected:
+			refused++
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out: %d admitted, %d rejected", admitted, refused)
+		}
+	}
+	close(release)
+	if admitted != burst {
+		t.Fatalf("admitted %d concurrent credential-bearing requests, want the address burst of %d", admitted, burst)
+	}
+}
+
+func TestRateLimitLongAuthenticatedRequestReleasesTheAddress(t *testing.T) {
+	keyStore := auth.NewMemoryKeyStore()
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	slow := DualAuthMiddleware(keyStore, auth.NewMemorySessionStore(), auth.NewMemoryUserStore(), true, newTestLogger())(blockingHandler(entered, release))
+	h := RateLimitMiddleware(RateLimitConfig{RequestsPerSecond: 0.001, Burst: 1}, newTestLogger())(slow)
+	key := mintKey(t, keyStore, "streaming", nil)
+
+	done := make(chan int, 1)
+	go func() { done <- sendAs(h, principalRequest{bearer: key}).Code }()
+	<-entered
+
+	// The key paid for the stream; its address token is free for anyone else.
+	expectCodes(t, h, principalRequest{}, http.StatusUnauthorized)
+	close(release)
+	if code := <-done; code != http.StatusOK {
+		t.Fatalf("streaming request: status = %d", code)
+	}
+}
