@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -24,6 +25,12 @@ var (
 	maxResponseBytes int64 = 8 << 20
 	maxStreamBytes   int64 = 64 << 20
 )
+
+// streamDrainTimeout bounds how long a finished stream waits for the provider
+// to end the response before the body is closed anyway. Providers send [DONE]
+// and end the response within the same flush as finish_reason, so the common
+// case needs none of it; it only caps the socket a misbehaving provider holds.
+var streamDrainTimeout = time.Second
 
 // limitedBody reads at most limit bytes and then fails with
 // ErrResponseTooLarge, so an oversized reply is reported rather than truncated.
@@ -294,16 +301,48 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 		defer close(ch)
 		defer span.End()
 		defer func() { _ = resp.Body.Close() }()
-		p.readSSEStream(newLimitedBody(resp.Body, maxStreamBytes), ch)
+		p.readSSEStream(ctx, newLimitedBody(resp.Body, maxStreamBytes), ch)
+		drainStream(resp.Body)
 	}()
 
 	return ch, nil
 }
 
+// drainStream reads what follows the terminal event, normally just the [DONE]
+// sentinel and the end of the response, so the body reaches EOF and the
+// transport pools the connection instead of discarding it. discardBody bounds
+// the bytes, and a provider that holds the socket open after finish_reason
+// (#359) is cut off by closing the body at streamDrainTimeout.
+func drainStream(body io.ReadCloser) {
+	timer := time.AfterFunc(streamDrainTimeout, func() { _ = body.Close() })
+	defer timer.Stop()
+	discardBody(body)
+}
+
+// send forwards evt and reports whether it was delivered. It tries the channel
+// before looking at ctx, so a terminal event still reaches a consumer that is
+// reading after the context ended; only when the channel is full does it give
+// up on ctx.Done, which frees the producer from a consumer that stopped
+// reading before the terminal event.
+func send(ctx context.Context, ch chan<- StreamEvent, evt StreamEvent) bool {
+	select {
+	case ch <- evt:
+		return true
+	default:
+	}
+	select {
+	case ch <- evt:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // readSSEStream forwards one StreamEvent per content chunk and exactly one
 // terminal event (Done, with Err set on a read failure), then returns so the
-// caller can close the body and the channel.
-func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
+// caller can drain and close the body and close the channel. It also returns,
+// without a terminal event, when ctx ends while the channel is full.
+func (p *OpenAIProvider) readSSEStream(ctx context.Context, r io.Reader, ch chan<- StreamEvent) {
 	buf := make([]byte, 4096)
 	var lineBuf strings.Builder
 
@@ -330,7 +369,7 @@ func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
 				}
 				data := strings.TrimPrefix(line, "data: ")
 				if data == "[DONE]" {
-					ch <- StreamEvent{Done: true}
+					send(ctx, ch, StreamEvent{Done: true})
 					return
 				}
 
@@ -352,12 +391,10 @@ func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
 					evt.FinishReason = *fr
 					evt.Done = true
 				}
-				ch <- evt
-				if evt.Done {
-					// Done is terminal: consumers stop at the first done event
-					// and never drain, so anything streamed after finish_reason
-					// (usage chunks, the [DONE] sentinel) would block this
-					// goroutine on a full channel until the context ended.
+				// Done is terminal: consumers stop at the first done event
+				// and never drain, so anything streamed after finish_reason
+				// (usage chunks, the [DONE] sentinel) is left to drainStream.
+				if !send(ctx, ch, evt) || evt.Done {
 					return
 				}
 			}
@@ -367,7 +404,7 @@ func (p *OpenAIProvider) readSSEStream(r io.Reader, ch chan<- StreamEvent) {
 			if !errors.Is(err, io.EOF) {
 				evt.Err = err
 			}
-			ch <- evt
+			send(ctx, ch, evt)
 			return
 		}
 	}

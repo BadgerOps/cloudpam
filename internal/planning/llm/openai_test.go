@@ -702,3 +702,46 @@ func TestOpenAIProviderStreamReusesTheConnection(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenAIProviderStreamReportsCancellationToAReadingConsumer: giving up on
+// a send when ctx ends must not drop the terminal event for a consumer that is
+// still reading. The AI service treats a stream that closes without an error
+// event as a complete answer and stores it, so the cancellation has to arrive
+// as Done with Err set.
+func TestOpenAIProviderStreamReportsCancellationToAReadingConsumer(t *testing.T) {
+	stub := newSSEStub(t, true, chunk("Hel", ""), chunk("lo", ""))
+	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: stub.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := provider.StreamComplete(ctx, []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+
+	var content string
+	doneSeen := 0
+	var streamErr error
+	timeout := time.After(3 * time.Second)
+	for open := true; open; {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				open = false
+				break
+			}
+			content += evt.Delta
+			if evt.Done {
+				doneSeen++
+				streamErr = evt.Err
+			}
+			if content == "Hello" {
+				cancel()
+			}
+		case <-timeout:
+			t.Fatal("stream channel not closed within 3s of cancelling the context")
+		}
+	}
+	if doneSeen != 1 || !errors.Is(streamErr, context.Canceled) {
+		t.Fatalf("done events = %d with err %v, want exactly 1 with context.Canceled", doneSeen, streamErr)
+	}
+}
