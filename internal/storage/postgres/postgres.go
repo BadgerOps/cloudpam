@@ -365,15 +365,19 @@ func (s *Store) UpdatePoolMeta(ctx context.Context, id int64, name *string, acco
 }
 
 func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error) {
+	return updatePool(ctx, s.pool, s.orgID, id, update)
+}
+
+func updatePool(ctx context.Context, q execQuerier, orgID string, id int64, update domain.UpdatePool) (domain.Pool, bool, error) {
 	setClauses := []string{}
-	args := []any{id, s.orgID}
+	args := []any{id, orgID}
 	argIdx := 3
 
 	// Resolve account
 	var accountUUID *string
 	if update.AccountID != nil {
 		var uuid string
-		err := s.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, *update.AccountID, s.orgID).Scan(&uuid)
+		err := q.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, *update.AccountID, orgID).Scan(&uuid)
 		if err != nil {
 			return domain.Pool{}, false, fmt.Errorf("account not found: %w", storage.ErrNotFound)
 		}
@@ -411,13 +415,13 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 	}
 
 	if len(setClauses) == 0 {
-		return s.GetPool(ctx, id)
+		return getPool(ctx, q, orgID, id)
 	}
 
 	query := fmt.Sprintf(`UPDATE pools SET %s WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
 		strings.Join(setClauses, ", "))
 
-	tag, err := s.pool.Exec(ctx, query, args...)
+	tag, err := q.Exec(ctx, query, args...)
 	if err != nil {
 		return domain.Pool{}, false, err
 	}
@@ -425,7 +429,7 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 		return domain.Pool{}, false, nil
 	}
 
-	return s.GetPool(ctx, id)
+	return getPool(ctx, q, orgID, id)
 }
 
 func (s *Store) UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error) {

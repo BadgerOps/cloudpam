@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -392,7 +393,19 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request, id int64) {
 		Tags:        payload.Tags,
 	}
 
-	p, ok, err := s.store.UpdatePool(ctx, id, update)
+	// Under the placement guard, so a reclaim that has checked this pool is unchanged deletes it
+	// before this update lands or sees the update and refuses.
+	var p domain.Pool
+	var ok bool
+	err = s.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		var err error
+		p, ok, err = ps.UpdatePool(work, id, update)
+		return err
+	})
+	if errors.Is(err, storage.ErrBusy) {
+		s.writeStoreErr(ctx, w, err)
+		return
+	}
 	if err != nil {
 		s.writeErr(ctx, w, http.StatusBadRequest, err.Error(), "")
 		return

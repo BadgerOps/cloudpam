@@ -129,10 +129,11 @@ func (s *RecommendationService) consolidationRecommendations(ctx context.Context
 // applyConsolidation widens the first source pool to the merged block and deletes the second,
 // under the placement guard so no placement runs between the checks and the writes. Widening
 // before deleting means the merged range is never free for another pool to take. The kept pool
-// keeps its ID, name and tags; discovered resources linked to the deleted pool move to it.
+// keeps its ID, name and tags; discovered resources linked to the deleted pool move to it, and the
+// requested name and account are set on it under the same guard.
 //
-// The resource moves and the rename run after the merge commits, so a failure there leaves the
-// recommendation pending. Applying it again finds the merge already done and finishes the rest.
+// On a store without a placement transaction a failure after the merge leaves the recommendation
+// pending with the merge stored. Applying it again finds the merge already done and finishes the rest.
 func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *domain.Recommendation, req domain.ApplyRecommendationRequest) (*int64, error) {
 	ids, cidrs, err := consolidationSources(rec)
 	if err != nil {
@@ -151,50 +152,52 @@ func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *dom
 		if err != nil {
 			return fmt.Errorf("list pools: %w", err)
 		}
-		if merged, ok := alreadyMerged(pools, rec, ids); ok {
-			kept = merged
-			return s.relinkResources(work, ps, ids[1], kept.ID)
-		}
-		if err := checkUnchangedLeaves(pools, rec.PoolID, ids, cidrs); err != nil {
-			return err
-		}
-		if err := rejectDuplicateCIDR(pools, rec.SuggestedCIDR); err != nil {
-			return err
-		}
-		widened, found, err := ps.UpdatePoolCIDR(work, ids[0], rec.SuggestedCIDR)
-		if err != nil {
-			return fmt.Errorf("widen pool %d to %s: %w", ids[0], rec.SuggestedCIDR, err)
-		}
-		if !found {
-			return fmt.Errorf("pool %d: %w", ids[0], storage.ErrNotFound)
-		}
-		deleted, err := ps.DeletePool(work, ids[1])
-		if err != nil || !deleted {
-			// Stores without a placement transaction keep the widened range unless it is put back.
-			_, _, _ = ps.UpdatePoolCIDR(work, ids[0], cidrs[0])
-			if err == nil {
-				err = storage.ErrNotFound
+		var merged bool
+		if kept, merged = alreadyMerged(pools, rec, ids); !merged {
+			if err := checkUnchangedLeaves(pools, rec.PoolID, ids, cidrs); err != nil {
+				return err
 			}
-			return fmt.Errorf("delete pool %d: %w", ids[1], err)
+			if err := rejectDuplicateCIDR(pools, rec.SuggestedCIDR); err != nil {
+				return err
+			}
+			widened, found, err := ps.UpdatePoolCIDR(work, ids[0], rec.SuggestedCIDR)
+			if err != nil {
+				return fmt.Errorf("widen pool %d to %s: %w", ids[0], rec.SuggestedCIDR, err)
+			}
+			if !found {
+				return fmt.Errorf("pool %d: %w", ids[0], storage.ErrNotFound)
+			}
+			deleted, err := ps.DeletePool(work, ids[1])
+			if err != nil || !deleted {
+				// Stores without a placement transaction keep the widened range unless it is put back.
+				_, _, _ = ps.UpdatePoolCIDR(work, ids[0], cidrs[0])
+				if err == nil {
+					err = storage.ErrNotFound
+				}
+				return fmt.Errorf("delete pool %d: %w", ids[1], err)
+			}
+			kept = widened
 		}
-		kept = widened
-		return s.relinkResources(work, ps, ids[1], kept.ID)
+		if err := s.relinkResources(work, ps, ids[1], kept.ID); err != nil {
+			return err
+		}
+		if req.Name == "" && req.AccountID == nil {
+			return nil
+		}
+		update := domain.UpdatePool{Name: &kept.Name, AccountID: kept.AccountID}
+		if req.Name != "" {
+			update.Name = &req.Name
+		}
+		if req.AccountID != nil {
+			update.AccountID = req.AccountID
+		}
+		if _, _, err := ps.UpdatePool(work, kept.ID, update); err != nil {
+			return fmt.Errorf("rename merged pool %d: %w", kept.ID, err)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	if req.Name != "" || req.AccountID != nil {
-		name := kept.Name
-		if req.Name != "" {
-			name = req.Name
-		}
-		accountID := kept.AccountID
-		if req.AccountID != nil {
-			accountID = req.AccountID
-		}
-		if _, _, err := s.mainStore.UpdatePoolMeta(ctx, kept.ID, &name, accountID); err != nil {
-			return nil, fmt.Errorf("rename merged pool %d: %w", kept.ID, err)
-		}
 	}
 	return &kept.ID, nil
 }

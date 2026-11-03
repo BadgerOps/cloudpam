@@ -162,6 +162,11 @@ func (t placementTx) CreatePool(_ context.Context, in domain.CreatePool) (domain
 	return p, nil
 }
 
+func (t placementTx) UpdatePool(_ context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error) {
+	p, found, err := updatePool(t.work, t.tx, t.orgID, id, update)
+	return p, found, placementBusy(t.caller, err)
+}
+
 func (t placementTx) UpdatePoolCIDR(_ context.Context, id int64, cidr string) (domain.Pool, bool, error) {
 	p, found, err := updatePoolCIDR(t.work, t.tx, t.orgID, id, cidr)
 	return p, found, placementBusy(t.caller, err)

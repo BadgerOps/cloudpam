@@ -108,3 +108,45 @@ func TestLinkResource_RejectsAPoolDeletedWhileWaiting(t *testing.T) {
 		t.Fatalf("resource %+v err=%v, want it left unlinked", got, err)
 	}
 }
+
+// A reclaim checks that a pool is unchanged and then deletes it under the placement guard, so a
+// PATCH must wait for the guard and then find the pool gone, not update it between those steps.
+func TestUpdatePool_WaitsForThePlacementGuard(t *testing.T) {
+	d, _, _, _ := setupDiscoveryTestServer()
+	pool := createRootPool(t, d.srv, "10.7.0.0/16")
+
+	release := make(chan struct{})
+	held := make(chan struct{})
+	holder := make(chan error, 1)
+	go func() {
+		holder <- d.srv.WithPlacement(context.Background(), func(work context.Context, ps storage.PlacementStore) error {
+			close(held)
+			<-release
+			_, err := ps.DeletePool(work, pool.ID)
+			return err
+		})
+	}()
+	<-held
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/pools/"+strconv.FormatInt(pool.ID, 10), strings.NewReader(`{"name":"renamed"}`))
+		req.Header.Set("Content-Type", "application/json")
+		d.srv.mux.ServeHTTP(rr, req)
+		done <- rr
+	}()
+
+	select {
+	case rr := <-done:
+		t.Fatalf("PATCH finished with %d while the placement guard was held", rr.Code)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-holder; err != nil {
+		t.Fatalf("delete under the guard: %v", err)
+	}
+	if rr := <-done; rr.Code != http.StatusNotFound {
+		t.Fatalf("PATCH of a pool deleted while it waited = %d %s, want 404", rr.Code, rr.Body.String())
+	}
+}

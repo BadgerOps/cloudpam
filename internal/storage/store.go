@@ -167,7 +167,7 @@ func (m *MemoryStore) UpdatePoolAccount(ctx context.Context, id int64, accountID
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, ok := m.pools[id]
-	if !ok {
+	if !ok || p.DeletedAt != nil {
 		return domain.Pool{}, false, nil
 	}
 	p.AccountID = accountID
@@ -179,7 +179,7 @@ func (m *MemoryStore) UpdatePoolMeta(ctx context.Context, id int64, name *string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, ok := m.pools[id]
-	if !ok {
+	if !ok || p.DeletedAt != nil {
 		return domain.Pool{}, false, nil
 	}
 	if name != nil {
@@ -197,7 +197,7 @@ func (m *MemoryStore) UpdatePool(ctx context.Context, id int64, update domain.Up
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, ok := m.pools[id]
-	if !ok {
+	if !ok || p.DeletedAt != nil {
 		return domain.Pool{}, false, nil
 	}
 	if update.Name != nil {

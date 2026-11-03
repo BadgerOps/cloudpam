@@ -8,13 +8,14 @@ import (
 	"cloudpam/internal/domain"
 )
 
-// PlacementStore is the part of Store that changes which pools are live or which ranges they hold:
-// pool placement, resizing a pool, and every delete that can remove a pool another placement might
-// pick as a parent.
+// PlacementStore is the part of Store that changes which pools are live or what they hold: pool
+// placement, resizing a pool, updating the metadata reclaim checks, and every delete that can
+// remove a pool another placement might pick as a parent.
 type PlacementStore interface {
 	ListPools(ctx context.Context) ([]domain.Pool, error)
 	GetPool(ctx context.Context, id int64) (domain.Pool, bool, error)
 	CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error)
+	UpdatePool(ctx context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error)
 	UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error)
 	RestorePool(ctx context.Context, id int64) (domain.Pool, bool, error)
 	DeletePool(ctx context.Context, id int64) (bool, error)

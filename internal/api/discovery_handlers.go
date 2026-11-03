@@ -501,7 +501,7 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 			resp.Skipped++
 			continue
 		}
-		if err := d.store.LinkResourceToPool(ctx, item.ResourceID, pool.ID); err != nil {
+		if err := d.srv.linkResource(ctx, d.store, item.ResourceID, pool.ID); err != nil {
 			failedPools[pool.ID] = true
 			cleanup = append(cleanup, failedPoolCleanup{poolID: pool.ID, resource: res.ResourceID})
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link new pool: %v", res.ResourceID, err))
@@ -1309,7 +1309,7 @@ func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID i
 		if p.creates {
 			resp.PoolsCreated++
 		}
-		if err := d.store.LinkResourceToPool(ctx, p.res.ID, pool.ID); err != nil {
+		if err := d.srv.linkResource(ctx, d.store, p.res.ID, pool.ID); err != nil {
 			action := "link matching pool"
 			if p.creates {
 				action = "link new pool"

@@ -658,6 +658,12 @@ func TestPoolsAreCreatedAndDeletedOnlyUnderThePlacementLock(t *testing.T) {
 					t.Errorf("%s calls %s directly; create or restore pools through placePools, Server.PlacePool or Server.restorePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()), sel.Sel.Name)
 				case "DeletePool", "DeletePoolCascade", "DeleteAccountCascade", "UpdatePoolCIDR":
 					t.Errorf("%s calls %s directly; delete or resize through Server.deletePool, Server.deleteAccountCascade or the PlacementStore a WithPlacement callback receives, so a concurrent placement cannot check against a range that is changing", fset.Position(call.Pos()), sel.Sel.Name)
+				case "LinkResourceToPool":
+					if _, onStoreField := sel.X.(*ast.SelectorExpr); onStoreField {
+						t.Errorf("%s calls %s on a store directly; link through Server.linkResource, which rechecks the pool under the placement guard, so a reclaim or consolidation cannot delete the pool between the check and the link", fset.Position(call.Pos()), sel.Sel.Name)
+					}
+				case "UpdatePool", "UpdatePoolMeta", "UpdatePoolAccount":
+					t.Errorf("%s calls %s directly; update pool metadata through the PlacementStore a WithPlacement callback receives, so a reclaim cannot delete a pool it saw before the update", fset.Position(call.Pos()), sel.Sel.Name)
 				}
 				return true
 			})
