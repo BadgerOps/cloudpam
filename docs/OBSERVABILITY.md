@@ -147,10 +147,12 @@ helm upgrade --install cloudpam deploy/helm/cloudpam-server --set vector.enabled
 
 What the chart does when it is on:
 
-- Runs `timberio/vector:0.59.0-distroless-libc` as a native sidecar (an init
+- Runs `timberio/vector:0.59.0-alpine` as a native sidecar (an init
   container with `restartPolicy: Always`, Kubernetes 1.29 or later). It starts
   before the server and stops after it, so events written during startup and
-  graceful shutdown still reach it.
+  graceful shutdown still reach it. A startup probe (`nc -z 127.0.0.1 5514`)
+  holds the server back until Vector accepts connections, because the server
+  drops an audit event it cannot deliver.
 - Sets `CLOUDPAM_AUDIT_SYSLOG_ADDR=127.0.0.1:5514` and
   `CLOUDPAM_AUDIT_SYSLOG_NETWORK=tcp`. The server sends each audit event as
   CEF inside one RFC 5424 syslog record over the pod's loopback. The render
@@ -548,7 +550,8 @@ See mockup: `cloudpam-audit-log.html`
 | Value | Default | Description |
 |-------|---------|-------------|
 | `vector.enabled` | false | Run the sidecar and point audit syslog forwarding at it |
-| `vector.image.tag` | 0.59.0-distroless-libc | Vector image tag (`vector.image.repository` is `timberio/vector`) |
+| `vector.image.tag` | 0.59.0-alpine | Vector image tag (`vector.image.repository` is `timberio/vector`) |
+| `vector.startupProbe` | `nc -z -w 1 127.0.0.1 5514`, every 1s, 60 tries | Gates the server's start on the syslog listener; replace it for an image without `nc` |
 | `vector.config` | `files/vector.toml` | Vector TOML; must keep the tcp syslog source on 127.0.0.1:5514 |
 | `vector.env` | [] | Raw env entries for the sidecar, for sink credentials |
 | `vector.resources` | 20m/64Mi requests, 200m/256Mi limits | Sidecar resources |

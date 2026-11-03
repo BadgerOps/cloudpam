@@ -211,8 +211,17 @@ vector:
   enabled: false
   image:
     repository: timberio/vector
-    tag: 0.59.0-distroless-libc
+    tag: 0.59.0-alpine
     pullPolicy: IfNotPresent
+  # Holds the server back until the sidecar accepts connections on its syslog
+  # listener; the server drops an audit event it cannot deliver. The default
+  # runs busybox nc, so an image without it (the distroless tags) needs a
+  # different probe here.
+  startupProbe:
+    exec:
+      command: ["nc", "-z", "-w", "1", "127.0.0.1", "5514"]
+    periodSeconds: 1
+    failureThreshold: 60
   # Vector TOML config. Empty uses files/vector.toml, which parses the CEF into
   # .cef and prints each event as JSON on the sidecar's stdout. A config of
   # your own must keep that file's syslog source (tcp on 127.0.0.1:5514) and

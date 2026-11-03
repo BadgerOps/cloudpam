@@ -143,6 +143,7 @@ grep -q '^      initContainers:$' "${sv[1]}" || fail "vector render has no initC
 grep -q '^        restartPolicy: Always$' "${sv[1]}" || fail "vector sidecar is not a native sidecar (restartPolicy: Always)"
 grep -q 'name: cloudpam-cloudpam-server-vector$' "${sv[1]}" || fail "vector render does not mount the vector ConfigMap"
 grep -q 'checksum/vector:' "${sv[1]}" || fail "vector render does not roll the pod on a config change"
+grep -q '^        startupProbe:$' "${sv[1]}" || fail "vector sidecar has no startupProbe to hold the server until it listens"
 
 want_once CLOUDPAM_API_KEY "${af[@]}"
 want_absent CLOUDPAM_AGENT_NAME "${af[@]}"

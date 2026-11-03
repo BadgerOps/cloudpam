@@ -35,6 +35,7 @@ spec:
       {{- if .enabled }}
       # A native sidecar starts before the server and stops after it, so audit
       # events sent during startup and graceful shutdown still reach Vector.
+      # The server starts only once the sidecar's startupProbe passes.
       initContainers:
       - name: vector
         restartPolicy: Always
@@ -43,6 +44,10 @@ spec:
         image: "{{ .image.repository }}:{{ .image.tag }}"
         imagePullPolicy: {{ .image.pullPolicy }}
         args: ["--config", "/etc/vector/vector.toml"]
+        {{- with .startupProbe }}
+        startupProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         {{- with .env }}
         env:
           {{- toYaml . | nindent 10 }}
