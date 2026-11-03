@@ -12,6 +12,7 @@ interface BlockFilters {
 export function useBlocks() {
   const [blocks, setBlocks] = useState<Block[]>([])
   const [total, setTotal] = useState(0)
+  const [pageSize, setPageSize] = useState(50)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,6 +29,7 @@ export function useBlocks() {
       const data = await get<BlocksListResponse>(`/api/v1/blocks${qs ? `?${qs}` : ''}`)
       setBlocks(data.items ?? [])
       setTotal(data.total ?? 0)
+      if (data.page_size > 0) setPageSize(data.page_size)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to fetch blocks')
     } finally {
@@ -35,5 +37,5 @@ export function useBlocks() {
     }
   }, [])
 
-  return { blocks, total, loading, error, fetchBlocks }
+  return { blocks, total, pageSize, loading, error, fetchBlocks }
 }
