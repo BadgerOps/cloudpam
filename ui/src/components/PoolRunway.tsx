@@ -44,7 +44,7 @@ function ProjectionBody({ projection }: { projection: GrowthProjection }) {
   if (projection.status === 'insufficient_history') {
     return (
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Not enough history to project growth yet; projections start after 7 days of allocations.
+        Not enough history to project growth yet. A projection needs 7 days of utilization snapshots, and CloudPAM does not record snapshots automatically yet.
       </p>
     )
   }
