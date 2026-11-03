@@ -65,15 +65,17 @@ type MemoryStore struct {
 	accounts    map[int64]domain.Account
 	nextAccount int64
 	credentials map[int64]domain.AccountCredentialRecord
+	*MemoryUtilizationStore
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		pools:       make(map[int64]domain.Pool),
-		next:        1,
-		accounts:    make(map[int64]domain.Account),
-		nextAccount: 1,
-		credentials: make(map[int64]domain.AccountCredentialRecord),
+		pools:                  make(map[int64]domain.Pool),
+		next:                   1,
+		accounts:               make(map[int64]domain.Account),
+		nextAccount:            1,
+		credentials:            make(map[int64]domain.AccountCredentialRecord),
+		MemoryUtilizationStore: NewMemoryUtilizationStore(),
 	}
 }
 

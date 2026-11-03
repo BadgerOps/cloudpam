@@ -15,6 +15,24 @@ export function getHostCount(cidr: string): number {
   return Math.pow(2, 32 - prefix)
 }
 
+const DAYS_PER_MONTH = 30.4375
+
+/** Rounds a runway in days to the coarsest unit a planner reads at a glance. */
+export function formatRunway(days: number): string {
+  if (!isFinite(days) || days < 0) return 'unknown'
+  if (days < 1) return 'less than a day'
+  if (days < 30) {
+    const d = Math.round(days)
+    return d + ' day' + (d === 1 ? '' : 's')
+  }
+  if (days < 365) {
+    const m = Math.max(1, Math.round(days / DAYS_PER_MONTH))
+    return m + ' month' + (m === 1 ? '' : 's')
+  }
+  const y = Math.round((days / 365) * 10) / 10
+  return y + ' year' + (y === 1 ? '' : 's')
+}
+
 export function formatTimeAgo(timestamp: string): string {
   if (!timestamp) return 'unknown'
   const date = new Date(timestamp)
@@ -77,6 +95,8 @@ export function getStatusBadgeClass(status: string): string {
     disabled: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
     revoked: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
     idle: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
+    expired: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300',
+    expiring: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300',
   }
   return classes[status] || 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
 }

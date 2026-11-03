@@ -15,7 +15,6 @@ vi.mock('../hooks/useSessionRefresh', () => ({
 }))
 
 vi.mock('../components/UpdateBanner', () => ({ default: () => null }))
-vi.mock('../components/ToastContainer', () => ({ default: () => null }))
 vi.mock('../components/ImportExportModal', () => ({ default: () => null }))
 
 // A stub search modal that counts how many times it is mounted, so a

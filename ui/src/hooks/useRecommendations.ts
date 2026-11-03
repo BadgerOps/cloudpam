@@ -47,7 +47,7 @@ export function useRecommendations() {
           err instanceof Error ? err.message : 'Failed to load recommendations',
         )
       } finally {
-        setLoading(false)
+        if (isCurrent(token)) setLoading(false)
       }
     },
     [begin, isCurrent],

@@ -14,7 +14,6 @@ vi.mock('../hooks/useSessionRefresh', () => ({
 }))
 
 vi.mock('../components/UpdateBanner', () => ({ default: () => null }))
-vi.mock('../components/ToastContainer', () => ({ default: () => null }))
 vi.mock('../components/SearchModal', () => ({ default: () => null }))
 vi.mock('../components/ImportExportModal', () => ({ default: () => null }))
 

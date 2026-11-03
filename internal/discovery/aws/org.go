@@ -6,6 +6,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/organizations"
 	orgtypes "github.com/aws/aws-sdk-go-v2/service/organizations/types"
+
+	"cloudpam/internal/discovery"
 )
 
 // OrgAccount represents an AWS account discovered via AWS Organizations.
@@ -16,18 +18,24 @@ type OrgAccount struct {
 }
 
 // ListOrgAccounts enumerates all active accounts in the AWS Organization.
-// Uses the default credential chain (management account credentials).
-func ListOrgAccounts(ctx context.Context) ([]OrgAccount, error) {
+// Uses the default credential chain (management account credentials). The
+// limiter paces the ListAccounts pages; nil is unlimited.
+func ListOrgAccounts(ctx context.Context, limiter *discovery.Limiter) ([]OrgAccount, error) {
 	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return listOrgAccounts(ctx, organizations.NewFromConfig(cfg), limiter)
+}
 
-	client := organizations.NewFromConfig(cfg)
+func listOrgAccounts(ctx context.Context, client organizations.ListAccountsAPIClient, limiter *discovery.Limiter) ([]OrgAccount, error) {
 	var accounts []OrgAccount
 
 	paginator := organizations.NewListAccountsPaginator(client, &organizations.ListAccountsInput{})
 	for paginator.HasMorePages() {
+		if err := limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
 		page, err := paginator.NextPage(ctx)
 		if err != nil {
 			return nil, err
