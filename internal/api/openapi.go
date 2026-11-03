@@ -915,6 +915,8 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 		})
 	case "/api/v1/audit":
 		return routesForMethodPath(http.MethodGet, "/api/v1/audit")
+	case "/api/v1/audit/export":
+		return routesForMethodPath(http.MethodGet, "/api/v1/audit/export")
 	case "/api/v1/auth/oidc/login":
 		return routesForMethodPath(http.MethodGet, "/api/v1/auth/oidc/login")
 	case "/api/v1/auth/oidc/callback":
@@ -1138,7 +1140,8 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "GET", Path: "/api/v1/auth/roles/{roleName}", Summary: "Get RBAC role", Tag: "Auth", ResponseSchema: "Role"},
 		{Method: "PATCH", Path: "/api/v1/auth/roles/{roleName}", Summary: "Update RBAC role", Tag: "Auth", RequestSchema: "RoleRequest", ResponseSchema: "Role"},
 		{Method: "DELETE", Path: "/api/v1/auth/roles/{roleName}", Summary: "Delete RBAC role", Tag: "Auth", ResponseDescription: "Role deleted"},
-		{Method: "GET", Path: "/api/v1/audit", Summary: "Query audit log", Tag: "Audit", ResponseSchema: "AuditListResponse", Parameters: []openAPIParameter{queryParam("limit", "Maximum events", "integer"), queryParam("offset", "Offset", "integer"), queryParam("actor", "Actor filter", "string"), queryParam("action", "Action filter", "string"), queryParam("resource_type", "Resource type filter", "string")}},
+		{Method: "GET", Path: "/api/v1/audit", Summary: "Query audit log", Tag: "Audit", ResponseSchema: "AuditListResponse", Parameters: []openAPIParameter{queryParam("limit", "Maximum events", "integer"), queryParam("offset", "Offset", "integer"), queryParam("actor", "Actor filter", "string"), queryParam("action", "Action filter", "string"), queryParam("resource_type", "Resource type filter", "string"), queryParam("since", "Events at or after this RFC 3339 time", "string"), queryParam("until", "Events at or before this RFC 3339 time", "string")}},
+		{Method: "GET", Path: "/api/v1/audit/export", Summary: "Export audit log", Description: "Streams every event that matches the filters as a CSV or JSON download. CSV cells that start with a formula character are prefixed with an apostrophe.", Tag: "Audit", ResponseSchema: "String", ResponseContentType: "text/csv", Parameters: []openAPIParameter{queryParam("format", "Output format: csv (default) or json", "string"), queryParam("actor", "Actor filter", "string"), queryParam("action", "Action filter", "string"), queryParam("resource_type", "Resource type filter", "string"), queryParam("since", "Events at or after this RFC 3339 time", "string"), queryParam("until", "Events at or before this RFC 3339 time (defaults to the request time)", "string")}},
 		{Method: "GET", Path: "/api/v1/auth/oidc/login", Summary: "Start OIDC login", Tag: "OIDC", Security: false, ResponseDescription: "Redirect to OIDC provider", Parameters: []openAPIParameter{queryParam("provider_id", "OIDC provider ID", "string"), queryParam("prompt", "Optional OIDC prompt", "string")}},
 		{Method: "GET", Path: "/api/v1/auth/oidc/callback", Summary: "Handle OIDC callback", Tag: "OIDC", Security: false, ResponseDescription: "Redirect to frontend or iframe HTML", Parameters: []openAPIParameter{queryParam("code", "Authorization code", "string"), queryParam("state", "OIDC state", "string")}},
 		{Method: "POST", Path: "/api/v1/auth/oidc/refresh", Summary: "Get OIDC silent refresh URL", Tag: "OIDC", Security: false, ResponseSchema: "OIDCRefreshResponse"},

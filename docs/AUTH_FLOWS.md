@@ -269,6 +269,12 @@ Administrators manage API key policy from **Configuration > Security** via `GET/
 
 `GET /api/v1/auth/keys` includes `age_days`, `expires_in_days`, `expiry_status`, and `rotation_due` fields so operators can see stale, expiring, expired, revoked, and non-expiring keys in the UI.
 
+#### Audit Retention
+
+The same settings document carries `audit_retention_days`. A background job runs on startup and then every hour; it reads the setting fresh each pass and deletes audit events older than that many days. `0` keeps events forever. A fresh install starts at 90 days, and a settings document saved before the field existed decodes to `0`, so an upgrade never purges history until an operator sets a value. The first pass with a non-zero setting is a dry run that logs `audit retention dry run` with the number of events a purge would remove and deletes nothing; the purge starts on the next pass.
+
+`GET /api/v1/audit/export?format=csv|json` (scope `audit:read`) downloads every event that matches the list endpoint's `actor`, `action`, `resource_type`, `since` and `until` filters. CSV cells that start with `=`, `+`, `-`, `@`, tab or carriage return are prefixed with an apostrophe so a spreadsheet does not run them as formulas.
+
 #### Rate Limiting
 
 API keys have no rate limit of their own. Two limiters exist, and both key on an IP address, not on the key or the user:
