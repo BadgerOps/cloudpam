@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/storage"
@@ -126,6 +128,15 @@ func (s *Server) WithPlacement(ctx context.Context, fn func(work context.Context
 	return busyIfBudgetSpent(ctx, locker.WithPlacementLock(work, func(ps storage.PlacementStore) error {
 		return fn(work, ps)
 	}))
+}
+
+// linkResource links a discovered resource to an existing pool under the placement guard.
+// Reclaim and resize read a pool's links under the same guard, so a link cannot land between
+// their check and their write.
+func (s *Server) linkResource(ctx context.Context, ds storage.DiscoveryStore, resourceID uuid.UUID, poolID int64) error {
+	return s.WithPlacement(ctx, func(work context.Context, _ storage.PlacementStore) error {
+		return ds.LinkResourceToPool(work, resourceID, poolID)
+	})
 }
 
 // placementGate serializes placements inside one process. Unlike a mutex, a request

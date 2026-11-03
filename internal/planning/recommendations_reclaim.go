@@ -73,22 +73,18 @@ func (s *RecommendationService) reclaimRecommendation(pool domain.Pool, tree poo
 }
 
 // applyReclaim deletes the pool once it is still the idle, unlinked leaf the recommendation saw.
-// The checks and the delete run under the placement guard, so no placement can add a child
-// between them.
+// The checks and the delete run under the placement guard, which pool placement and resource
+// linking also hold, so no child or link can land between them.
 func (s *RecommendationService) applyReclaim(ctx context.Context, rec *domain.Recommendation) error {
-	linked, err := s.linkedResources(ctx)
-	if err != nil {
-		return err
-	}
-	if len(linked[rec.PoolID]) > 0 {
-		return fmt.Errorf("pool %d now has linked discovered resources: %w", rec.PoolID, storage.ErrConflict)
-	}
 	return s.placer.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		pools, err := ps.ListPools(work)
 		if err != nil {
 			return fmt.Errorf("list pools: %w", err)
 		}
 		if err := checkReclaimable(pools, rec); err != nil {
+			return err
+		}
+		if err := s.rejectLinked(work, rec.PoolID); err != nil {
 			return err
 		}
 		deleted, err := ps.DeletePool(work, rec.PoolID)

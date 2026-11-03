@@ -237,7 +237,7 @@ func (d *DiscoveryServer) handleLink(w http.ResponseWriter, r *http.Request, id 
 			return
 		}
 
-		if err := d.store.LinkResourceToPool(r.Context(), id, body.PoolID); err != nil {
+		if err := d.srv.linkResource(r.Context(), d.store, id, body.PoolID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
 				d.srv.writeErr(r.Context(), w, http.StatusNotFound, "resource not found", "")
 				return
@@ -423,7 +423,7 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 		d.persistDiscoveryImportCandidate(ctx, item, *res)
 
 		if item.ProposedPoolID != nil && (item.ProposedAction == "link_pool" || opts.AllowBlocked) {
-			if err := d.store.LinkResourceToPool(ctx, item.ResourceID, *item.ProposedPoolID); err != nil {
+			if err := d.srv.linkResource(ctx, d.store, item.ResourceID, *item.ProposedPoolID); err != nil {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link pool: %v", res.ResourceID, err))
 				resp.Skipped++
 				continue
@@ -1211,7 +1211,7 @@ func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID i
 		}
 
 		if id, ok := poolByDiscoveryID[res.ResourceID]; ok {
-			if err := d.store.LinkResourceToPool(ctx, res.ID, id); err != nil {
+			if err := d.srv.linkResource(ctx, d.store, res.ID, id); err != nil {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link existing pool: %v", res.ResourceID, err))
 			} else {
 				resourceToPool[res.ResourceID] = discoveryParent{id: &id}
@@ -1226,7 +1226,7 @@ func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID i
 				pending = append(pending, pendingLink{res: res, entry: entryOf[match.ref]})
 				continue
 			}
-			if err := d.store.LinkResourceToPool(ctx, res.ID, *match.id); err != nil {
+			if err := d.srv.linkResource(ctx, d.store, res.ID, *match.id); err != nil {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("%s: link matching pool: %v", res.ResourceID, err))
 			} else {
 				resourceToPool[res.ResourceID] = match

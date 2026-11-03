@@ -474,7 +474,7 @@ func (ns *NetworkServer) handleNetworkConflictLinkAction(w http.ResponseWriter, 
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "prepare conflict action failed", err.Error())
 		return
 	}
-	if err := ns.discStore.LinkResourceToPool(r.Context(), req.DiscoveredID, req.PoolID); err != nil {
+	if err := ns.srv.linkResource(r.Context(), ns.discStore, req.DiscoveredID, req.PoolID); err != nil {
 		ns.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "link resource to pool failed", err.Error())
 		return
 	}
@@ -1648,7 +1648,7 @@ func (ns *NetworkServer) rollbackNetworkConflictLink(ctx context.Context, discov
 	if previousPoolID == nil {
 		return ns.discStore.UnlinkResource(ctx, discoveredID)
 	}
-	return ns.discStore.LinkResourceToPool(ctx, discoveredID, *previousPoolID)
+	return ns.srv.linkResource(ctx, ns.discStore, discoveredID, *previousPoolID)
 }
 
 func (ns *NetworkServer) rollbackNetworkConflictImport(ctx context.Context, resp domain.DiscoveryImportApplyResponse) error {
