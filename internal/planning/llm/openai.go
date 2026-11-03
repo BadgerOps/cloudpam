@@ -319,29 +319,11 @@ func drainStream(body io.ReadCloser) {
 	discardBody(body)
 }
 
-// send forwards evt and reports whether it was delivered. It tries the channel
-// before looking at ctx, so a terminal event still reaches a consumer that is
-// reading after the context ended; only when the channel is full does it give
-// up on ctx.Done, which frees the producer from a consumer that stopped
-// reading before the terminal event.
-func send(ctx context.Context, ch chan<- StreamEvent, evt StreamEvent) bool {
-	select {
-	case ch <- evt:
-		return true
-	default:
-	}
-	select {
-	case ch <- evt:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
 // readSSEStream forwards one StreamEvent per content chunk and exactly one
 // terminal event (Done, with Err set on a read failure), then returns so the
 // caller can drain and close the body and close the channel. It also returns,
-// without a terminal event, when ctx ends while the channel is full.
+// without a terminal event, when ctx ends while the channel is full: the
+// consumer stopped reading, and Provider.StreamComplete documents that close.
 func (p *OpenAIProvider) readSSEStream(ctx context.Context, r io.Reader, ch chan<- StreamEvent) {
 	buf := make([]byte, 4096)
 	var lineBuf strings.Builder
@@ -369,7 +351,7 @@ func (p *OpenAIProvider) readSSEStream(ctx context.Context, r io.Reader, ch chan
 				}
 				data := strings.TrimPrefix(line, "data: ")
 				if data == "[DONE]" {
-					send(ctx, ch, StreamEvent{Done: true})
+					Send(ctx, ch, StreamEvent{Done: true})
 					return
 				}
 
@@ -394,7 +376,7 @@ func (p *OpenAIProvider) readSSEStream(ctx context.Context, r io.Reader, ch chan
 				// Done is terminal: consumers stop at the first done event
 				// and never drain, so anything streamed after finish_reason
 				// (usage chunks, the [DONE] sentinel) is left to drainStream.
-				if !send(ctx, ch, evt) || evt.Done {
+				if !Send(ctx, ch, evt) || evt.Done {
 					return
 				}
 			}
@@ -404,7 +386,7 @@ func (p *OpenAIProvider) readSSEStream(ctx context.Context, r io.Reader, ch chan
 			if !errors.Is(err, io.EOF) {
 				evt.Err = err
 			}
-			send(ctx, ch, evt)
+			Send(ctx, ch, evt)
 			return
 		}
 	}

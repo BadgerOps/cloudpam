@@ -18,6 +18,12 @@ var ErrInvalidResponse = errors.New("invalid response from provider")
 // cap. It wraps ErrInvalidResponse, so errors.Is holds for both.
 var ErrResponseTooLarge = fmt.Errorf("%w: response exceeds the size limit", ErrInvalidResponse)
 
+// ErrStreamInterrupted marks a stream whose channel closed before its
+// terminal event. Provider.StreamComplete only does that once ctx has ended
+// while the consumer was not reading, so the reply is cut short, never
+// complete.
+var ErrStreamInterrupted = errors.New("stream ended before its terminal event")
+
 // StatusError reports a non-200 HTTP status from the provider. It deliberately
 // carries no response body: provider bodies can echo request details.
 type StatusError struct {
