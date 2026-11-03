@@ -150,7 +150,7 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 	logger.Info("starting org discovery sync")
 
 	// Enumerate all active accounts in the organization
-	orgAccounts, err := aws.ListOrgAccounts(ctx)
+	orgAccounts, err := aws.ListOrgAccounts(ctx, nil)
 	if err != nil {
 		logger.Error("failed to list org accounts", "error", err)
 		return
