@@ -40,6 +40,10 @@ type StreamEvent struct {
 	// Err is set on the final event when the stream ended on a read error
 	// rather than a clean end of stream.
 	Err error
+	// Fallback is set on the first event of a stream that a later provider
+	// in a Chain answered after an earlier one failed. The event carries no
+	// text.
+	Fallback *FallbackNotice
 }
 
 // Provider abstracts an LLM backend (OpenAI, Ollama, vLLM, etc.).
