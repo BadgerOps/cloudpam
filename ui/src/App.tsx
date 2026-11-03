@@ -4,6 +4,7 @@ import { ToastContext, useToastState } from './hooks/useToast'
 import { AuthContext, useAuthState } from './hooks/useAuth'
 import Layout from './components/Layout'
 import ProtectedRoute from './components/ProtectedRoute'
+import ToastContainer from './components/ToastContainer'
 import LoginPage from './pages/LoginPage'
 import SetupPage from './pages/SetupPage'
 import DashboardPage from './pages/DashboardPage'
@@ -77,6 +78,7 @@ export default function App() {
             </Route>
           </Routes>
         </BrowserRouter>
+        <ToastContainer />
       </ToastContext.Provider>
     </AuthContext.Provider>
   )

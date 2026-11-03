@@ -15,7 +15,6 @@ vi.mock('../hooks/useAuth', async () => {
 
 vi.mock('../hooks/useSessionRefresh', () => ({ useSessionRefresh: () => {} }))
 vi.mock('../components/UpdateBanner', () => ({ default: () => null }))
-vi.mock('../components/ToastContainer', () => ({ default: () => null }))
 vi.mock('../components/SearchModal', () => ({ default: () => null }))
 vi.mock('../components/ImportExportModal', () => ({ default: () => null }))
 

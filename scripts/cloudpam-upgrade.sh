@@ -109,12 +109,14 @@ if [[ -z "${TARGET_VERSION}" ]]; then
   exit 1
 fi
 
-write_status "running" 1 "Pulling cloudpam server image v${TARGET_VERSION}..."
-if ! timeout "${PULL_TIMEOUT}" podman pull "${SERVER_IMAGE}:v${TARGET_VERSION}"; then
-  write_status "failed" 1 "Failed to pull ${SERVER_IMAGE}:v${TARGET_VERSION}"
+IMAGE_TAG="${TARGET_IMAGE_TAG:-${TARGET_VERSION}}"
+write_status "running" 1 "Pulling ${SERVER_IMAGE}:${IMAGE_TAG}..."
+if ! timeout "${PULL_TIMEOUT}" podman pull "${SERVER_IMAGE}:${IMAGE_TAG}"; then
+  write_status "failed" 1 "Failed to pull ${SERVER_IMAGE}:${IMAGE_TAG}"
   cleanup
   exit 1
 fi
+printf 'CLOUDPAM_IMAGE=%s:%s\n' "${SERVER_IMAGE}" "${IMAGE_TAG}" > "${DATA_DIR}/image.env"
 
 write_status "running" 2 "Restarting ${SERVICE_NAME}..."
 if ! systemctl restart "${SERVICE_NAME}"; then

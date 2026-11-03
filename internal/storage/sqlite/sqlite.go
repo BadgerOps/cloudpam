@@ -21,6 +21,7 @@ import (
 	"cloudpam/internal/cidr"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
+	"cloudpam/internal/storage/sqlitedb"
 )
 
 type Store struct {
@@ -41,7 +42,7 @@ const (
 )
 
 func New(dsn string) (*Store, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -52,10 +53,6 @@ func New(dsn string) (*Store, error) {
 	db.SetConnMaxLifetime(time.Duration(envIntOrDefault("SQLITE_CONN_MAX_LIFETIME_SECS", defaultConnMaxLifetime)) * time.Second)
 	db.SetConnMaxIdleTime(time.Duration(envIntOrDefault("SQLITE_CONN_MAX_IDLE_SECS", defaultConnMaxIdleTime)) * time.Second)
 
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	if err := runMigrations(db); err != nil {
 		_ = db.Close()
 		return nil, err

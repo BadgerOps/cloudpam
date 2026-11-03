@@ -2,6 +2,8 @@ import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, LayoutGrid, Pencil, Trash2, X } from 'lucide-react'
 import { useBlocks } from '../hooks/useBlocks'
+import { usePagedFilters } from '../hooks/usePagedFilters'
+import Pager from '../components/Pager'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
 import { get, patch, del } from '../api/client'
@@ -12,30 +14,39 @@ import type { Block, Pool, PoolType, PoolStatus, UpdatePoolRequest } from '../ap
 
 export default function BlocksPage() {
   const navigate = useNavigate()
-  const { blocks, loading, error, fetchBlocks } = useBlocks()
+  const { blocks, total, page, pageSize, loading, error, fetchBlocks } = useBlocks()
   const { accounts, fetchAccounts } = useAccounts()
   const { showToast } = useToast()
   const [search, setSearch] = useState('')
-  const [accountFilter, setAccountFilter] = useState<string>('')
+  const { query, filters, setFilters, setPage } = usePagedFilters({ account: '' })
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [editBlock, setEditBlock] = useState<Block | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Block | null>(null)
   const [showBulkDelete, setShowBulkDelete] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
 
-  useEffect(() => {
-    fetchBlocks()
-    fetchAccounts()
-  }, [fetchBlocks, fetchAccounts])
+  const loadBlocks = useCallback(() => {
+    fetchBlocks({
+      accounts: query.filters.account ? [Number(query.filters.account)] : undefined,
+      page: query.page,
+    })
+  }, [fetchBlocks, query])
 
-  // Clear selection when filters change
+  useEffect(() => {
+    loadBlocks()
+  }, [loadBlocks])
+
+  useEffect(() => {
+    fetchAccounts()
+  }, [fetchAccounts])
+
+  // Clear selection when the visible rows change
   useEffect(() => {
     setSelectedIds(new Set())
-  }, [search, accountFilter])
+  }, [search, query])
 
   const filtered = useMemo(() => {
     return blocks.filter(b => {
-      if (accountFilter && String(b.account_id) !== accountFilter) return false
       if (!search) return true
       const q = search.toLowerCase()
       return b.name.toLowerCase().includes(q) ||
@@ -43,7 +54,7 @@ export default function BlocksPage() {
         (b.account_name || '').toLowerCase().includes(q) ||
         (b.parent_name || '').toLowerCase().includes(q)
     })
-  }, [blocks, search, accountFilter])
+  }, [blocks, search])
 
   const filteredIds = useMemo(() => new Set(filtered.map(b => b.id)), [filtered])
   const isAllSelected = filtered.length > 0 && filtered.every(b => selectedIds.has(b.id))
@@ -88,7 +99,7 @@ export default function BlocksPage() {
         next.delete(block.id)
         return next
       })
-      await fetchBlocks()
+      await loadBlocks()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Delete failed', 'error')
     } finally {
@@ -116,7 +127,7 @@ export default function BlocksPage() {
     setSelectedIds(new Set())
     setShowBulkDelete(false)
     setActionLoading(false)
-    await fetchBlocks()
+    await loadBlocks()
   }
 
   // Count only selected items visible in current filter
@@ -140,8 +151,8 @@ export default function BlocksPage() {
           />
         </div>
         <select
-          value={accountFilter}
-          onChange={e => setAccountFilter(e.target.value)}
+          value={filters.account}
+          onChange={e => setFilters({ account: e.target.value })}
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Accounts</option>
@@ -275,6 +286,8 @@ export default function BlocksPage() {
         </div>
       )}
 
+      <Pager page={page} pageSize={pageSize} total={total} noun="blocks" loading={loading} onPageChange={setPage} />
+
       {/* Edit Modal */}
       {editBlock && (
         <EditBlockModal
@@ -283,7 +296,7 @@ export default function BlocksPage() {
           onClose={() => setEditBlock(null)}
           onSaved={() => {
             setEditBlock(null)
-            fetchBlocks()
+            loadBlocks()
           }}
         />
       )}

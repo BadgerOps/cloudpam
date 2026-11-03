@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
+	"cloudpam/internal/planning"
 	"cloudpam/internal/storage"
 	"cloudpam/internal/validation"
 )
@@ -318,6 +320,13 @@ func (s *Server) handlePoolStats(w http.ResponseWriter, r *http.Request, id int6
 		return
 	}
 
+	projection, err := planning.NewAnalysisService(s.store).ProjectPoolGrowth(ctx, id, *stats, time.Now())
+	if err != nil {
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+		return
+	}
+	stats.Projection = projection
+
 	writeJSON(w, http.StatusOK, stats)
 }
 
@@ -448,47 +457,6 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pools)
 }
 
-// poolFieldError describes a CreatePool field that fails the validation
-// POST /api/v1/pools applies. Msg and Detail map onto the API error body;
-// Error() joins them for per-row import reports.
-type poolFieldError struct {
-	Field  string
-	Value  string
-	Msg    string
-	Detail string
-}
-
-func (e *poolFieldError) Error() string {
-	if e.Detail != "" {
-		return e.Msg + ": " + e.Detail
-	}
-	return e.Msg
-}
-
-// validatePoolFields runs the field checks every pool creation path must
-// pass: name, CIDR (format, IPv4 only, canonical, reserved ranges, prefix
-// bounds) and the type, status and source enumerations when provided.
-// Containment, overlap and parent existence are placement concerns and are
-// handled by placePools.
-func validatePoolFields(in domain.CreatePool) *poolFieldError {
-	if err := validation.ValidateName(in.Name); err != nil {
-		return &poolFieldError{Field: "name", Value: in.Name, Msg: err.Error()}
-	}
-	if err := validation.ValidateCIDR(in.CIDR); err != nil {
-		return &poolFieldError{Field: "cidr", Value: in.CIDR, Msg: err.Error()}
-	}
-	if in.Type != "" && !domain.IsValidPoolType(in.Type) {
-		return &poolFieldError{Field: "type", Value: string(in.Type), Msg: "invalid pool type", Detail: fmt.Sprintf("valid types: %v", domain.ValidPoolTypes)}
-	}
-	if in.Status != "" && !domain.IsValidPoolStatus(in.Status) {
-		return &poolFieldError{Field: "status", Value: string(in.Status), Msg: "invalid pool status", Detail: fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses)}
-	}
-	if in.Source != "" && !domain.IsValidPoolSource(in.Source) {
-		return &poolFieldError{Field: "source", Value: string(in.Source), Msg: "invalid pool source", Detail: fmt.Sprintf("valid sources: %v", domain.ValidPoolSources)}
-	}
-	return nil
-}
-
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := s.logger
@@ -501,27 +469,24 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.CIDR = strings.TrimSpace(in.CIDR)
 
-	// Field validation shared with CSV import (#350): name, CIDR, type,
-	// status and source are checked the same way on both paths.
-	if ferr := validatePoolFields(in); ferr != nil {
-		logger.WarnContext(ctx, "pools:create invalid "+ferr.Field, appendRequestID(ctx, []any{
-			ferr.Field, ferr.Value,
-			"reason", ferr.Error(),
-		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, ferr.Msg, ferr.Detail)
-		return
-	}
-
 	placed, err := s.placePools(ctx, siblingsOnly, []poolPlacement{{In: in}})
 	if err != nil {
 		s.writeStoreErr(r.Context(), w, err)
 		return
 	}
 	p, err := placed[0].Pool, placed[0].Err
+	var invalid *poolFieldError
 	var missing *missingParentError
 	var outside *containmentError
 	var overlap *placementConflict
 	switch {
+	case errors.As(err, &invalid):
+		logger.WarnContext(ctx, "pools:create invalid "+invalid.Field, appendRequestID(ctx, []any{
+			invalid.Field, invalid.Value,
+			"reason", invalid.Error(),
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, invalid.Msg, invalid.Detail)
+		return
 	case errors.As(err, &missing):
 		logger.WarnContext(ctx, "pools:create parent not found", appendRequestID(ctx, []any{
 			"parent_id", missing.ParentID,

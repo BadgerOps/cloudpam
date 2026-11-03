@@ -68,4 +68,31 @@ describe('useDrift', () => {
 
     expect(result.current.data?.total).toBe(2)
   })
+  it('stays loading until the newest request settles', async () => {
+    const first = deferred<DriftListResponse>()
+    const second = deferred<DriftListResponse>()
+    mockGet
+      .mockReturnValueOnce(first.promise as Promise<never>)
+      .mockReturnValueOnce(second.promise as Promise<never>)
+
+    const { result } = renderHook(() => useDrift())
+
+    act(() => {
+      void result.current.fetch({ severity: 'low' })
+      void result.current.fetch({ severity: 'critical' })
+    })
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      first.resolve(response(99))
+      await first.promise
+    })
+    expect(result.current.loading).toBe(true)
+
+    await act(async () => {
+      second.resolve(response(2))
+      await second.promise
+    })
+    expect(result.current.loading).toBe(false)
+  })
 })

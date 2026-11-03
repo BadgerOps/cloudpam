@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/storage"
+	"cloudpam/internal/validation"
 )
 
 type overlapPolicy int
@@ -45,6 +47,48 @@ func (c *placementConflict) Error() string {
 	return fmt.Sprintf("pool %q (%s) overlaps with existing pool %q (%s)", c.Pool.Name, c.Pool.CIDR, c.With.Name, c.With.CIDR)
 }
 
+// poolFieldError is a CreatePool field that fails the checks every pool must
+// pass. Msg and Detail map onto the API error body; Error() joins them for
+// per-entry reports.
+type poolFieldError struct {
+	Field  string
+	Value  string
+	Msg    string
+	Detail string
+}
+
+func (e *poolFieldError) Error() string {
+	if e.Detail != "" {
+		return e.Msg + ": " + e.Detail
+	}
+	return e.Msg
+}
+
+// validatePoolFields checks name, CIDR (format, IPv4 only, canonical, reserved
+// ranges, prefix bounds) and the type, status and source enumerations when set.
+// Containment, overlap and parent existence are placement concerns.
+func validatePoolFields(in domain.CreatePool) *poolFieldError {
+	if err := validation.ValidateName(in.Name); err != nil {
+		return &poolFieldError{Field: "name", Value: in.Name, Msg: err.Error()}
+	}
+	if err := validation.ValidateCIDR(in.CIDR); err != nil {
+		return &poolFieldError{Field: "cidr", Value: in.CIDR, Msg: err.Error()}
+	}
+	if in.CIDR != strings.TrimSpace(in.CIDR) {
+		return &poolFieldError{Field: "cidr", Value: in.CIDR, Msg: "cidr has leading or trailing whitespace"}
+	}
+	if in.Type != "" && !domain.IsValidPoolType(in.Type) {
+		return &poolFieldError{Field: "type", Value: string(in.Type), Msg: "invalid pool type", Detail: fmt.Sprintf("valid types: %v", domain.ValidPoolTypes)}
+	}
+	if in.Status != "" && !domain.IsValidPoolStatus(in.Status) {
+		return &poolFieldError{Field: "status", Value: string(in.Status), Msg: "invalid pool status", Detail: fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses)}
+	}
+	if in.Source != "" && !domain.IsValidPoolSource(in.Source) {
+		return &poolFieldError{Field: "source", Value: string(in.Source), Msg: "invalid pool source", Detail: fmt.Sprintf("valid sources: %v", domain.ValidPoolSources)}
+	}
+	return nil
+}
+
 type missingParentError struct {
 	ParentID int64
 }
@@ -73,19 +117,20 @@ var _ planning.PoolPlacer = (*Server)(nil)
 
 // PlacePool creates one pool the way POST /api/v1/pools does and returns it once stored, on
 // PostgreSQL once committed. Its errors carry storage sentinels for callers outside this package:
-// a missing parent or a pool outside its parent is ErrValidation, an overlapping sibling is
-// ErrConflict, and a placement past its budget is ErrBusy.
+// an invalid field, a missing parent or a pool outside its parent is ErrValidation, an
+// overlapping sibling is ErrConflict, and a placement past its budget is ErrBusy.
 func (s *Server) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
 	placed, err := s.placePools(ctx, siblingsOnly, []poolPlacement{{In: in}})
 	if err != nil {
 		return domain.Pool{}, err
 	}
 	p, err := placed[0].Pool, placed[0].Err
+	var invalid *poolFieldError
 	var missing *missingParentError
 	var outside *containmentError
 	var overlap *placementConflict
 	switch {
-	case errors.As(err, &missing), errors.As(err, &outside):
+	case errors.As(err, &invalid), errors.As(err, &missing), errors.As(err, &outside):
 		return p, fmt.Errorf("%w: %w", storage.ErrValidation, err)
 	case errors.As(err, &overlap):
 		return p, fmt.Errorf("%w: %w", storage.ErrConflict, err)
@@ -194,8 +239,14 @@ func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy,
 		return nil, err
 	}
 	pools := indexPools(live)
+	out := make([]placedPool, len(batch))
+	for i, e := range batch {
+		if ferr := validatePoolFields(e.In); ferr != nil {
+			out[i].Err = ferr
+		}
+	}
 	if policy != siblingsOnly {
-		if err := checkPlan(policy, live, pools, batch); err != nil {
+		if err := checkPlan(policy, live, pools, batch, out); err != nil {
 			return nil, err
 		}
 	}
@@ -203,11 +254,13 @@ func place(ctx context.Context, ps storage.PlacementStore, policy overlapPolicy,
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	out := make([]placedPool, len(batch))
 	stored := make(map[string]int64, len(batch))
 	for i, e := range batch {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if out[i].Err != nil {
+			continue
 		}
 		in := e.In
 		if e.ParentRef != "" {
@@ -310,9 +363,14 @@ func (x *poolIndex) admit(i int, ref string, in domain.CreatePool) error {
 	return nil
 }
 
-func checkPlan(policy overlapPolicy, live []domain.Pool, pools *poolIndex, batch []poolPlacement) error {
+// checkPlan validates the whole batch before anything is stored. Entries that already
+// failed in out are skipped, so their error stays per entry.
+func checkPlan(policy overlapPolicy, live []domain.Pool, pools *poolIndex, batch []poolPlacement, out []placedPool) error {
 	cidrByRef := make(map[string]string, len(batch))
 	for i, e := range batch {
+		if out[i].Err != nil {
+			continue
+		}
 		var parentCIDR string
 		switch {
 		case e.ParentRef != "":
@@ -336,17 +394,23 @@ func checkPlan(policy overlapPolicy, live []domain.Pool, pools *poolIndex, batch
 	if policy == overlapAllowed {
 		return nil
 	}
-	return checkPlacement(live, batch)
+	return checkPlacement(live, batch, out)
 }
 
-func checkPlacement(live []domain.Pool, batch []poolPlacement) error {
+func checkPlacement(live []domain.Pool, batch []poolPlacement, out []placedPool) error {
 	for i, e := range batch {
+		if out[i].Err != nil {
+			continue
+		}
 		for _, p := range live {
 			if cidrsOverlap(p.CIDR, e.In.CIDR) {
 				return &placementConflict{Pool: e.In, With: p}
 			}
 		}
-		for _, prev := range batch[:i] {
+		for j, prev := range batch[:i] {
+			if out[j].Err != nil {
+				continue
+			}
 			if prev.ParentRef == e.ParentRef && sameParent(prev.In.ParentID, e.In.ParentID) && cidrsOverlap(prev.In.CIDR, e.In.CIDR) {
 				return &placementConflict{Pool: e.In, With: domain.Pool{Name: prev.In.Name, CIDR: prev.In.CIDR}, InBatch: true}
 			}

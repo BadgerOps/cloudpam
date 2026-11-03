@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { get, post, patch, del } from '../api/client'
 import type { Pool, PoolWithStats, CreatePoolRequest, UpdatePoolRequest } from '../api/types'
+import { subtreeIds } from '../utils/cascadeDelete'
 
 export function usePools() {
   const [pools, setPools] = useState<Pool[]>([])
@@ -53,7 +54,12 @@ export function usePools() {
   const deletePool = useCallback(async (id: number, force = false) => {
     const qs = force ? '?force=true' : ''
     await del(`/api/v1/pools/${id}${qs}`)
-    setPools(prev => prev.filter(p => p.id !== id))
+    // The server only deletes a pool whose subtree is gone, so drop the subtree
+    // locally whether this call forced it or an earlier one did.
+    setPools(prev => {
+      const gone = subtreeIds(prev, [id])
+      return prev.filter(p => !gone.has(p.id))
+    })
   }, [])
 
   return { pools, hierarchy, loading, error, fetchPools, fetchHierarchy, getPool, createPool, updatePool, deletePool }
