@@ -159,7 +159,7 @@ func (s *childrenCountingStore) GetPoolChildren(ctx context.Context, parentID in
 func TestGenerate_ChildFetchesDoNotScaleWithCandidates(t *testing.T) {
 	mem := storage.NewMemoryStore()
 	st := &childrenCountingStore{Store: mem}
-	svc := NewRecommendationService(NewAnalysisService(st), storage.NewMemoryRecommendationStore(mem), st, storePlacer{mem})
+	svc := NewRecommendationService(NewAnalysisService(st), storage.NewMemoryRecommendationStore(mem), storePlacer{mem})
 	pool := createPool(t, st, "Big", "10.0.0.0/16", nil)
 
 	halves := generateAllocations(t, svc, pool.ID, 0)

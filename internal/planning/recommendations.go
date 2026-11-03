@@ -21,19 +21,17 @@ type PoolPlacer interface {
 
 // RecommendationService generates, applies, and dismisses recommendations.
 type RecommendationService struct {
-	analysis  *AnalysisService
-	store     storage.RecommendationStore
-	mainStore storage.Store
-	placer    PoolPlacer
+	analysis *AnalysisService
+	store    storage.RecommendationStore
+	placer   PoolPlacer
 }
 
 // NewRecommendationService creates a new RecommendationService.
-func NewRecommendationService(analysis *AnalysisService, store storage.RecommendationStore, mainStore storage.Store, placer PoolPlacer) *RecommendationService {
+func NewRecommendationService(analysis *AnalysisService, store storage.RecommendationStore, placer PoolPlacer) *RecommendationService {
 	return &RecommendationService{
-		analysis:  analysis,
-		store:     store,
-		mainStore: mainStore,
-		placer:    placer,
+		analysis: analysis,
+		store:    store,
+		placer:   placer,
 	}
 }
 
