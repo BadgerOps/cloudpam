@@ -24,7 +24,8 @@ export SKILL_DIR REPO_ROOT
 
 VERIFY_USERNAME="${CLOUDPAM_VERIFY_USERNAME:-verify-admin}"
 VERIFY_PASSWORD="${CLOUDPAM_VERIFY_PASSWORD:-VerifyDev12345!}"
-# Fixed dev-only key so the server does not log an auto-generated-key warning on every launch.
+# Fixed throwaway key for the disposable instance. Never inherited, never written to the env file,
+# so a real deployment key in the caller's environment cannot reach logs or evidence.
 VERIFY_OIDC_KEY="0000000000000000000000000000000000000000000000000000000000000001"
 
 log() { printf '[cloudpam-verify] %s\n' "$*" >&2; }
@@ -166,7 +167,9 @@ cmd_launch() {
   fi
 
   log "installing Playwright + chromium (repo-root package.json)"
-  nixrun 'cd "$REPO_ROOT" && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && npx playwright install chromium' >"$STATE/playwright-install.log" 2>&1 \
+  # The dev shell ships the browsers in the read-only Nix store and says so with
+  # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD; `playwright install` would try to write there.
+  nixrun 'cd "$REPO_ROOT" && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && if [ -n "${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-}" ] && [ -d "${PLAYWRIGHT_BROWSERS_PATH:-/nonexistent}" ]; then echo "using browsers from $PLAYWRIGHT_BROWSERS_PATH"; else npx playwright install chromium; fi' >"$STATE/playwright-install.log" 2>&1 \
     || { tail -n 40 "$STATE/playwright-install.log" >&2; die "playwright install failed"; }
 
   GIT_REV="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"

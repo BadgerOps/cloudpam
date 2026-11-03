@@ -21,7 +21,7 @@ func setupRecommendationServer() (*stdhttp.ServeMux, *storage.MemoryStore) {
 
 	analysisSvc := planning.NewAnalysisService(st)
 	recStore := storage.NewMemoryRecommendationStore(st)
-	recSvc := planning.NewRecommendationService(analysisSvc, recStore, st, srv)
+	recSvc := planning.NewRecommendationService(analysisSvc, recStore, srv)
 	recSrv := NewRecommendationServer(srv, recSvc, recStore)
 	recSrv.RegisterRecommendationRoutes()
 
@@ -364,5 +364,20 @@ func TestRecommendationHandler_ApplyFirstRecOnEmptyPool(t *testing.T) {
 	}
 	if child.CIDR != allocCIDR || child.ParentID == nil || *child.ParentID != pool.ID {
 		t.Errorf("child = %+v, want CIDR %s under pool %d", child, allocCIDR, pool.ID)
+	}
+}
+
+func TestRecommendationHandler_ListEmptyFilterReturnsEmptyArray(t *testing.T) {
+	mux, _ := setupRecommendationServer()
+
+	req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/recommendations?status=dismissed", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if body := rr.Body.String(); !strings.Contains(body, `"items":[]`) {
+		t.Fatalf("expected items to serialize as an empty array, got %s", body)
 	}
 }

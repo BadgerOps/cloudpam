@@ -101,7 +101,8 @@ func (s *AIPlanningService) DeleteConversation(ctx context.Context, id string) e
 // and the partial answer is not persisted: a truncated assistant turn would
 // otherwise be replayed to the provider as if the model had said it. The
 // returned channel receives incremental text deltas; the caller should read
-// until close.
+// until close. Once ctx ends, a caller that has stopped reading no longer
+// holds the forwarder: events it would have received are dropped.
 func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage string) (<-chan llm.StreamEvent, error) {
 	provider, err := s.provider(ctx)
 	if err != nil {
@@ -177,19 +178,20 @@ func (s *AIPlanningService) Chat(ctx context.Context, sessionID, userMessage str
 			fullContent.WriteString(evt.Delta)
 			if evt.Err != nil {
 				// A failed stream is not stored as an answer.
-				outCh <- evt
+				llm.Send(ctx, outCh, evt)
 				return
 			}
 			if evt.Done {
 				persist()
 			}
-			outCh <- evt
-			if evt.Done {
+			if !llm.Send(ctx, outCh, evt) || evt.Done {
 				return
 			}
 		}
-		// The provider closed the stream without a done event.
-		persist()
+		// The provider closed the stream without a done event, which it only
+		// does once ctx has ended while nobody was reading: the reply is cut
+		// short, so it is reported as a failure and not stored as an answer.
+		llm.Send(ctx, outCh, llm.StreamEvent{Done: true, Err: llm.ErrStreamInterrupted})
 	}()
 
 	return outCh, nil

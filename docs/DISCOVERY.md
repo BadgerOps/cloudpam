@@ -100,6 +100,17 @@ Apply creates pools with the same checks as `POST /api/v1/pools`, under the same
 
 `POST /api/v1/discovery/import` remains available for compatibility, but new integrations should use preview/apply so conflicts and non-pool network objects are visible before conversion. It applies the same checks. It places each VPC at the top level, so a VPC inside an existing top-level pool is reported as an overlap. Use preview and apply to place it under that pool.
 
+### Provider Rate Limits
+
+Each collector can pace its provider API calls with a token bucket. The cap is requests per second; the burst is one second's worth of calls. Every page of a listing (`DescribeVpcs`, `DescribeSubnets`, `DescribeAddresses`, Compute `networks`, `aggregated/subnetworks`, `aggregated/addresses`, and Organizations `ListAccounts` in org mode) takes one token first, and concurrent syncs of the same provider share one bucket. The default is unlimited, which leaves throttling to the SDK's own retry.
+
+| Where | Setting | Scope |
+|-------|---------|-------|
+| Server | `CLOUDPAM_DISCOVERY_AWS_RPS`, `CLOUDPAM_DISCOVERY_GCP_RPS` | All syncs of that provider, including stored per-account credentials |
+| Agent | `discovery_aws_rps` / `CLOUDPAM_DISCOVERY_AWS_RPS` | Single-account syncs and every member account of an org-mode pass |
+
+A sync whose context ends while it waits for a token fails with that context error, the same as a provider call that times out.
+
 ## Merged Network Views
 
 CloudPAM exposes merged network views that combine managed pools, linked discovered resources, durable managed network objects, discovered-only network objects, explicit relationships, and computed conflict evidence.
@@ -520,6 +531,168 @@ curl 'http://localhost:8080/api/v1/network/conflicts?schema_policy=region_level'
 - Schema policy is global or request-scoped today; per-pool or per-account
   schema policy is a follow-up area.
 
+## Credential models
+
+Every sync runs as some cloud identity. Until stored credentials existed, that identity was always the host's, never something saved in CloudPAM.
+
+### How discovery reaches an account
+
+| Path | Identity used | Reaches | Where it is set up |
+|------|---------------|---------|--------------------|
+| Server sync | The server host. An EC2 instance profile, ECS task role, or `AWS_*` variables for AWS. Application Default Credentials for GCP. | The host's own AWS account. The GCP projects the ADC identity can read. | The server registers the AWS and GCP collectors at startup. `POST /api/v1/discovery/sync` runs them when no agent is connected for the account. |
+| Agent, single account | The agent host's identity, deployed next to the account. | That one account. | `cloudpam-agent` with `CLOUDPAM_ACCOUNT_ID`. It pushes through the ingest API. |
+| Agent, organization mode | The agent host's identity in the management account, then STS `AssumeRole` into `CloudPAMDiscoveryRole` in every member account, with the configured external ID. | Every account in one AWS organization. | `cloudpam-agent` with the `CLOUDPAM_AWS_ORG_*` variables. The Terraform `member-role` module or the CloudFormation StackSet creates the role. See [AWS Organizations Discovery](#aws-organizations-discovery). |
+| Stored per-account credential | A role ARN the server assumes, or a GCP service-account key, saved encrypted on the account record. | That account, from the server, with no agent and no change to the host identity. | The **Credentials** action on the Accounts page, or `PUT /api/v1/accounts/{id}/credentials`. |
+
+For one AWS organization with the member role deployed, the first three paths are complete. You give the instance or the agent an IAM identity and CloudPAM uses it. No credential goes into the application.
+
+### Why stored credentials exist
+
+Some accounts are out of reach for every host identity:
+
+- a second AWS organization, or a partner account that only grants CloudPAM a role to assume;
+- a GCP project whose service account is not the server's ADC identity;
+- an environment where no agent can run next to the account.
+
+Before stored credentials, those accounts could not be synced. Now you attach a credential to the account record and the server's own sync uses it. An account with no stored credential behaves exactly as before. Agents never use stored credentials. An account that an agent owns keeps the agent's identity.
+
+### Which identity a sync uses
+
+For one account, a connected agent wins. Otherwise the server uses the stored credential. Otherwise the server uses its host identity.
+
+A stored credential that cannot be decrypted, that does not match the account's provider, or that belongs to a provider with no credential support fails the sync job with an `ErrorMessage` that starts with `credential:`. The server never falls back to the host identity in those cases, so a sync never runs as an identity you did not choose.
+
+### Credential types
+
+One credential per account. Saving a second one replaces the first.
+
+| Type | Account provider | Secret payload | Shown in the UI and the API |
+|------|------------------|----------------|-----------------------------|
+| `aws_assume_role` | `aws` | `role_arn`, optional `external_id` | `role_arn`, `has_external_id` |
+| `gcp_service_account` | `gcp` | the service-account key file | `client_email`, `project_id` |
+
+The payload is encrypted with the application key `CLOUDPAM_OIDC_ENCRYPTION_KEY` through the same mechanism that protects OIDC client secrets and the AI provider API key. The summary is stored in clear. Account reads, the account list, search, and CSV export never include the payload. The GCP key's `token_uri` is dropped at save time. The server always requests tokens from Google's own endpoint.
+
+The application key must be set, or saving returns `409 Conflict`. When the key is missing the server generates one at startup and logs a warning. A credential encrypted with that key would be unreadable after a restart, so the server refuses to store one. Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` to a 32-byte hex string (`openssl rand -hex 32`) and restart.
+
+### Set up an AWS assumed role
+
+The server's own identity must be allowed to assume the role, and the role must be able to read EC2 networking. Create the role in the target account with this trust policy. Replace the principal with the ARN of the server's identity (the instance profile role, the task role, or the user behind the `AWS_*` variables).
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::111111111111:role/cloudpam-server" },
+      "Action": "sts:AssumeRole",
+      "Condition": { "StringEquals": { "sts:ExternalId": "choose-a-long-random-string" } }
+    }
+  ]
+}
+```
+
+Leave out the `Condition` block when you save the credential without an external ID. When you set one, the value you save must equal the value in the policy.
+
+Attach the read-only permissions from [Required IAM Permissions](#required-iam-permissions) to the role. The server's own identity needs `sts:AssumeRole` on the role ARN.
+
+The server calls STS in the first region listed on the account, then in the host's default region, then in `us-east-1`.
+
+### Set up a GCP service account
+
+Create a service account in the project, grant it `roles/compute.networkViewer` on the project, and create a JSON key. Paste the whole key file into the credential form. The server keeps only `client_email`, `project_id`, `private_key_id`, and `private_key`.
+
+The test action reads the project named by the account's `external_id`, or by the `gcp:` key when `external_id` is empty. That is the project sync reads too, so a passing test proves the credential can discover that account.
+
+### Credential API
+
+All routes live under `/api/v1/accounts/{id}/credentials`. Reading needs `accounts:read`. Saving, deleting, and testing need `accounts:update`.
+
+Store or replace a credential:
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/accounts/1/credentials \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "aws_assume_role",
+    "aws_assume_role": {
+      "role_arn": "arn:aws:iam::222222222222:role/CloudPAMDiscoveryRole",
+      "external_id": "choose-a-long-random-string"
+    }
+  }'
+```
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/accounts/2/credentials \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "gcp_service_account",
+    "gcp_service_account": { "key_json": "{\"type\":\"service_account\",\"project_id\":\"my-project\",\"client_email\":\"cloudpam@my-project.iam.gserviceaccount.com\",\"private_key\":\"-----BEGIN PRIVATE KEY-----\\n...\"}" }
+  }'
+```
+
+Exactly one of `aws_assume_role` and `gcp_service_account` is set, and it must be the one that `type` names. Unknown fields are rejected. The response is the credential view with the summary, never the payload:
+
+```json
+{
+  "account_id": 1,
+  "type": "aws_assume_role",
+  "summary": { "role_arn": "arn:aws:iam::222222222222:role/CloudPAMDiscoveryRole", "has_external_id": true },
+  "created_at": "2026-11-02T10:00:00Z",
+  "updated_at": "2026-11-02T10:00:00Z"
+}
+```
+
+Read the stored credential:
+
+```bash
+curl http://localhost:8080/api/v1/accounts/1/credentials
+```
+
+`last_test` appears after a test and is cleared by the next save:
+
+```json
+{
+  "account_id": 1,
+  "type": "aws_assume_role",
+  "summary": { "role_arn": "arn:aws:iam::222222222222:role/CloudPAMDiscoveryRole", "has_external_id": true },
+  "last_test": { "tested_at": "2026-11-02T10:05:00Z", "status": "failed", "error": "assume_role: AccessDenied (http 403)" },
+  "created_at": "2026-11-02T10:00:00Z",
+  "updated_at": "2026-11-02T10:00:00Z"
+}
+```
+
+Test the stored credential. The test uses only the stored credential, never the host identity. AWS runs `sts:GetCallerIdentity` as the assumed role. GCP fetches a token and reads the project. The call takes at most 15 seconds:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/accounts/1/credentials/test
+```
+
+```json
+{ "tested_at": "2026-11-02T10:05:00Z", "status": "ok", "identity": "arn:aws:sts::222222222222:assumed-role/CloudPAMDiscoveryRole/cloudpam" }
+```
+
+A failing credential is `200` with `"status": "failed"` and a sanitized `error` such as `assume_role: AccessDenied (http 403)`, `token: invalid_grant (http 400)`, `endpoint unreachable`, or `timed out after 15s`. The error never includes a response body or a credential value.
+
+Delete the stored credential:
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/accounts/1/credentials
+```
+
+The response is `204`.
+
+Error responses:
+
+| Status | When | Body |
+|--------|------|------|
+| `400` | A field fails validation, or `type` does not match the account's provider | `{"error": "invalid aws_assume_role.role_arn", "detail": "must look like arn:aws:iam::<12-digit account>:role/<name>"}` or `{"error": "credential type does not match the account provider"}` |
+| `404` | The account does not exist, or no credential is stored (GET, DELETE, test) | `{"error": "account not found"}` or `{"error": "no credential stored for this account"}` |
+| `409` | `CLOUDPAM_OIDC_ENCRYPTION_KEY` is not set, so the server runs on an auto-generated key | `{"error": "cannot store a credential: CLOUDPAM_OIDC_ENCRYPTION_KEY is not set, so the stored credential would be lost at restart; set the key"}` |
+
+Every save, delete, and test writes an audit event with resource type `account_credential` and the account id as the resource id. The event records the credential type or the test status, never a value. `GET /api/v1/audit?resource_type=account_credential` lists them.
+
 ## AWS Setup
 
 ### Prerequisites
@@ -686,6 +859,7 @@ heartbeat_interval: 1m
 | `account_id` | `CLOUDPAM_ACCOUNT_ID` | (required) | CloudPAM account ID to discover for |
 | `bootstrap_token` | `CLOUDPAM_BOOTSTRAP_TOKEN` | | Base64 provisioning bundle (replaces server_url, api_key, agent_name) |
 | `aws_regions` | `CLOUDPAM_AWS_REGIONS` | SDK default | Comma-separated AWS regions |
+| `discovery_aws_rps` | `CLOUDPAM_DISCOVERY_AWS_RPS` | `0` (unlimited) | Cap on AWS API calls per second, shared across every account in an org-mode pass |
 | `sync_interval` | `CLOUDPAM_SYNC_INTERVAL` | `15m` | How often to run discovery |
 | `heartbeat_interval` | `CLOUDPAM_HEARTBEAT_INTERVAL` | `1m` | How often to send heartbeats |
 | `max_retries` | | `3` | Push retry attempts on server error |
@@ -989,6 +1163,14 @@ curl -X DELETE http://localhost:8080/api/v1/discovery/resources/{resource-uuid}/
 
 ```bash
 curl 'http://localhost:8080/api/v1/discovery/sync?account_id=1&limit=10'
+```
+
+### List Each Account's Latest Sync Job
+
+Returns one job per account that has synced at least once, in a single response. The dashboard uses it to show sync health for every account without one request per account.
+
+```bash
+curl http://localhost:8080/api/v1/discovery/sync/latest
 ```
 
 ### Get Sync Job Details

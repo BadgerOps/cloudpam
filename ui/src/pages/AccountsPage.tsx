@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { KeyRound, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { useAccounts } from '../hooks/useAccounts'
+import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import StatusBadge from '../components/StatusBadge'
 import ConnectivityBadge from '../components/ConnectivityBadge'
 import FormError from '../components/FormError'
-import type { Account, UpdateAccountRequest } from '../api/types'
+import AccountCredentialModal, { credentialProvider } from '../components/AccountCredentialModal'
+import type { CredentialProvider } from '../components/AccountCredentialModal'
+import type { Account, Pool, UpdateAccountRequest } from '../api/types'
 import { formatTimeAgo } from '../utils/format'
+import { get } from '../api/client'
+import { cascadePoolCount, deleteWithCascade, plural } from '../utils/cascadeDelete'
 
 interface AccountForm {
   key: string
@@ -290,12 +295,16 @@ function EditAccountDialog({
 export default function AccountsPage() {
   const { accounts, loading, error, fetchAccounts, createAccount, updateAccount, deleteAccount } = useAccounts()
   const { showToast } = useToast()
+  const { hasPermission } = useAuth()
+  const canUpdate = hasPermission('accounts:update')
   const [search, setSearch] = useState('')
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedId = Number(searchParams.get('selected')) || null
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState<Account | null>(null)
+  const [credentialsFor, setCredentialsFor] = useState<{ account: Account; provider: CredentialProvider } | null>(null)
   const editTrigger = useRef<HTMLElement | null>(null)
+  const credentialsTrigger = useRef<HTMLElement | null>(null)
 
   useEffect(() => { fetchAccounts() }, [fetchAccounts])
 
@@ -326,11 +335,19 @@ export default function AccountsPage() {
   }
 
   const closeEditor = useCallback(() => setEditing(null), [])
+  const closeCredentials = useCallback(() => setCredentialsFor(null), [])
 
   async function handleDelete(id: number, name: string) {
     if (!confirm(`Delete account "${name}"?`)) return
     try {
-      await deleteAccount(id)
+      const deleted = await deleteWithCascade(
+        force => deleteAccount(id, force),
+        async () => {
+          const count = cascadePoolCount((await get<Pool[]>('/api/v1/pools')) ?? [], id)
+          return `Account "${name}" is used by ${plural(count, 'pool')}. Delete with ${plural(count, 'pool')}?`
+        },
+      )
+      if (!deleted) return
       showToast('Account deleted', 'success')
       if (id === selectedId) setSearchParams({}, { replace: true })
     } catch (err) {
@@ -404,7 +421,9 @@ export default function AccountsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-              {filtered.map(a => (
+              {filtered.map(a => {
+                const provider = credentialProvider(a)
+                return (
                 <tr key={a.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                   <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{a.name}</td>
                   <td className="px-4 py-2 text-sm font-mono text-gray-600 dark:text-gray-300">{a.key}</td>
@@ -414,6 +433,18 @@ export default function AccountsPage() {
                   <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{(a.regions || []).join(', ') || '-'}</td>
                   <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(a.created_at)}</td>
                   <td className="px-4 py-2 text-right">
+                    {provider && (
+                      <button
+                        onClick={e => {
+                          credentialsTrigger.current = e.currentTarget
+                          setCredentialsFor({ account: a, provider })
+                        }}
+                        className="text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 p-1"
+                        title="Credentials"
+                      >
+                        <KeyRound className="w-4 h-4" />
+                      </button>
+                    )}
                     <button
                       onClick={e => {
                         editTrigger.current = e.currentTarget
@@ -433,7 +464,8 @@ export default function AccountsPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -446,6 +478,17 @@ export default function AccountsPage() {
           returnFocusTo={editTrigger.current}
           onSubmit={form => handleUpdate(editing.id, form)}
           onClose={closeEditor}
+        />
+      )}
+
+      {credentialsFor && (
+        <AccountCredentialModal
+          key={credentialsFor.account.id}
+          account={credentialsFor.account}
+          provider={credentialsFor.provider}
+          canEdit={canUpdate}
+          returnFocusTo={credentialsTrigger.current}
+          onClose={closeCredentials}
         />
       )}
     </div>

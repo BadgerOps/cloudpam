@@ -218,7 +218,7 @@ The storage layer uses build tags to switch between implementations:
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
-  - Current migrations: `0001_init.sql` through `0021_network_objects_relationships.sql` (21 files; new work starts at `0022`)
+  - Current migrations: `0001_init.sql` through `0024_api_key_rate_limit.sql` (24 files; new work starts at `0025`)
 
 - **PostgreSQL Support** (`-tags postgres`)
   - Production-grade database with native CIDR operations
@@ -253,6 +253,10 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/pools/{id}/blocks` - enumerate candidate subnets for a pool
   - `/api/v1/accounts` - account CRUD
   - `/api/v1/accounts/{id}` - single account GET/PATCH/DELETE
+  - `/api/v1/accounts/{id}/credentials` - stored discovery credential summary (GET, `accounts:read`); never returns the payload
+  - `/api/v1/accounts/{id}/credentials` - store or replace the encrypted credential (PUT, `accounts:update`); 409 when the encryption key is ephemeral
+  - `/api/v1/accounts/{id}/credentials` - delete the stored credential (DELETE, `accounts:update`)
+  - `/api/v1/accounts/{id}/credentials/test` - run one read-only call as the stored credential and record the outcome (POST, `accounts:update`)
   - `/api/v1/blocks` - list assigned blocks (sub-pools with filters)
   - `/api/v1/export` - data export as CSV in ZIP
   - `/api/v1/import/{type}` - CSV import for accounts or pools
@@ -412,11 +416,11 @@ When adding endpoints:
 ### Frontend Development
 
 - Unified React/Vite/TypeScript SPA in `ui/` directory
-- Uses `react-router-dom` for client-side routing (21 page components in `ui/src/pages/`)
+- Uses `react-router-dom` for client-side routing (22 page components in `ui/src/pages/`)
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` — 25 hooks: useAIPlanner, useAISettings, useAccounts, useApiKeys, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useNetwork, useOIDCAdmin, useOIDCProviders, usePendingAction, usePoolAnalysis, usePools, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
+- API hooks in `ui/src/hooks/` — 31 hooks: useAccountCredential, useAccounts, useAIPlanner, useAISettings, useApiKeys, useAttention, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useLogDestinations, useNetwork, useOIDCAdmin, useOIDCProviders, usePagedFilters, usePendingAction, usePoolAnalysis, usePoolProjection, usePools, useRecentlyDeleted, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)
@@ -439,6 +443,7 @@ When adding endpoints:
 
 ### OIDC/SSO
 - `CLOUDPAM_OIDC_ENCRYPTION_KEY`: 32-byte hex-encoded AES-256 application secret key (`internal/secrets`); encrypts OIDC client secrets and AI provider API keys saved under Configuration → AI Provider (auto-generated with warning if not set; then the AI provider page cannot store an API key)
+  - The same key protects stored per-account discovery credentials (`PUT /api/v1/accounts/{id}/credentials` answers 409 while the key is auto-generated)
 - `CLOUDPAM_OIDC_CALLBACK_URL`: OIDC callback URL (default: `http://localhost:8080/api/v1/auth/oidc/callback`)
 
 ### Observability
@@ -456,7 +461,7 @@ When adding endpoints:
 ### Rate Limiting
 - `RATE_LIMIT_RPS`: Requests per second (default: `100`; set to `0` to disable)
 - `RATE_LIMIT_BURST`: Burst size (default: `200`)
-- The global limiter keeps one token bucket per TCP peer address and ignores `X-Forwarded-For`, so clients behind one reverse proxy share a bucket. The login limiter and the audit client IP honor `CLOUDPAM_TRUSTED_PROXIES`, and the global limiter does not. Behind a proxy, set `RATE_LIMIT_RPS=0` and limit at the ingress.
+- The global limiter keeps one token bucket per API key, per user, or per TCP peer address for unauthenticated requests. It ignores `X-Forwarded-For`, so unauthenticated clients behind one reverse proxy share a bucket. Requests that carry credentials are admitted against a separate per-address budget that only rejected credentials spend, so anonymous traffic cannot starve authenticated principals behind the same address. An API key can carry its own `rate_limit` (set at creation, requires `settings:write`), which applies even with `RATE_LIMIT_RPS=0`. The login limiter and the audit client IP honor `CLOUDPAM_TRUSTED_PROXIES`, and the global limiter does not. Behind a proxy, set `RATE_LIMIT_RPS=0` and limit at the ingress.
 
 ### Agent (Org Mode)
 - `CLOUDPAM_AWS_ORG_ENABLED`: Enable AWS Organizations discovery mode
@@ -729,7 +734,7 @@ cloudpam/
 │   │   └── llm/            # LLM provider abstraction (OpenAI-compatible)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0021)
+├── migrations/             # SQL migrations (0001-0024)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
@@ -740,6 +745,8 @@ cloudpam/
 │   ├── 0019_account_lockout.sql       # Account lockout state
 │   ├── 0020_rbac_permission_catalog.sql # Custom roles + permission catalog
 │   ├── 0021_network_objects_relationships.sql # Network objects + relationships
+│   ├── 0022_account_credentials.sql   # Per-account cloud credentials
+│   ├── 0024_api_key_rate_limit.sql    # Optional per-key rate limit
 │   └── postgres/           # PostgreSQL migrations
 ├── deploy/                 # Deployment configurations
 │   ├── terraform/aws-org-discovery/  # AWS Organizations discovery IAM
@@ -750,7 +757,6 @@ cloudpam/
 │   ├── docker/             # Docker build files
 │   ├── helm/               # Helm charts
 │   ├── k8s/                # Kubernetes manifests (observability stack)
-│   ├── vector/             # Vector log shipping config
 │   └── docker-compose.observability.yml
 ├── ui/                     # Frontend (React/Vite/TypeScript SPA)
 │   ├── src/

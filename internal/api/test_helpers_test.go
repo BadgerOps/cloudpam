@@ -17,6 +17,7 @@ func (s *Server) registerUnprotectedTestRoutes() {
 	s.handleOpenAPIRouteFunc("/api/v1/pools/", s.handlePoolsSubroutes)
 	s.handleOpenAPIRouteFunc("/api/v1/accounts", s.handleAccounts)
 	s.handleOpenAPIRouteFunc("/api/v1/accounts/", s.handleAccountsSubroutes)
+	NewAccountCredentialServer(s, nil, nil).RegisterAccountCredentialRoutes()
 	s.handleOpenAPIRouteFunc("/api/v1/blocks", s.handleBlocksList)
 	s.handleOpenAPIRouteFunc("/api/v1/export", s.handleExport)
 	s.handleOpenAPIRouteFunc("/api/v1/import/accounts", s.handleImportAccounts)

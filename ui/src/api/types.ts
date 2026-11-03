@@ -65,6 +65,7 @@ export interface Pool {
   tags?: Record<string, string>
   created_at: string
   updated_at: string
+  deleted_at?: string
 }
 
 export interface PoolStats {
@@ -74,6 +75,27 @@ export interface PoolStats {
   utilization: number
   child_count: number
   direct_children: number
+  /** Present only on GET /api/v1/pools/{id}/stats. */
+  projection?: GrowthProjection
+}
+
+export type ProjectionStatus = 'ok' | 'no_growth' | 'insufficient_history' | 'exhausted'
+
+export interface ProjectedUsage {
+  months: number
+  used_ips: number
+  utilization: number
+}
+
+export interface GrowthProjection {
+  status: ProjectionStatus
+  window_days: number
+  window_start: string
+  sample_count: number
+  growth_ips_per_day: number
+  runway_days?: number
+  exhaustion_date?: string
+  forecast: ProjectedUsage[]
 }
 
 export interface PoolWithStats extends Pool {
@@ -114,6 +136,7 @@ export interface Account {
   environment?: string
   regions?: string[]
   created_at: string
+  deleted_at?: string
 }
 
 // ConnectivityTestResult is the response of POST /api/v1/accounts/{id}/test.
@@ -223,6 +246,12 @@ export interface SearchResponse {
 
 // --- Auth types ---
 
+// A key's own token bucket. Absent means the server default.
+export interface ApiKeyRateLimit {
+  requests_per_second: number
+  burst: number
+}
+
 export interface ApiKeyInfo {
   id: string
   prefix: string
@@ -232,6 +261,7 @@ export interface ApiKeyInfo {
   expires_at?: string | null
   last_used_at?: string | null
   revoked: boolean
+  rate_limit?: ApiKeyRateLimit | null
   age_days?: number
   expires_in_days?: number | null
   expiry_status?: 'active' | 'expiring' | 'expired' | 'no_expiry' | 'revoked'
@@ -242,6 +272,7 @@ export interface ApiKeyCreateRequest {
   name: string
   scopes?: string[]
   expires_in_days?: number
+  rate_limit?: ApiKeyRateLimit
 }
 
 export interface ApiKeyCreateResponse {
@@ -252,6 +283,7 @@ export interface ApiKeyCreateResponse {
   scopes: string[]
   created_at: string
   expires_at?: string | null
+  rate_limit?: ApiKeyRateLimit | null
 }
 
 export interface HealthResponse {
@@ -866,6 +898,28 @@ export interface ApplyPlanResponse {
   pool_map: Record<string, number>
 }
 
+// --- Compliance types ---
+
+export type ComplianceSeverity = 'error' | 'warning' | 'info'
+
+export interface ComplianceViolation {
+  rule_id: string
+  severity: ComplianceSeverity
+  pool_id: number
+  pool_name: string
+  cidr?: string
+  message: string
+  remediation?: string
+}
+
+export interface ComplianceReport {
+  total_checks: number
+  passed: number
+  failed: number
+  warnings: number
+  violations: ComplianceViolation[] | null
+}
+
 // --- Drift detection types ---
 
 export type DriftType = 'unmanaged' | 'cidr_mismatch' | 'orphaned_pool' | 'name_mismatch' | 'account_drift'
@@ -1019,4 +1073,74 @@ export interface AIProviderTestResult {
   streaming_supported: boolean
   error?: string
   tested_at: string
+}
+
+// --- Account credential types ---
+
+export type CredentialType = 'aws_assume_role' | 'gcp_service_account'
+
+export interface CredentialSummary {
+  role_arn?: string
+  has_external_id?: boolean
+  client_email?: string
+  project_id?: string
+}
+
+export type CredentialTestStatus = 'ok' | 'failed'
+
+export interface CredentialTest {
+  tested_at: string
+  status: CredentialTestStatus
+  error?: string
+}
+
+export interface CredentialTestResult extends CredentialTest {
+  identity?: string
+}
+
+export interface AccountCredential {
+  account_id: number
+  type: CredentialType
+  summary: CredentialSummary
+  last_test?: CredentialTest
+  created_at: string
+  updated_at: string
+}
+
+export interface AWSAssumeRoleInput {
+  role_arn: string
+  external_id?: string
+}
+
+export interface GCPServiceAccountInput {
+  key_json: string
+}
+
+export type PutAccountCredentialRequest =
+  | { type: 'aws_assume_role'; aws_assume_role: AWSAssumeRoleInput }
+  | { type: 'gcp_service_account'; gcp_service_account: GCPServiceAccountInput }
+
+// Audit forwarding targets (GET /api/v1/settings/log-destinations). Configured
+// from CLOUDPAM_AUDIT_SYSLOG_* at startup; the health fields are live.
+// invalid: the configuration was rejected at startup (see config_error).
+// idle: enabled, no event sent yet. ok / failing: the outcome of the last send.
+export type LogDestinationState = 'invalid' | 'idle' | 'ok' | 'failing'
+
+export interface LogDestination {
+  type: string
+  format: string
+  network: string
+  address: string
+  app_name?: string
+  state: LogDestinationState
+  config_error?: string
+  delivered: number
+  failed: number
+  last_success_at?: string
+  last_failure_at?: string
+  last_error?: string
+}
+
+export interface LogDestinationsResponse {
+  destinations: LogDestination[]
 }

@@ -1,0 +1,11 @@
+{{- if .Values.vector.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cloudpam-server.fullname" . }}-vector
+  labels:
+    {{- include "cloudpam-server.labels" . | nindent 4 }}
+data:
+  vector.toml: |
+    {{- include "cloudpam-server.vectorConfig" . | nindent 4 }}
+{{- end }}

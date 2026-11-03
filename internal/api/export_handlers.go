@@ -588,19 +588,19 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var rows []poolRow
-	var errs []string
+	var errs importRowErrors
 	idIdx, hasID := colIdx["id"]
 
 	for i, row := range records[1:] {
 		if len(row) <= nameIdx || len(row) <= cidrIdx {
-			errs = append(errs, fmt.Sprintf("row %d: insufficient columns", i+2))
+			errs.add(i+2, "insufficient columns")
 			continue
 		}
 
 		name := strings.TrimSpace(row[nameIdx])
 		cidr := strings.TrimSpace(row[cidrIdx])
 		if name == "" || cidr == "" {
-			errs = append(errs, fmt.Sprintf("row %d: name and cidr required", i+2))
+			errs.add(i+2, "name and cidr required")
 			continue
 		}
 
@@ -649,22 +649,6 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			pr.description = strings.TrimSpace(row[idx])
 		}
 
-		// Same field validation as POST /api/v1/pools (#350), applied here so
-		// errors stay in CSV row order and rows holds only valid rows.
-		// Containment and overlap are still decided by placePools below.
-		if ferr := validatePoolFields(domain.CreatePool{
-			Name:   pr.name,
-			CIDR:   pr.cidr,
-			Type:   pr.poolType,
-			Status: pr.status,
-			Source: pr.source,
-		}); ferr != nil {
-			s.logger.WarnContext(r.Context(), "pools:import invalid "+ferr.Field,
-				"row", pr.rowNum, ferr.Field, ferr.Value, "reason", ferr.Error())
-			errs = append(errs, fmt.Sprintf("row %d: %v", pr.rowNum, ferr))
-			continue
-		}
-
 		rows = append(rows, pr)
 	}
 
@@ -704,7 +688,7 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			} else {
 				s.logger.WarnContext(r.Context(), "pools:import account key not found",
 					"row", pr.rowNum, "account_key", pr.accountKey)
-				errs = append(errs, fmt.Sprintf("row %d: account_key '%s' not found", pr.rowNum, pr.accountKey))
+				errs.add(pr.rowNum, fmt.Sprintf("account_key '%s' not found", pr.accountKey))
 				continue
 			}
 		} else if pr.oldAccountID != 0 {
@@ -716,7 +700,7 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 				s.logger.WarnContext(r.Context(), "pools:import account_id not found (stale reference)",
 					"row", pr.rowNum, "account_id", pr.oldAccountID,
 					"hint", "use account_key column instead of account_id for reliable imports")
-				errs = append(errs, fmt.Sprintf("row %d: account_id %d not found (use account_key column for imports)", pr.rowNum, pr.oldAccountID))
+				errs.add(pr.rowNum, fmt.Sprintf("account_id %d not found (use account_key column for imports)", pr.oldAccountID))
 				continue
 			}
 		}
@@ -762,7 +746,7 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(res.Err, storage.ErrConflict) {
 				skipped++
 			} else {
-				errs = append(errs, fmt.Sprintf("row %d: %v", batchRows[i], res.Err))
+				errs.add(batchRows[i], res.Err.Error())
 			}
 			continue
 		}
@@ -774,6 +758,31 @@ func (s *Server) handleImportPools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"created": created,
 		"skipped": skipped,
-		"errors":  errs,
+		"errors":  errs.inRowOrder(),
 	})
+}
+
+// importRowErrors collects per-row import errors from every pass over the
+// CSV so the response lists them in row order, however the rows were batched.
+type importRowErrors []importRowError
+
+type importRowError struct {
+	row int
+	msg string
+}
+
+func (e *importRowErrors) add(row int, msg string) {
+	*e = append(*e, importRowError{row: row, msg: msg})
+}
+
+func (e importRowErrors) inRowOrder() []string {
+	if len(e) == 0 {
+		return nil
+	}
+	sort.SliceStable(e, func(i, j int) bool { return e[i].row < e[j].row })
+	out := make([]string, len(e))
+	for i, re := range e {
+		out[i] = fmt.Sprintf("row %d: %s", re.row, re.msg)
+	}
+	return out
 }

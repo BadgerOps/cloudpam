@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/getsentry/sentry-go"
 
@@ -111,6 +112,24 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
 }
 
+const maxStrictJSONBody = 64 << 10
+
+// decodeStrictJSON rejects unknown fields so a misspelled field ("apikey") is a
+// 400 rather than a silently dropped value.
+func (s *Server) decodeStrictJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxStrictJSONBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		detail := "expected a json object"
+		if msg := err.Error(); strings.HasPrefix(msg, "json: unknown field") {
+			detail = strings.TrimPrefix(msg, "json: ")
+		}
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", detail)
+		return false
+	}
+	return true
+}
+
 // writeStoreErr maps a storage-layer error to the appropriate HTTP status code
 // and writes the error response. It uses errors.Is() to detect sentinel errors
 // from the storage package, falling back to 500 Internal Server Error for unknown errors.
@@ -128,6 +147,15 @@ func (s *Server) writeStoreErr(ctx context.Context, w http.ResponseWriter, err e
 	default:
 		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
 	}
+}
+
+// writeDeleteErr answers a failed delete: 503 when it ran out of placement budget, 409 otherwise.
+func (s *Server) writeDeleteErr(ctx context.Context, w http.ResponseWriter, err error) {
+	if errors.Is(err, storage.ErrBusy) {
+		s.writeStoreErr(ctx, w, err)
+		return
+	}
+	s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
 }
 
 // logAudit logs an audit event for CRUD operations.

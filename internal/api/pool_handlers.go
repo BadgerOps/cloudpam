@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
+	"cloudpam/internal/planning"
 	"cloudpam/internal/storage"
 	"cloudpam/internal/validation"
 )
@@ -73,9 +75,19 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 			return
 		}
 
+		if parts[0] == "deleted" && len(parts) == 1 {
+			s.listDeletedPools(w, r)
+			return
+		}
+
 		id64, err := strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
 			s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool id", "")
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "restore" {
+			s.restorePoolHandler(w, r, id64)
 			return
 		}
 
@@ -139,15 +151,10 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
-			var ok bool
 			force := strings.ToLower(r.URL.Query().Get("force"))
-			if force == "1" || force == "true" || force == "yes" {
-				ok, err = s.store.DeletePoolCascade(ctx, id64)
-			} else {
-				ok, err = s.store.DeletePool(ctx, id64)
-			}
+			ok, err := s.deletePool(ctx, id64, force == "1" || force == "true" || force == "yes")
 			if err != nil {
-				s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
+				s.writeDeleteErr(ctx, w, err)
 				return
 			}
 			if !ok {
@@ -235,15 +242,10 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		// Get pool info before delete for audit logging
 		pool, poolFound, _ := s.store.GetPool(r.Context(), id64)
-		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
-		if force == "1" || force == "true" || force == "yes" {
-			ok, err = s.store.DeletePoolCascade(r.Context(), id64)
-		} else {
-			ok, err = s.store.DeletePool(r.Context(), id64)
-		}
+		ok, err := s.deletePool(r.Context(), id64, force == "1" || force == "true" || force == "yes")
 		if err != nil {
-			s.writeErr(r.Context(), w, http.StatusConflict, err.Error(), "")
+			s.writeDeleteErr(r.Context(), w, err)
 			return
 		}
 		if !ok {
@@ -307,6 +309,13 @@ func (s *Server) handlePoolStats(w http.ResponseWriter, r *http.Request, id int6
 		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
+
+	projection, err := planning.NewAnalysisService(s.store).ProjectPoolGrowth(ctx, id, *stats, time.Now())
+	if err != nil {
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+		return
+	}
+	stats.Projection = projection
 
 	writeJSON(w, http.StatusOK, stats)
 }
@@ -438,47 +447,6 @@ func (s *Server) listPools(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pools)
 }
 
-// poolFieldError describes a CreatePool field that fails the validation
-// POST /api/v1/pools applies. Msg and Detail map onto the API error body;
-// Error() joins them for per-row import reports.
-type poolFieldError struct {
-	Field  string
-	Value  string
-	Msg    string
-	Detail string
-}
-
-func (e *poolFieldError) Error() string {
-	if e.Detail != "" {
-		return e.Msg + ": " + e.Detail
-	}
-	return e.Msg
-}
-
-// validatePoolFields runs the field checks every pool creation path must
-// pass: name, CIDR (format, IPv4 only, canonical, reserved ranges, prefix
-// bounds) and the type, status and source enumerations when provided.
-// Containment, overlap and parent existence are placement concerns and are
-// handled by placePools.
-func validatePoolFields(in domain.CreatePool) *poolFieldError {
-	if err := validation.ValidateName(in.Name); err != nil {
-		return &poolFieldError{Field: "name", Value: in.Name, Msg: err.Error()}
-	}
-	if err := validation.ValidateCIDR(in.CIDR); err != nil {
-		return &poolFieldError{Field: "cidr", Value: in.CIDR, Msg: err.Error()}
-	}
-	if in.Type != "" && !domain.IsValidPoolType(in.Type) {
-		return &poolFieldError{Field: "type", Value: string(in.Type), Msg: "invalid pool type", Detail: fmt.Sprintf("valid types: %v", domain.ValidPoolTypes)}
-	}
-	if in.Status != "" && !domain.IsValidPoolStatus(in.Status) {
-		return &poolFieldError{Field: "status", Value: string(in.Status), Msg: "invalid pool status", Detail: fmt.Sprintf("valid statuses: %v", domain.ValidPoolStatuses)}
-	}
-	if in.Source != "" && !domain.IsValidPoolSource(in.Source) {
-		return &poolFieldError{Field: "source", Value: string(in.Source), Msg: "invalid pool source", Detail: fmt.Sprintf("valid sources: %v", domain.ValidPoolSources)}
-	}
-	return nil
-}
-
 func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := s.logger
@@ -491,27 +459,24 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 	in.Name = strings.TrimSpace(in.Name)
 	in.CIDR = strings.TrimSpace(in.CIDR)
 
-	// Field validation shared with CSV import (#350): name, CIDR, type,
-	// status and source are checked the same way on both paths.
-	if ferr := validatePoolFields(in); ferr != nil {
-		logger.WarnContext(ctx, "pools:create invalid "+ferr.Field, appendRequestID(ctx, []any{
-			ferr.Field, ferr.Value,
-			"reason", ferr.Error(),
-		})...)
-		s.writeErr(r.Context(), w, http.StatusBadRequest, ferr.Msg, ferr.Detail)
-		return
-	}
-
 	placed, err := s.placePools(ctx, siblingsOnly, []poolPlacement{{In: in}})
 	if err != nil {
 		s.writeStoreErr(r.Context(), w, err)
 		return
 	}
 	p, err := placed[0].Pool, placed[0].Err
+	var invalid *poolFieldError
 	var missing *missingParentError
 	var outside *containmentError
 	var overlap *placementConflict
 	switch {
+	case errors.As(err, &invalid):
+		logger.WarnContext(ctx, "pools:create invalid "+invalid.Field, appendRequestID(ctx, []any{
+			invalid.Field, invalid.Value,
+			"reason", invalid.Error(),
+		})...)
+		s.writeErr(r.Context(), w, http.StatusBadRequest, invalid.Msg, invalid.Detail)
+		return
 	case errors.As(err, &missing):
 		logger.WarnContext(ctx, "pools:create parent not found", appendRequestID(ctx, []any{
 			"parent_id", missing.ParentID,

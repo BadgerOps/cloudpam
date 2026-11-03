@@ -42,6 +42,7 @@ func (c *Collector) WithCredential(ctx context.Context, account domain.Account, 
 	provider := newAssumeRoleProvider(c.stsClient(cfg), role.RoleARN(), role.ExternalID(), fmt.Sprintf("cloudpam-%d", account.ID))
 	return &assumedRoleCollector{Collector: &Collector{
 		credsProvider: aws.NewCredentialsCache(provider),
+		limiter:       c.limiter,
 		loadConfig:    c.loadConfig,
 		newEC2Client:  func(cfg aws.Config) ec2API { return stsRedactingEC2{client: c.ec2Client(cfg)} },
 		newSTSClient:  c.newSTSClient,
