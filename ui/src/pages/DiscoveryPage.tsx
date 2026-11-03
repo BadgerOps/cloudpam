@@ -35,6 +35,7 @@ import StatusBadge from '../components/StatusBadge'
 import DiscoveryWizard from '../components/DiscoveryWizard'
 import { formatTimeAgo } from '../utils/format'
 import { POOL_TYPES } from '../utils/poolTypes'
+import { NETWORK_SCHEMA_POLICIES, networkSchemaPolicyLabel, networkSchemaPolicyName, type NetworkSchemaPolicyName } from '../utils/networkPolicy'
 import type {
   Account,
   CreatePoolRequest,
@@ -828,7 +829,8 @@ export function NetworkTab({
   const [objectPoolID, setObjectPoolID] = useState('')
   const [objectSourceDiscoveredID, setObjectSourceDiscoveredID] = useState('')
   const [conflictType, setConflictType] = useState('')
-  const [schemaPolicy, setSchemaPolicy] = useState('account_level')
+  // null applies the stored policy; a name is a request-scoped override.
+  const [schemaPolicyOverride, setSchemaPolicyOverride] = useState<NetworkSchemaPolicyName | null>(null)
   const [relationshipType, setRelationshipType] = useState('')
   const [relationshipState, setRelationshipState] = useState('')
   const [relationshipIDs, setRelationshipIDs] = useState<string[]>([])
@@ -864,6 +866,12 @@ export function NetworkTab({
   const { showToast } = useToast()
   const { hasPermission } = useAuth()
   const canDeleteObjects = hasPermission('discovery:update')
+  // The hierarchy, flat, and conflicts responses name the policy the server
+  // applied to them, so with no override the dropdown shows the policy behind
+  // the rows on screen. The objects and relationships rows are not evaluated
+  // under a policy, so those modes show the policy of whichever view is loaded.
+  const activePolicyView = mode === 'hierarchy' ? hierarchy : mode === 'flat' ? flat : mode === 'conflicts' ? conflicts : null
+  const schemaPolicy = schemaPolicyOverride ?? networkSchemaPolicyName((activePolicyView ?? hierarchy ?? flat ?? conflicts)?.schema_policy?.name)
 
   const filters = useMemo(() => ({
     account_id: selectedAccountId ?? undefined,
@@ -874,9 +882,9 @@ export function NetworkTab({
     pool_id: objectPoolID ? Number(objectPoolID) : undefined,
     source_discovered_id: objectSourceDiscoveredID || undefined,
     conflict_type: conflictType || undefined,
-    schema_policy: schemaPolicy,
+    schema_policy: schemaPolicyOverride ?? undefined,
     q: query || undefined,
-  }), [selectedAccountId, networkProvider, networkRegion, objectType, objectState, objectPoolID, objectSourceDiscoveredID, conflictType, schemaPolicy, query])
+  }), [selectedAccountId, networkProvider, networkRegion, objectType, objectState, objectPoolID, objectSourceDiscoveredID, conflictType, schemaPolicyOverride, query])
 
   const relationshipFilters = useMemo(() => ({
     account_id: selectedAccountId ?? undefined,
@@ -1137,14 +1145,14 @@ export function NetworkTab({
             />
           </div>
           <select
+            aria-label="Schema policy"
             value={schemaPolicy}
-            onChange={(e) => setSchemaPolicy(e.target.value)}
+            onChange={(e) => setSchemaPolicyOverride(e.target.value as NetworkSchemaPolicyName)}
             className="rounded border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           >
-            <option value="account_level">Account policy</option>
-            <option value="region_level">Region policy</option>
-            <option value="global">Global policy</option>
-            <option value="manual">Manual policy</option>
+            {NETWORK_SCHEMA_POLICIES.map((option) => (
+              <option key={option.name} value={option.name}>{option.label}</option>
+            ))}
           </select>
           {(mode === 'objects' || mode === 'hierarchy' || mode === 'flat' || mode === 'conflicts') && (
             <>
@@ -1311,7 +1319,7 @@ export function NetworkTab({
       <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
         <span>{rowCount} rows</span>
         {(mode === 'hierarchy' || mode === 'flat') && <span>{activeConflictCount ?? 0} issues</span>}
-        <span>{schemaPolicy.replace(/_/g, ' ')} policy, request-scoped</span>
+        <span>{networkSchemaPolicyLabel(schemaPolicy).toLowerCase()}, {schemaPolicyOverride ? 'request-scoped' : 'stored default'}</span>
         {selectedAccountId && <span>{accounts.find((a) => a.id === selectedAccountId)?.name || `Account ${selectedAccountId}`}</span>}
       </div>
 

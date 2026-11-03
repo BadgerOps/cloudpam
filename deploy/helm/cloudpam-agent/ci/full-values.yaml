@@ -4,6 +4,7 @@ config:
   accountId: 7
   agentName: ci-cluster-agent
   awsRegions: [us-east-1, us-west-2]
+  discoveryAwsRps: 5
   awsOrg:
     enabled: true
     roleName: CloudPAMDiscoveryRole

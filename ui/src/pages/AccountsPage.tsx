@@ -8,8 +8,10 @@ import StatusBadge from '../components/StatusBadge'
 import FormError from '../components/FormError'
 import AccountCredentialModal, { credentialProvider } from '../components/AccountCredentialModal'
 import type { CredentialProvider } from '../components/AccountCredentialModal'
-import type { Account, UpdateAccountRequest } from '../api/types'
+import type { Account, Pool, UpdateAccountRequest } from '../api/types'
 import { formatTimeAgo } from '../utils/format'
+import { get } from '../api/client'
+import { cascadePoolCount, deleteWithCascade, plural } from '../utils/cascadeDelete'
 
 interface AccountForm {
   key: string
@@ -337,7 +339,14 @@ export default function AccountsPage() {
   async function handleDelete(id: number, name: string) {
     if (!confirm(`Delete account "${name}"?`)) return
     try {
-      await deleteAccount(id)
+      const deleted = await deleteWithCascade(
+        force => deleteAccount(id, force),
+        async () => {
+          const count = cascadePoolCount((await get<Pool[]>('/api/v1/pools')) ?? [], id)
+          return `Account "${name}" is used by ${plural(count, 'pool')}. Delete with ${plural(count, 'pool')}?`
+        },
+      )
+      if (!deleted) return
       showToast('Account deleted', 'success')
       if (id === selectedId) setSearchParams({}, { replace: true })
     } catch (err) {

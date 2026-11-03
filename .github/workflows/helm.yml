@@ -40,3 +40,12 @@ jobs:
 
       - name: Lint, render, and check the env contract
         run: ./scripts/helm-check.sh
+        env:
+          HELM_CHECK_OUT: ${{ runner.temp }}/helm-check
+
+      - name: Validate the Vector sidecar config with the chart's Vector image
+        run: |
+          image="$(helm template cloudpam deploy/helm/cloudpam-server --set vector.enabled=true -s templates/deployment.yaml |
+            grep -oE 'image: "timberio/vector:[^"]+"' | cut -d'"' -f2)"
+          docker run --rm -v "$RUNNER_TEMP/helm-check/server-vector.toml:/etc/vector/vector.toml:ro" \
+            "$image" validate --no-environment /etc/vector/vector.toml

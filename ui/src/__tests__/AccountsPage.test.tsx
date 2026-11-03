@@ -3,10 +3,16 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AccountsPage from '../pages/AccountsPage'
 import { ApiRequestError } from '../api/client'
-import type { Account } from '../api/types'
+import type { Account, Pool } from '../api/types'
 
 const mockUseAccounts = vi.hoisted(() => vi.fn())
 const mockUseToast = vi.hoisted(() => vi.fn())
+const mockGet = vi.hoisted(() => vi.fn())
+
+vi.mock('../api/client', async () => ({
+  ...(await vi.importActual<typeof import('../api/client')>('../api/client')),
+  get: (...args: unknown[]) => mockGet(...args),
+}))
 
 vi.mock('../hooks/useAccounts', () => ({
   useAccounts: () => mockUseAccounts(),
@@ -254,5 +260,73 @@ describe('AccountsPage create', () => {
     const alert = await form.findByRole('alert')
     expect(alert.textContent).toContain('account key already exists')
     expect(field(form, 'Key (required)').value).toBe('aws:111111111111')
+  })
+})
+
+describe('AccountsPage cascade delete', () => {
+  function pool(id: number, parent_id: number | null, account_id: number | null): Pool {
+    return {
+      id, parent_id, account_id, name: `p${id}`, cidr: `10.${id}.0.0/16`,
+      type: 'vpc', status: 'active', source: 'manual',
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    }
+  }
+
+  const inUse = () => new ApiRequestError(409, { error: 'account in use by pools: conflict' })
+
+  function deleteRow(name: string) {
+    const row = screen.getByRole('cell', { name }).closest('tr')!
+    fireEvent.click(within(row).getByTitle('Delete'))
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    deleteAccount.mockReset()
+    mockGet.mockResolvedValue([pool(1, null, 1), pool(2, 1, null), pool(3, null, 2)])
+  })
+
+  it('offers to delete the pools the cascade would remove when the plain delete is refused', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    deleteAccount.mockRejectedValueOnce(inUse()).mockResolvedValueOnce(undefined)
+    renderPage()
+
+    deleteRow('prod-platform')
+
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith('Account deleted', 'success')
+    })
+    expect(confirm.mock.calls).toEqual([
+      ['Delete account "prod-platform"?'],
+      ['Account "prod-platform" is used by 2 pools. Delete with 2 pools?'],
+    ])
+    expect(deleteAccount.mock.calls).toEqual([[1, false], [1, true]])
+  })
+
+  it('keeps the account when the cascade is declined', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false)
+    deleteAccount.mockRejectedValueOnce(inUse())
+    renderPage()
+
+    deleteRow('prod-platform')
+
+    await waitFor(() => {
+      expect(confirm).toHaveBeenCalledTimes(2)
+    })
+    expect(deleteAccount).toHaveBeenCalledTimes(1)
+    expect(showToast).not.toHaveBeenCalled()
+  })
+
+  it('still reports any other delete failure', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    deleteAccount.mockRejectedValueOnce(new ApiRequestError(403, { error: 'forbidden' }))
+    renderPage()
+
+    deleteRow('prod-platform')
+
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith('forbidden', 'error')
+    })
+    expect(confirm).toHaveBeenCalledTimes(1)
+    expect(deleteAccount).toHaveBeenCalledTimes(1)
   })
 })

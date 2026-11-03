@@ -89,9 +89,12 @@ func TestConfigureAuditSyslogForwardingDisabledWithoutAddress(t *testing.T) {
 	base := audit.NewMemoryAuditLogger()
 	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: &bytes.Buffer{}})
 
-	got := configureAuditSyslogForwarding(logger, base, "0.15.0")
+	got, destinations := configureAuditSyslogForwarding(logger, base, "0.15.0")
 	if got != base {
 		t.Fatal("expected base audit logger when syslog address is not set")
+	}
+	if destinations != nil {
+		t.Fatalf("expected no destinations source when forwarding is off, got %+v", destinations())
 	}
 }
 
@@ -102,11 +105,18 @@ func TestConfigureAuditSyslogForwardingRejectsInvalidNetwork(t *testing.T) {
 	var logs bytes.Buffer
 	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: &logs})
 
-	got := configureAuditSyslogForwarding(logger, base, "0.15.0")
+	got, destinations := configureAuditSyslogForwarding(logger, base, "0.15.0")
 	if got != base {
 		t.Fatal("expected base audit logger when syslog network is invalid")
 	}
 	if !strings.Contains(logs.String(), "audit syslog forwarding disabled") {
 		t.Fatalf("expected disabled warning, got %s", logs.String())
+	}
+	reported := destinations()
+	if len(reported) != 1 {
+		t.Fatalf("expected the rejected destination to be reported, got %+v", reported)
+	}
+	if d := reported[0]; d.State != "invalid" || d.Address != "127.0.0.1:514" || d.Network != "http" || !strings.Contains(d.ConfigError, "unsupported syslog network") {
+		t.Fatalf("rejected destination = %+v", d)
 	}
 }

@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "modernc.org/sqlite" // CGO-less SQLite driver
+
+	"cloudpam/internal/storage/sqlitedb"
 )
 
 // SQLiteAuditLogger is a SQLite-backed implementation of AuditLogger.
@@ -23,12 +24,8 @@ type SQLiteAuditLogger struct {
 // NewSQLiteAuditLogger creates a new SQLite-backed audit logger.
 // It shares the same database as the main store.
 func NewSQLiteAuditLogger(dsn string) (*SQLiteAuditLogger, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(dsn)
 	if err != nil {
-		return nil, err
-	}
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`); err != nil {
-		_ = db.Close()
 		return nil, err
 	}
 	return &SQLiteAuditLogger{db: db, ownDB: true}, nil

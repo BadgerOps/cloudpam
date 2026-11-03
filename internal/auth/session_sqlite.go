@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite" // CGO-less SQLite driver
+	"cloudpam/internal/storage/sqlitedb"
 )
 
 // SQLiteSessionStore is a SQLite-backed implementation of SessionStore.
@@ -19,13 +19,9 @@ type SQLiteSessionStore struct {
 
 // NewSQLiteSessionStore creates a new SQLite-backed session store.
 func NewSQLiteSessionStore(dsn string) (*SQLiteSessionStore, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set pragmas: %w", err)
 	}
 	return &SQLiteSessionStore{db: db}, nil
 }
