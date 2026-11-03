@@ -146,7 +146,7 @@ curl -s -H "Authorization: Bearer cpam_..." http://<host>/api/v1/updates | jq '{
 
 The startup log reports the migration result; `cloudpam -migrate status` prints `schema_version=<n> applied=<n> latest=<n> app_version=<version>`.
 
-To roll back, redeploy the previous tag the same way. This is safe when the release you are leaving added no migration (compare `migrations/` between the two tags, or the release notes). When it did add one, the older binary starts against a newer schema without complaint and misbehaves later, so restore the pre-upgrade backup (runbook 1) instead of running the old binary on the new schema.
+To roll back, first check whether the release you are leaving added a migration (compare `migrations/` between the two tags, or the release notes). When it did not, redeploy the previous tag the same way. When it did, the older binary starts against the newer schema without complaint and misbehaves later, so stop the server, restore the pre-upgrade backup (runbook 1, steps 1 to 3) while it is stopped, and only then redeploy the previous tag. Do not start the old image first and restore afterwards; every request served in between runs on the incompatible schema.
 
 ### 2.2 Host-managed upgrade through the control directory
 
@@ -214,7 +214,7 @@ Symptoms and causes:
 | `completed` but the version did not change | Requirement 2 is not met | Compare `cat /var/lib/cloudpam/control/image.env` with the image `podman ps` shows; add the `EnvironmentFile` and `${CLOUDPAM_IMAGE}` from requirement 2 and restart |
 | `could not fetch releases` from `GET /api/v1/updates` | No GitHub API access, or rate-limited | Check egress; set `CLOUDPAM_GITHUB_API_ROOT` to a mirror if you run one |
 
-To roll back on the host, write the previous reference into `image.env` (`CLOUDPAM_IMAGE=ghcr.io/badgerops/cloudpam/server:<previous>`), pull it, and restart `cloudpam.service`. Then apply the schema rule from 2.1 and restore the pre-upgrade backup if the release you are leaving added a migration.
+To roll back on the host, apply the schema rule from 2.1 before anything restarts. Check whether the release you are leaving added a migration. If it did, `systemctl stop cloudpam.service` and restore the pre-upgrade backup (runbook 1, steps 1 to 3) while the service is stopped. Then write the previous reference into `image.env` (`CLOUDPAM_IMAGE=ghcr.io/badgerops/cloudpam/server:<previous>`), pull it, and `systemctl restart cloudpam.service`. The old image must not start until the schema it expects is in place.
 
 ## 3. Rotate the encryption key
 
