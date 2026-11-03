@@ -541,8 +541,8 @@ func TestPoolsAreCreatedOnlyByPlacement(t *testing.T) {
 				if !ok {
 					return true
 				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "CreatePool" {
-					t.Errorf("%s calls CreatePool directly; create pools through placePools or Server.PlacePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()))
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "CreatePool" || sel.Sel.Name == "RestorePool") {
+					t.Errorf("%s calls %s directly; create or restore pools through placePools, Server.PlacePool or Server.restorePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()), sel.Sel.Name)
 				}
 				return true
 			})
