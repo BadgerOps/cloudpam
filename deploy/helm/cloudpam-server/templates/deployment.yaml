@@ -18,6 +18,9 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- if .Values.vector.enabled }}
+        checksum/vector: {{ include (print $.Template.BasePath "/vector-configmap.yaml") . | sha256sum }}
+        {{- end }}
       labels:
         {{- include "cloudpam-server.selectorLabels" . | nindent 8 }}
     spec:
@@ -28,6 +31,32 @@ spec:
       serviceAccountName: {{ include "cloudpam-server.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.vector }}
+      {{- if .enabled }}
+      # A native sidecar starts before the server and stops after it, so audit
+      # events sent during startup and graceful shutdown still reach Vector.
+      initContainers:
+      - name: vector
+        restartPolicy: Always
+        securityContext:
+          {{- toYaml $.Values.securityContext | nindent 12 }}
+        image: "{{ .image.repository }}:{{ .image.tag }}"
+        imagePullPolicy: {{ .image.pullPolicy }}
+        args: ["--config", "/etc/vector/vector.toml"]
+        {{- with .env }}
+        env:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        resources:
+          {{- toYaml .resources | nindent 12 }}
+        volumeMounts:
+          - name: vector-config
+            mountPath: /etc/vector
+            readOnly: true
+          - name: vector-data
+            mountPath: /var/lib/vector
+      {{- end }}
+      {{- end }}
       containers:
       - name: server
         securityContext:
@@ -85,7 +114,7 @@ spec:
           {{- toYaml . | nindent 10 }}
           {{- end }}
         {{- end }}
-      {{- if or $sqlite .Values.extraVolumes }}
+      {{- if or $sqlite .Values.extraVolumes .Values.vector.enabled }}
       volumes:
         {{- if and $sqlite .Values.storage.sqlite.persistence.enabled }}
         - name: data
@@ -93,6 +122,13 @@ spec:
             claimName: {{ include "cloudpam-server.fullname" . }}-data
         {{- else if $sqlite }}
         - name: data
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.vector.enabled }}
+        - name: vector-config
+          configMap:
+            name: {{ include "cloudpam-server.fullname" . }}-vector
+        - name: vector-data
           emptyDir: {}
         {{- end }}
         {{- with .Values.extraVolumes }}

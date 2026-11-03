@@ -47,6 +47,26 @@ render cloudpam "$SERVER" server-full -f "$SERVER/ci/full-values.yaml"
 render cloudpam-agent "$AGENT" agent-full -f "$AGENT/ci/full-values.yaml"
 render cloudpam-agent "$AGENT" agent-explicit --set config.accountId=1 --set config.agentName=cluster-a-discovery --set apiKey=x
 
+render cloudpam "$SERVER" server-vector --set vector.enabled=true
+helm template cloudpam "$SERVER" --set vector.enabled=true -s templates/vector-configmap.yaml |
+	sed -n '/^  vector.toml: |$/,$p' | tail -n +2 | sed 's/^    //' >"$OUT/server-vector.toml"
+
+want_fail() {
+	local tag=$1 message=$2
+	shift 2
+	if helm template cloudpam "$SERVER" "$@" >"$OUT/$tag.txt" 2>&1; then
+		fail "server chart renders with $* (want failure)"
+	elif ! grep -q "$message" "$OUT/$tag.txt"; then
+		fail "server chart with $* does not explain: $message"
+	fi
+}
+want_fail vector-own-addr 'config.CLOUDPAM_AUDIT_SYSLOG_ADDR is set by the chart while vector.enabled' \
+	--set vector.enabled=true --set config.CLOUDPAM_AUDIT_SYSLOG_ADDR=syslog:514
+want_fail vector-own-network 'config.CLOUDPAM_AUDIT_SYSLOG_NETWORK is set by the chart while vector.enabled' \
+	--set vector.enabled=true --set config.CLOUDPAM_AUDIT_SYSLOG_NETWORK=udp
+want_fail vector-no-listener 'vector.config must keep a syslog source' \
+	--set vector.enabled=true --set-string 'vector.config=data_dir = "/var/lib/vector"'
+
 if helm template cloudpam-agent "$AGENT" --set apiKey=x >"$OUT/agent-missing-name.txt" 2>&1; then
 	fail "agent chart renders without required config.agentName"
 elif ! grep -q 'config.agentName is required' "$OUT/agent-missing-name.txt"; then
@@ -109,6 +129,20 @@ want_absent SQLITE_DSN "${sf[@]}"
 grep -q 'kind: PersistentVolumeClaim' "$OUT/server-full-all.yaml" && fail "postgres render still has a PVC"
 grep -q 'mountPath: /data' "${sf[1]}" && fail "postgres render still mounts /data"
 grep -q 'type: RollingUpdate' "${sf[1]}" || fail "postgres render is not strategy RollingUpdate"
+
+for rendered in "$OUT"/server-default-all.yaml "$OUT"/server-full-all.yaml; do
+	grep -q 'name: vector$' "$rendered" && fail "$rendered has a vector sidecar while vector.enabled is false"
+done
+sv=("$OUT/server-vector-configmap.yaml" "$OUT/server-vector-deployment.yaml")
+want_once CLOUDPAM_AUDIT_SYSLOG_ADDR "${sv[@]}"
+want_once CLOUDPAM_AUDIT_SYSLOG_NETWORK "${sv[@]}"
+grep -q '^  CLOUDPAM_AUDIT_SYSLOG_ADDR: 127.0.0.1:5514$' "${sv[0]}" || fail "vector render does not send audit events to 127.0.0.1:5514"
+grep -q '^  CLOUDPAM_AUDIT_SYSLOG_NETWORK: tcp$' "${sv[0]}" || fail "vector render does not send audit events over tcp"
+grep -q '^address = "127.0.0.1:5514"$' "$OUT/server-vector.toml" || fail "default vector config does not listen on 127.0.0.1:5514"
+grep -q '^      initContainers:$' "${sv[1]}" || fail "vector render has no initContainers"
+grep -q '^        restartPolicy: Always$' "${sv[1]}" || fail "vector sidecar is not a native sidecar (restartPolicy: Always)"
+grep -q 'name: cloudpam-cloudpam-server-vector$' "${sv[1]}" || fail "vector render does not mount the vector ConfigMap"
+grep -q 'checksum/vector:' "${sv[1]}" || fail "vector render does not roll the pod on a config change"
 
 want_once CLOUDPAM_API_KEY "${af[@]}"
 want_absent CLOUDPAM_AGENT_NAME "${af[@]}"

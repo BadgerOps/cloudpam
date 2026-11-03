@@ -63,6 +63,7 @@ config:
   CLOUDPAM_OIDC_CALLBACK_URL: ""     # none
 
   # Audit events as CEF over syslog. On when CLOUDPAM_AUDIT_SYSLOG_ADDR is set.
+  # vector.enabled sets ADDR and NETWORK to the sidecar; leave them empty then.
   CLOUDPAM_AUDIT_SYSLOG_ADDR: ""     # host:port
   CLOUDPAM_AUDIT_SYSLOG_NETWORK: ""  # udp (udp or tcp; no TLS)
   CLOUDPAM_AUDIT_SYSLOG_APP_NAME: "" # cloudpam
@@ -198,3 +199,35 @@ extraVolumes: []
 
 # Extra volume mounts
 extraVolumeMounts: []
+
+# Vector sidecar for audit events. Enabling it sets CLOUDPAM_AUDIT_SYSLOG_ADDR
+# to 127.0.0.1:5514 and CLOUDPAM_AUDIT_SYSLOG_NETWORK to tcp, so leave both
+# empty under config. Each audit event reaches Vector as CEF in an RFC 5424
+# syslog record. It runs as a native sidecar, which needs Kubernetes 1.29 or
+# later. Application logs are JSON on the server's stdout and do not pass
+# through the sidecar; collect them with a node agent such as
+# deploy/k8s/vector-daemonset.yaml.
+vector:
+  enabled: false
+  image:
+    repository: timberio/vector
+    tag: 0.59.0-distroless-libc
+    pullPolicy: IfNotPresent
+  # Vector TOML config. Empty uses files/vector.toml, which parses the CEF into
+  # .cef and prints each event as JSON on the sidecar's stdout. A config of
+  # your own must keep that file's syslog source (tcp on 127.0.0.1:5514) and
+  # adds the sinks, for example splunk_hec_logs or aws_cloudwatch_logs.
+  config: ""
+  # Raw env entries for the sidecar, for sink credentials, for example
+  #   - name: SPLUNK_HEC_TOKEN
+  #     valueFrom:
+  #       secretKeyRef: {name: splunk-hec, key: token}
+  # and reference them in config as "${SPLUNK_HEC_TOKEN}".
+  env: []
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 20m
+      memory: 64Mi
