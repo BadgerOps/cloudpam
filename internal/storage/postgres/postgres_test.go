@@ -2110,3 +2110,38 @@ func searchStr(s, substr string) bool {
 	}
 	return false
 }
+
+func TestPostgresAuditLoggerDeleteOlderThan(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	al := audit.NewPostgresAuditLoggerFromPool(testDB.pool)
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	for _, ts := range []time.Time{cutoff.Add(-48 * time.Hour), cutoff.Add(-time.Second), cutoff, cutoff.Add(time.Hour)} {
+		err := al.Log(ctx, &audit.AuditEvent{Timestamp: ts, Actor: "tester", ActorType: audit.ActorTypeAPIKey, Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1", StatusCode: 201})
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	deleted, err := al.DeleteOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+
+	events, total, err := al.List(ctx, audit.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 || len(events) != 2 {
+		t.Fatalf("remaining = %d/%d, want 2", len(events), total)
+	}
+	for _, e := range events {
+		if e.Timestamp.Before(cutoff) {
+			t.Errorf("event at %s survived a purge with cutoff %s", e.Timestamp, cutoff)
+		}
+	}
+}

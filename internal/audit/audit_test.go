@@ -637,3 +637,46 @@ func TestMemoryAuditLogger_List_NegativeOffsetEmptyLog(t *testing.T) {
 		t.Errorf("expected 0 events, got %d", len(events))
 	}
 }
+
+func TestMemoryAuditLogger_DeleteOlderThan(t *testing.T) {
+	logger := NewMemoryAuditLogger()
+	ctx := context.Background()
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	for i, ts := range []time.Time{
+		cutoff.Add(-48 * time.Hour),
+		cutoff.Add(-time.Nanosecond),
+		cutoff,
+		cutoff.Add(time.Hour),
+	} {
+		if err := logger.Log(ctx, &AuditEvent{ID: string(rune('a' + i)), Timestamp: ts, Action: ActionCreate, ResourceType: ResourcePool, ResourceID: "1"}); err != nil {
+			t.Fatalf("Log() error = %v", err)
+		}
+	}
+
+	deleted, err := logger.DeleteOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan() error = %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+
+	events, total, err := logger.List(ctx, ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if total != 2 || len(events) != 2 {
+		t.Fatalf("remaining = %d/%d, want 2", len(events), total)
+	}
+	for _, e := range events {
+		if e.Timestamp.Before(cutoff) {
+			t.Errorf("event %s at %s survived a purge with cutoff %s", e.ID, e.Timestamp, cutoff)
+		}
+	}
+
+	deleted, err = logger.DeleteOlderThan(ctx, cutoff)
+	if err != nil || deleted != 0 {
+		t.Fatalf("second purge = (%d, %v), want (0, nil)", deleted, err)
+	}
+}

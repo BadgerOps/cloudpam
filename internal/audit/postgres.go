@@ -169,6 +169,15 @@ func (s *PostgresAuditLogger) GetByResource(ctx context.Context, resourceType, r
 	return scanAuditEvents(rows)
 }
 
+// DeleteOlderThan removes every event with a timestamp before the cutoff.
+func (s *PostgresAuditLogger) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM audit_events WHERE organization_id = $1 AND timestamp < $2`, s.orgID, before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func scanAuditEvents(rows pgx.Rows) ([]*AuditEvent, error) {
 	var events []*AuditEvent
 	for rows.Next() {

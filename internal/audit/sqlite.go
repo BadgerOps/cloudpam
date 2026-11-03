@@ -175,6 +175,15 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 	return events, total, rows.Err()
 }
 
+// DeleteOlderThan removes every event with a timestamp before the cutoff.
+func (s *SQLiteAuditLogger) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM audit_logs WHERE timestamp < ?`, before.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // GetByResource retrieves audit events for a specific resource.
 func (s *SQLiteAuditLogger) GetByResource(ctx context.Context, resourceType, resourceID string) ([]*AuditEvent, error) {
 	// The resource_id filter is applied in SQL: filtering in Go after a capped

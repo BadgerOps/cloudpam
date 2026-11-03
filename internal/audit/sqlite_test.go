@@ -169,3 +169,36 @@ func TestSQLiteListFiltersByResourceID(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLiteAuditLoggerDeleteOlderThan(t *testing.T) {
+	ctx := context.Background()
+	logger := NewSQLiteAuditLoggerFromDB(newAuditTestDB(t))
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	for _, ts := range []time.Time{cutoff.Add(-48 * time.Hour), cutoff.Add(-time.Second), cutoff, cutoff.Add(time.Hour)} {
+		if err := logger.Log(ctx, &AuditEvent{Timestamp: ts, Actor: "tester", Action: ActionCreate, ResourceType: ResourcePool, ResourceID: "1"}); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	deleted, err := logger.DeleteOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+
+	events, total, err := logger.List(ctx, ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 || len(events) != 2 {
+		t.Fatalf("remaining = %d/%d, want 2", len(events), total)
+	}
+	for _, e := range events {
+		if e.Timestamp.Before(cutoff) {
+			t.Errorf("event at %s survived a purge with cutoff %s", e.Timestamp, cutoff)
+		}
+	}
+}

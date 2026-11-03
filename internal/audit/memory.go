@@ -144,6 +144,25 @@ func (m *MemoryAuditLogger) GetByResource(ctx context.Context, resourceType, res
 	return result, nil
 }
 
+// DeleteOlderThan removes every event with a timestamp before the cutoff.
+func (m *MemoryAuditLogger) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	kept := m.events[:0]
+	for _, e := range m.events {
+		if !e.Timestamp.Before(before) {
+			kept = append(kept, e)
+		}
+	}
+	deleted := int64(len(m.events) - len(kept))
+	for i := len(kept); i < len(m.events); i++ {
+		m.events[i] = nil
+	}
+	m.events = kept
+	return deleted, nil
+}
+
 // matchesFilters checks if an event matches the provided filter options.
 func matchesFilters(e *AuditEvent, opts ListOptions) bool {
 	if opts.Actor != "" && e.Actor != opts.Actor {

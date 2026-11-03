@@ -18,6 +18,27 @@ func (s *captureSink) Send(_ context.Context, event *AuditEvent) error {
 	return s.err
 }
 
+func TestForwardingAuditLoggerDelegatesDeleteOlderThan(t *testing.T) {
+	primary := &covStubLogger{deleted: 3}
+	logger := NewForwardingAuditLogger(primary, nil, nil)
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	deleted, err := logger.DeleteOlderThan(context.Background(), cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan: %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("deleted = %d, want 3", deleted)
+	}
+	if !primary.gotBefore.Equal(cutoff) {
+		t.Fatalf("primary cutoff = %s, want %s", primary.gotBefore, cutoff)
+	}
+
+	if _, err := (&ForwardingAuditLogger{}).DeleteOlderThan(context.Background(), cutoff); err == nil {
+		t.Fatal("expected an error without a primary logger")
+	}
+}
+
 func TestForwardingAuditLoggerForwardsPersistedEvent(t *testing.T) {
 	primary := NewMemoryAuditLogger()
 	sink := &captureSink{}

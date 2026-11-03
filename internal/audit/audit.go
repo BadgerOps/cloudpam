@@ -54,6 +54,10 @@ type AuditLogger interface {
 
 	// GetByResource retrieves audit events for a specific resource.
 	GetByResource(ctx context.Context, resourceType, resourceID string) ([]*AuditEvent, error)
+
+	// DeleteOlderThan removes every event with a timestamp before the cutoff
+	// and returns how many it removed.
+	DeleteOlderThan(ctx context.Context, before time.Time) (int64, error)
 }
 
 // Valid actions for audit events.
