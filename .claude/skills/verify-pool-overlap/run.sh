@@ -36,7 +36,8 @@ COVERED=(
   internal/api/pool_handlers.go internal/api/pool_placement.go internal/api/server.go internal/api/schema_handlers.go internal/api/cidr.go
   internal/storage/store.go internal/storage/sqlite/sqlite.go internal/storage/postgres/postgres.go
   internal/storage/placement.go internal/storage/postgres/placement.go
-  migrations/0001_init.sql migrations/postgres/001_core_schema.up.sql
+  migrations/0001_init.sql migrations/0023_partial_unique_live_rows.sql migrations/postgres/001_core_schema.up.sql
+  internal/api/restore_handlers.go internal/storage/postgres/restore.go internal/storage/sqlite/restore.go internal/storage/sqlite/write_lock.go
   internal/api/ai_handlers.go internal/api/export_handlers.go internal/api/discovery_handlers.go internal/planning/recommendations.go
 )
 if [ -n "$SYNC" ] && git -C "$REPO" cat-file -e "$SYNC^{commit}" 2>/dev/null; then

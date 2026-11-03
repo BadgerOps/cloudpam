@@ -73,6 +73,9 @@ func TestSettingsHandler_GetDefaults(t *testing.T) {
 	if len(settings.APIKeyAllowedScopesByRole["admin"]) == 0 {
 		t.Error("api_key_allowed_scopes_by_role should include admin defaults")
 	}
+	if settings.AuditRetentionDays != defaults.AuditRetentionDays {
+		t.Errorf("audit_retention_days: got %d, want %d", settings.AuditRetentionDays, defaults.AuditRetentionDays)
+	}
 }
 
 func TestSettingsHandler_UpdateValid(t *testing.T) {
@@ -90,6 +93,7 @@ func TestSettingsHandler_UpdateValid(t *testing.T) {
 		"api_key_default_expiry_days": 30,
 		"api_key_max_lifetime_days": 365,
 		"api_key_rotation_reminder_days": 14,
+		"audit_retention_days": 30,
 		"api_key_allowed_scopes_by_role": {
 			"admin": ["*"],
 			"operator": ["pools:read", "pools:write"],

@@ -23,6 +23,7 @@ type fakeAwareCollector struct {
 	identity  func(ctx context.Context) (string, error)
 	bindErr   error
 	boundErr  error
+	hostErr   error
 }
 
 func (c *fakeAwareCollector) Provider() string { return c.provider }

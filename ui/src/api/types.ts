@@ -139,6 +139,16 @@ export interface Account {
   deleted_at?: string
 }
 
+// ConnectivityTestResult is the response of POST /api/v1/accounts/{id}/test.
+export interface ConnectivityTestResult {
+  tested_at: string
+  status: 'ok' | 'failed'
+  error?: string
+  latency_ms: number
+  identity?: string
+  source: 'host' | 'stored_credential'
+}
+
 export interface CreateAccountRequest {
   key: string
   name: string
@@ -1111,6 +1121,51 @@ export interface ChatFallbackNotice {
   provider: string
   failed: { provider: string; error: string }[]
 }
+
+// --- Account credential types ---
+
+export type CredentialType = 'aws_assume_role' | 'gcp_service_account'
+
+export interface CredentialSummary {
+  role_arn?: string
+  has_external_id?: boolean
+  client_email?: string
+  project_id?: string
+}
+
+export type CredentialTestStatus = 'ok' | 'failed'
+
+export interface CredentialTest {
+  tested_at: string
+  status: CredentialTestStatus
+  error?: string
+}
+
+export interface CredentialTestResult extends CredentialTest {
+  identity?: string
+}
+
+export interface AccountCredential {
+  account_id: number
+  type: CredentialType
+  summary: CredentialSummary
+  last_test?: CredentialTest
+  created_at: string
+  updated_at: string
+}
+
+export interface AWSAssumeRoleInput {
+  role_arn: string
+  external_id?: string
+}
+
+export interface GCPServiceAccountInput {
+  key_json: string
+}
+
+export type PutAccountCredentialRequest =
+  | { type: 'aws_assume_role'; aws_assume_role: AWSAssumeRoleInput }
+  | { type: 'gcp_service_account'; gcp_service_account: GCPServiceAccountInput }
 
 // Audit forwarding targets (GET /api/v1/settings/log-destinations). Configured
 // from CLOUDPAM_AUDIT_SYSLOG_* at startup; the health fields are live.

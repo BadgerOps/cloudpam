@@ -2110,3 +2110,121 @@ func searchStr(s, substr string) bool {
 	}
 	return false
 }
+
+func TestPostgresAuditLoggerDeleteOlderThan(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	al := audit.NewPostgresAuditLoggerFromPool(testDB.pool)
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	for _, ts := range []time.Time{cutoff.Add(-48 * time.Hour), cutoff.Add(-time.Second), cutoff, cutoff.Add(time.Hour)} {
+		err := al.Log(ctx, &audit.AuditEvent{Timestamp: ts, Actor: "tester", ActorType: audit.ActorTypeAPIKey, Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1", StatusCode: 201})
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	deleted, err := al.DeleteOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+
+	events, total, err := al.List(ctx, audit.ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 || len(events) != 2 {
+		t.Fatalf("remaining = %d/%d, want 2", len(events), total)
+	}
+	for _, e := range events {
+		if e.Timestamp.Before(cutoff) {
+			t.Errorf("event at %s survived a purge with cutoff %s", e.Timestamp, cutoff)
+		}
+	}
+}
+
+func TestPostgresAuditListPagesTiedTimestampsWithoutGapsOrRepeats(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	al := audit.NewPostgresAuditLoggerFromPool(testDB.pool)
+	ts := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	const n = 200
+	for i := 0; i < n; i++ {
+		err := al.Log(ctx, &audit.AuditEvent{Timestamp: ts, Actor: "tester", ActorType: audit.ActorTypeAPIKey, Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1", StatusCode: 201})
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+	seen := map[string]bool{}
+	for offset := 0; offset < n; offset += 7 {
+		events, _, err := al.List(ctx, audit.ListOptions{Limit: 7, Offset: offset})
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		for _, e := range events {
+			if seen[e.ID] {
+				t.Fatalf("event %s returned on two pages", e.ID)
+			}
+			seen[e.ID] = true
+		}
+	}
+	if len(seen) != n {
+		t.Fatalf("paged through %d distinct events, want %d", len(seen), n)
+	}
+}
+
+func TestPostgresAuditListCursorPagesAcrossAMidListingInsert(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	al := audit.NewPostgresAuditLoggerFromPool(testDB.pool)
+	base := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	want := map[string]bool{}
+	for i := 0; i < 40; i++ {
+		e := &audit.AuditEvent{Timestamp: base.Add(time.Duration(max(i-9, 0)) * time.Second), Actor: "tester", ActorType: audit.ActorTypeAPIKey, Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1", StatusCode: 201}
+		if err := al.Log(ctx, e); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+		want[e.ID] = true
+	}
+
+	seen := map[string]bool{}
+	opts := audit.ListOptions{Limit: 7}
+	for page := 0; ; page++ {
+		events, total, err := al.List(ctx, opts)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if page == 0 && total != 40 {
+			t.Fatalf("first page total = %d, want 40", total)
+		}
+		if page > 0 && total != 0 {
+			t.Fatalf("page %d total = %d with SkipCount, want 0", page, total)
+		}
+		if len(events) == 0 {
+			break
+		}
+		for _, e := range events {
+			if seen[e.ID] {
+				t.Fatalf("event %s returned on two pages", e.ID)
+			}
+			seen[e.ID] = true
+		}
+		if page == 0 {
+			late := &audit.AuditEvent{Timestamp: base.Add(20 * time.Second), Actor: "tester", ActorType: audit.ActorTypeAPIKey, Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1", StatusCode: 201}
+			if err := al.Log(ctx, late); err != nil {
+				t.Fatalf("Log late: %v", err)
+			}
+		}
+		last := events[len(events)-1]
+		opts.After = &audit.Cursor{Timestamp: last.Timestamp, ID: last.ID}
+		opts.SkipCount = true
+	}
+	for id := range want {
+		if !seen[id] {
+			t.Fatalf("event %s logged before paging began was never returned", id)
+		}
+	}
+}

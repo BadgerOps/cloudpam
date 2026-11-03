@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
-import { useAudit } from '../hooks/useAudit'
+import { RefreshCw, ChevronDown, ChevronUp, Download } from 'lucide-react'
+import { useAudit, auditExportUrl } from '../hooks/useAudit'
 import { usePagedFilters } from '../hooks/usePagedFilters'
 import Pager from '../components/Pager'
 import { formatTimeAgo, getActionBadgeClass } from '../utils/format'
@@ -29,13 +29,31 @@ export default function AuditPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Audit Log</h1>
-        <button
-          onClick={loadEvents}
-          className="inline-flex items-center gap-1.5 px-3 py-2 border dark:border-gray-700 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex gap-2">
+          <a
+            href={auditExportUrl('csv', filters.action || undefined, filters.resource || undefined)}
+            download
+            className="inline-flex items-center gap-1.5 px-3 py-2 border dark:border-gray-700 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50"
+          >
+            <Download className="w-4 h-4" />
+            Export CSV
+          </a>
+          <a
+            href={auditExportUrl('json', filters.action || undefined, filters.resource || undefined)}
+            download
+            className="inline-flex items-center gap-1.5 px-3 py-2 border dark:border-gray-700 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50"
+          >
+            <Download className="w-4 h-4" />
+            Export JSON
+          </a>
+          <button
+            onClick={loadEvents}
+            className="inline-flex items-center gap-1.5 px-3 py-2 border dark:border-gray-700 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

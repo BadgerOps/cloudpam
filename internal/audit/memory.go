@@ -97,6 +97,20 @@ func (m *MemoryAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 	}
 
 	total := len(filtered)
+	if opts.SkipCount {
+		total = 0
+	}
+	if opts.After != nil {
+		// Events are kept in insertion order, so the cursor is a position.
+		next := len(filtered)
+		for i, e := range filtered {
+			if e.ID == opts.After.ID {
+				next = i + 1
+				break
+			}
+		}
+		filtered = filtered[next:]
+	}
 
 	// Apply pagination
 	if opts.Limit <= 0 {
@@ -142,6 +156,25 @@ func (m *MemoryAuditLogger) GetByResource(ctx context.Context, resourceType, res
 	}
 
 	return result, nil
+}
+
+// DeleteOlderThan removes every event with a timestamp before the cutoff.
+func (m *MemoryAuditLogger) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	kept := m.events[:0]
+	for _, e := range m.events {
+		if !e.Timestamp.Before(before) {
+			kept = append(kept, e)
+		}
+	}
+	deleted := int64(len(m.events) - len(kept))
+	for i := len(kept); i < len(m.events); i++ {
+		m.events[i] = nil
+	}
+	m.events = kept
+	return deleted, nil
 }
 
 // matchesFilters checks if an event matches the provided filter options.
