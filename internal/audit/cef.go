@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cloudpam/internal/domain"
 )
 
 const (
@@ -148,6 +150,7 @@ type SyslogSink struct {
 	formatter CEFFormatter
 	timeout   time.Duration
 	pid       int
+	health    deliveryHealth
 }
 
 // NewSyslogSink creates a syslog sink for CEF audit events.
@@ -187,7 +190,8 @@ func NewSyslogSink(cfg SyslogSinkConfig) (*SyslogSink, error) {
 	}, nil
 }
 
-// Send sends a formatted audit event to the configured syslog endpoint.
+// Send sends a formatted audit event to the configured syslog endpoint and
+// records the outcome for Destination.
 func (s *SyslogSink) Send(ctx context.Context, event *AuditEvent) error {
 	if event == nil {
 		return nil
@@ -196,7 +200,25 @@ func (s *SyslogSink) Send(ctx context.Context, event *AuditEvent) error {
 	if payload == "" {
 		return nil
 	}
+	err := s.deliver(ctx, event, payload)
+	s.health.record(time.Now().UTC(), err)
+	return err
+}
 
+// Destination reports the sink configuration and its delivery health.
+func (s *SyslogSink) Destination() domain.LogDestination {
+	d := domain.LogDestination{
+		Type:    "syslog",
+		Format:  "cef",
+		Network: s.network,
+		Address: s.address,
+		AppName: s.appName,
+	}
+	s.health.fill(&d)
+	return d
+}
+
+func (s *SyslogSink) deliver(ctx context.Context, event *AuditEvent, payload string) error {
 	dialer := net.Dialer{Timeout: s.timeout}
 	conn, err := dialer.DialContext(ctx, s.network, s.address)
 	if err != nil {
