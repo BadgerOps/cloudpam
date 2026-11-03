@@ -98,6 +98,8 @@ Until #338, CSV import, AI apply-plan, both discovery imports and recommendation
 - `POST /api/v1/discovery/import/apply` and `POST /api/v1/discovery/import` (`internal/api/discovery_handlers.go`) decide link-or-create first, link to existing pools at once, place every new pool in one `siblingsOnly` batch, and link the new pools only after the placement has committed: on PostgreSQL `discovered_resources.pool_id` references `pools`.
 - `POST /api/v1/recommendations/{id}/apply` reaches placement through `planning.PoolPlacer`, which `Server.PlacePool` implements: one `siblingsOnly` entry. It marks the recommendation applied only after `PlacePool` returns, so the `applied_pool_id` foreign key sees a committed pool.
 
+- `POST /api/v1/pools/{id}/restore` (`restorePoolHandler` in `internal/api/restore_handlers.go`, #270) brings a soft-deleted pool back through `Server.restorePool` (`pool_placement.go`), which takes both locks through `withPlacement`, the helper `placePools` also uses. Under them it runs `ListPools`, then `poolIndex.admit` on the pool's parent and CIDR, then `PlacementStore.RestorePool`, so the restore is `ListAndCheck` followed by `Insert` or `TxInsert`. A deleted parent or an overlapping sibling is a `409`; an exact duplicate is refused by the same unique indexes. `TestPoolsAreCreatedOnlyByPlacement` also fails on a direct `RestorePool` call outside `pool_placement.go`.
+
 Excluded because they cannot change a CIDR: `PATCH /api/v1/pools/{id}` (`updatePool` accepts no `cidr` field).
 
 ## Not covered

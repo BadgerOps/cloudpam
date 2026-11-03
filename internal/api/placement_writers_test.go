@@ -546,8 +546,8 @@ func TestPoolsAreCreatedAndDeletedOnlyUnderThePlacementLock(t *testing.T) {
 					return true
 				}
 				switch sel.Sel.Name {
-				case "CreatePool":
-					t.Errorf("%s calls CreatePool directly; create pools through placePools or Server.PlacePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()))
+				case "CreatePool", "RestorePool":
+					t.Errorf("%s calls %s directly; create or restore pools through placePools, Server.PlacePool or Server.restorePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()), sel.Sel.Name)
 				case "DeletePool", "DeletePoolCascade", "DeleteAccountCascade":
 					t.Errorf("%s calls %s directly; delete through Server.deletePool or Server.deleteAccountCascade so a concurrent placement cannot put a child under the deleted pool", fset.Position(call.Pos()), sel.Sel.Name)
 				}

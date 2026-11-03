@@ -412,11 +412,11 @@ When adding endpoints:
 ### Frontend Development
 
 - Unified React/Vite/TypeScript SPA in `ui/` directory
-- Uses `react-router-dom` for client-side routing (21 page components in `ui/src/pages/`)
+- Uses `react-router-dom` for client-side routing (22 page components in `ui/src/pages/`)
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` — 25 hooks: useAIPlanner, useAISettings, useAccounts, useApiKeys, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useNetwork, useOIDCAdmin, useOIDCProviders, usePendingAction, usePoolAnalysis, usePools, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
+- API hooks in `ui/src/hooks/` — 26 hooks: useAIPlanner, useAISettings, useAccounts, useApiKeys, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useNetwork, useOIDCAdmin, useOIDCProviders, usePendingAction, usePoolAnalysis, usePools, useRecentlyDeleted, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)

@@ -135,6 +135,34 @@ func (s *Server) deleteAccountCascade(ctx context.Context, id int64) (bool, erro
 	return ok, err
 }
 
+// restorePool brings a soft-deleted pool back under the placement lock, checked against
+// its live parent and siblings the way POST /api/v1/pools checks a new pool. A deleted
+// parent or an overlapping sibling is ErrConflict.
+func (s *Server) restorePool(ctx context.Context, deleted domain.Pool) (domain.Pool, bool, error) {
+	var p domain.Pool
+	var ok bool
+	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		live, err := ps.ListPools(work)
+		if err != nil {
+			return err
+		}
+		in := domain.CreatePool{Name: deleted.Name, CIDR: deleted.CIDR, ParentID: deleted.ParentID}
+		var missing *missingParentError
+		var overlap *placementConflict
+		switch err := indexPools(live).admit(0, "", in); {
+		case errors.As(err, &missing):
+			return fmt.Errorf("parent pool %d is deleted; restore it first: %w", missing.ParentID, storage.ErrConflict)
+		case errors.As(err, &overlap):
+			return fmt.Errorf("pool %q (%s) overlaps with live pool #%d (%s): %w", deleted.Name, deleted.CIDR, overlap.With.ID, overlap.With.CIDR, storage.ErrConflict)
+		case err != nil:
+			return fmt.Errorf("%w: %w", storage.ErrConflict, err)
+		}
+		p, ok, err = ps.RestorePool(work, deleted.ID)
+		return err
+	})
+	return p, ok, err
+}
+
 // withPlacementLock runs fn holding placeGate and, on a store several processes share, the store's
 // placement lock, all within placementBudget. fn must use work and ps for every read and write.
 func (s *Server) withPlacementLock(ctx context.Context, fn func(work context.Context, ps storage.PlacementStore) error) error {
@@ -155,7 +183,7 @@ func (s *Server) withPlacementLock(ctx context.Context, fn func(work context.Con
 	}))
 }
 
-// placementGate serializes placements and pool deletes inside one process. Unlike a mutex, a request
+// placementGate serializes placements, restores and pool deletes inside one process. Unlike a mutex, a request
 // waiting for it gives up when its context ends, so the placement budget also bounds the
 // time spent queued behind another placement.
 type placementGate struct {

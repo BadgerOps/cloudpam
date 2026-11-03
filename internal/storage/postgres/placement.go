@@ -39,6 +39,15 @@ var _ storage.PlacementLocker = (*Store)(nil)
 // the lock, the reads, and the inserts share one session. If that session ends, PostgreSQL drops
 // the lock and the inserts together.
 func (s *Store) WithPlacementLock(ctx context.Context, fn func(storage.PlacementStore) error) error {
+	return s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
+		return fn(placementTx{tx: tx, orgID: s.orgID, work: work, caller: ctx})
+	})
+}
+
+// withPlacementTx runs fn in a transaction holding the organization's placement lock. Every
+// write that makes a pool live or deleted takes it, so a restore and a delete of its parent or
+// account cannot each pass a liveness check the other is about to falsify.
+func (s *Store) withPlacementTx(ctx context.Context, fn func(work context.Context, tx pgx.Tx) error) error {
 	work, cancel := context.WithTimeout(ctx, placementDeadline)
 	defer cancel()
 
@@ -58,7 +67,7 @@ func (s *Store) WithPlacementLock(ctx context.Context, fn func(storage.Placement
 	if _, err := tx.Exec(work, `SELECT pg_advisory_xact_lock(hashtextextended('cloudpam/pool-placement/' || $1::text, 0))`, s.orgID); err != nil {
 		return placementBusy(ctx, err)
 	}
-	if err := fn(placementTx{tx: tx, orgID: s.orgID, work: work, caller: ctx}); err != nil {
+	if err := fn(work, tx); err != nil {
 		return placementBusy(ctx, err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -120,6 +129,13 @@ type placementTx struct {
 
 func (t placementTx) ListPools(context.Context) ([]domain.Pool, error) {
 	return listPools(t.work, t.tx, t.orgID)
+}
+
+// RestorePool needs no savepoint: a restore is the placement's only write, and its
+// error rolls the whole transaction back.
+func (t placementTx) RestorePool(_ context.Context, id int64) (domain.Pool, bool, error) {
+	p, ok, err := restorePool(t.work, t.tx, t.orgID, id)
+	return p, ok, placementBusy(t.caller, err)
 }
 
 // CreatePool runs each insert in its own savepoint. A failed INSERT aborts the whole PostgreSQL

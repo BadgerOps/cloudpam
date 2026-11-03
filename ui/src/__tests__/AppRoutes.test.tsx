@@ -26,6 +26,7 @@ vi.mock('../pages/DashboardPage', () => ({ default: () => <div>Dashboard page</d
 vi.mock('../pages/PoolsPage', () => ({ default: () => <div>Pools page</div> }))
 vi.mock('../pages/BlocksPage', () => ({ default: () => <div>Blocks page</div> }))
 vi.mock('../pages/AccountsPage', () => ({ default: () => <div>Accounts page</div> }))
+vi.mock('../pages/RecentlyDeletedPage', () => ({ default: () => <div>Recently deleted page</div> }))
 vi.mock('../pages/AuditPage', () => ({ default: () => <div>Audit page</div> }))
 vi.mock('../pages/DiscoveryPage', () => ({ default: () => <div>Discovery page</div> }))
 vi.mock('../pages/SchemaPage', () => ({ default: () => <div>Schema page</div> }))
