@@ -16,7 +16,9 @@ func allocationCIDRs(items []domain.Recommendation) []string {
 			out = append(out, r.SuggestedCIDR)
 		}
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool {
+		return netip.MustParsePrefix(out[i]).Addr().Less(netip.MustParsePrefix(out[j]).Addr())
+	})
 	return out
 }
 
