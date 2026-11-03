@@ -1,6 +1,6 @@
 # CloudPAM Smart Planning Architecture
 
-> **Target architecture.** Gap analysis, fragmentation, compliance, allocation/compliance recommendations, the schema wizard, and optional OpenAI-compatible chat/apply-plan **are implemented**. The diagram below still shows capabilities that are not: Azure ARM collector, Excel import, growth projections, migration paths, what-if/risk analysis, on-prem SNMP, DNS, and CMDB. Analysis has no UI. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+> **Target architecture.** Gap analysis, fragmentation, compliance, allocation/compliance recommendations, the schema wizard, and optional OpenAI-compatible chat/apply-plan **are implemented**. Growth projections are implemented as a linear fit over utilization snapshots (section 2.4). The diagram below still shows capabilities that are not: Azure ARM collector, Excel import, migration paths, what-if/risk analysis, on-prem SNMP, DNS, and CMDB. Analysis has no UI. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 ## Overview
 
@@ -90,7 +90,7 @@ Configurable rules including: minimum/maximum subnet sizes, reserved IP range pr
 
 ### 2.4 Growth Projection
 
-Predicts future address needs using linear regression, seasonal adjustment, and event-based factors.
+`GET /api/v1/pools/{id}/stats` returns a `projection` next to the utilization figures. `internal/planning/projection.go` fits an ordinary least-squares line through the pool's utilization snapshots from the last 90 days, with the live stats as the newest point, and reports the growth rate in IPs per day, the runway in days, the exhaustion date, and the projected usage 3, 6 and 12 months out. A fit needs at least 7 days of history (`insufficient_history` otherwise) and a positive slope (`no_growth` otherwise). Seasonal adjustment and event-based factors are not implemented. Stores without snapshot history omit the field, and no job records snapshots yet (see #266).
 
 ## 3. Recommendation Generator
 
