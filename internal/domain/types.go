@@ -134,8 +134,9 @@ type GrowthProjection struct {
 	SampleCount int              `json:"sample_count"`
 	// GrowthPerDay is the fitted slope in IPs per day; negative means shrinking.
 	GrowthPerDay float64 `json:"growth_ips_per_day"`
-	// RunwayDays and ExhaustionDate are set only when Status is ok.
-	RunwayDays     *float64         `json:"runway_days,omitempty"`
+	// RunwayDays is set only when Status is ok.
+	RunwayDays *float64 `json:"runway_days,omitempty"`
+	// ExhaustionDate is set when Status is ok and the runway is at most 100 years.
 	ExhaustionDate *time.Time       `json:"exhaustion_date,omitempty"`
 	Forecast       []ProjectedUsage `json:"forecast"`
 }

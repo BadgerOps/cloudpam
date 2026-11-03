@@ -1,6 +1,7 @@
 package planning
 
 import (
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
@@ -143,5 +144,49 @@ func TestProjectGrowthFullPool(t *testing.T) {
 	}
 	if !proj.ExhaustionDate.Equal(projNow) {
 		t.Errorf("exhaustion_date = %v, want now", proj.ExhaustionDate)
+	}
+}
+
+func TestProjectGrowthLongRunwayOmitsExhaustionDate(t *testing.T) {
+	// A /8 gaining one /24 every 30 days has thousands of years of runway.
+	points := []UsagePoint{
+		{At: daysAgo(60), UsedIPs: 0},
+		{At: daysAgo(30), UsedIPs: 256},
+		{At: daysAgo(0), UsedIPs: 512},
+	}
+	proj := ProjectGrowth(points, 1<<24, projNow)
+
+	if proj.Status != domain.ProjectionOK {
+		t.Fatalf("status = %q, want ok", proj.Status)
+	}
+	wantRunway := float64(1<<24-512) / (256.0 / 30)
+	if proj.RunwayDays == nil || math.Abs(*proj.RunwayDays-wantRunway) > 1e-3 {
+		t.Fatalf("runway_days = %v, want %v", proj.RunwayDays, wantRunway)
+	}
+	if proj.ExhaustionDate != nil {
+		t.Errorf("exhaustion_date = %v, want omitted beyond the date horizon", proj.ExhaustionDate)
+	}
+	if _, err := json.Marshal(proj); err != nil {
+		t.Errorf("marshal projection: %v", err)
+	}
+}
+
+func TestProjectGrowthExhaustionDateWithinHorizon(t *testing.T) {
+	// One IP per day into a pool with 50 years of free space.
+	free := int64(50 * 365)
+	points := []UsagePoint{
+		{At: daysAgo(10), UsedIPs: 0},
+		{At: daysAgo(0), UsedIPs: 10},
+	}
+	proj := ProjectGrowth(points, free+10, projNow)
+
+	if proj.ExhaustionDate == nil {
+		t.Fatal("exhaustion_date omitted, want a date about 50 years out")
+	}
+	if !proj.ExhaustionDate.After(projNow) {
+		t.Errorf("exhaustion_date = %v, want after now", proj.ExhaustionDate)
+	}
+	if want := projNow.AddDate(0, 0, int(free)); proj.ExhaustionDate.Sub(want).Abs() > 24*time.Hour {
+		t.Errorf("exhaustion_date = %v, want about %v", proj.ExhaustionDate, want)
 	}
 }

@@ -90,7 +90,7 @@ Configurable rules including: minimum/maximum subnet sizes, reserved IP range pr
 
 ### 2.4 Growth Projection
 
-`GET /api/v1/pools/{id}/stats` returns a `projection` next to the utilization figures. `internal/planning/projection.go` fits an ordinary least-squares line through the pool's utilization snapshots from the last 90 days, with the live stats as the newest point, and reports the growth rate in IPs per day, the runway in days, the exhaustion date, and the projected usage 3, 6 and 12 months out. A fit needs at least 7 days of history (`insufficient_history` otherwise) and a positive slope (`no_growth` otherwise). Seasonal adjustment and event-based factors are not implemented. Stores without snapshot history omit the field, and no job records snapshots yet (see #266).
+`GET /api/v1/pools/{id}/stats` returns a `projection` next to the utilization figures. `internal/planning/projection.go` fits an ordinary least-squares line through the pool's utilization snapshots from the last 90 days, with the live stats as the newest point, and reports the growth rate in IPs per day, the runway in days, the exhaustion date (omitted when the runway passes 100 years), and the projected usage 3, 6 and 12 months out. A fit needs at least 7 days of history (`insufficient_history` otherwise) and a positive slope (`no_growth` otherwise). Seasonal adjustment and event-based factors are not implemented. Stores without snapshot history omit the field, and no job records snapshots yet (see #266).
 
 ## 3. Recommendation Generator
 

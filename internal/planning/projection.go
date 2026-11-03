@@ -16,6 +16,10 @@ const minHistoryDays = 7
 
 const daysPerMonth = 30.4375
 
+// maxExhaustionDays bounds the exhaustion date well inside time.Duration's
+// roughly 292-year range; a longer runway gets no date.
+const maxExhaustionDays = 100 * 365
+
 var forecastMonths = []int{3, 6, 12}
 
 // UsagePoint is one observation of a pool's used address count.
@@ -63,10 +67,12 @@ func ProjectGrowth(points []UsagePoint, totalIPs int64, now time.Time) domain.Gr
 
 	available := math.Max(float64(totalIPs-current), 0)
 	runway := available / rate
-	exhaustion := now.Add(time.Duration(runway * float64(24*time.Hour)))
 	proj.Status = domain.ProjectionOK
 	proj.RunwayDays = &runway
-	proj.ExhaustionDate = &exhaustion
+	if runway <= maxExhaustionDays {
+		exhaustion := now.Add(time.Duration(runway * float64(24*time.Hour)))
+		proj.ExhaustionDate = &exhaustion
+	}
 	return proj
 }
 
