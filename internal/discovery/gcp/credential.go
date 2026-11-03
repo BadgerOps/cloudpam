@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"golang.org/x/oauth2"
@@ -51,8 +52,8 @@ func (c *Collector) WithCredential(ctx context.Context, _ domain.Account, cred d
 	}, nil
 }
 
-// tokenTransport carries the binding context into the token request and keeps the
-// transport error, which the oauth2 jwt source otherwise flattens into text.
+// tokenTransport adds the binding context to the token request's own context and
+// keeps the transport error, which the oauth2 jwt source otherwise flattens into text.
 type tokenTransport struct {
 	ctx     context.Context
 	base    http.RoundTripper
@@ -60,9 +61,28 @@ type tokenTransport struct {
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(req.WithContext(t.ctx))
+	ctx, cancel := context.WithCancel(req.Context())
+	stop := context.AfterFunc(t.ctx, cancel)
+	release := func() { stop(); cancel() }
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
 	t.lastErr = err
-	return resp, err
+	if err != nil {
+		release()
+		return nil, err
+	}
+	resp.Body = releaseOnClose{ReadCloser: resp.Body, release: release}
+	return resp, nil
+}
+
+// releaseOnClose keeps the request context alive until the caller has read the body.
+type releaseOnClose struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b releaseOnClose) Close() error {
+	defer b.release()
+	return b.ReadCloser.Close()
 }
 
 type serviceAccountCollector struct {
