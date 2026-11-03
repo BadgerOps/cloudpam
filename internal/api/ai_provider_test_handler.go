@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"cloudpam/internal/audit"
@@ -45,14 +46,36 @@ func (ss *SettingsServer) handleTestAIProvider(w http.ResponseWriter, r *http.Re
 		ss.logAudit(ctx, audit.ActionTest, audit.ResourceSettings, aiProviderSettingsID, aiProviderSettingsID, status)
 	}()
 
-	if provider == nil || !provider.Available() {
+	// Each link is tested on its own, the fallbacks concurrently with the
+	// primary, so the whole test stays within one provider budget.
+	var links []llm.Link
+	if provider != nil {
+		links = llm.Links(provider, resolved.Config.Label())
+	}
+	var wg sync.WaitGroup
+	fallbackResults := make([]domain.AIFallbackTestResult, len(resolved.Fallbacks))
+	for i, fb := range resolved.Fallbacks {
+		if i+1 >= len(links) {
+			break
+		}
+		wg.Add(1)
+		go func(i int, fb llm.ResolvedFallback, p llm.Provider) {
+			defer wg.Done()
+			fallbackResults[i] = runAIFallbackTest(ctx, p, fb)
+		}(i, fb, links[i+1].Provider)
+	}
+	if len(links) == 0 || !links[0].Provider.Available() {
 		resp.State = domain.AIProviderStateNotConfigured
 		resp.Error = "no provider configured"
+		wg.Wait()
+		resp.Fallbacks = fallbackResults
 		writeJSON(w, status, resp)
 		return
 	}
 
-	runAIProviderTest(ctx, provider, &resp)
+	runAIProviderTest(ctx, links[0].Provider, &resp)
+	wg.Wait()
+	resp.Fallbacks = fallbackResults
 	if ctx.Err() != nil {
 		// The client went away; the result may reflect the cancellation
 		// rather than the provider, so it is returned but not stored.
@@ -100,6 +123,33 @@ func runAIProviderTest(ctx context.Context, provider llm.Provider, resp *domain.
 		}
 	}
 	resp.StreamingSupported = received > 0 && !failed
+}
+
+// runAIFallbackTest runs one short completion against a fallback link and
+// reduces the outcome the way runAIProviderTest does. The result is reported,
+// never stored.
+func runAIFallbackTest(ctx context.Context, p llm.Provider, fb llm.ResolvedFallback) domain.AIFallbackTestResult {
+	out := domain.AIFallbackTestResult{
+		ID:       fb.ID,
+		Provider: fb.Config.Provider,
+		Endpoint: llm.RedactEndpoint(fb.Config.Endpoint),
+		Model:    fb.Config.Model,
+	}
+	if !p.Available() {
+		out.Error = "no api key configured"
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, aiProviderTestTimeout)
+	defer cancel()
+	start := time.Now()
+	_, err := p.Complete(ctx, aiProviderTestMessages, llm.Options{MaxTokens: 8})
+	out.LatencyMS = time.Since(start).Milliseconds()
+	if err != nil {
+		out.Error = llm.DiagnoseError(err, aiProviderTestTimeout)
+		return out
+	}
+	out.OK = true
+	return out
 }
 
 // recordAIProviderTest stores the outcome on the document read before the
