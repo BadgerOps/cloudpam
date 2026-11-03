@@ -111,7 +111,7 @@ Apply creates pools with the same checks as `POST /api/v1/pools`, under the same
 | `deprecate_pool` | A discovered-source pool has no active linked resource and is not deprecated yet. | The orphaned pool. | `PATCH /api/v1/pools/{id}` with `{"status":"deprecated"}` |
 | `review` | Anything else, such as an overlap, a missing parent VPC, an EIP or NIC, or a CIDR mismatch with no matching pool. | Absent. | By hand |
 
-`suggestion_reason` says why in one line. Each unmanaged resource is classified by the import preview above with only that resource selected, so a `create_pool` or `link_pool` suggestion is exactly what apply will do. The Drift page shows the suggestion under each open item. Its apply button calls the listed endpoint and then resolves the item. If import apply skips the resource, the item stays open and the page reports why.
+`suggestion_reason` says why in one line. Each unmanaged resource is classified by the import preview above with only that resource selected, so a `create_pool` or `link_pool` suggestion is exactly what apply will do. Detection does not report a deprecated discovered-source pool as orphaned, so an applied `deprecate_pool` stays reconciled. The Drift page shows the suggestion under each open item. Its apply button calls the listed endpoint and then resolves the item. If import apply skips the resource, the item stays open and the page reports why.
 
 ### Provider Rate Limits
 

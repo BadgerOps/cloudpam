@@ -199,6 +199,26 @@ func TestDriftSuggestions_OrphanedPoolDeprecation(t *testing.T) {
 	assertSuggestion(t, item, domain.DriftActionReview, nil)
 }
 
+func TestDriftSuggestions_AppliedDeprecationStaysReconciled(t *testing.T) {
+	mux, ms, _, _ := setupDriftTestServer()
+	ctx := context.Background()
+	acct, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:retired", Name: "Retired", Provider: "aws"})
+	pool := addPool(t, ms, domain.CreatePool{Name: "retired", CIDR: "10.9.0.0/16", AccountID: &acct.ID, Source: domain.PoolSourceDiscovered})
+
+	items := detectDrift(t, mux)
+	if len(items) != 1 {
+		t.Fatalf("expected one orphaned pool item, got %+v", items)
+	}
+	assertSuggestion(t, items[0], domain.DriftActionDeprecatePool, &pool.ID)
+
+	doDriftJSON(t, mux, stdhttp.MethodPatch, fmt.Sprintf("/api/v1/pools/%d", pool.ID), `{"status":"deprecated"}`, stdhttp.StatusOK)
+	doDriftJSON(t, mux, stdhttp.MethodPost, "/api/v1/drift/"+items[0].ID+"/resolve", `{}`, stdhttp.StatusOK)
+
+	if items := detectDrift(t, mux); len(items) != 0 {
+		t.Fatalf("detection flagged the deprecated pool again: %+v", items)
+	}
+}
+
 func TestDriftSuggestions_OnlyOpenItemsCarryOne(t *testing.T) {
 	mux, ms, ds, _ := setupDriftTestServer()
 	ctx := context.Background()
