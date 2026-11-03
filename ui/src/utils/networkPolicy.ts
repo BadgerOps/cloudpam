@@ -18,7 +18,7 @@ export const NETWORK_SCHEMA_POLICIES: readonly NetworkSchemaPolicyOption[] = [
   {
     name: 'region_level',
     label: 'Region policy',
-    description: 'Each region owns its address space. Repeated CIDRs inside one region are flagged across accounts.',
+    description: 'Each account region owns its address space. Repeated CIDRs inside one region of one account are flagged; the same CIDR in another account or region is expected reuse.',
   },
   {
     name: 'global',
@@ -28,7 +28,7 @@ export const NETWORK_SCHEMA_POLICIES: readonly NetworkSchemaPolicyOption[] = [
   {
     name: 'manual',
     label: 'Manual policy',
-    description: 'Ownership and hierarchy come from the relationships you record. Duplicate CIDRs are flagged only where you choose below.',
+    description: 'Ownership and hierarchy come from the relationships you record. Duplicate CIDRs are not flagged unless you turn on network-wide detection below.',
   },
 ]
 

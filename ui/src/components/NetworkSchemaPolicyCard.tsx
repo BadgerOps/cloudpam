@@ -109,7 +109,7 @@ export default function NetworkSchemaPolicyCard() {
                   disabled={disabled}
                   onChange={(e) => setDraft({ ...form, duplicateScope: e.target.value as ManualDuplicateScope })}
                 >
-                  <option value="manual">Flag only where relationships overlap</option>
+                  <option value="manual">Not flagged</option>
                   <option value="global">Flag anywhere in the network</option>
                 </select>
               </div>
