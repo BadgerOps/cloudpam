@@ -8,7 +8,7 @@ It is a companion to `docs/OBSERVABILITY.md`, which owns structured logging, met
 
 **The most important finding is that issue #93 is not a greenfield design.** A working CEF-over-syslog forwarder already exists, is wired into `main.go`, is covered by tests, and is documented. The issue's framing ("what format? CEF, JSON, OCSF?") and its recommendation ("JSON format; webhook + S3/GCS shipping for v1; CEF/OCSF as optional formatters for enterprise") were written without that context and are revised below.
 
-**Still not implemented (as of 0.23.4):** webhook and file sinks shown in the diagram, persisted Log Destinations CRUD, Splunk HEC / CloudWatch / Cloud Logging connectors, and `AuditStore` retention APIs. The `/config/log-destinations` page shows the syslog target with its live send health from `GET /api/v1/settings/log-destinations` (state, delivered and failed counts, last success, last error, or the startup rejection reason; syslog has no acknowledgement, so a successful send does not confirm receipt) and documents the env vars; it does not edit destinations. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+**Still not implemented (as of 0.23.4):** webhook and file sinks shown in the diagram, persisted Log Destinations CRUD, Splunk HEC / CloudWatch / Cloud Logging connectors, and audit retention (#292). The `/config/log-destinations` page shows the syslog target with its live send health from `GET /api/v1/settings/log-destinations` (state, delivered and failed counts, last success, last error, or the startup rejection reason; syslog has no acknowledgement, so a successful send does not confirm receipt) and documents the env vars; it does not edit destinations. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -67,7 +67,7 @@ It is a companion to `docs/OBSERVABILITY.md`, which owns structured logging, met
 
 `ListOptions` (`internal/audit/audit.go:33-41`) supports `Limit`, `Offset`, `Actor`, `Action`, `ResourceType`, `Since`, `Until`. The `Since`/`Until` pair is what makes gap-replay feasible (§6.4).
 
-`AuditLogger` (`internal/audit/audit.go:44-53`) is a three-method interface: `Log`, `List`, `GetByResource`. Note that the much richer `AuditStore` interface in `internal/audit/store.go:13-46` (with `Query`, `Count`, `GetByID`, `GetByActor`, `DeleteOlderThan`, `Close`) has **no implementations** — it is aspirational. Any shipper must be written against `AuditLogger`, not `AuditStore`.
+`AuditLogger` (`internal/audit/audit.go:44-53`) is a three-method interface: `Log`, `List`, `GetByResource`. Any shipper is written against `AuditLogger`.
 
 ### 1.2 Persistence
 
@@ -205,9 +205,9 @@ A batched HTTPS POST of `Content-Type: application/json` carrying the §2.4 enve
 
 **This contradicts issue #93's recommendation of "webhook + S3/GCS shipping for v1", and deliberately so.**
 
-Direct object-store shipping is not one feature; it is batching, buffering, multipart upload, retry, key/partition layout, compaction, and lifecycle policy — plus the AWS and GCP SDKs and their credential chains pulled into the server process. `docs/OBSERVABILITY.md:129-131` already made the opposite call in writing: use a collector "when a deployment needs vendor APIs... That keeps credentials, buffering, and backpressure handling outside the CloudPAM process." Object stores are the same class of problem. Adding S3/GCS in-process would silently reverse a decision the project already documented, and would duplicate machinery Vector already has and that `deploy/vector/` already exists to configure.
+Direct object-store shipping is not one feature; it is batching, buffering, multipart upload, retry, key/partition layout, compaction, and lifecycle policy — plus the AWS and GCP SDKs and their credential chains pulled into the server process. `docs/OBSERVABILITY.md:129-131` already made the opposite call in writing: use a collector "when a deployment needs vendor APIs... That keeps credentials, buffering, and backpressure handling outside the CloudPAM process." Object stores are the same class of problem. Adding S3/GCS in-process would silently reverse a decision the project already documented, and would duplicate machinery Vector already has and that the server chart's Vector sidecar (`vector.enabled`) already runs.
 
-A file sink writing newline-delimited JSON to a configured path satisfies the same requirement at a fraction of the cost. Vector or Fluent Bit tails the file and performs the object upload with its own buffering, compression, and partitioning — the sidecar pattern `OBSERVABILITY.md` §2.2 already specifies. The file also gives operators a local durable spool for free, which is what makes gap-replay (§6.4) practical.
+A file sink writing newline-delimited JSON to a configured path satisfies the same requirement at a fraction of the cost. Vector or Fluent Bit tails the file and performs the object upload with its own buffering, compression, and partitioning — the sidecar pattern `OBSERVABILITY.md` §2.1 ships for the syslog stream. The file also gives operators a local durable spool for free, which is what makes gap-replay (§6.4) practical.
 
 If a future deployment genuinely cannot run a sidecar (a constraint no current requirement states), revisit S3 direct as a distinct phase with its own design.
 
@@ -499,7 +499,7 @@ Behaviour-preserving for existing syslog users, so it ships independently of any
 
 - Webhook sink: TLS config, auth header, batching, retry (§5.3) — 2 d
 - File sink: JSON Lines, rotation, permissions (§5.4) — 1.5 d
-- `docs/OBSERVABILITY.md` cross-reference, `docs/DEPLOYMENT.md` operator guidance, Vector example config in `deploy/vector/` for the file → S3/GCS path — 1 d
+- `docs/OBSERVABILITY.md` cross-reference, `docs/DEPLOYMENT.md` operator guidance, Vector example `vector.config` for the file → S3/GCS path — 1 d
 
 Delivers the issue's actual v1 requirement.
 

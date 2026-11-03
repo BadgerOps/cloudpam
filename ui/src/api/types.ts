@@ -65,6 +65,7 @@ export interface Pool {
   tags?: Record<string, string>
   created_at: string
   updated_at: string
+  deleted_at?: string
 }
 
 export interface PoolStats {
@@ -74,6 +75,27 @@ export interface PoolStats {
   utilization: number
   child_count: number
   direct_children: number
+  /** Present only on GET /api/v1/pools/{id}/stats. */
+  projection?: GrowthProjection
+}
+
+export type ProjectionStatus = 'ok' | 'no_growth' | 'insufficient_history' | 'exhausted'
+
+export interface ProjectedUsage {
+  months: number
+  used_ips: number
+  utilization: number
+}
+
+export interface GrowthProjection {
+  status: ProjectionStatus
+  window_days: number
+  window_start: string
+  sample_count: number
+  growth_ips_per_day: number
+  runway_days?: number
+  exhaustion_date?: string
+  forecast: ProjectedUsage[]
 }
 
 export interface PoolWithStats extends Pool {
@@ -114,6 +136,7 @@ export interface Account {
   environment?: string
   regions?: string[]
   created_at: string
+  deleted_at?: string
 }
 
 export interface CreateAccountRequest {
@@ -854,6 +877,28 @@ export interface ApplyPlanResponse {
   errors: string[]
   root_pool_id: number
   pool_map: Record<string, number>
+}
+
+// --- Compliance types ---
+
+export type ComplianceSeverity = 'error' | 'warning' | 'info'
+
+export interface ComplianceViolation {
+  rule_id: string
+  severity: ComplianceSeverity
+  pool_id: number
+  pool_name: string
+  cidr?: string
+  message: string
+  remediation?: string
+}
+
+export interface ComplianceReport {
+  total_checks: number
+  passed: number
+  failed: number
+  warnings: number
+  violations: ComplianceViolation[] | null
 }
 
 // --- Drift detection types ---

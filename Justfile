@@ -198,6 +198,10 @@ docker-build-all tag="latest":
 helm-check:
     ./scripts/helm-check.sh
 
+# Install the server chart with the Vector sidecar on a throwaway kind cluster and check an audit event reaches it
+vector-e2e:
+    ./scripts/vector-sidecar-e2e.sh
+
 openapi-validate: ensure-cache
     {{go-env}} go test ./internal/api -run TestOpenAPISpecValidation
 
