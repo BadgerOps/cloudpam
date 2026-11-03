@@ -18,6 +18,22 @@ describe('StatusBadge', () => {
     expect(container.querySelector('.bg-amber-500')).toBeTruthy()
   })
 
+  it('colours by status while showing the label', () => {
+    const { container } = render(<StatusBadge status="locked" label="Locked" />)
+    const badge = container.firstElementChild as HTMLElement
+
+    expect(badge.textContent).toBe('Locked')
+    expect(badge.className).toContain('bg-amber-100')
+    expect(badge.className).not.toContain('bg-gray-100')
+  })
+
+  it('keys the colour on the label when no status is given', () => {
+    const { container } = render(<StatusBadge label="active" />)
+    const badge = container.firstElementChild as HTMLElement
+
+    expect(badge.className).toContain('bg-green-100')
+  })
+
   it('renders nothing for an empty label', () => {
     const { container } = render(<StatusBadge label="" />)
 

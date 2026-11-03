@@ -136,6 +136,12 @@ describe('color helpers', () => {
     expect(getStatusBadgeClass('idle')).toContain('amber')
   })
 
+  it('getStatusBadgeClass colours API key expiry states', () => {
+    expect(getStatusBadgeClass('expired')).toContain('red')
+    expect(getStatusBadgeClass('expiring')).toContain('amber')
+    expect(getStatusBadgeClass('expiring')).not.toBe(getStatusBadgeClass('no_expiry'))
+  })
+
   it('getStatusBadgeClass no longer greys out known account states', () => {
     // Regression: a locked account and a planned pool rendered identically.
     const grey = getStatusBadgeClass('some-unknown-status')
