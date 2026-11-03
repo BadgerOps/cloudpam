@@ -89,14 +89,20 @@ func (as *AuthServer) handleAuditExport(w http.ResponseWriter, r *http.Request) 
 	exporter := newExporter()
 	w.Header().Set("Content-Type", exporter.contentType())
 	w.Header().Set("Content-Disposition", "attachment; filename=cloudpam-audit-"+now.Format("20060102-150405")+"."+exporter.extension())
-	if err := exporter.begin(w); err != nil {
-		return
-	}
 	written := 0
+	// Once the 200 and the first rows are out, closing the connection
+	// mid-stream is the only signal a download has that it is incomplete.
+	abort := func(err error) {
+		as.logger.WarnContext(ctx, "audit export aborted", "error", err, "written", written, "total", total)
+		panic(http.ErrAbortHandler)
+	}
+	if err := exporter.begin(w); err != nil {
+		abort(err)
+	}
 	for {
 		for _, e := range events {
 			if err := exporter.write(e); err != nil {
-				return
+				abort(err)
 			}
 		}
 		written += len(events)
@@ -105,11 +111,12 @@ func (as *AuthServer) handleAuditExport(w http.ResponseWriter, r *http.Request) 
 		}
 		opts.Offset = written
 		if events, _, err = as.auditLogger.List(ctx, opts); err != nil {
-			as.logger.WarnContext(ctx, "audit export aborted", "error", err, "written", written, "total", total)
-			return
+			abort(err)
 		}
 	}
-	_ = exporter.end(written)
+	if err := exporter.end(written); err != nil {
+		abort(err)
+	}
 }
 
 var auditCSVHeader = []string{"id", "timestamp", "actor", "actor_type", "action", "resource_type", "resource_id", "resource_name", "request_id", "ip_address", "status_code", "changes"}

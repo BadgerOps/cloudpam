@@ -213,6 +213,12 @@ func LoggingMiddleware(logger *slog.Logger) Middleware {
 
 			defer func() {
 				if rec := recover(); rec != nil {
+					if rec == http.ErrAbortHandler {
+						// A handler aborts this way to cut a streaming
+						// response short; net/http closes the connection
+						// silently and nothing must be written after it.
+						panic(rec)
+					}
 					panicRecovered = rec
 					transaction.Status = sentry.SpanStatusInternalError
 					hub.RecoverWithContext(ctx, rec)
