@@ -322,6 +322,27 @@ describe('PoolsPage cascade delete', () => {
     expect(fetchHierarchy).toHaveBeenCalledTimes(2)
   })
 
+  it('closes the panel of a descendant removed by the cascade', async () => {
+    const child: Pool = { ...parent, id: 2, name: 'prod-app', cidr: '10.0.1.0/24', parent_id: 1 }
+    mockUsePools.mockReturnValue({
+      pools: [parent, child], hierarchy: [], loading: false, error: null,
+      fetchPools: vi.fn(), fetchHierarchy, createPool: vi.fn(), updatePool: vi.fn(), deletePool,
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    deletePool
+      .mockRejectedValueOnce(new ApiRequestError(409, { error: 'pool has child pools: conflict' }))
+      .mockResolvedValueOnce(undefined)
+    renderPage('/pools?selected=2')
+
+    fireEvent.click(within(screen.getByText('prod').closest('tr')!).getByTitle('Delete'))
+
+    await waitFor(() => {
+      expect(showToast).toHaveBeenCalledWith('Pool deleted', 'success')
+    })
+    expect(deletePool.mock.calls).toEqual([[1, false], [1, true]])
+    expect(screen.getByTestId('location').textContent).toBe('/pools')
+  })
+
   it('keeps the pool when the cascade is declined', async () => {
     const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false)
     deletePool.mockRejectedValueOnce(new ApiRequestError(409, { error: 'pool has child pools: conflict' }))

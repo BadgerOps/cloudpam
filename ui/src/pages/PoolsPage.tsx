@@ -11,7 +11,7 @@ import type { Pool, PoolStats, PoolWithStats, CreatePoolRequest, UpdatePoolReque
 import { formatHostCount, getHostCount, formatTimeAgo } from '../utils/format'
 import { POOL_TYPES } from '../utils/poolTypes'
 import { get } from '../api/client'
-import { deleteWithCascade, plural } from '../utils/cascadeDelete'
+import { deleteWithCascade, plural, subtreeIds } from '../utils/cascadeDelete'
 
 type PoolFormErrors = {
   name?: string
@@ -206,7 +206,7 @@ export default function PoolsPage() {
       if (!deleted) return
       showToast('Pool deleted', 'success')
       fetchHierarchy()
-      if (selectedId === pool.id) closePanel()
+      if (selectedId !== null && subtreeIds(pools, [pool.id]).has(selectedId)) closePanel()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to delete pool', 'error')
     }

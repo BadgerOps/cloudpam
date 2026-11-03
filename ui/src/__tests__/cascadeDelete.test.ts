@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiRequestError } from '../api/client'
 import type { Pool } from '../api/types'
-import { cascadePoolCount, deleteWithCascade, plural } from '../utils/cascadeDelete'
+import { cascadePoolCount, deleteWithCascade, plural, subtreeIds } from '../utils/cascadeDelete'
 
 const conflict = () => new ApiRequestError(409, { error: 'pool has child pools: conflict' })
 
@@ -79,6 +79,28 @@ describe('cascadePoolCount', () => {
   it('is zero for an account with no pools', () => {
     expect(cascadePoolCount(pools, 9)).toBe(0)
     expect(cascadePoolCount([], 1)).toBe(0)
+  })
+})
+
+describe('subtreeIds', () => {
+  function pool(id: number, parent_id: number | null): Pool {
+    return {
+      id, parent_id, name: `p${id}`, cidr: `10.${id}.0.0/16`,
+      type: 'vpc', status: 'active', source: 'manual',
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    }
+  }
+
+  const pools = [pool(1, null), pool(2, 1), pool(3, 2), pool(4, null), pool(5, 4)]
+
+  it('includes the root and every pool below it', () => {
+    expect([...subtreeIds(pools, [1])].sort()).toEqual([1, 2, 3])
+    expect([...subtreeIds(pools, [2])].sort()).toEqual([2, 3])
+    expect([...subtreeIds(pools, [1, 4])].sort()).toEqual([1, 2, 3, 4, 5])
+  })
+
+  it('keeps a root that is missing from the list so it can still be dropped by id', () => {
+    expect([...subtreeIds(pools, [9])]).toEqual([9])
   })
 })
 

@@ -23,25 +23,31 @@ export async function deleteWithCascade(
   return true
 }
 
-// Pools an account cascade removes: those assigned to the account and every
-// pool below them, counted once.
-export function cascadePoolCount(pools: Pool[], accountId: number): number {
-  const childrenOf = new Map<number, Pool[]>()
+// Ids of the given pools and every pool below them, each once. A root that
+// is not in the list is still included, so a caller can drop it by id.
+export function subtreeIds(pools: Pool[], rootIds: Iterable<number>): Set<number> {
+  const childrenOf = new Map<number, number[]>()
   for (const p of pools) {
     if (p.parent_id == null) continue
     const siblings = childrenOf.get(p.parent_id) ?? []
-    siblings.push(p)
+    siblings.push(p.id)
     childrenOf.set(p.parent_id, siblings)
   }
-  const removed = new Set<number>()
-  const pending = pools.filter(p => p.account_id === accountId)
+  const ids = new Set<number>()
+  const pending = [...rootIds]
   while (pending.length > 0) {
-    const p = pending.pop()!
-    if (removed.has(p.id)) continue
-    removed.add(p.id)
-    pending.push(...(childrenOf.get(p.id) ?? []))
+    const id = pending.pop()!
+    if (ids.has(id)) continue
+    ids.add(id)
+    pending.push(...(childrenOf.get(id) ?? []))
   }
-  return removed.size
+  return ids
+}
+
+// Pools an account cascade removes: those assigned to the account and every
+// pool below them.
+export function cascadePoolCount(pools: Pool[], accountId: number): number {
+  return subtreeIds(pools, pools.filter(p => p.account_id === accountId).map(p => p.id)).size
 }
 
 export function plural(n: number, one: string, many = `${one}s`): string {
