@@ -66,9 +66,16 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	stop := context.AfterFunc(t.ctx, cancel)
 	release := func() { stop(); cancel() }
 	resp, err := t.base.RoundTrip(req.WithContext(ctx))
-	t.lastErr = err
 	if err != nil {
 		release()
+		// The cancel above reports context.Canceled even when the binding context
+		// hit its deadline, which would read as "canceled" instead of a timeout.
+		if bindErr := t.ctx.Err(); bindErr != nil {
+			err = bindErr
+		}
+	}
+	t.lastErr = err
+	if err != nil {
 		return nil, err
 	}
 	resp.Body = releaseOnClose{ReadCloser: resp.Body, release: release}
@@ -140,6 +147,11 @@ func (c *Collector) getProject(ctx context.Context, project string) error {
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		// An ADC token failure arrives flattened to text, so a spent deadline is
+		// only recoverable from the context.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("get_project: %w", ctxErr)
+		}
 		return fmt.Errorf("get_project: %w", err)
 	}
 	_ = resp.Body.Close()

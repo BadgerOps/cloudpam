@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -332,5 +333,45 @@ func TestHostIdentityGetsTheProjectWithoutAServiceAccount(t *testing.T) {
 				t.Fatalf("Identity() error = %v, want get_project code %q http %d", err, tc.wantCode, tc.wantHTTP)
 			}
 		})
+	}
+}
+
+func TestHostIdentityDeadlineBoundsTheADCTokenFetch(t *testing.T) {
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(func() { close(release); stalled.Close() })
+
+	sa := testServiceAccount(t)
+	key, err := json.Marshal(map[string]string{
+		"type":           "service_account",
+		"project_id":     "proj-1",
+		"private_key_id": sa.PrivateKeyID(),
+		"private_key":    string(sa.PrivateKey()),
+		"client_email":   sa.ClientEmail(),
+		"token_uri":      stalled.URL + "/token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := t.TempDir() + "/adc.json"
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", path)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := New().Identity(ctx, domain.Account{Key: "gcp:proj-1"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Identity() error = %v, want context.DeadlineExceeded from the stalled token endpoint", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Identity() kept waiting on the stalled ADC token endpoint past the probe deadline")
 	}
 }

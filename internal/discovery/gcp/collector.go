@@ -124,8 +124,10 @@ func (c *Collector) getHTTPClient(ctx context.Context) (*http.Client, error) {
 	if c.httpClient != nil {
 		return c.httpClient, nil
 	}
-	// Use Application Default Credentials
-	ts, err := google.DefaultTokenSource(ctx, computeScope)
+	// A service-account ADC file posts its token request without a context, so the
+	// caller's deadline has to come from the token client's transport.
+	tokenClient := &http.Client{Transport: &tokenTransport{ctx: ctx, base: http.DefaultTransport}}
+	ts, err := google.DefaultTokenSource(context.WithValue(ctx, oauth2.HTTPClient, tokenClient), computeScope)
 	if err != nil {
 		return nil, fmt.Errorf("get default credentials: %w", err)
 	}
