@@ -46,7 +46,7 @@ sqlite3 <data>/cloudpam.db "PRAGMA wal_checkpoint(TRUNCATE);"
 cp <data>/cloudpam.db "<backups>/cloudpam-${ts}.db"
 ```
 
-On Kubernetes the server pod cannot run `sqlite3`. Run a helper pod that mounts the same claim on the same node, then run the online backup inside it. A `ReadWriteOnce` volume can be mounted by a second pod on the node where the server pod runs; `nodeName` pins it there.
+On Kubernetes the server pod cannot run `sqlite3`. Run a helper pod that mounts the same claim on the same node, then run the online backup inside it. A `ReadWriteOnce` volume can be mounted by a second pod on the node where the server pod runs; `nodeName` pins it there. The pod has no readiness probe, so `Ready` only means the container started while `apk add` is still running; the loop below waits until `sqlite3` answers instead.
 
 ```bash
 node="$(kubectl -n <ns> get pod -l app.kubernetes.io/instance=<release> -o jsonpath='{.items[0].spec.nodeName}')"
@@ -67,7 +67,7 @@ spec:
   - name: data
     persistentVolumeClaim: {claimName: ${claim}}
 EOF
-kubectl -n <ns> wait --for=condition=Ready pod/cloudpam-backup
+until kubectl -n <ns> exec cloudpam-backup -- sqlite3 -version >/dev/null 2>&1; do sleep 2; done
 kubectl -n <ns> exec cloudpam-backup -- sqlite3 /data/cloudpam.db ".backup '/data/cloudpam-backup.db'"
 kubectl -n <ns> cp cloudpam-backup:/data/cloudpam-backup.db "./cloudpam-${ts}.db"
 kubectl -n <ns> exec cloudpam-backup -- rm /data/cloudpam-backup.db
@@ -159,18 +159,28 @@ The pieces, all in this repository:
 | Request and status handlers | `internal/api/update_handlers.go` | `GET /api/v1/updates` (release check, 1 h cache, `?force=true` refreshes), `POST /api/v1/updates/upgrade` (writes the request), `GET /api/v1/updates/status`, `POST /api/v1/updates/status/ack`. `settings:read` for the GETs, `settings:write` for the POSTs. |
 | Path unit | `deploy/cloudpam-upgrade.path` | Watches `/var/lib/cloudpam/control/upgrade-requested` |
 | Service unit | `deploy/cloudpam-upgrade.service` | Runs the script as root with `DATA_DIR=/var/lib/cloudpam/control` |
-| Script | `scripts/cloudpam-upgrade.sh` | Pulls the image, restarts `cloudpam.service`, waits for `/healthz`, writes the status file, removes the request |
+| Script | `scripts/cloudpam-upgrade.sh` | Pulls the image, records it in `image.env`, restarts `cloudpam.service`, waits for `/healthz`, writes the status file, removes the request |
 
 Files in the control directory:
 
 - `upgrade-requested`: JSON with `upgrade_id`, `target_version`, `target_image_tag`, `target_release_tag`, `release_url`, `requested_at`, `requested_by`. Written by the server, removed by the script.
 - `upgrade-status.json`: `status` (`running`, `completed`, `failed`), `step` of `total_steps`, `progress`, `message`, `updated_at`, plus the request fields. Written by the script.
 - `upgrade-status-ack.json`: written by the server when an admin dismisses a completed upgrade. A completed status also expires from the UI ten minutes after `updated_at`.
+- `image.env`: one line, `CLOUDPAM_IMAGE=<repository>:<tag>`, the reference the script last pulled. Written by the script after a successful pull, before the restart.
 
 Set-up requirements the repository does not enforce for you:
 
 1. **One directory, two defaults.** The server reads `CLOUDPAM_CONTROL_DIR`, then `CLOUDPAM_UPGRADE_DATA_DIR`, then falls back to `/var/lib/cloudpam-control`. The units and the script use `/var/lib/cloudpam/control`. Those are different paths. Set `CLOUDPAM_CONTROL_DIR=/var/lib/cloudpam/control` on the server and bind-mount that host directory into the container at the same path. The directory must be writable by the container user (uid 65532 in the release image).
-2. **The service must start what the script pulled.** The script pulls `ghcr.io/badgerops/cloudpam/server:<target_image_tag>` (the `SERVER_IMAGE` variable overrides the repository) and then restarts `cloudpam.service`. It does not edit the unit. The unit must therefore resolve to the pulled image. Either run `:latest` and pull on start (`ExecStartPre=/usr/bin/podman pull ghcr.io/badgerops/cloudpam/server:latest`, or `--pull=newer` on `podman run`), or have your configuration tool rewrite the pinned tag from `target_image_tag` before the restart. With a pinned tag and no rewrite, the upgrade reports `completed` while the old version keeps running.
+2. **The service must start what the script pulled.** The script pulls `ghcr.io/badgerops/cloudpam/server:<target_image_tag>` (the `SERVER_IMAGE` variable overrides the repository), writes that reference to `image.env`, and restarts `cloudpam.service`. It does not edit the unit, so the unit must read `image.env` and start the image it names:
+
+   ```ini
+   [Service]
+   Environment=CLOUDPAM_IMAGE=ghcr.io/badgerops/cloudpam/server:0.23.11
+   EnvironmentFile=-/var/lib/cloudpam/control/image.env
+   ExecStart=/usr/bin/podman run --rm --name cloudpam ... ${CLOUDPAM_IMAGE}
+   ```
+
+   `Environment=` is the tag for a host that has never upgraded; once `image.env` exists its value wins. Do not run `:latest` with a pull on start instead. `latest` moves on every published release, pre-releases included, while the update check offers stable releases only, so a `:latest` unit can start a pre-release and still report the stable target as `completed`. With a pinned tag and no `EnvironmentFile`, the upgrade reports `completed` while the old version keeps running.
 3. **Outbound HTTPS to the GitHub API** from the server for the release check, and to `ghcr.io` from the host for the pull. Unauthenticated GitHub API calls are rate-limited per source address; the server caches the release list for an hour and serves stale data with `warning: using stale release metadata` when a refresh fails.
 4. `python3`, `podman`, `curl`, and `systemctl` on the host, which the script calls.
 
@@ -201,10 +211,10 @@ Symptoms and causes:
 | `failed` at step 1, `Failed to pull ...` | The host cannot reach `ghcr.io`, or the tag does not exist | Pull the same reference by hand. Scripts older than this runbook pulled a `v`-prefixed tag that the registry never had; update the script. |
 | `failed` at step 2 | `systemctl restart cloudpam.service` failed | `journalctl -u cloudpam.service` |
 | `failed` at step 3, `Health check failed after 30s` | The new container did not answer `/healthz` in `HEALTH_TIMEOUT` seconds, often a failed migration or a missing environment variable | `journalctl -u cloudpam.service`, then roll back |
-| `completed` but the version did not change | Requirement 2 is not met | Make the unit start the pulled tag |
+| `completed` but the version did not change | Requirement 2 is not met | Compare `cat /var/lib/cloudpam/control/image.env` with the image `podman ps` shows; add the `EnvironmentFile` and `${CLOUDPAM_IMAGE}` from requirement 2 and restart |
 | `could not fetch releases` from `GET /api/v1/updates` | No GitHub API access, or rate-limited | Check egress; set `CLOUDPAM_GITHUB_API_ROOT` to a mirror if you run one |
 
-To roll back on the host, pin the previous tag in a drop-in (`systemctl edit cloudpam.service`) or your configuration tool, pull it, and restart. Then apply the schema rule from 2.1 and restore the pre-upgrade backup if the release you are leaving added a migration.
+To roll back on the host, write the previous reference into `image.env` (`CLOUDPAM_IMAGE=ghcr.io/badgerops/cloudpam/server:<previous>`), pull it, and restart `cloudpam.service`. Then apply the schema rule from 2.1 and restore the pre-upgrade backup if the release you are leaving added a migration.
 
 ## 3. Rotate the encryption key
 

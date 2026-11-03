@@ -116,6 +116,7 @@ if ! timeout "${PULL_TIMEOUT}" podman pull "${SERVER_IMAGE}:${IMAGE_TAG}"; then
   cleanup
   exit 1
 fi
+printf 'CLOUDPAM_IMAGE=%s:%s\n' "${SERVER_IMAGE}" "${IMAGE_TAG}" > "${DATA_DIR}/image.env"
 
 write_status "running" 2 "Restarting ${SERVICE_NAME}..."
 if ! systemctl restart "${SERVICE_NAME}"; then
