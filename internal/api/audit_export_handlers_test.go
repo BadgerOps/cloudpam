@@ -261,3 +261,55 @@ func TestCSVSafeCell(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditExportClampsAFutureUntilToTheRequestTime(t *testing.T) {
+	mux, logger := setupAuditExportServer(t)
+	now := time.Now().UTC()
+	logAuditEvents(t, logger,
+		&audit.AuditEvent{ID: "past", Timestamp: now.Add(-time.Hour), Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1"},
+		&audit.AuditEvent{ID: "future", Timestamp: now.Add(time.Hour), Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1"},
+	)
+
+	rr := getExport(t, mux, "?format=json&until="+url.QueryEscape(now.Add(2*time.Hour).Format(time.RFC3339)))
+	if rr.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Events []audit.AuditEvent `json:"events"`
+		Total  int                `json:"total"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse json: %v\n%s", err, rr.Body.String())
+	}
+	if body.Total != 1 || len(body.Events) != 1 || body.Events[0].ID != "past" {
+		t.Errorf("a future until must not reach past the request time, got %+v", body.Events)
+	}
+}
+
+// deadlineRecorder records the write deadline a handler sets through
+// http.ResponseController.
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.deadline = t
+	return nil
+}
+
+func TestAuditExportExtendsTheWriteDeadlinePastTheServerTimeout(t *testing.T) {
+	mux, logger := setupAuditExportServer(t)
+	logAuditEvents(t, logger, &audit.AuditEvent{ID: "evt-1", Timestamp: time.Now().Add(-time.Minute), Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1"})
+
+	start := time.Now()
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	mux.ServeHTTP(rec, httptest.NewRequest(stdhttp.MethodGet, "/api/v1/audit/export?format=csv", nil))
+	if rec.Code != stdhttp.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	// cmd/cloudpam/main.go gives every response 15s; a full export needs more.
+	if !rec.deadline.After(start.Add(15 * time.Second)) {
+		t.Errorf("write deadline = %v, want later than the server's 15s timeout from %v", rec.deadline, start)
+	}
+}

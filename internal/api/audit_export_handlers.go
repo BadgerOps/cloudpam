@@ -18,6 +18,10 @@ import (
 // export walks the log in pages of this size.
 const auditExportPageSize = 1000
 
+// auditExportWriteTimeout replaces the server's 15s write timeout for the
+// export stream, since a full history download can outlive it.
+const auditExportWriteTimeout = 10 * time.Minute
+
 // auditFilters reads the filter query parameters shared by the audit list and
 // export endpoints. Pagination is left to the caller.
 func auditFilters(q url.Values) audit.ListOptions {
@@ -71,9 +75,9 @@ func (as *AuthServer) handleAuditExport(w http.ResponseWriter, r *http.Request) 
 
 	opts := auditFilters(q)
 	now := time.Now().UTC()
-	if opts.Until == nil {
-		// Pin the window so events logged during the export do not shift
-		// later pages and duplicate rows.
+	if opts.Until == nil || opts.Until.After(now) {
+		// Pin the window at the request time so events logged during the
+		// export do not shift later pages into duplicating or skipping rows.
 		opts.Until = &now
 	}
 	opts.Limit = auditExportPageSize
@@ -89,6 +93,7 @@ func (as *AuthServer) handleAuditExport(w http.ResponseWriter, r *http.Request) 
 	exporter := newExporter()
 	w.Header().Set("Content-Type", exporter.contentType())
 	w.Header().Set("Content-Disposition", "attachment; filename=cloudpam-audit-"+now.Format("20060102-150405")+"."+exporter.extension())
+	_ = http.NewResponseController(w).SetWriteDeadline(now.Add(auditExportWriteTimeout))
 	written := 0
 	// Once the 200 and the first rows are out, closing the connection
 	// mid-stream is the only signal a download has that it is incomplete.
