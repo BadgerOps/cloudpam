@@ -112,6 +112,25 @@ func TestGenerate_DesiredPrefixLenNotLongerThanPoolFallsBackToHalves(t *testing.
 	}
 }
 
+func TestGenerate_DesiredPrefixLenCapsCandidatesPerPool(t *testing.T) {
+	svc, st := setupRecService(t)
+	pool := createPool(t, st, "Big", "10.0.0.0/16", nil)
+
+	got := allocationCIDRs(generateAllocations(t, svc, pool.ID, 30))
+
+	if len(got) != maxAllocationCandidates {
+		t.Fatalf("got %d candidates, want the cap of %d", len(got), maxAllocationCandidates)
+	}
+	if first := netip.MustParsePrefix(got[0]); first.Addr() != netip.MustParseAddr("10.0.0.0") {
+		t.Errorf("lowest candidate = %s, want the pool's first /30", got[0])
+	}
+	for _, c := range got {
+		if netip.MustParsePrefix(c).Bits() != 30 {
+			t.Errorf("%s is not a /30", c)
+		}
+	}
+}
+
 func TestGenerate_DesiredPrefixLenContiguityPrefersNeighbourOfChild(t *testing.T) {
 	svc, st := setupRecService(t)
 	parent := createPool(t, st, "Corp", "10.0.0.0/24", nil)
