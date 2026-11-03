@@ -42,10 +42,9 @@ const routes: Record<string, unknown> = {
   '/api/v1/drift?status=open&severity=critical&page_size=5': { items: [driftItem], total: 1, page: 1, page_size: 5, summary: driftSummary },
   '/api/v1/recommendations?status=pending&page_size=5': { items: [], total: 0, page: 1, page_size: 5 },
   '/api/v1/recommendations?status=pending&priority=high&page_size=5': { items: [], total: 0, page: 1, page_size: 5 },
-  '/api/v1/discovery/sync?account_id=7&limit=1': {
+  '/api/v1/discovery/sync/latest': {
     items: [{ id: 'j1', account_id: 7, status: 'failed', error_message: 'access denied', resources_found: 0, resources_created: 0, resources_updated: 0, resources_deleted: 0, created_at: now, completed_at: now }],
   },
-  '/api/v1/discovery/sync?account_id=8&limit=1': { items: [] },
   '/api/v1/updates': { current_version: '0.23.0', latest_version: '0.24.0', update_available: true, checked_at: now },
 }
 

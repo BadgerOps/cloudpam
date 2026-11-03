@@ -38,23 +38,13 @@ export type AttentionLoad =
   | { state: 'ready'; summary: AttentionSummary }
   | { state: 'error'; message: string }
 
-// Fetching every account's latest job at once trips the global rate limiter
-// on large estates, so a few workers drain the account list instead.
-const SYNC_CONCURRENCY = 6
-
 async function loadAccountSyncs(): Promise<AccountSync[]> {
-  const accounts = await get<Account[]>('/api/v1/accounts')
-  const rows: AccountSync[] = new Array(accounts.length)
-  let next = 0
-  async function worker() {
-    while (next < accounts.length) {
-      const i = next++
-      const jobs = await get<SyncJobsResponse>(`/api/v1/discovery/sync?account_id=${accounts[i].id}&limit=1`)
-      rows[i] = { account: accounts[i], latest: jobs.items[0] ?? null }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(SYNC_CONCURRENCY, accounts.length) }, worker))
-  return rows
+  const [accounts, latest] = await Promise.all([
+    get<Account[]>('/api/v1/accounts'),
+    get<SyncJobsResponse>('/api/v1/discovery/sync/latest'),
+  ])
+  const byAccount = new Map(latest.items.map(job => [job.account_id, job]))
+  return accounts.map(account => ({ account, latest: byAccount.get(account.id) ?? null }))
 }
 
 export const ATTENTION_SOURCES: readonly AttentionSource[] = [
