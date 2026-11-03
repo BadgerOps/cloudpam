@@ -21,7 +21,7 @@ func setupRecommendationServer() (*stdhttp.ServeMux, *storage.MemoryStore) {
 
 	analysisSvc := planning.NewAnalysisService(st)
 	recStore := storage.NewMemoryRecommendationStore(st)
-	recSvc := planning.NewRecommendationService(analysisSvc, recStore, st, srv)
+	recSvc := planning.NewRecommendationService(analysisSvc, recStore, st, storage.NewMemoryDiscoveryStore(st), srv)
 	recSrv := NewRecommendationServer(srv, recSvc, recStore)
 	recSrv.RegisterRecommendationRoutes()
 

@@ -19,7 +19,7 @@ func setupRecService(t *testing.T) (*RecommendationService, *storage.MemoryStore
 	st := storage.NewMemoryStore()
 	recStore := storage.NewMemoryRecommendationStore(st)
 	analysisSvc := NewAnalysisService(st)
-	recSvc := NewRecommendationService(analysisSvc, recStore, st, storePlacer{st})
+	recSvc := NewRecommendationService(analysisSvc, recStore, st, storage.NewMemoryDiscoveryStore(st), storePlacer{st})
 	return recSvc, st
 }
 

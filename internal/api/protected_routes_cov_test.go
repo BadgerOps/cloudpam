@@ -58,7 +58,7 @@ func setupProtectedFeatureRoutesCov(t *testing.T) *http.ServeMux {
 
 	recStore := storage.NewMemoryRecommendationStore(st)
 	analysisSvc := planning.NewAnalysisService(st)
-	recSrv := NewRecommendationServer(srv, planning.NewRecommendationService(analysisSvc, recStore, st, srv), recStore)
+	recSrv := NewRecommendationServer(srv, planning.NewRecommendationService(analysisSvc, recStore, st, storage.NewMemoryDiscoveryStore(st), srv), recStore)
 	recSrv.RegisterProtectedRecommendationRoutes(roleHeaderMiddlewareCov, slogger)
 
 	// Keep the update endpoints hermetic: a local release API and a temp

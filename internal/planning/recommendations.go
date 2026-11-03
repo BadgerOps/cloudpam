@@ -24,16 +24,20 @@ type RecommendationService struct {
 	analysis  *AnalysisService
 	store     storage.RecommendationStore
 	mainStore storage.Store
+	discovery storage.DiscoveryStore
 	placer    PoolPlacer
+	now       func() time.Time
 }
 
 // NewRecommendationService creates a new RecommendationService.
-func NewRecommendationService(analysis *AnalysisService, store storage.RecommendationStore, mainStore storage.Store, placer PoolPlacer) *RecommendationService {
+func NewRecommendationService(analysis *AnalysisService, store storage.RecommendationStore, mainStore storage.Store, discovery storage.DiscoveryStore, placer PoolPlacer) *RecommendationService {
 	return &RecommendationService{
 		analysis:  analysis,
 		store:     store,
 		mainStore: mainStore,
+		discovery: discovery,
 		placer:    placer,
+		now:       time.Now,
 	}
 }
 
@@ -44,58 +48,40 @@ func (s *RecommendationService) Generate(ctx context.Context, req domain.Generat
 		return nil, err
 	}
 
-	now := time.Now().UTC()
-	var allRecs []domain.Recommendation
+	tree, err := s.loadPoolTree(ctx)
+	if err != nil {
+		return nil, err
+	}
+	linked, err := s.linkedPoolIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	now := s.now().UTC()
+	allRecs := []domain.Recommendation{}
 
 	for _, pool := range pools {
-		// Clear stale pending recommendations before regeneration.
 		if err := s.store.DeletePendingForPool(ctx, pool.ID); err != nil {
 			return nil, fmt.Errorf("clear pending for pool %d: %w", pool.ID, err)
 		}
 
-		// Gap analysis → allocation recommendations.
-		gap, err := s.analysis.AnalyzeGaps(ctx, pool.ID)
-		if err == nil && gap != nil {
-			for _, block := range allocatableBlocks(pool.CIDR, gap.AvailableBlocks) {
-				score := s.scoreAllocation(block.CIDR, pool, req.DesiredPrefixLen)
-				rec := domain.Recommendation{
-					ID:            uuid.New().String(),
-					PoolID:        pool.ID,
-					Type:          domain.RecommendationTypeAllocation,
-					Status:        domain.RecommendationStatusPending,
-					Priority:      priorityFromScore(score),
-					Title:         fmt.Sprintf("Allocate %s", block.CIDR),
-					Description:   fmt.Sprintf("Available block %s (%d addresses) in pool %q", block.CIDR, block.AddressCount, pool.Name),
-					SuggestedCIDR: block.CIDR,
-					Score:         score,
-					CreatedAt:     now,
-					UpdatedAt:     now,
-				}
-				if err := s.store.CreateRecommendation(ctx, rec); err != nil {
-					return nil, fmt.Errorf("create allocation rec: %w", err)
-				}
-				allRecs = append(allRecs, rec)
-			}
+		var recs []domain.Recommendation
+		recs = append(recs, s.allocationRecommendations(ctx, pool, req.DesiredPrefixLen, now)...)
+		recs = append(recs, s.complianceRecommendations(ctx, pool, now)...)
+		recs = append(recs, s.consolidationRecommendations(ctx, pool, tree, now)...)
+		if rec := s.resizeRecommendation(ctx, pool, tree, now); rec != nil {
+			recs = append(recs, *rec)
+		}
+		if rec := s.reclaimRecommendation(pool, tree, linked, now); rec != nil {
+			recs = append(recs, *rec)
 		}
 
-		// Compliance → compliance recommendations.
-		compliance, err := s.analysis.CheckCompliance(ctx, []int64{pool.ID}, false)
-		if err == nil && compliance != nil {
-			for _, v := range compliance.Violations {
-				if v.PoolID != pool.ID {
-					continue
-				}
-				rec := s.complianceRecommendation(v, pool, now)
-				if err := s.store.CreateRecommendation(ctx, rec); err != nil {
-					return nil, fmt.Errorf("create compliance rec: %w", err)
-				}
-				allRecs = append(allRecs, rec)
+		for _, rec := range recs {
+			if err := s.store.CreateRecommendation(ctx, rec); err != nil {
+				return nil, fmt.Errorf("create %s rec: %w", rec.Type, err)
 			}
 		}
-	}
-
-	if allRecs == nil {
-		allRecs = []domain.Recommendation{}
+		allRecs = append(allRecs, recs...)
 	}
 
 	return &domain.GenerateRecommendationsResponse{
@@ -104,7 +90,9 @@ func (s *RecommendationService) Generate(ctx context.Context, req domain.Generat
 	}, nil
 }
 
-// Apply applies a recommendation: for allocation types, creates a new child pool.
+// Apply carries out a pending recommendation: allocation places a child pool, consolidation
+// replaces two sibling pools with their merged block, resize shrinks the pool, reclaim deletes
+// it, and compliance only records the acknowledgement.
 func (s *RecommendationService) Apply(ctx context.Context, id string, req domain.ApplyRecommendationRequest) (*domain.Recommendation, error) {
 	rec, err := s.store.GetRecommendation(ctx, id)
 	if err != nil {
@@ -118,25 +106,18 @@ func (s *RecommendationService) Apply(ctx context.Context, id string, req domain
 
 	switch rec.Type {
 	case domain.RecommendationTypeAllocation:
-		name := req.Name
-		if name == "" {
-			name = fmt.Sprintf("Allocation %s", rec.SuggestedCIDR)
-		}
-		parentID := rec.PoolID
-		newPool, err := s.placer.PlacePool(ctx, domain.CreatePool{
-			Name:      name,
-			CIDR:      rec.SuggestedCIDR,
-			ParentID:  &parentID,
-			AccountID: req.AccountID,
-			Source:    domain.PoolSourceManual,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("create pool from recommendation: %w", err)
-		}
-		appliedPoolID = &newPool.ID
-
+		appliedPoolID, err = s.applyAllocation(ctx, rec, req)
+	case domain.RecommendationTypeConsolidation:
+		appliedPoolID, err = s.applyConsolidation(ctx, rec, req)
+	case domain.RecommendationTypeResize:
+		appliedPoolID, err = s.applyResize(ctx, rec)
+	case domain.RecommendationTypeReclaim:
+		err = s.applyReclaim(ctx, rec)
 	case domain.RecommendationTypeCompliance:
 		// Compliance fixes are manual; marking as applied acknowledges the issue.
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	if err := s.store.UpdateRecommendationStatus(ctx, id, domain.RecommendationStatusApplied, "", appliedPoolID); err != nil {
@@ -165,6 +146,67 @@ func (s *RecommendationService) Dismiss(ctx context.Context, id string, reason s
 	rec.Status = domain.RecommendationStatusDismissed
 	rec.DismissReason = reason
 	return rec, nil
+}
+
+// allocationRecommendations turns the free blocks of a pool into allocation recommendations.
+func (s *RecommendationService) allocationRecommendations(ctx context.Context, pool domain.Pool, desiredPrefixLen int, now time.Time) []domain.Recommendation {
+	gap, err := s.analysis.AnalyzeGaps(ctx, pool.ID)
+	if err != nil || gap == nil {
+		return nil
+	}
+	var recs []domain.Recommendation
+	for _, block := range allocatableBlocks(pool.CIDR, gap.AvailableBlocks) {
+		score := s.scoreAllocation(block.CIDR, pool, desiredPrefixLen)
+		recs = append(recs, domain.Recommendation{
+			ID:            uuid.New().String(),
+			PoolID:        pool.ID,
+			Type:          domain.RecommendationTypeAllocation,
+			Status:        domain.RecommendationStatusPending,
+			Priority:      priorityFromScore(score),
+			Title:         fmt.Sprintf("Allocate %s", block.CIDR),
+			Description:   fmt.Sprintf("Available block %s (%d addresses) in pool %q", block.CIDR, block.AddressCount, pool.Name),
+			SuggestedCIDR: block.CIDR,
+			Score:         score,
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		})
+	}
+	return recs
+}
+
+// complianceRecommendations turns the pool's own compliance violations into recommendations.
+func (s *RecommendationService) complianceRecommendations(ctx context.Context, pool domain.Pool, now time.Time) []domain.Recommendation {
+	compliance, err := s.analysis.CheckCompliance(ctx, []int64{pool.ID}, false)
+	if err != nil || compliance == nil {
+		return nil
+	}
+	var recs []domain.Recommendation
+	for _, v := range compliance.Violations {
+		if v.PoolID == pool.ID {
+			recs = append(recs, s.complianceRecommendation(v, pool, now))
+		}
+	}
+	return recs
+}
+
+// applyAllocation places the suggested block as a new child of the recommendation's pool.
+func (s *RecommendationService) applyAllocation(ctx context.Context, rec *domain.Recommendation, req domain.ApplyRecommendationRequest) (*int64, error) {
+	name := req.Name
+	if name == "" {
+		name = fmt.Sprintf("Allocation %s", rec.SuggestedCIDR)
+	}
+	parentID := rec.PoolID
+	newPool, err := s.placer.PlacePool(ctx, domain.CreatePool{
+		Name:      name,
+		CIDR:      rec.SuggestedCIDR,
+		ParentID:  &parentID,
+		AccountID: req.AccountID,
+		Source:    domain.PoolSourceManual,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create pool from recommendation: %w", err)
+	}
+	return &newPool.ID, nil
 }
 
 // allocatableBlocks turns the free blocks of a pool into blocks a child pool can

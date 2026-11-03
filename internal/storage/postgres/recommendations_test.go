@@ -148,7 +148,7 @@ func TestRecommendationServiceRoundTripsThroughPostgres(t *testing.T) {
 	}
 	mustCreatePool(t, s, "child", "10.0.0.0/26", &parent.ID)
 
-	svc := planning.NewRecommendationService(planning.NewAnalysisService(s), s, s, lockedPlacer{s})
+	svc := planning.NewRecommendationService(planning.NewAnalysisService(s), s, s, s, lockedPlacer{s})
 	first, err := svc.Generate(ctx, domain.GenerateRecommendationsRequest{PoolIDs: []int64{parent.ID}})
 	if err != nil {
 		t.Fatalf("first generate: %v", err)
