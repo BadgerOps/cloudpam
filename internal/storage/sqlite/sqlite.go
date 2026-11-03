@@ -269,61 +269,46 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 }
 
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
-	// check children (only non-deleted)
-	var cnt int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
-		return false, err
-	}
-	if cnt > 0 {
-		return false, fmt.Errorf("pool has child pools: %w", storage.ErrConflict)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	var deleted bool
+	err := s.withWriteLock(ctx, func(c *sql.Conn) error {
+		var cnt int
+		if err := c.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
+			return err
+		}
+		if cnt > 0 {
+			return fmt.Errorf("pool has child pools: %w", storage.ErrConflict)
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		res, err := c.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		deleted = n > 0
+		return nil
+	})
+	return deleted, err
 }
 
 func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
-	// Load all non-deleted pools, compute subtree, soft-delete
-	ps, err := s.ListPools(ctx)
-	if err != nil {
-		return false, err
-	}
-	exists := false
-	children := map[int64][]int64{}
-	for _, p := range ps {
-		if p.ID == id {
-			exists = true
-		}
-		if p.ParentID != nil {
-			children[*p.ParentID] = append(children[*p.ParentID], p.ID)
-		}
-	}
-	if !exists {
-		return false, nil
-	}
-	// BFS
-	queue := []int64{id}
-	order := []int64{}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		order = append(order, cur)
-		for _, ch := range children[cur] {
-			queue = append(queue, ch)
-		}
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, pid := range order {
-		_, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, pid)
+	var deleted bool
+	err := s.withWriteLock(ctx, func(c *sql.Conn) error {
+		now := time.Now().UTC().Format(time.RFC3339)
+		res, err := c.ExecContext(ctx, `
+			WITH RECURSIVE subtree(id) AS (
+				SELECT id FROM pools WHERE id=? AND deleted_at IS NULL
+				UNION
+				SELECT p.id FROM pools p JOIN subtree t ON p.parent_id = t.id WHERE p.deleted_at IS NULL
+			)
+			UPDATE pools SET deleted_at=?, updated_at=? WHERE id IN (SELECT id FROM subtree)`, id, now, now)
 		if err != nil {
-			return false, err
+			return err
 		}
-	}
-	return true, nil
+		n, _ := res.RowsAffected()
+		deleted = n > 0
+		return nil
+	})
+	return deleted, err
 }
 
 // Accounts
@@ -409,78 +394,52 @@ func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Accou
 }
 
 func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
-	var cnt int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
-		return false, err
-	}
-	if cnt > 0 {
-		return false, fmt.Errorf("account in use by pools: %w", storage.ErrConflict)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	// account_credentials_drop_on_account_soft_delete removes the stored credential.
-	res, err := s.db.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	var deleted bool
+	err := s.withWriteLock(ctx, func(c *sql.Conn) error {
+		var cnt int
+		if err := c.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
+			return err
+		}
+		if cnt > 0 {
+			return fmt.Errorf("account in use by pools: %w", storage.ErrConflict)
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		// account_credentials_drop_on_account_soft_delete removes the stored credential.
+		res, err := c.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		deleted = n > 0
+		return nil
+	})
+	return deleted, err
 }
 
+// DeleteAccountCascade soft-deletes the account, every live pool it owns, and those pools' descendants.
 func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
-	// Soft-delete all pools referencing this account, including their descendants, then soft-delete account
-	ps, err := s.ListPools(ctx)
-	if err != nil {
-		return false, err
-	}
-	// Check account exists (non-deleted)
-	var accCnt int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM accounts WHERE id=? AND deleted_at IS NULL`, id).Scan(&accCnt); err != nil {
-		return false, err
-	}
-	if accCnt == 0 {
-		return false, nil
-	}
-	// Build adjacency
-	children := map[int64][]int64{}
-	for _, p := range ps {
-		if p.ParentID != nil {
-			children[*p.ParentID] = append(children[*p.ParentID], p.ID)
+	var deleted bool
+	err := s.withWriteLock(ctx, func(c *sql.Conn) error {
+		now := time.Now().UTC().Format(time.RFC3339)
+		// account_credentials_drop_on_account_soft_delete removes the stored credential.
+		res, err := c.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
+		if err != nil {
+			return err
 		}
-	}
-	// Collect roots: pools with account_id = id
-	roots := []int64{}
-	for _, p := range ps {
-		if p.AccountID != nil && *p.AccountID == id {
-			roots = append(roots, p.ID)
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil
 		}
-	}
-	// Collect all to soft-delete
-	toDel := map[int64]struct{}{}
-	var dfs func(int64)
-	dfs = func(n int64) {
-		if _, ok := toDel[n]; ok {
-			return
-		}
-		toDel[n] = struct{}{}
-		for _, ch := range children[n] {
-			dfs(ch)
-		}
-	}
-	for _, r := range roots {
-		dfs(r)
-	}
-	// Soft-delete pools
-	now := time.Now().UTC().Format(time.RFC3339)
-	for pid := range toDel {
-		if _, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, pid); err != nil {
-			return false, err
-		}
-	}
-	// Soft-delete account; account_credentials_drop_on_account_soft_delete removes the stored credential.
-	if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id); err != nil {
-		return false, err
-	}
-	return true, nil
+		deleted = true
+		_, err = c.ExecContext(ctx, `
+			WITH RECURSIVE subtree(id) AS (
+				SELECT id FROM pools WHERE account_id=? AND deleted_at IS NULL
+				UNION
+				SELECT p.id FROM pools p JOIN subtree t ON p.parent_id = t.id WHERE p.deleted_at IS NULL
+			)
+			UPDATE pools SET deleted_at=?, updated_at=? WHERE id IN (SELECT id FROM subtree)`, id, now, now)
+		return err
+	})
+	return deleted, err
 }
 
 // GetPoolWithStats returns a pool with its computed statistics.
