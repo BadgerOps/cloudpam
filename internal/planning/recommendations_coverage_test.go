@@ -247,10 +247,11 @@ func TestCovGenerateHonoursDesiredPrefixLen(t *testing.T) {
 		t.Fatalf("CreatePool() error = %v", err)
 	}
 
-	// An empty /24 is offered as its two /25 halves, so ask for a /25.
+	// A /26 is not one of the halves an empty /24 falls back to, so the
+	// generator has to split down to it instead of scoring the halves.
 	resp, err := svc.Generate(ctx, domain.GenerateRecommendationsRequest{
 		PoolIDs:          []int64{pool.ID},
-		DesiredPrefixLen: 25,
+		DesiredPrefixLen: 26,
 	})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -266,8 +267,8 @@ func TestCovGenerateHonoursDesiredPrefixLen(t *testing.T) {
 	if alloc == nil {
 		t.Fatal("no allocation recommendation generated")
 	}
-	if alloc.SuggestedCIDR != "10.0.0.0/25" {
-		t.Errorf("SuggestedCIDR = %q, want the first /25 half of the empty /24", alloc.SuggestedCIDR)
+	if alloc.SuggestedCIDR != "10.0.0.0/26" {
+		t.Errorf("SuggestedCIDR = %q, want the first /26 of the empty /24", alloc.SuggestedCIDR)
 	}
 	if alloc.Priority != priorityFromScore(alloc.Score) {
 		t.Errorf("Priority %q does not match score %d", alloc.Priority, alloc.Score)
