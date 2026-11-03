@@ -4447,6 +4447,85 @@ ec2:DescribeAddresses`}
         )}
       </div>
 
+      {/* Where credentials come from */}
+      <div className={sectionClass}>
+        <button onClick={() => toggle('credentials')} className={headerClass}>
+          {openSection === 'credentials' ? (
+            <ChevronDown className="w-4 h-4 text-gray-400" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-gray-400" />
+          )}
+          Where discovery credentials come from
+        </button>
+        {openSection === 'credentials' && (
+          <div className={bodyClass}>
+            <p>
+              Every sync runs as some identity. Which one depends on how the
+              account is reached.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-xs">
+                <thead>
+                  <tr className="text-left text-gray-500 dark:text-gray-400">
+                    <th className="pr-3 pb-1 font-medium">Path</th>
+                    <th className="pr-3 pb-1 font-medium">Identity used</th>
+                    <th className="pb-1 font-medium">Reaches</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700/50 align-top">
+                  <tr>
+                    <td className="pr-3 py-1.5 font-medium text-gray-900 dark:text-gray-100">Server sync</td>
+                    <td className="pr-3 py-1.5">The server host: an instance profile or{' '}
+                      <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">AWS_*</code> variables for AWS,
+                      Application Default Credentials for GCP</td>
+                    <td className="py-1.5">The host&apos;s own AWS account and the GCP projects its identity can read</td>
+                  </tr>
+                  <tr>
+                    <td className="pr-3 py-1.5 font-medium text-gray-900 dark:text-gray-100">Agent, single account</td>
+                    <td className="pr-3 py-1.5">The agent host&apos;s identity, deployed next to the account</td>
+                    <td className="py-1.5">That one account</td>
+                  </tr>
+                  <tr>
+                    <td className="pr-3 py-1.5 font-medium text-gray-900 dark:text-gray-100">Agent, organization mode</td>
+                    <td className="pr-3 py-1.5">The agent host&apos;s identity in the management account, then{' '}
+                      <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1 py-0.5 rounded">CloudPAMDiscoveryRole</code> in every member account</td>
+                    <td className="py-1.5">Every account in one AWS organization</td>
+                  </tr>
+                  <tr>
+                    <td className="pr-3 py-1.5 font-medium text-gray-900 dark:text-gray-100">Stored per-account credential</td>
+                    <td className="pr-3 py-1.5">A role ARN the server assumes, or a GCP service-account key, saved encrypted on the account</td>
+                    <td className="py-1.5">That account, from the server, with no agent and no host-identity change</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p>
+              For an account, a connected agent wins, otherwise a stored
+              credential, otherwise the server&apos;s host identity.
+            </p>
+            <p>
+              For one AWS organization with the member role deployed, no
+              in-app credential is needed. Give the agent an IAM identity and
+              it reaches every member account.
+            </p>
+            <p>
+              Store a credential when the host identity cannot reach the
+              account: a second AWS organization, a partner account that only
+              grants a role to assume, or a GCP project with its own service
+              account. Open the account&apos;s{' '}
+              <strong>Credentials</strong> action on the{' '}
+              <a
+                href="/accounts"
+                className="text-blue-600 dark:text-blue-400 underline"
+              >
+                Accounts page
+              </a>
+              .
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* Linking */}
       <div className={sectionClass}>
         <button onClick={() => toggle('linking')} className={headerClass}>

@@ -354,9 +354,9 @@ OpenAPI: route metadata for the four routes; component types `AccountCredential`
 
 - STS region: first `account.Regions` entry, else the host default, else `us-east-1`.
 - The GCP test reads the account's project, not the key's `project_id`, because that is what sync reads.
-- No check that the role ARN's account matches the account record in this slice. `Identity` returns the assumed-role ARN, so the operator sees it. Filed as a follow-up.
+- No check that the role ARN's account matches the account record in this slice. `Identity` returns the assumed-role ARN, so the operator sees it. Recorded as a follow-up for the maintainer to file.
 - `accounts:update` is the permission for PUT, DELETE, and test, per the spec.
-- The verify journey proves the failure path against an unreachable or refusing stub and the API contract (summary only, 404s, 409). A success path needs a token stub, which a later journey can add with an operator-only endpoint override that is not API-settable.
+- The verify journey proves the failure path with a throwaway key and the API contract (summary only, 404s, 409). It asserts only that the test result is `failed` and shows no key material, so it passes whether the host can reach Google's token endpoint (`token: invalid_grant`) or not (`endpoint unreachable`). A success path needs a token stub, which a later journey can add with an operator-only endpoint override that is not API-settable.
 
 ## 11. Delivery as a stack
 
