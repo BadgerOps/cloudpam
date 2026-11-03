@@ -29,10 +29,13 @@ func TestNormalizeAIProviderSettings(t *testing.T) {
 	}{
 		{
 			name: "trims strings",
-			in:   AIProviderSettings{Endpoint: "  http://llm:11434/v1  ", Model: " llama3 ", APIKeyEncrypted: " abcd "},
+			in:   AIProviderSettings{Provider: " Anthropic ", Endpoint: "  http://llm:11434/v1  ", Model: " llama3 ", APIKeyEncrypted: " abcd "},
 			check: func(t *testing.T, got *AIProviderSettings) {
-				if got.Endpoint != "http://llm:11434/v1" || got.Model != "llama3" || got.APIKeyEncrypted != "abcd" {
+				if got.Provider != "anthropic" || got.Endpoint != "http://llm:11434/v1" || got.Model != "llama3" || got.APIKeyEncrypted != "abcd" {
 					t.Fatalf("not trimmed: %+v", got)
+				}
+				if got.State != AIProviderStateConfigured {
+					t.Fatalf("state = %q, want configured for a document with stored values", got.State)
 				}
 			},
 		},

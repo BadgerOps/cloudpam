@@ -66,12 +66,17 @@ func blockedAddrControl(_, address string, _ syscall.RawConn) error {
 
 // checkRedirect follows at most maxRedirects redirects and only to http(s)
 // URLs whose host is not a blocked literal address; resolution is covered by
-// the dialer. The http.Client keeps its default behaviour of dropping the
-// Authorization header on cross-host redirects.
+// the dialer. The http.Client drops Authorization on cross-domain redirects
+// but copies custom headers, so the Anthropic x-api-key is dropped here once
+// the redirect leaves the configured origin. The scheme counts: an https
+// endpoint redirecting to http on the same host would send the key in clear.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	// via holds the initial request plus the redirects followed so far.
 	if len(via) > maxRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+	}
+	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
+		req.Header.Del("x-api-key")
 	}
 	return validateRedirectTarget(req.URL)
 }
@@ -86,9 +91,17 @@ func validateRedirectTarget(u *url.URL) error {
 	return nil
 }
 
+// responseHeaderTimeout bounds how long one provider may hold a request
+// before answering. Without it a primary that accepts the connection and then
+// stalls spends the whole chat budget, and the chain never reaches a healthy
+// fallback. Streaming replies send headers once generation starts, so the
+// bound leaves the stream itself unlimited. Tests shorten it.
+var responseHeaderTimeout = 90 * time.Second
+
 // newHTTPClient builds the provider's HTTP client: the default transport with
 // a dialer that refuses blocked addresses, a proxy selector that checks the
-// target before handing it to an egress proxy, and the redirect policy above.
+// target before handing it to an egress proxy, the response-header bound
+// above, and the redirect policy above.
 func newHTTPClient() *http.Client {
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
@@ -98,6 +111,7 @@ func newHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = dialer.DialContext
 	transport.Proxy = selectProxy
+	transport.ResponseHeaderTimeout = responseHeaderTimeout
 	return &http.Client{Transport: transport, CheckRedirect: checkRedirect}
 }
 

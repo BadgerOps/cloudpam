@@ -15,6 +15,8 @@ export default function AIPlannerPage() {
     loading,
     applying,
     error,
+    fallbackNotice,
+    setFallbackNotice,
     fetchSessions,
     createSession,
     selectSession,
@@ -149,6 +151,17 @@ export default function AIPlannerPage() {
                 <div className="flex items-center gap-2 text-gray-400 text-sm">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Thinking...
+                </div>
+              )}
+
+              {fallbackNotice && (
+                <div
+                  role="status"
+                  className="flex items-center gap-2 text-amber-700 dark:text-amber-300 text-sm bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg"
+                >
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>Fallback provider used: {fallbackNotice}</span>
+                  <button onClick={() => setFallbackNotice(null)} className="ml-auto text-xs underline">dismiss</button>
                 </div>
               )}
 

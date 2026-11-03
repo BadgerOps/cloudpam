@@ -271,3 +271,38 @@ describe('streamPost error events', () => {
     expect(sink.done).toBe(false)
   })
 })
+
+describe('streamPost fallback events', () => {
+  it('hands the fallback notice to onFallback and keeps streaming the answer', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'event: fallback\ndata: {"provider":"openai gpt-4o","failed":[{"provider":"anthropic claude-opus-5-5","error":"provider returned HTTP 529"}]}\n\n',
+      'data: {"delta":"From fallback"}\n\n',
+      'event: done\ndata: {}\n\n',
+    ])))
+
+    const sink = collect()
+    const notices: unknown[] = []
+    await streamPost('/api/v1/ai/chat', {}, { ...sink.callbacks, onFallback: n => { notices.push(n) } })
+
+    expect(notices).toEqual([{ provider: 'openai gpt-4o', failed: [{ provider: 'anthropic claude-opus-5-5', error: 'provider returned HTTP 529' }] }])
+    expect(sink.deltas).toEqual(['From fallback'])
+    expect(sink.done).toBe(true)
+    expect(sink.error).toBeNull()
+  })
+
+  it('ignores a fallback event when no handler is given or the payload is malformed', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse([
+      'event: fallback\ndata: not json\n\n',
+      'event: fallback\ndata: {"provider":"x","failed":[]}\n\n',
+      'data: {"delta":"still answers"}\n\n',
+      'event: done\ndata: {}\n\n',
+    ])))
+
+    const sink = collect()
+    await streamPost('/api/v1/ai/chat', {}, sink.callbacks)
+
+    expect(sink.deltas).toEqual(['still answers'])
+    expect(sink.done).toBe(true)
+    expect(sink.error).toBeNull()
+  })
+})

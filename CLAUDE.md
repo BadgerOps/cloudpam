@@ -237,7 +237,7 @@ The storage layer uses build tags to switch between implementations:
 | `internal/observability` | Logging, metrics, OpenTelemetry tracing (opt-in, OTLP/HTTP) | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
-| `internal/planning/llm` | LLM provider abstraction (OpenAI-compatible) | Implemented (Phase 4) |
+| `internal/planning/llm` | LLM provider abstraction (OpenAI-compatible and Anthropic Messages API, ordered fallback chain) | Implemented (Phase 4) |
 | `internal/auth/oidc` | OIDC provider integration (discovery, exchange, claims, crypto) | Implemented (Phase 5) |
 
 ### HTTP Layer
@@ -471,8 +471,9 @@ When adding endpoints:
 - `CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS`: Comma-separated account IDs to skip
 
 ### AI Planning
-- `CLOUDPAM_LLM_API_KEY`: API key for OpenAI-compatible endpoint (optional when using an authless custom endpoint)
-- `CLOUDPAM_LLM_MODEL`: Model name (default: `gpt-4o`)
+- `CLOUDPAM_LLM_PROVIDER`: Provider protocol, `openai` (default, any OpenAI-compatible API) or `anthropic` (Messages API)
+- `CLOUDPAM_LLM_API_KEY`: API key for the provider (optional when using an authless OpenAI-compatible endpoint; always required for `anthropic`)
+- `CLOUDPAM_LLM_MODEL`: Model name (default: `gpt-4o`, or `claude-opus-5-5` when the provider is `anthropic`)
 - `CLOUDPAM_LLM_ENDPOINT`: Base URL override for Ollama/vLLM/Azure; with no API key, a non-empty endpoint enables authless custom-provider mode
 - `CLOUDPAM_LLM_MAX_TOKENS`: Max response tokens (default: `4096`)
 - `CLOUDPAM_LLM_TEMPERATURE`: Temperature (default: `0.7`)

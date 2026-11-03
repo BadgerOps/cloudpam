@@ -2,6 +2,37 @@ package llm
 
 import "testing"
 
+func TestConfigFromEnvProviderKind(t *testing.T) {
+	for _, tc := range []struct {
+		name, value, want string
+	}{
+		{"unset is openai-compatible", "", ProviderOpenAI},
+		{"anthropic", "anthropic", ProviderAnthropic},
+		{"case and whitespace are ignored", "  Anthropic ", ProviderAnthropic},
+		{"unsupported value falls back to the default", "bogus", ProviderOpenAI},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CLOUDPAM_LLM_PROVIDER", tc.value)
+			if got := ConfigFromEnv().Provider; got != tc.want {
+				t.Fatalf("Provider = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConfigFromEnvDefaultModelFollowsProviderKind(t *testing.T) {
+	for _, tc := range []struct{ kind, want string }{
+		{"", DefaultModel},
+		{"anthropic", DefaultAnthropicModel},
+	} {
+		t.Setenv("CLOUDPAM_LLM_PROVIDER", tc.kind)
+		t.Setenv("CLOUDPAM_LLM_MODEL", "")
+		if got := ConfigFromEnv().Model; got != tc.want {
+			t.Errorf("provider %q: Model = %q, want %q", tc.kind, got, tc.want)
+		}
+	}
+}
+
 // TestConfigFromEnvNumericFallbacks pins the behaviour that a malformed or
 // out-of-range numeric override is ignored in favour of the documented default,
 // rather than propagating a zero value into the provider.

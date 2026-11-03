@@ -78,6 +78,10 @@ func TestAIProviderSettingsRoundTripEncryptedKey(t *testing.T) {
 		LastTestedAt:    &tested,
 		LastTestError:   "provider returned HTTP 401",
 		LastTestModel:   "llama3",
+		Fallbacks: []domain.AIFallbackProvider{
+			{ID: "fb1", Provider: "anthropic", Model: "claude", APIKeyEncrypted: ct},
+			{ID: "fb2", Provider: "openai", Endpoint: "http://vllm:8000/v1"},
+		},
 	}
 	if err := s.UpdateAIProviderSettings(ctx, in); err != nil {
 		t.Fatalf("UpdateAIProviderSettings: %v", err)
@@ -97,6 +101,9 @@ func TestAIProviderSettingsRoundTripEncryptedKey(t *testing.T) {
 	}
 	if got.Endpoint != in.Endpoint || got.Model != in.Model || got.MaxTokens != 2048 || got.Temperature == nil || *got.Temperature != 0.2 {
 		t.Fatalf("round trip mismatch: %+v", got)
+	}
+	if len(got.Fallbacks) != 2 || got.Fallbacks[0] != in.Fallbacks[0] || got.Fallbacks[1] != in.Fallbacks[1] {
+		t.Fatalf("fallbacks round trip mismatch: %+v", got.Fallbacks)
 	}
 	if got.State != domain.AIProviderStateFailing || got.LastTestedAt == nil || !got.LastTestedAt.Equal(tested) || got.LastTestError != in.LastTestError {
 		t.Fatalf("test fields mismatch: %+v", got)

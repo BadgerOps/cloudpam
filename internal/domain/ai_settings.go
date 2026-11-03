@@ -33,6 +33,7 @@ const (
 // Zero values mean "not set", so the environment or built-in default applies.
 // It holds the API key ciphertext and is never returned by the API.
 type AIProviderSettings struct {
+	Provider        string     `json:"provider"` // llm.ProviderKinds value; "" = not set
 	Endpoint        string     `json:"endpoint"`
 	Model           string     `json:"model"`
 	MaxTokens       int64      `json:"max_tokens"`            // 0 = not set
@@ -45,9 +46,26 @@ type AIProviderSettings struct {
 	// LastTestFingerprint identifies the effective configuration the last
 	// test ran against (see llm.Resolved.Fingerprint); the result is reported
 	// only while the current configuration still matches it.
-	LastTestFingerprint string    `json:"last_test_fingerprint,omitempty"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	LastTestFingerprint string `json:"last_test_fingerprint,omitempty"`
+	// Fallbacks are tried in order when the primary provider cannot be
+	// reached or answers 5xx. Each is fully specified; max tokens and
+	// temperature are inherited from the effective primary configuration.
+	Fallbacks []AIFallbackProvider `json:"fallbacks,omitempty"`
+	UpdatedAt time.Time            `json:"updated_at"`
 }
+
+// AIFallbackProvider is one stored fallback provider. ID is server-assigned
+// and lets a PATCH keep an entry's stored key without re-sending it.
+type AIFallbackProvider struct {
+	ID              string `json:"id"`
+	Provider        string `json:"provider"`
+	Endpoint        string `json:"endpoint"`
+	Model           string `json:"model"`
+	APIKeyEncrypted string `json:"api_key_encrypted,omitempty"`
+}
+
+// MaxAIFallbackProviders bounds the stored fallback list.
+const MaxAIFallbackProviders = 5
 
 // DefaultAIProviderSettings returns an empty document: nothing stored.
 func DefaultAIProviderSettings() AIProviderSettings {
@@ -56,7 +74,7 @@ func DefaultAIProviderSettings() AIProviderSettings {
 
 // HasStoredValues reports whether any provider field is set in the document.
 func (s *AIProviderSettings) HasStoredValues() bool {
-	return s.Endpoint != "" || s.Model != "" || s.MaxTokens != 0 || s.Temperature != nil || s.APIKeyEncrypted != ""
+	return s.Provider != "" || s.Endpoint != "" || s.Model != "" || s.MaxTokens != 0 || s.Temperature != nil || s.APIKeyEncrypted != "" || len(s.Fallbacks) > 0
 }
 
 // NormalizeAIProviderSettings trims strings, clamps numeric fields into their
@@ -66,12 +84,30 @@ func NormalizeAIProviderSettings(s *AIProviderSettings) *AIProviderSettings {
 		d := DefaultAIProviderSettings()
 		return &d
 	}
+	s.Provider = strings.ToLower(strings.TrimSpace(s.Provider))
 	s.Endpoint = strings.TrimSpace(s.Endpoint)
 	s.Model = strings.TrimSpace(s.Model)
 	s.APIKeyEncrypted = strings.TrimSpace(s.APIKeyEncrypted)
 	s.LastTestError = strings.TrimSpace(s.LastTestError)
 	s.LastTestModel = strings.TrimSpace(s.LastTestModel)
 	s.LastTestFingerprint = strings.TrimSpace(s.LastTestFingerprint)
+	fallbacks := s.Fallbacks[:0:0]
+	for _, fb := range s.Fallbacks {
+		fb.ID = strings.TrimSpace(fb.ID)
+		fb.Provider = strings.ToLower(strings.TrimSpace(fb.Provider))
+		fb.Endpoint = strings.TrimSpace(fb.Endpoint)
+		fb.Model = strings.TrimSpace(fb.Model)
+		fb.APIKeyEncrypted = strings.TrimSpace(fb.APIKeyEncrypted)
+		// An entry without an id or kind cannot be addressed or built.
+		if fb.ID == "" || fb.Provider == "" {
+			continue
+		}
+		fallbacks = append(fallbacks, fb)
+	}
+	if len(fallbacks) > MaxAIFallbackProviders {
+		fallbacks = fallbacks[:MaxAIFallbackProviders]
+	}
+	s.Fallbacks = fallbacks
 	if s.MaxTokens < 0 {
 		s.MaxTokens = 0
 	}
@@ -105,6 +141,7 @@ func NormalizeAIProviderSettings(s *AIProviderSettings) *AIProviderSettings {
 
 // AIProviderSettingSources reports where each effective value came from.
 type AIProviderSettingSources struct {
+	Provider    string `json:"provider"`
 	Endpoint    string `json:"endpoint"`
 	Model       string `json:"model"`
 	APIKey      string `json:"api_key"`
@@ -115,6 +152,7 @@ type AIProviderSettingSources struct {
 // AIProviderSettingsResponse is the API representation of the effective AI
 // provider configuration. It never carries the API key.
 type AIProviderSettingsResponse struct {
+	Provider               string                   `json:"provider"`
 	Endpoint               string                   `json:"endpoint"`
 	Model                  string                   `json:"model"`
 	MaxTokens              int64                    `json:"max_tokens"`
@@ -126,10 +164,24 @@ type AIProviderSettingsResponse struct {
 	LastTestedAt           *time.Time               `json:"last_tested_at,omitempty"`
 	LastTestError          string                   `json:"last_test_error,omitempty"`
 	LastTestModel          string                   `json:"last_test_model,omitempty"`
+	// Fallbacks lists the stored fallback providers in order. It is always
+	// present, empty when none are configured.
+	Fallbacks []AIFallbackProviderResponse `json:"fallbacks"`
+}
+
+// AIFallbackProviderResponse is the API representation of one fallback. The
+// endpoint is redacted and the key is never returned.
+type AIFallbackProviderResponse struct {
+	ID               string `json:"id"`
+	Provider         string `json:"provider"`
+	Endpoint         string `json:"endpoint"`
+	Model            string `json:"model"`
+	APIKeyConfigured bool   `json:"api_key_configured"`
 }
 
 // UpdateAIProviderSettingsRequest is the PATCH body. Omitted fields are kept.
 type UpdateAIProviderSettingsRequest struct {
+	Provider         *string  `json:"provider,omitempty"`    // "" clears
 	Endpoint         *string  `json:"endpoint,omitempty"`    // "" clears the stored value
 	Model            *string  `json:"model,omitempty"`       // "" clears
 	MaxTokens        *int64   `json:"max_tokens,omitempty"`  // 0 clears
@@ -137,6 +189,21 @@ type UpdateAIProviderSettingsRequest struct {
 	ClearTemperature bool     `json:"clear_temperature,omitempty"`
 	APIKey           *string  `json:"api_key,omitempty"` // omitted = keep; non-empty = replace; "" = invalid
 	ClearAPIKey      bool     `json:"clear_api_key,omitempty"`
+	// Fallbacks replaces the whole ordered list when present; an empty list
+	// clears it. Omitted keeps the stored list.
+	Fallbacks *[]AIFallbackProviderUpdate `json:"fallbacks,omitempty"`
+}
+
+// AIFallbackProviderUpdate is one entry of a PATCH fallback list. An entry
+// with the id of a stored fallback keeps that fallback's key when api_key is
+// omitted; an entry without an id is new.
+type AIFallbackProviderUpdate struct {
+	ID          string  `json:"id,omitempty"`
+	Provider    string  `json:"provider"`
+	Endpoint    string  `json:"endpoint,omitempty"`
+	Model       string  `json:"model,omitempty"`
+	APIKey      *string `json:"api_key,omitempty"` // omitted = keep (stored entry) or none (new entry); "" = invalid
+	ClearAPIKey bool    `json:"clear_api_key,omitempty"`
 }
 
 // AIProviderTestResponse is the result of POST /api/v1/settings/ai/test.
@@ -149,6 +216,20 @@ type AIProviderTestResponse struct {
 	StreamingSupported bool      `json:"streaming_supported"`
 	Error              string    `json:"error,omitempty"` // sanitized
 	TestedAt           time.Time `json:"tested_at"`
+	// Fallbacks reports each stored fallback's own outcome, in order. The
+	// results are not stored; ok and state describe the primary only.
+	Fallbacks []AIFallbackTestResult `json:"fallbacks,omitempty"`
+}
+
+// AIFallbackTestResult is one fallback provider's test outcome.
+type AIFallbackTestResult struct {
+	ID        string `json:"id"`
+	Provider  string `json:"provider"`
+	Endpoint  string `json:"endpoint"`
+	Model     string `json:"model"`
+	OK        bool   `json:"ok"`
+	LatencyMS int64  `json:"latency_ms"`
+	Error     string `json:"error,omitempty"` // sanitized
 }
 
 // Clone deep-copies the document so the pointer fields are not shared.
@@ -164,6 +245,9 @@ func (s *AIProviderSettings) Clone() *AIProviderSettings {
 	if s.LastTestedAt != nil {
 		at := *s.LastTestedAt
 		out.LastTestedAt = &at
+	}
+	if s.Fallbacks != nil {
+		out.Fallbacks = append([]AIFallbackProvider(nil), s.Fallbacks...)
 	}
 	return &out
 }

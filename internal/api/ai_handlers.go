@@ -112,6 +112,21 @@ func (a *AIPlanningServer) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for evt := range eventCh {
+		if evt.Fallback != nil {
+			// An earlier provider in the chain failed and a later one is
+			// answering. Tell the client which, with sanitized reasons, and
+			// log it so operators see the primary is unhealthy.
+			failed := make([]map[string]string, 0, len(evt.Fallback.Failed))
+			for _, f := range evt.Fallback.Failed {
+				failed = append(failed, map[string]string{"provider": f.Label, "error": llm.DiagnoseError(f.Err, aiChatStreamTimeout)})
+				a.srv.logger.WarnContext(r.Context(), "ai provider failed; falling back",
+					"failed", f.Label, "error", llm.DiagnoseError(f.Err, aiChatStreamTimeout), "provider", evt.Fallback.Provider)
+			}
+			data, _ := json.Marshal(map[string]any{"provider": evt.Fallback.Provider, "failed": failed})
+			_, _ = fmt.Fprintf(w, "event: fallback\ndata: %s\n\n", data)
+			_ = rc.Flush()
+			continue
+		}
 		if evt.Err != nil {
 			// The provider failed mid-stream (or the stream exceeded its cap).
 			// Tell the client instead of ending the answer as if complete; the

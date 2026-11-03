@@ -5,14 +5,16 @@ import type { AIProviderSettings, AIProviderTestResult } from '../api/types'
 
 function settings(overrides: Partial<AIProviderSettings> = {}): AIProviderSettings {
   return {
+    provider: 'openai',
     endpoint: 'https://api.openai.com/v1',
     model: 'gpt-4o',
     max_tokens: 4096,
     temperature: 0.7,
     api_key_configured: false,
     api_key_storage_available: true,
-    sources: { endpoint: 'default', model: 'default', api_key: 'none', max_tokens: 'default', temperature: 'default' },
+    sources: { provider: 'default', endpoint: 'default', model: 'default', api_key: 'none', max_tokens: 'default', temperature: 'default' },
     state: 'not_configured',
+    fallbacks: [],
     ...overrides,
   }
 }

@@ -62,13 +62,13 @@ func (l *limitedBody) Read(p []byte) (int, error) {
 // startCompletionSpan opens a client span around a chat completion call. When
 // tracing is disabled the shared tracer is the OpenTelemetry no-op, so this is
 // an interface call against a network round trip.
-func (p *OpenAIProvider) startCompletionSpan(ctx context.Context, stream bool) (context.Context, trace.Span) {
+func startCompletionSpan(ctx context.Context, provider, model, server string, stream bool) (context.Context, trace.Span) {
 	return observability.Tracer().Start(ctx, "llm.chat.completions",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(
-			attribute.String("llm.provider", p.Name()),
-			attribute.String("llm.model", p.cfg.Model),
-			attribute.String("server.address", p.baseURL()),
+			attribute.String("llm.provider", provider),
+			attribute.String("llm.model", model),
+			attribute.String("server.address", server),
 			attribute.Bool("llm.stream", stream),
 		),
 	)
@@ -81,6 +81,15 @@ func endSpanWithError(span trace.Span, err error) error {
 		span.SetStatus(codes.Error, err.Error())
 	}
 	span.End()
+	return err
+}
+
+// recordStatus puts a non-200 status on the span and returns err unchanged.
+func recordStatus(span trace.Span, err error) error {
+	var statusErr *StatusError
+	if errors.As(err, &statusErr) {
+		span.SetAttributes(attribute.Int("http.response.status_code", statusErr.Status))
+	}
 	return err
 }
 
@@ -102,7 +111,7 @@ func NewOpenAIProvider(cfg Config) *OpenAIProvider {
 	}
 }
 
-func (p *OpenAIProvider) Name() string { return "openai" }
+func (p *OpenAIProvider) Name() string { return ProviderOpenAI }
 func (p *OpenAIProvider) Available() bool {
 	return strings.TrimSpace(p.cfg.APIKey) != "" || strings.TrimSpace(p.cfg.Endpoint) != ""
 }
@@ -153,10 +162,20 @@ type openaiStreamChunk struct {
 	} `json:"choices"`
 }
 
-func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts Options) (out *Response, err error) {
-	ctx, span := p.startCompletionSpan(ctx, false)
-	defer func() { _ = endSpanWithError(span, err) }()
+// headers returns the request headers for one call. The key is sent only when
+// configured, so authless endpoints (Ollama, vLLM) get no Authorization header.
+func (p *OpenAIProvider) headers(stream bool) map[string]string {
+	h := map[string]string{}
+	if stream {
+		h["Accept"] = "text/event-stream"
+	}
+	if apiKey := strings.TrimSpace(p.cfg.APIKey); apiKey != "" {
+		h["Authorization"] = "Bearer " + apiKey
+	}
+	return h
+}
 
+func (p *OpenAIProvider) request(messages []Message, opts Options, stream bool) openaiRequest {
 	maxTokens := opts.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = p.cfg.MaxTokens
@@ -165,45 +184,29 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 	if opts.Temperature != nil {
 		temp = *opts.Temperature
 	}
-
 	oaiMsgs := make([]openaiMessage, len(messages))
 	for i, m := range messages {
 		oaiMsgs[i] = openaiMessage(m)
 	}
-
-	body := openaiRequest{
+	return openaiRequest{
 		Model:       p.cfg.Model,
 		Messages:    oaiMsgs,
 		MaxTokens:   maxTokens,
 		Temperature: temp,
-		Stream:      false,
+		Stream:      stream,
 	}
+}
 
-	bodyJSON, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
+func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts Options) (out *Response, err error) {
+	ctx, span := startCompletionSpan(ctx, p.Name(), p.cfg.Model, p.baseURL(), false)
+	defer func() { _ = endSpanWithError(span, err) }()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL()+"/chat/completions", strings.NewReader(string(bodyJSON)))
+	resp, err := postJSON(ctx, p.client, p.baseURL()+"/chat/completions", p.headers(false), p.request(messages, opts, false))
 	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey := strings.TrimSpace(p.cfg.APIKey); apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
+		return nil, recordStatus(span, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
-
-	if resp.StatusCode != http.StatusOK {
-		discardBody(resp.Body)
-		return nil, &StatusError{Status: resp.StatusCode}
-	}
 
 	respBody, err := io.ReadAll(newLimitedBody(resp.Body, maxResponseBytes))
 	if err != nil {
@@ -236,7 +239,7 @@ func (p *OpenAIProvider) Complete(ctx context.Context, messages []Message, opts 
 }
 
 func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message, opts Options) (events <-chan StreamEvent, err error) {
-	ctx, span := p.startCompletionSpan(ctx, true)
+	ctx, span := startCompletionSpan(ctx, p.Name(), p.cfg.Model, p.baseURL(), true)
 	// The span stays open for the lifetime of the stream, so it is only ended
 	// here when the request never got that far.
 	streaming := false
@@ -246,54 +249,11 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 		}
 	}()
 
-	maxTokens := opts.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = p.cfg.MaxTokens
-	}
-	temp := p.cfg.Temperature
-	if opts.Temperature != nil {
-		temp = *opts.Temperature
-	}
-
-	oaiMsgs := make([]openaiMessage, len(messages))
-	for i, m := range messages {
-		oaiMsgs[i] = openaiMessage(m)
-	}
-
-	body := openaiRequest{
-		Model:       p.cfg.Model,
-		Messages:    oaiMsgs,
-		MaxTokens:   maxTokens,
-		Temperature: temp,
-		Stream:      true,
-	}
-
-	bodyJSON, err := json.Marshal(body)
+	resp, err := postJSON(ctx, p.client, p.baseURL()+"/chat/completions", p.headers(true), p.request(messages, opts, true))
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
+		return nil, recordStatus(span, err)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL()+"/chat/completions", strings.NewReader(string(bodyJSON)))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	if apiKey := strings.TrimSpace(p.cfg.APIKey); apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("http request: %w", err)
-	}
-
 	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
-	if resp.StatusCode != http.StatusOK {
-		discardBody(resp.Body)
-		_ = resp.Body.Close()
-		return nil, &StatusError{Status: resp.StatusCode}
-	}
 
 	ch := make(chan StreamEvent, 64)
 	streaming = true
@@ -301,93 +261,57 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 		defer close(ch)
 		defer span.End()
 		defer func() { _ = resp.Body.Close() }()
-		p.readSSEStream(ctx, newLimitedBody(resp.Body, maxStreamBytes), ch)
+		readOpenAIStream(ctx, newLimitedBody(resp.Body, maxStreamBytes), ch)
 		drainStream(resp.Body)
 	}()
 
 	return ch, nil
 }
 
-// drainStream reads what follows the terminal event, normally just the [DONE]
-// sentinel and the end of the response, so the body reaches EOF and the
-// transport pools the connection instead of discarding it. discardBody bounds
-// the bytes, and a provider that holds the socket open after finish_reason
-// (#359) is cut off by closing the body at streamDrainTimeout.
+// drainStream reads the rest of a body the caller is done with (what follows
+// a stream's terminal event, or an error reply), so the body reaches EOF and
+// the transport pools the connection instead of discarding it. discardBody
+// bounds the bytes, and a provider that holds the socket open (#359) is cut
+// off by closing the body at streamDrainTimeout.
 func drainStream(body io.ReadCloser) {
 	timer := time.AfterFunc(streamDrainTimeout, func() { _ = body.Close() })
 	defer timer.Stop()
 	discardBody(body)
 }
 
-// readSSEStream forwards one StreamEvent per content chunk and exactly one
+// readOpenAIStream forwards one StreamEvent per content chunk and exactly one
 // terminal event (Done, with Err set on a read failure), then returns so the
 // caller can drain and close the body and close the channel. It also returns,
 // without a terminal event, when ctx ends while the channel is full: the
 // consumer stopped reading, and Provider.StreamComplete documents that close.
-func (p *OpenAIProvider) readSSEStream(ctx context.Context, r io.Reader, ch chan<- StreamEvent) {
-	buf := make([]byte, 4096)
-	var lineBuf strings.Builder
-
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			lineBuf.Write(buf[:n])
-			for {
-				text := lineBuf.String()
-				idx := strings.Index(text, "\n")
-				if idx == -1 {
-					break
-				}
-				line := text[:idx]
-				lineBuf.Reset()
-				lineBuf.WriteString(text[idx+1:])
-
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				if !strings.HasPrefix(line, "data: ") {
-					continue
-				}
-				data := strings.TrimPrefix(line, "data: ")
-				if data == "[DONE]" {
-					Send(ctx, ch, StreamEvent{Done: true})
-					return
-				}
-
-				var chunk openaiStreamChunk
-				if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-					continue
-				}
-				if len(chunk.Choices) == 0 {
-					continue
-				}
-
-				evt := StreamEvent{
-					Delta: chunk.Choices[0].Delta.Content,
-				}
-				// Some OpenAI-compatible proxies send "finish_reason":"" on
-				// intermediate chunks instead of null; only a non-empty reason
-				// ends the completion.
-				if fr := chunk.Choices[0].FinishReason; fr != nil && *fr != "" {
-					evt.FinishReason = *fr
-					evt.Done = true
-				}
-				// Done is terminal: consumers stop at the first done event
-				// and never drain, so anything streamed after finish_reason
-				// (usage chunks, the [DONE] sentinel) is left to drainStream.
-				if !Send(ctx, ch, evt) || evt.Done {
-					return
-				}
-			}
+func readOpenAIStream(ctx context.Context, r io.Reader, ch chan<- StreamEvent) {
+	stopped := false
+	err := readSSE(r, func(data string) bool {
+		if data == "[DONE]" {
+			Send(ctx, ch, StreamEvent{Done: true})
+			stopped = true
+			return false
 		}
-		if err != nil {
-			evt := StreamEvent{Done: true}
-			if !errors.Is(err, io.EOF) {
-				evt.Err = err
-			}
-			Send(ctx, ch, evt)
-			return
+		var chunk openaiStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil || len(chunk.Choices) == 0 {
+			return true
 		}
+		evt := StreamEvent{Delta: chunk.Choices[0].Delta.Content}
+		// Some OpenAI-compatible proxies send "finish_reason":"" on
+		// intermediate chunks instead of null; only a non-empty reason
+		// ends the completion.
+		if fr := chunk.Choices[0].FinishReason; fr != nil && *fr != "" {
+			evt.FinishReason = *fr
+			evt.Done = true
+		}
+		// Done is terminal: consumers stop at the first done event and never
+		// drain, so anything streamed after finish_reason (usage chunks, the
+		// [DONE] sentinel) is left to drainStream.
+		stopped = !Send(ctx, ch, evt) || evt.Done
+		return !stopped
+	})
+	if stopped {
+		return
 	}
+	Send(ctx, ch, StreamEvent{Done: true, Err: err})
 }

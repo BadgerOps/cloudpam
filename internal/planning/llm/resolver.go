@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"cloudpam/internal/domain"
@@ -29,17 +30,37 @@ type Resolved struct {
 	Sources          domain.AIProviderSettingSources
 	Stored           domain.AIProviderSettings
 	APIKeyConfigured bool
+	// Fallbacks are the stored fallback providers in order, each with the
+	// effective max tokens and temperature. They come from the store only.
+	Fallbacks []ResolvedFallback
+}
+
+// ResolvedFallback is one fallback provider ready to build. A stored key that
+// cannot be decrypted leaves APIKey empty and sets KeyUnreadable, so the link
+// is skipped by the chain even when its endpoint would accept an
+// unauthenticated request, and is reported as unconfigured by the API.
+type ResolvedFallback struct {
+	ID               string
+	Config           Config
+	APIKeyConfigured bool
+	KeyUnreadable    bool
+}
+
+// Label names a configuration in notices and test results, as "<kind> <model>".
+// It never includes the endpoint or key.
+func (c Config) Label() string {
+	return strings.TrimSpace(c.Provider + " " + c.Model)
 }
 
 // Fingerprint identifies the configuration a test result applies to: a hex
-// SHA-256 over the effective endpoint, model and key source, plus the stored
-// key ciphertext when the key comes from the database, so re-saving the key
-// changes it. No key material, plaintext or hashed, goes in. A rotation of
+// SHA-256 over the effective provider kind, endpoint, model and key source,
+// plus the stored key ciphertext when the key comes from the database, so
+// re-saving the key changes it. No key material, plaintext or hashed, goes in. A rotation of
 // CLOUDPAM_LLM_API_KEY with the same endpoint and model is therefore not
 // detected and the earlier test result stays in effect; that is accepted.
 func (r Resolved) Fingerprint() string {
 	h := sha256.New()
-	parts := []string{r.Config.Endpoint, r.Config.Model, r.Sources.APIKey}
+	parts := []string{r.Config.Provider, r.Config.Endpoint, r.Config.Model, r.Sources.APIKey}
 	if r.Sources.APIKey == domain.AISettingSourceDatabase {
 		parts = append(parts, r.Stored.APIKeyEncrypted)
 	}
@@ -55,10 +76,11 @@ func (r Resolved) Fingerprint() string {
 // Precedence per field: non-empty stored value, then environment, then the
 // built-in default.
 //
-// The API key is bound to its endpoint: the environment key is used only when
-// the effective endpoint comes from the environment or the built-in default.
-// A database endpoint only ever receives a database key, so whoever can set
-// the endpoint cannot redirect CLOUDPAM_LLM_API_KEY to a host of their choice.
+// The API key is bound to its endpoint and provider kind: the environment key
+// is used only when both come from the environment or the built-in default.
+// A database endpoint or kind only ever receives a database key, so whoever
+// can set either cannot redirect CLOUDPAM_LLM_API_KEY to a host of their
+// choice (the kind selects the default host).
 type Resolver struct {
 	env     Config
 	source  SettingsSource
@@ -93,8 +115,17 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 	cfg := &out.Config
 	src := &out.Sources
 
+	cfg.Provider, src.Provider = pickString(stored.Provider, r.env.Provider, DefaultProvider)
 	cfg.Endpoint, src.Endpoint = pickString(stored.Endpoint, r.env.Endpoint, "")
-	cfg.Model, src.Model = pickString(stored.Model, r.env.Model, DefaultModel)
+	// ConfigFromEnv fills the model with its kind's default when
+	// CLOUDPAM_LLM_MODEL is unset; that value must not follow a stored kind
+	// change, so it is treated as unset and the effective kind's default
+	// applies.
+	envModel := r.env.Model
+	if envModel == DefaultModelFor(r.env.Provider) {
+		envModel = ""
+	}
+	cfg.Model, src.Model = pickString(stored.Model, envModel, DefaultModelFor(cfg.Provider))
 
 	switch {
 	case stored.MaxTokens > 0:
@@ -117,38 +148,68 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 	}
 
 	var keyErr error
+	var unreadable []string
 	if stored.APIKeyEncrypted != "" {
 		key, err := r.decryptKey(stored.APIKeyEncrypted)
 		if err == nil && key != "" {
 			cfg.APIKey, src.APIKey = key, domain.AISettingSourceDatabase
 		} else {
 			keyErr = ErrStoredKeyUnreadable
-			r.warnUnreadable(stored.APIKeyEncrypted)
+			unreadable = append(unreadable, stored.APIKeyEncrypted)
 		}
 	}
 	if cfg.APIKey == "" {
-		if r.env.APIKey != "" && src.Endpoint != domain.AISettingSourceDatabase {
+		if r.env.APIKey != "" && src.Endpoint != domain.AISettingSourceDatabase && src.Provider != domain.AISettingSourceDatabase {
 			cfg.APIKey, src.APIKey = r.env.APIKey, domain.AISettingSourceEnvironment
 		} else {
 			src.APIKey = domain.AISettingSourceNone
 		}
 	}
 	out.APIKeyConfigured = cfg.APIKey != ""
+
+	for _, fb := range stored.Fallbacks {
+		link := ResolvedFallback{ID: fb.ID, Config: Config{
+			Provider:    fb.Provider,
+			Endpoint:    fb.Endpoint,
+			Model:       fb.Model,
+			MaxTokens:   cfg.MaxTokens,
+			Temperature: cfg.Temperature,
+		}}
+		if link.Config.Model == "" {
+			link.Config.Model = DefaultModelFor(fb.Provider)
+		}
+		if fb.APIKeyEncrypted != "" {
+			key, err := r.decryptKey(fb.APIKeyEncrypted)
+			if err == nil && key != "" {
+				link.Config.APIKey = key
+			} else {
+				link.KeyUnreadable = true
+				unreadable = append(unreadable, fb.APIKeyEncrypted)
+			}
+		}
+		link.APIKeyConfigured = link.Config.APIKey != ""
+		out.Fallbacks = append(out.Fallbacks, link)
+	}
+	if len(unreadable) > 0 {
+		r.warnUnreadable(strings.Join(unreadable, "\n"))
+	}
 	return out, keyErr
 }
 
-// warnUnreadable logs an undecryptable stored key once per distinct ciphertext
-// rather than on every resolve. The ciphertext itself is never logged.
-func (r *Resolver) warnUnreadable(ciphertext string) {
+// warnUnreadable logs undecryptable stored keys once per distinct set of
+// ciphertexts rather than on every resolve. The ciphertexts themselves are
+// never logged.
+func (r *Resolver) warnUnreadable(ciphertexts string) {
 	r.mu.Lock()
-	seen := r.lastUnreadable == ciphertext
-	r.lastUnreadable = ciphertext
+	seen := r.lastUnreadable == ciphertexts
+	r.lastUnreadable = ciphertexts
 	r.mu.Unlock()
 	if seen {
 		return
 	}
 	slog.Default().Warn("stored ai provider api key cannot be decrypted",
-		"hint", "check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again; CLOUDPAM_LLM_API_KEY is used only when the endpoint is not stored in the database")
+		"keys", strings.Count(ciphertexts, "\n")+1,
+		"hint", "check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again; CLOUDPAM_LLM_API_KEY is used only when the endpoint and provider kind are not stored in the database")
 }
 
 func (r *Resolver) decryptKey(ciphertext string) (string, error) {

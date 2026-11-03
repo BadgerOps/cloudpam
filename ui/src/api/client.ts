@@ -1,4 +1,4 @@
-import type { ApiError } from './types'
+import type { ApiError, ChatFallbackNotice } from './types'
 import type {
   AccountCredential,
   CredentialTestResult,
@@ -204,6 +204,8 @@ export interface SSECallbacks {
   onDelta: (text: string) => void
   onDone: () => void
   onError: (error: Error) => void
+  // Called once, before the first delta, when a fallback provider answers.
+  onFallback?: (notice: ChatFallbackNotice) => void
 }
 
 export async function streamPost(path: string, data: unknown, callbacks: SSECallbacks): Promise<void> {
@@ -245,6 +247,8 @@ export async function streamPost(path: string, data: unknown, callbacks: SSECall
   let buffer = ''
   // Set by an "event: error" line; the next data line carries the message.
   let errorEventPending = false
+  // Set by an "event: fallback" line; the next data line carries the notice.
+  let fallbackEventPending = false
   let streamError: Error | null = null
 
   // Returns 'done' when the line ends the stream normally, 'error' when the
@@ -258,9 +262,25 @@ export async function streamPost(path: string, data: unknown, callbacks: SSECall
       errorEventPending = true
       return 'next'
     }
+    if (trimmed === 'event: fallback') {
+      fallbackEventPending = true
+      return 'next'
+    }
 
     if (trimmed.startsWith('data: ')) {
       const jsonStr = trimmed.slice(6)
+      if (fallbackEventPending) {
+        fallbackEventPending = false
+        try {
+          const parsed = JSON.parse(jsonStr)
+          if (typeof parsed.provider === 'string' && Array.isArray(parsed.failed)) {
+            callbacks.onFallback?.(parsed as ChatFallbackNotice)
+          }
+        } catch {
+          // a malformed notice is not worth failing the answer over
+        }
+        return 'next'
+      }
       if (errorEventPending) {
         let message = 'The AI provider failed while answering'
         try {

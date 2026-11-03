@@ -1029,8 +1029,11 @@ export interface FragmentationAnalysis {
 // The API never returns the API key itself, only whether one is configured.
 export type AIProviderState = 'not_configured' | 'configured' | 'verified' | 'failing'
 export type AISettingSource = 'database' | 'environment' | 'default' | 'none'
+// The protocol: any OpenAI-compatible API, or the Anthropic Messages API.
+export type AIProviderKind = 'openai' | 'anthropic'
 
 export interface AIProviderSettingSources {
+  provider: AISettingSource
   endpoint: AISettingSource
   model: AISettingSource
   api_key: AISettingSource
@@ -1038,7 +1041,18 @@ export interface AIProviderSettingSources {
   temperature: AISettingSource
 }
 
+// One stored fallback provider, tried in order when the primary cannot be
+// reached or answers 5xx. Max tokens and temperature follow the primary.
+export interface AIFallbackProvider {
+  id: string
+  provider: AIProviderKind
+  endpoint: string
+  model: string
+  api_key_configured: boolean
+}
+
 export interface AIProviderSettings {
+  provider: AIProviderKind
   endpoint: string
   model: string
   max_tokens: number
@@ -1050,11 +1064,25 @@ export interface AIProviderSettings {
   last_tested_at?: string
   last_test_error?: string
   last_test_model?: string
+  fallbacks: AIFallbackProvider[]
 }
 
-// PATCH body. Omitted fields are kept; "" for endpoint/model and 0 for
-// max_tokens clear the stored value.
+// One entry of the PATCH fallback list. An entry with the id of a stored
+// fallback keeps its key unless api_key or clear_api_key is sent; an entry
+// without an id is new.
+export interface AIFallbackProviderUpdate {
+  id?: string
+  provider: AIProviderKind
+  endpoint?: string
+  model?: string
+  api_key?: string
+  clear_api_key?: boolean
+}
+
+// PATCH body. Omitted fields are kept; "" for provider/endpoint/model and 0
+// for max_tokens clear the stored value. fallbacks replaces the whole list.
 export interface UpdateAIProviderSettingsRequest {
+  provider?: AIProviderKind | ''
   endpoint?: string
   model?: string
   max_tokens?: number
@@ -1062,6 +1090,17 @@ export interface UpdateAIProviderSettingsRequest {
   clear_temperature?: boolean
   api_key?: string
   clear_api_key?: boolean
+  fallbacks?: AIFallbackProviderUpdate[]
+}
+
+export interface AIFallbackTestResult {
+  id: string
+  provider: AIProviderKind
+  endpoint: string
+  model: string
+  ok: boolean
+  latency_ms: number
+  error?: string
 }
 
 export interface AIProviderTestResult {
@@ -1073,6 +1112,14 @@ export interface AIProviderTestResult {
   streaming_supported: boolean
   error?: string
   tested_at: string
+  fallbacks?: AIFallbackTestResult[]
+}
+
+// "event: fallback" on the chat stream: an earlier provider failed and a
+// later one is answering. Sent before the first delta.
+export interface ChatFallbackNotice {
+  provider: string
+  failed: { provider: string; error: string }[]
 }
 
 // --- Account credential types ---

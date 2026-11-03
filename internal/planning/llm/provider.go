@@ -2,8 +2,11 @@ package llm
 
 import (
 	"context"
+	"log/slog"
 	"os"
+	"slices"
 	"strconv"
+	"strings"
 )
 
 // Message represents a chat message sent to or received from the LLM.
@@ -37,6 +40,10 @@ type StreamEvent struct {
 	// Err is set on the final event when the stream ended on a read error
 	// rather than a clean end of stream.
 	Err error
+	// Fallback is set on the first event of a stream that a later provider
+	// in a Chain answered after an earlier one failed. The event carries no
+	// text.
+	Fallback *FallbackNotice
 }
 
 // Send forwards evt on ch and reports whether it was delivered. It tries the
@@ -80,11 +87,37 @@ type Provider interface {
 	Available() bool
 }
 
+// Provider kinds. The kind selects the wire protocol and the default host;
+// the endpoint, when set, overrides the host only.
+const (
+	ProviderOpenAI    = "openai"
+	ProviderAnthropic = "anthropic"
+)
+
+// ProviderKinds lists the supported kinds in display order.
+var ProviderKinds = []string{ProviderOpenAI, ProviderAnthropic}
+
+// ValidProviderKind reports whether kind names a supported protocol.
+func ValidProviderKind(kind string) bool {
+	return slices.Contains(ProviderKinds, kind)
+}
+
+// NewProvider builds the provider for cfg.Provider. The kind is validated at
+// the boundaries (environment and PATCH), so an unknown value here is treated
+// as the OpenAI-compatible default rather than refused.
+func NewProvider(cfg Config) Provider {
+	if cfg.Provider == ProviderAnthropic {
+		return NewAnthropicProvider(cfg)
+	}
+	return NewOpenAIProvider(cfg)
+}
+
 // Config holds LLM provider configuration.
 type Config struct {
+	Provider    string // ProviderOpenAI (default) or ProviderAnthropic
 	APIKey      string
 	Model       string
-	Endpoint    string // base URL override (for Ollama, vLLM, Azure)
+	Endpoint    string // base URL override (for Ollama, vLLM, Azure, gateways)
 	MaxTokens   int64
 	Temperature float64
 }
@@ -92,13 +125,38 @@ type Config struct {
 // Built-in defaults used when neither the settings store nor the environment
 // sets a value.
 const (
+	DefaultProvider    = ProviderOpenAI
 	DefaultModel       = "gpt-4o"
 	DefaultMaxTokens   = int64(4096)
 	DefaultTemperature = 0.7
+
+	// DefaultAnthropicModel is the model an Anthropic provider uses when
+	// none is set; DefaultModel is an OpenAI model the Messages API rejects.
+	DefaultAnthropicModel = "claude-opus-5-5"
 )
 
-// ConfigFromEnv reads LLM configuration from environment variables.
+// DefaultModelFor returns the built-in model for a provider kind.
+func DefaultModelFor(kind string) string {
+	if kind == ProviderAnthropic {
+		return DefaultAnthropicModel
+	}
+	return DefaultModel
+}
+
+// ConfigFromEnv reads LLM configuration from environment variables. An
+// unsupported CLOUDPAM_LLM_PROVIDER is logged and ignored, like a malformed
+// numeric value.
 func ConfigFromEnv() Config {
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("CLOUDPAM_LLM_PROVIDER")))
+	switch {
+	case provider == "":
+		provider = DefaultProvider
+	case !ValidProviderKind(provider):
+		slog.Default().Warn("ignoring unsupported CLOUDPAM_LLM_PROVIDER",
+			"value", provider, "supported", strings.Join(ProviderKinds, ", "))
+		provider = DefaultProvider
+	}
+
 	maxTokens := DefaultMaxTokens
 	if v := os.Getenv("CLOUDPAM_LLM_MAX_TOKENS"); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
@@ -115,10 +173,11 @@ func ConfigFromEnv() Config {
 
 	model := os.Getenv("CLOUDPAM_LLM_MODEL")
 	if model == "" {
-		model = DefaultModel
+		model = DefaultModelFor(provider)
 	}
 
 	return Config{
+		Provider:    provider,
 		APIKey:      os.Getenv("CLOUDPAM_LLM_API_KEY"),
 		Model:       model,
 		Endpoint:    os.Getenv("CLOUDPAM_LLM_ENDPOINT"),
