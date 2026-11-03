@@ -213,6 +213,12 @@ export interface SearchResponse {
 
 // --- Auth types ---
 
+// A key's own token bucket. Absent means the server default.
+export interface ApiKeyRateLimit {
+  requests_per_second: number
+  burst: number
+}
+
 export interface ApiKeyInfo {
   id: string
   prefix: string
@@ -222,6 +228,7 @@ export interface ApiKeyInfo {
   expires_at?: string | null
   last_used_at?: string | null
   revoked: boolean
+  rate_limit?: ApiKeyRateLimit | null
   age_days?: number
   expires_in_days?: number | null
   expiry_status?: 'active' | 'expiring' | 'expired' | 'no_expiry' | 'revoked'
@@ -232,6 +239,7 @@ export interface ApiKeyCreateRequest {
   name: string
   scopes?: string[]
   expires_in_days?: number
+  rate_limit?: ApiKeyRateLimit
 }
 
 export interface ApiKeyCreateResponse {
@@ -242,6 +250,7 @@ export interface ApiKeyCreateResponse {
   scopes: string[]
   created_at: string
   expires_at?: string | null
+  rate_limit?: ApiKeyRateLimit | null
 }
 
 export interface HealthResponse {
