@@ -889,6 +889,7 @@ func addDiscoveryPreviewItem(resp *domain.DiscoveryImportPreviewResponse, item d
 func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImportPreviewItem, res *domain.DiscoveredResource, pools []domain.Pool) {
 	bestParentBits := -1
 	parentChosen := item.ProposedParentPoolID != nil
+	var foreignParents []domain.Pool
 	for _, pool := range pools {
 		if pool.CIDR == "" || res.CIDR == "" {
 			continue
@@ -905,6 +906,7 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 		}
 		if cidrContains(pool.CIDR, res.CIDR) {
 			if pool.AccountID != nil && *pool.AccountID != res.AccountID {
+				foreignParents = append(foreignParents, pool)
 				continue
 			}
 			if bits := prefixLength(pool.CIDR); bits > bestParentBits && !parentChosen {
@@ -917,6 +919,26 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 		if cidrOverlaps(pool.CIDR, res.CIDR) {
 			item.ConflictPoolIDs = append(item.ConflictPoolIDs, pool.ID)
 			item.Evidence = append(item.Evidence, fmt.Sprintf("%s overlaps existing pool %d (%s)", res.CIDR, pool.ID, pool.CIDR))
+		}
+	}
+	if item.ProposedPoolID != nil {
+		return
+	}
+	// A pool of another account that contains the CIDR and sits below the
+	// chosen parent (or at the top level when there is none) is a sibling the
+	// new pool would overlap, so apply refuses it.
+	parentCIDR := ""
+	if item.ProposedParentPoolID != nil {
+		for _, pool := range pools {
+			if pool.ID == *item.ProposedParentPoolID {
+				parentCIDR = pool.CIDR
+			}
+		}
+	}
+	for _, pool := range foreignParents {
+		if parentCIDR == "" || (cidrContains(parentCIDR, pool.CIDR) && !cidrEqual(parentCIDR, pool.CIDR)) {
+			item.ConflictPoolIDs = append(item.ConflictPoolIDs, pool.ID)
+			item.Evidence = append(item.Evidence, fmt.Sprintf("%s is inside pool %d (%s) assigned to another account", res.CIDR, pool.ID, pool.CIDR))
 		}
 	}
 }
