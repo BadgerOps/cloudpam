@@ -1,4 +1,5 @@
 import {
+  ArchiveRestore,
   Bot,
   Clock,
   Cloud,
@@ -40,6 +41,7 @@ const ROUTE_SPECS = [
   { path: '/pools', nav: { label: 'Address Pools', icon: Server, section: 'IPAM' } },
   { path: '/blocks', nav: { label: 'Allocated Blocks', icon: LayoutGrid, section: 'IPAM' } },
   { path: '/accounts', nav: { label: 'Cloud Accounts', icon: Cloud, section: 'IPAM' } },
+  { path: '/deleted', requiredAnyPermissions: ['pools:delete', 'accounts:delete'], nav: { label: 'Recently Deleted', icon: ArchiveRestore, section: 'IPAM' } },
   { path: '/discovery', nav: { label: 'Discovery', icon: RefreshCw, section: 'Operations' } },
   { path: '/drift', nav: { label: 'Drift Detection', icon: GitCompareArrows, section: 'Operations' } },
   { path: '/audit', requiredAnyPermissions: ['audit:read'], nav: { label: 'Audit Log', icon: Clock, section: 'Operations' } },

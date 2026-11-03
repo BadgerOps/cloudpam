@@ -74,3 +74,74 @@ func TestNewSyslogSinkRejectsInvalidConfig(t *testing.T) {
 		t.Fatal("expected missing address error")
 	}
 }
+
+func TestSyslogSinkDestinationReportsDeliveryHealth(t *testing.T) {
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	sink, err := NewSyslogSink(SyslogSinkConfig{
+		Network: "udp",
+		Address: conn.LocalAddr().String(),
+		AppName: "cloudpam",
+		Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewSyslogSink() error = %v", err)
+	}
+
+	idle := sink.Destination()
+	if idle.State != "idle" || idle.Delivered != 0 || idle.Failed != 0 {
+		t.Fatalf("fresh sink = %+v, want idle with zero counters", idle)
+	}
+	if idle.Type != "syslog" || idle.Format != "cef" || idle.Network != "udp" || idle.Address != conn.LocalAddr().String() || idle.AppName != "cloudpam" {
+		t.Fatalf("destination config = %+v", idle)
+	}
+
+	event := &AuditEvent{Action: ActionCreate, ResourceType: ResourcePool, StatusCode: 201}
+	if err := sink.Send(context.Background(), event); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	ok := sink.Destination()
+	if ok.State != "ok" || ok.Delivered != 1 || ok.Failed != 0 || ok.LastSuccessAt == nil || ok.LastFailureAt != nil || ok.LastError != "" {
+		t.Fatalf("after success = %+v, want ok with one delivery", ok)
+	}
+
+	sink.network = "tcp"
+	if err := sink.Send(context.Background(), event); err == nil {
+		t.Fatal("expected tcp dial to a udp listener to fail")
+	}
+	failing := sink.Destination()
+	if failing.State != "failing" || failing.Delivered != 1 || failing.Failed != 1 || failing.LastFailureAt == nil || failing.LastError == "" {
+		t.Fatalf("after failure = %+v, want failing with the dial error", failing)
+	}
+	if failing.LastSuccessAt == nil || !failing.LastSuccessAt.Equal(*ok.LastSuccessAt) {
+		t.Fatalf("last success should survive a later failure, got %+v", failing)
+	}
+
+	sink.network = "udp"
+	if err := sink.Send(context.Background(), event); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	recovered := sink.Destination()
+	if recovered.State != "ok" || recovered.Delivered != 2 || recovered.Failed != 1 || recovered.LastError == "" {
+		t.Fatalf("after recovery = %+v, want ok with the last error kept for reference", recovered)
+	}
+}
+
+func TestSyslogSinkSkippedSendsLeaveHealthIdle(t *testing.T) {
+	sink, err := NewSyslogSink(SyslogSinkConfig{Network: "udp", Address: "127.0.0.1:1"})
+	if err != nil {
+		t.Fatalf("NewSyslogSink() error = %v", err)
+	}
+	if err := sink.Send(context.Background(), nil); err != nil {
+		t.Fatalf("Send(nil) error = %v", err)
+	}
+	if got := sink.Destination(); got.State != "idle" {
+		t.Fatalf("nil event should not count as an attempt, got %+v", got)
+	}
+}

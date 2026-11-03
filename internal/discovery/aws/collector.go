@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/observability"
 )
@@ -50,6 +51,7 @@ func endEC2Span(span trace.Span, resourceCount int, err error) {
 // Collector discovers AWS VPCs, subnets, and Elastic IPs.
 type Collector struct {
 	credsProvider aws.CredentialsProvider
+	limiter       *discovery.Limiter
 	loadConfig    func(context.Context, string, aws.CredentialsProvider) (aws.Config, error)
 	newEC2Client  func(aws.Config) ec2API
 	newSTSClient  func(aws.Config) stsAPI
@@ -74,6 +76,10 @@ func NewWithCredentials(cp aws.CredentialsProvider) *Collector {
 
 // Provider returns "aws".
 func (c *Collector) Provider() string { return "aws" }
+
+// SetLimiter paces every EC2 call made by this collector and by the collectors
+// it binds through WithCredential. nil removes the pacing.
+func (c *Collector) SetLimiter(l *discovery.Limiter) { c.limiter = l }
 
 // Discover discovers VPCs, subnets, and Elastic IPs for the given account.
 // Authentication uses the default AWS credential chain (env vars, instance profile, etc.).
@@ -202,6 +208,9 @@ func (c *Collector) discoverVPCs(ctx context.Context, client ec2API, account dom
 
 	var token *string
 	for {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
 		out, err := client.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{NextToken: token})
 		if err != nil {
 			return nil, err
@@ -247,6 +256,9 @@ func (c *Collector) discoverSubnets(ctx context.Context, client ec2API, account 
 
 	var token *string
 	for {
+		if err := c.limiter.Wait(ctx); err != nil {
+			return nil, err
+		}
 		out, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{NextToken: token})
 		if err != nil {
 			return nil, err
@@ -297,6 +309,9 @@ func (c *Collector) discoverElasticIPs(ctx context.Context, client ec2API, accou
 	ctx, span := startEC2Span(ctx, "DescribeAddresses", region)
 	defer func() { endEC2Span(span, len(resources), err) }()
 
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, err
+	}
 	out, err := client.DescribeAddresses(ctx, &ec2.DescribeAddressesInput{})
 	if err != nil {
 		return nil, err

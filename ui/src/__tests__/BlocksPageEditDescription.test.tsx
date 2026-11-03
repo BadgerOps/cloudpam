@@ -62,6 +62,7 @@ describe('BlocksPage edit block description', () => {
     mockUseBlocks.mockReturnValue({
       blocks: [block],
       total: 1,
+      pageSize: 50,
       loading: false,
       error: null,
       fetchBlocks: vi.fn(),

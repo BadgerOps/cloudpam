@@ -7,6 +7,7 @@ import { scheduleFrontendResetAfterUpgrade } from '../utils/upgradeReload'
 import { useAuth } from '../hooks/useAuth'
 import { canOpen } from '../navigation'
 import AIProviderSettingsCard from '../components/AIProviderSettingsCard'
+import NetworkSchemaPolicyCard from '../components/NetworkSchemaPolicyCard'
 
 function formatVersion(version: string | null | undefined) {
   if (!version) return 'unknown'
@@ -224,6 +225,7 @@ export default function ConfigurationPage() {
             )}
           </section>
 
+          {hasPermission('settings:read') && <NetworkSchemaPolicyCard />}
           {hasPermission('settings:read') && <AIProviderSettingsCard />}
         </div>
 

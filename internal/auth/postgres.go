@@ -51,11 +51,12 @@ func (s *PostgresKeyStore) Create(ctx context.Context, key *APIKey) error {
 		scopesJSON = []byte("[]")
 	}
 
+	rps, burst := rateLimitColumns(key.RateLimit)
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO api_tokens (id, organization_id, name, prefix, token_hash, token_salt, scopes, created_at, expires_at, owner_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+		INSERT INTO api_tokens (id, organization_id, name, prefix, token_hash, token_salt, scopes, created_at, expires_at, owner_id, rate_limit_rps, rate_limit_burst)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12)`,
 		key.ID, s.orgID, key.Name, key.Prefix, key.Hash, key.Salt,
-		string(scopesJSON), key.CreatedAt, key.ExpiresAt, key.OwnerID,
+		string(scopesJSON), key.CreatedAt, key.ExpiresAt, key.OwnerID, rps, burst,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -69,7 +70,7 @@ func (s *PostgresKeyStore) Create(ctx context.Context, key *APIKey) error {
 // GetByPrefix retrieves an API key by its prefix.
 func (s *PostgresKeyStore) GetByPrefix(ctx context.Context, prefix string) (*APIKey, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, prefix, name, token_hash, token_salt, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id
+		SELECT id, prefix, name, token_hash, token_salt, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id, rate_limit_rps, rate_limit_burst
 		FROM api_tokens
 		WHERE prefix = $1 AND organization_id = $2`, prefix, s.orgID)
 
@@ -79,7 +80,7 @@ func (s *PostgresKeyStore) GetByPrefix(ctx context.Context, prefix string) (*API
 // GetByID retrieves an API key by its ID.
 func (s *PostgresKeyStore) GetByID(ctx context.Context, id string) (*APIKey, error) {
 	row := s.pool.QueryRow(ctx, `
-		SELECT id, prefix, name, token_hash, token_salt, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id
+		SELECT id, prefix, name, token_hash, token_salt, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id, rate_limit_rps, rate_limit_burst
 		FROM api_tokens
 		WHERE id = $1 AND organization_id = $2`, id, s.orgID)
 
@@ -89,7 +90,7 @@ func (s *PostgresKeyStore) GetByID(ctx context.Context, id string) (*APIKey, err
 // List returns all API keys (without sensitive data).
 func (s *PostgresKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id
+		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id, rate_limit_rps, rate_limit_burst
 		FROM api_tokens
 		WHERE organization_id = $1
 		ORDER BY created_at DESC`, s.orgID)
@@ -104,7 +105,7 @@ func (s *PostgresKeyStore) List(ctx context.Context) ([]*APIKey, error) {
 // ListByOwner returns API keys owned by a specific user.
 func (s *PostgresKeyStore) ListByOwner(ctx context.Context, ownerID string) ([]*APIKey, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id
+		SELECT id, prefix, name, scopes, created_at, expires_at, last_used_at, revoked_at, owner_id, rate_limit_rps, rate_limit_burst
 		FROM api_tokens
 		WHERE organization_id = $1 AND owner_id = $2
 		ORDER BY created_at DESC`, s.orgID, ownerID)
@@ -123,10 +124,13 @@ func scanAPIKeyList(rows pgx.Rows) ([]*APIKey, error) {
 		var scopesJSON []byte
 		var expiresAt, lastUsedAt, revokedAt *time.Time
 		var ownerID *string
+		var rps *float64
+		var burst *int
 
-		if err := rows.Scan(&k.ID, &k.Prefix, &k.Name, &scopesJSON, &k.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt, &ownerID); err != nil {
+		if err := rows.Scan(&k.ID, &k.Prefix, &k.Name, &scopesJSON, &k.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt, &ownerID, &rps, &burst); err != nil {
 			return nil, err
 		}
+		k.RateLimit = rateLimitFromColumns(rps, burst)
 
 		if len(scopesJSON) > 0 {
 			_ = json.Unmarshal(scopesJSON, &k.Scopes)
@@ -188,14 +192,17 @@ func scanAPIKey(row pgx.Row) (*APIKey, error) {
 	var scopesJSON []byte
 	var expiresAt, lastUsedAt, revokedAt *time.Time
 	var ownerID *string
+	var rps *float64
+	var burst *int
 
-	err := row.Scan(&k.ID, &k.Prefix, &k.Name, &k.Hash, &k.Salt, &scopesJSON, &k.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt, &ownerID)
+	err := row.Scan(&k.ID, &k.Prefix, &k.Name, &k.Hash, &k.Salt, &scopesJSON, &k.CreatedAt, &expiresAt, &lastUsedAt, &revokedAt, &ownerID, &rps, &burst)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
+	k.RateLimit = rateLimitFromColumns(rps, burst)
 
 	if len(scopesJSON) > 0 {
 		_ = json.Unmarshal(scopesJSON, &k.Scopes)

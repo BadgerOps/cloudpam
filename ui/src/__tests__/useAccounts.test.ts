@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAccounts } from '../hooks/useAccounts'
-import { get, patch, post } from '../api/client'
+import { del, get, patch, post } from '../api/client'
 import type { Account } from '../api/types'
 
 vi.mock('../api/client', () => ({
@@ -14,6 +14,7 @@ vi.mock('../api/client', () => ({
 const mockGet = vi.mocked(get)
 const mockPost = vi.mocked(post)
 const mockPatch = vi.mocked(patch)
+const mockDel = vi.mocked(del)
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -73,5 +74,17 @@ describe('useAccounts', () => {
     expect(mockPatch).toHaveBeenCalledWith('/api/v1/accounts/1', { name: 'prod-renamed', regions: ['us-east-1'] })
     expect(result.current.accounts.map(a => a.name)).toEqual(['prod-renamed', 'stage'])
     expect(result.current.accounts[0].regions).toEqual(['us-east-1'])
+  })
+
+  it('sends force=true only when asked to cascade', async () => {
+    mockDel.mockResolvedValue(undefined)
+    const { result } = renderHook(() => useAccounts())
+
+    await act(async () => {
+      await result.current.deleteAccount(7)
+      await result.current.deleteAccount(7, true)
+    })
+
+    expect(mockDel.mock.calls).toEqual([['/api/v1/accounts/7'], ['/api/v1/accounts/7?force=true']])
   })
 })

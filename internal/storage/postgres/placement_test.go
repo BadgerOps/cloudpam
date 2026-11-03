@@ -368,3 +368,99 @@ func TestWithPlacementLock_FailedInsertKeepsTheRestOfTheBatch(t *testing.T) {
 		t.Fatalf("want the seed and 10.1.0.0/16 stored, got %v", got)
 	}
 }
+
+// A delete under the placement lock waits for a holder that has listed the pool as a parent, then
+// sees the child the holder stored (#269).
+func TestWithPlacementLock_DeleteSeesChildStoredByHolder(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		del      func(storage.PlacementStore, int64) (bool, error)
+		wantErr  error
+		wantLive int
+	}{
+		{"delete", func(ps storage.PlacementStore, id int64) (bool, error) {
+			return ps.DeletePool(context.Background(), id)
+		}, storage.ErrConflict, 2},
+		{"cascade", func(ps storage.PlacementStore, id int64) (bool, error) {
+			return ps.DeletePoolCascade(context.Background(), id)
+		}, nil, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetDB(t)
+			ctx := context.Background()
+			parent, err := testDB.store.CreatePool(ctx, domain.CreatePool{Name: "parent", CIDR: "10.0.0.0/8"})
+			if err != nil {
+				t.Fatalf("create parent: %v", err)
+			}
+
+			release := holdPlacementLock(t, testDB.store, func(ps storage.PlacementStore) error {
+				_, err := ps.CreatePool(ctx, domain.CreatePool{Name: "child", CIDR: "10.1.0.0/16", ParentID: &parent.ID})
+				return err
+			})
+			deleted := make(chan error, 1)
+			go func() {
+				deleted <- otherReplica(t, nil).WithPlacementLock(ctx, func(ps storage.PlacementStore) error {
+					_, err := tc.del(ps, parent.ID)
+					return err
+				})
+			}()
+			waitForAdvisoryWaiter(t)
+			if err := release(); err != nil {
+				t.Fatalf("holder: %v", err)
+			}
+			if err := <-deleted; !errors.Is(err, tc.wantErr) {
+				t.Fatalf("delete error = %v, want %v", err, tc.wantErr)
+			}
+
+			pools, err := testDB.store.ListPools(ctx)
+			if err != nil {
+				t.Fatalf("list: %v", err)
+			}
+			if len(pools) != tc.wantLive {
+				t.Fatalf("live pools = %v, want %d", cidrs(pools), tc.wantLive)
+			}
+		})
+	}
+}
+
+func TestWithPlacementLock_DeleteAccountCascadeSeesChildStoredByHolder(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	account, err := testDB.store.CreateAccount(ctx, domain.CreateAccount{Key: "aws:269", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	parent, err := testDB.store.CreatePool(ctx, domain.CreatePool{Name: "parent", CIDR: "10.0.0.0/8", AccountID: &account.ID})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+
+	release := holdPlacementLock(t, testDB.store, func(ps storage.PlacementStore) error {
+		_, err := ps.CreatePool(ctx, domain.CreatePool{Name: "child", CIDR: "10.1.0.0/16", ParentID: &parent.ID})
+		return err
+	})
+	deleted := make(chan error, 1)
+	go func() {
+		deleted <- otherReplica(t, nil).WithPlacementLock(ctx, func(ps storage.PlacementStore) error {
+			ok, err := ps.DeleteAccountCascade(ctx, account.ID)
+			if err == nil && !ok {
+				return errors.New("account not found")
+			}
+			return err
+		})
+	}()
+	waitForAdvisoryWaiter(t)
+	if err := release(); err != nil {
+		t.Fatalf("holder: %v", err)
+	}
+	if err := <-deleted; err != nil {
+		t.Fatalf("delete account: %v", err)
+	}
+	pools, err := testDB.store.ListPools(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(pools) != 0 {
+		t.Fatalf("pools left after the account cascade: %v", cidrs(pools))
+	}
+}

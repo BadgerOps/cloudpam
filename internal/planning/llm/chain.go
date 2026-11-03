@@ -117,7 +117,7 @@ func (c *Chain) StreamComplete(ctx context.Context, messages []Message, opts Opt
 			if len(failed) == 0 {
 				return events, nil
 			}
-			return withNotice(events, &FallbackNotice{Failed: failed, Provider: l.Label}), nil
+			return withNotice(ctx, events, &FallbackNotice{Failed: failed, Provider: l.Label}), nil
 		}
 		if !fallbackEligible(ctx, err) {
 			return nil, err
@@ -128,15 +128,19 @@ func (c *Chain) StreamComplete(ctx context.Context, messages []Message, opts Opt
 }
 
 // withNotice prepends the notice to events. The forwarding goroutine ends
-// when the source closes; the providers close their channel after the
-// terminal event, so it never outlives the stream.
-func withNotice(events <-chan StreamEvent, notice *FallbackNotice) <-chan StreamEvent {
+// when the source closes, after its terminal event, or when ctx ends while
+// the consumer is not reading, which is when the source gives up too.
+func withNotice(ctx context.Context, events <-chan StreamEvent, notice *FallbackNotice) <-chan StreamEvent {
 	out := make(chan StreamEvent, 64)
 	go func() {
 		defer close(out)
-		out <- StreamEvent{Fallback: notice}
+		if !Send(ctx, out, StreamEvent{Fallback: notice}) {
+			return
+		}
 		for evt := range events {
-			out <- evt
+			if !Send(ctx, out, evt) {
+				return
+			}
 		}
 	}()
 	return out

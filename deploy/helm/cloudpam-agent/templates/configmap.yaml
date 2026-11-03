@@ -18,6 +18,9 @@ data:
       - {{ . | quote }}
       {{- end }}
     {{- end }}
+    {{- with .Values.config.discoveryAwsRps }}
+    discovery_aws_rps: {{ . }}
+    {{- end }}
     max_retries: {{ .Values.config.maxRetries }}
     retry_backoff: {{ .Values.config.retryBackoff | quote }}
     request_timeout: {{ .Values.config.requestTimeout | quote }}

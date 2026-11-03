@@ -189,7 +189,8 @@ func (p *AnthropicProvider) StreamComplete(ctx context.Context, messages []Messa
 		defer close(ch)
 		defer span.End()
 		defer func() { _ = resp.Body.Close() }()
-		readAnthropicStream(newLimitedBody(resp.Body, maxStreamBytes), ch)
+		readAnthropicStream(ctx, newLimitedBody(resp.Body, maxStreamBytes), ch)
+		drainStream(resp.Body)
 	}()
 	return ch, nil
 }
@@ -199,8 +200,10 @@ func (p *AnthropicProvider) StreamComplete(ctx context.Context, messages []Messa
 // ends with message_stop; an error event ends it with Err set, and the
 // provider's message is not kept because it can echo request details. A
 // stream that ends with neither message_stop nor a stop reason was cut off,
-// so it ends with ErrInvalidResponse rather than as a complete answer.
-func readAnthropicStream(r io.Reader, ch chan<- StreamEvent) {
+// so it ends with ErrInvalidResponse rather than as a complete answer. Like
+// readOpenAIStream, it returns without a terminal event when ctx ends while
+// the channel is full.
+func readAnthropicStream(ctx context.Context, r io.Reader, ch chan<- StreamEvent) {
 	done := false
 	stopReason := ""
 	err := readSSE(r, func(data string) bool {
@@ -210,18 +213,18 @@ func readAnthropicStream(r io.Reader, ch chan<- StreamEvent) {
 		}
 		switch evt.Type {
 		case "content_block_delta":
-			if evt.Delta.Type == "text_delta" && evt.Delta.Text != "" {
-				ch <- StreamEvent{Delta: evt.Delta.Text}
+			if evt.Delta.Type == "text_delta" && evt.Delta.Text != "" && !Send(ctx, ch, StreamEvent{Delta: evt.Delta.Text}) {
+				done = true
 			}
 		case "message_delta":
 			if evt.Delta.StopReason != "" {
 				stopReason = evt.Delta.StopReason
 			}
 		case "message_stop":
-			ch <- StreamEvent{Done: true, FinishReason: stopReason}
+			Send(ctx, ch, StreamEvent{Done: true, FinishReason: stopReason})
 			done = true
 		case "error":
-			ch <- StreamEvent{Done: true, Err: fmt.Errorf("%w: provider reported an error during the stream", ErrInvalidResponse)}
+			Send(ctx, ch, StreamEvent{Done: true, Err: fmt.Errorf("%w: provider reported an error during the stream", ErrInvalidResponse)})
 			done = true
 		}
 		return !done
@@ -232,5 +235,5 @@ func readAnthropicStream(r io.Reader, ch chan<- StreamEvent) {
 	if err == nil && stopReason == "" {
 		err = fmt.Errorf("%w: stream ended before a stop reason", ErrInvalidResponse)
 	}
-	ch <- StreamEvent{Done: true, FinishReason: stopReason, Err: err}
+	Send(ctx, ch, StreamEvent{Done: true, FinishReason: stopReason, Err: err})
 }

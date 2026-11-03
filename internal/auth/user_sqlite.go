@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite" // CGO-less SQLite driver
+	"cloudpam/internal/storage/sqlitedb"
 )
 
 // SQLiteUserStore is a SQLite-backed implementation of UserStore.
@@ -18,13 +18,9 @@ type SQLiteUserStore struct {
 
 // NewSQLiteUserStore creates a new SQLite-backed user store.
 func NewSQLiteUserStore(dsn string) (*SQLiteUserStore, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set pragmas: %w", err)
 	}
 	return &SQLiteUserStore{db: db}, nil
 }
