@@ -134,6 +134,11 @@ func (s *PostgresAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Au
 		opts.Limit = 1000
 	}
 
+	if opts.After != nil {
+		where += " AND (timestamp, id) < ($" + itoa(argIdx) + ", $" + itoa(argIdx+1) + ")"
+		args = append(args, opts.After.Timestamp, opts.After.ID)
+		argIdx += 2
+	}
 	query := "SELECT id, timestamp, actor_id, actor_type, action, resource_type, resource_id, resource_name, changes, request_id, actor_ip, status_code FROM audit_events WHERE " + where +
 		" ORDER BY timestamp DESC, id DESC LIMIT $" + itoa(argIdx) + " OFFSET $" + itoa(argIdx+1)
 	args = append(args, opts.Limit, opts.Offset)

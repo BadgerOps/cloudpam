@@ -76,8 +76,6 @@ func (as *AuthServer) handleAuditExport(w http.ResponseWriter, r *http.Request) 
 	opts := auditFilters(q)
 	now := time.Now().UTC()
 	if opts.Until == nil || opts.Until.After(now) {
-		// Pin the window at the request time so events logged during the
-		// export do not shift later pages into duplicating or skipping rows.
 		opts.Until = &now
 	}
 	opts.Limit = auditExportPageSize
@@ -104,25 +102,26 @@ func (as *AuthServer) handleAuditExport(w http.ResponseWriter, r *http.Request) 
 	if err := exporter.begin(w); err != nil {
 		abort(err)
 	}
-	for {
+	// Each page resumes past the last event written rather than at an
+	// offset, because an insert that commits mid-export with a timestamp
+	// inside the window would shift offset pages into repeating rows.
+	for len(events) > 0 {
 		for _, e := range events {
 			if err := exporter.write(e); err != nil {
 				abort(err)
 			}
 		}
 		written += len(events)
-		if written >= total {
-			break
-		}
-		if len(events) == 0 {
-			// A retention purge between pages removed rows the first page
-			// counted, so the archive would be short with no sign of it.
-			abort(fmt.Errorf("audit log shrank during export: %d of %d events reachable", written, total))
-		}
-		opts.Offset = written
+		last := events[len(events)-1]
+		opts.After = &audit.Cursor{Timestamp: last.Timestamp, ID: last.ID}
 		if events, _, err = as.auditLogger.List(ctx, opts); err != nil {
 			abort(err)
 		}
+	}
+	if written < total {
+		// A retention purge between pages removed rows the first page
+		// counted, so the archive would be short with no sign of it.
+		abort(fmt.Errorf("audit log shrank during export: %d of %d events reachable", written, total))
 	}
 	if err := exporter.end(written); err != nil {
 		abort(err)

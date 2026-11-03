@@ -138,6 +138,12 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 		opts.Limit = 1000
 	}
 
+	if opts.After != nil {
+		// Same text comparison as the ORDER BY, so the cursor and the sort agree.
+		ts := opts.After.Timestamp.Format(time.RFC3339Nano)
+		where += " AND (timestamp < ? OR (timestamp = ? AND id < ?))"
+		args = append(args, ts, ts, opts.After.ID)
+	}
 	query := "SELECT id, timestamp, actor, actor_type, action, resource_type, resource_id, resource_name, changes, request_id, ip_address, status_code FROM audit_logs WHERE " + where + " ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?"
 	args = append(args, opts.Limit, opts.Offset)
 

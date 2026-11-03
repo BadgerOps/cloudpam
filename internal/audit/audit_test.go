@@ -680,3 +680,55 @@ func TestMemoryAuditLogger_DeleteOlderThan(t *testing.T) {
 		t.Fatalf("second purge = (%d, %v), want (0, nil)", deleted, err)
 	}
 }
+
+// checkCursorPaging pages a logger with After while an event commits between
+// pages, and requires every event logged beforehand exactly once.
+func checkCursorPaging(t *testing.T, logger AuditLogger) {
+	t.Helper()
+	ctx := context.Background()
+	base := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	want := map[string]bool{}
+	for i := 0; i < 40; i++ {
+		// The first ten share a timestamp so the id tiebreak is exercised.
+		e := &AuditEvent{Timestamp: base.Add(time.Duration(max(i-9, 0)) * time.Second), Actor: "tester", Action: ActionCreate, ResourceType: ResourcePool, ResourceID: "1"}
+		if err := logger.Log(ctx, e); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+		want[e.ID] = true
+	}
+
+	seen := map[string]bool{}
+	opts := ListOptions{Limit: 7}
+	for page := 0; ; page++ {
+		events, _, err := logger.List(ctx, opts)
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		if len(events) == 0 {
+			break
+		}
+		for _, e := range events {
+			if seen[e.ID] {
+				t.Fatalf("event %s returned on two pages", e.ID)
+			}
+			seen[e.ID] = true
+		}
+		if page == 0 {
+			late := &AuditEvent{Timestamp: base.Add(20 * time.Second), Actor: "tester", Action: ActionCreate, ResourceType: ResourcePool, ResourceID: "1"}
+			if err := logger.Log(ctx, late); err != nil {
+				t.Fatalf("Log late: %v", err)
+			}
+		}
+		last := events[len(events)-1]
+		opts.After = &Cursor{Timestamp: last.Timestamp, ID: last.ID}
+	}
+	for id := range want {
+		if !seen[id] {
+			t.Fatalf("event %s logged before paging began was never returned", id)
+		}
+	}
+}
+
+func TestMemoryAuditLogger_List_CursorPaging(t *testing.T) {
+	checkCursorPaging(t, NewMemoryAuditLogger())
+}

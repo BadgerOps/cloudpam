@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +26,7 @@ type secondPageFailsAuditLogger struct {
 }
 
 func (l secondPageFailsAuditLogger) List(ctx context.Context, opts audit.ListOptions) ([]*audit.AuditEvent, int, error) {
-	if opts.Offset > 0 {
+	if opts.After != nil {
 		return nil, 0, errors.New("backend went away")
 	}
 	return l.AuditLogger.List(ctx, opts)
@@ -40,8 +41,25 @@ type purgeBetweenPagesAuditLogger struct {
 
 func (l purgeBetweenPagesAuditLogger) List(ctx context.Context, opts audit.ListOptions) ([]*audit.AuditEvent, int, error) {
 	events, total, err := l.MemoryAuditLogger.List(ctx, opts)
-	if err == nil && opts.Offset == 0 {
+	if err == nil && opts.After == nil {
 		if _, err := l.DeleteOlderThan(ctx, l.cutoff); err != nil {
+			return nil, 0, err
+		}
+	}
+	return events, total, err
+}
+
+// insertBetweenPagesAuditLogger serves the first export page, then commits
+// an event inside the export window, the way a slow insert would.
+type insertBetweenPagesAuditLogger struct {
+	*audit.MemoryAuditLogger
+	late *audit.AuditEvent
+}
+
+func (l insertBetweenPagesAuditLogger) List(ctx context.Context, opts audit.ListOptions) ([]*audit.AuditEvent, int, error) {
+	events, total, err := l.MemoryAuditLogger.List(ctx, opts)
+	if err == nil && opts.After == nil {
+		if err := l.Log(ctx, l.late); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -98,6 +116,32 @@ func TestAuditExportAbortsWhenARetentionPurgeShrinksTheLogMidExport(t *testing.T
 
 	if recovered != stdhttp.ErrAbortHandler {
 		t.Fatalf("recovered %v, want http.ErrAbortHandler so a download that lost rows to the purge fails instead of completing short", recovered)
+	}
+}
+
+func TestAuditExportNeitherRepeatsNorDropsRowsWhenAnEventCommitsBetweenPages(t *testing.T) {
+	mem, base := multiPageMemoryAuditLogger(t)
+	late := &audit.AuditEvent{ID: "evt-late", Timestamp: base.Add(-time.Hour), Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1"}
+	rr, recovered := exportCSVRecovering(t, insertBetweenPagesAuditLogger{MemoryAuditLogger: mem, late: late})
+	if recovered != nil {
+		t.Fatalf("export panicked: %v", recovered)
+	}
+
+	records, err := csv.NewReader(strings.NewReader(rr.Body.String())).ReadAll()
+	if err != nil {
+		t.Fatalf("parse csv: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, rec := range records[1:] {
+		if seen[rec[0]] {
+			t.Fatalf("event %s exported twice", rec[0])
+		}
+		seen[rec[0]] = true
+	}
+	for i := range auditExportPageSize + 5 {
+		if id := fmt.Sprintf("evt-%04d", i); !seen[id] {
+			t.Fatalf("event %s logged before the export is missing from it", id)
+		}
 	}
 }
 

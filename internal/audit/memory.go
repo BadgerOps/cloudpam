@@ -97,6 +97,17 @@ func (m *MemoryAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 	}
 
 	total := len(filtered)
+	if opts.After != nil {
+		// Events are kept in insertion order, so the cursor is a position.
+		next := len(filtered)
+		for i, e := range filtered {
+			if e.ID == opts.After.ID {
+				next = i + 1
+				break
+			}
+		}
+		filtered = filtered[next:]
+	}
 
 	// Apply pagination
 	if opts.Limit <= 0 {

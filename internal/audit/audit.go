@@ -42,6 +42,16 @@ type ListOptions struct {
 	ResourceID string
 	Since      *time.Time
 	Until      *time.Time
+	// After resumes the newest-first listing just past this event. Unlike
+	// Offset, events logged or purged meanwhile cannot shift the page
+	// boundary. The total still counts every match.
+	After *Cursor
+}
+
+// Cursor names an event's place in the newest-first listing order.
+type Cursor struct {
+	Timestamp time.Time
+	ID        string
 }
 
 // AuditLogger defines the interface for audit logging operations.

@@ -271,3 +271,7 @@ func TestSQLiteListPagesTiedTimestampsWithoutGapsOrRepeats(t *testing.T) {
 		t.Fatalf("paged through %d distinct events, want %d", len(seen), n)
 	}
 }
+
+func TestSQLiteListCursorPagesAcrossAMidListingInsert(t *testing.T) {
+	checkCursorPaging(t, NewSQLiteAuditLoggerFromDB(newAuditTestDB(t)))
+}
