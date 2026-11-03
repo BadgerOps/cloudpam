@@ -24,6 +24,7 @@ const PROVIDER_KINDS: { value: AIProviderKind; label: string; placeholder: strin
   { value: 'anthropic', label: 'Anthropic', placeholder: 'https://api.anthropic.com' },
 ]
 const MAX_FALLBACKS = 5
+const INHERIT_PROVIDER_LABEL = 'Clear stored (use environment or default)'
 
 const KEY_PROMPT = 'Enter the API key again for the new endpoint or provider, or clear the stored key'
 const STORED_ENDPOINT_HINT = 'A stored endpoint or provider never uses CLOUDPAM_LLM_API_KEY; enter a key here or leave empty for an authless endpoint'
@@ -47,7 +48,8 @@ interface FallbackRow {
 }
 
 interface FormFields {
-  provider: AIProviderKind
+  // '' clears a stored provider so the environment or default applies again.
+  provider: AIProviderKind | ''
   endpoint: string
   model: string
   maxTokens: string
@@ -96,7 +98,7 @@ function keyHelpText(s: AIProviderSettings) {
   return s.sources.api_key === 'database' ? 'Key configured (stored)' : 'Key configured (from environment)'
 }
 
-function placeholderFor(kind: AIProviderKind) {
+function placeholderFor(kind: AIProviderKind | '') {
   return PROVIDER_KINDS.find(k => k.value === kind)?.placeholder ?? ''
 }
 
@@ -167,12 +169,14 @@ function SourceTag({ field, source }: { field: string; source: AISettingSource }
   )
 }
 
-function ProviderSelect({ id, label, value, disabled, onChange }: {
+function ProviderSelect<K extends AIProviderKind | ''>({ id, label, value, disabled, inheritLabel, onChange }: {
   id?: string
   label?: string
-  value: AIProviderKind
+  value: K
   disabled: boolean
-  onChange: (kind: AIProviderKind) => void
+  // Shown as an extra option with value '' that clears a stored value.
+  inheritLabel?: string
+  onChange: (kind: K) => void
 }) {
   return (
     <select
@@ -181,8 +185,9 @@ function ProviderSelect({ id, label, value, disabled, onChange }: {
       className={inputClass}
       value={value}
       disabled={disabled}
-      onChange={e => onChange(e.target.value as AIProviderKind)}
+      onChange={e => onChange(e.target.value as K)}
     >
+      {inheritLabel && <option value="">{inheritLabel}</option>}
       {PROVIDER_KINDS.map(k => (
         <option key={k.value} value={k.value}>{k.label}</option>
       ))}
@@ -344,6 +349,7 @@ export default function AIProviderSettingsCard() {
                 id="ai-provider"
                 value={form.provider}
                 disabled={formDisabled}
+                inheritLabel={settings.sources.provider === 'database' ? INHERIT_PROVIDER_LABEL : undefined}
                 onChange={provider => setForm({ ...form, provider })}
               />
               <SourceTag field="provider" source={settings.sources.provider} />

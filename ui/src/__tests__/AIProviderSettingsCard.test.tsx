@@ -489,6 +489,39 @@ describe('AIProviderSettingsCard', () => {
     expect(screen.getByText(KEY_PROMPT_TEXT)).toBeTruthy()
   })
 
+  it('clears a stored provider so the environment or default applies again', async () => {
+    const stored = settings({ provider: 'anthropic', model: 'claude-opus-5-5', sources: { ...settings().sources, provider: 'database' } })
+    serve(stored, { patch: () => json(200, settings()) })
+    await renderCard()
+    const select = screen.getByLabelText('Provider') as HTMLSelectElement
+    expect(select.value).toBe('anthropic')
+    fireEvent.change(select, { target: { value: '' } })
+    expect(select.value).toBe('')
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    expect(patches()[0].body).toEqual({ provider: '' })
+  })
+
+  it('offers clearing the provider only when it is stored', async () => {
+    serve(settings())
+    await renderCard()
+    const values = Array.from((screen.getByLabelText('Provider') as HTMLSelectElement).options).map(o => o.value)
+    expect(values).toEqual(['openai', 'anthropic'])
+  })
+
+  it('requires the key or an explicit clear when clearing a stored provider with a stored key', async () => {
+    serve(settings({ provider: 'anthropic', api_key_configured: true, sources: { ...settings().sources, provider: 'database', api_key: 'database' } }))
+    await renderCard()
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: '' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect(patches()).toHaveLength(0)
+    expect(screen.getByText(KEY_PROMPT_TEXT)).toBeTruthy()
+  })
+
   it('lists stored fallbacks, keeps their keys by id and sends the whole list on save', async () => {
     const stored = settings({
       fallbacks: [
