@@ -29,7 +29,7 @@ export function MetricCard({ label, value, icon, tone = 'neutral', detail, loadi
       aria-label={label}
       aria-busy={loading || undefined}
       data-tone={tone}
-      className={`flex flex-col bg-white dark:bg-gray-800 rounded-lg border border-l-4 dark:border-gray-700 ${styles.bar} p-4`}
+      className={`flex flex-col bg-white dark:bg-gray-800 rounded-lg border border-l-4 border-gray-200 dark:border-gray-700 ${styles.bar} p-4`}
     >
       <div className="flex items-start gap-3">
         {icon && <div className="p-2 bg-gray-50 dark:bg-gray-900/40 rounded-lg flex-shrink-0">{icon}</div>}

@@ -115,7 +115,7 @@ export default function DashboardPage() {
 
         <div className="flex gap-6">
           <div className="flex-1 min-w-0 space-y-6">
-            <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-3">Pool Hierarchy</h2>
               {poolsLoading ? (
                 <div className="text-center py-8 text-gray-400 dark:text-gray-500">Loading...</div>
@@ -131,7 +131,7 @@ export default function DashboardPage() {
             </div>
 
             {canReadAudit && (
-              <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-4">
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">Recent Activity</h3>
                 {events.length === 0 ? (
                   <p className="text-sm text-gray-400 dark:text-gray-500">No recent activity</p>

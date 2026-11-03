@@ -41,7 +41,9 @@ export default function AttentionCard({ title, icon: Icon, link, load }: Attenti
                   <span className="block truncate text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400">
                     {item.label}
                   </span>
-                  <span className="block truncate text-xs text-gray-500 dark:text-gray-400">{item.detail}</span>
+                  <span title={item.detail} className="block truncate text-xs text-gray-500 dark:text-gray-400">
+                    {item.detail}
+                  </span>
                 </span>
               </Link>
             </li>
