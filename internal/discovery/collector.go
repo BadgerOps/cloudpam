@@ -30,10 +30,15 @@ type CredentialAware interface {
 	WithCredential(ctx context.Context, account domain.Account, cred CredentialPayload) (CredentialedCollector, error)
 }
 
+// IdentityProber makes the provider's cheapest authenticated read and names the identity it ran as.
+type IdentityProber interface {
+	Identity(ctx context.Context, account domain.Account) (string, error)
+}
+
 // CredentialedCollector is a collector bound to one stored credential.
 type CredentialedCollector interface {
 	Collector
-	Identity(ctx context.Context, account domain.Account) (string, error)
+	IdentityProber
 }
 
 // ProbeStep names the provider call that failed.

@@ -25,6 +25,7 @@ type stsAPI interface {
 
 var (
 	_ discovery.CredentialAware       = (*Collector)(nil)
+	_ discovery.IdentityProber        = (*Collector)(nil)
 	_ discovery.CredentialedCollector = (*assumedRoleCollector)(nil)
 )
 
@@ -75,6 +76,11 @@ func (c *assumedRoleCollector) Identity(ctx context.Context, account domain.Acco
 	if _, err := c.credsProvider.Retrieve(ctx); err != nil {
 		return "", probeError(discovery.ProbeStepAssumeRole, err)
 	}
+	return c.Collector.Identity(ctx, account)
+}
+
+// Identity returns the ARN that discovery runs as.
+func (c *Collector) Identity(ctx context.Context, account domain.Account) (string, error) {
 	cfg, err := c.stsConfig(ctx, account)
 	if err != nil {
 		return "", err

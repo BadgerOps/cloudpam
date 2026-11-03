@@ -299,3 +299,38 @@ func TestInjectedClientStillWinsWithoutATokenSource(t *testing.T) {
 		t.Fatal("getHTTPClient() replaced the injected client although no token source is set")
 	}
 }
+
+func TestHostIdentityGetsTheProjectWithoutAServiceAccount(t *testing.T) {
+	g, collector := newGoogleStub(t)
+	account := domain.Account{Key: "gcp:proj-1"}
+
+	identity, err := collector.Identity(context.Background(), account)
+	if err != nil {
+		t.Fatalf("Identity() error = %v", err)
+	}
+	if identity != hostIdentity {
+		t.Fatalf("Identity() = %q, want %q", identity, hostIdentity)
+	}
+	if len(g.tokenGrants) != 0 || len(g.projectPaths) != 1 || g.projectPaths[0] != "/compute/v1/projects/proj-1" {
+		t.Fatalf("token grants = %v, project paths = %v; want only the project get", g.tokenGrants, g.projectPaths)
+	}
+
+	g.projectStatus = http.StatusForbidden
+	for _, tc := range []struct {
+		name     string
+		account  domain.Account
+		wantCode string
+		wantHTTP int
+	}{
+		{"project forbidden", account, "", http.StatusForbidden},
+		{"no project on the account", domain.Account{}, "no_project_id", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := collector.Identity(context.Background(), tc.account)
+			var pe *discovery.ProbeError
+			if !errors.As(err, &pe) || pe.Step != discovery.ProbeStepGetProject || pe.Code != tc.wantCode || pe.Status != tc.wantHTTP {
+				t.Fatalf("Identity() error = %v, want get_project code %q http %d", err, tc.wantCode, tc.wantHTTP)
+			}
+		})
+	}
+}
