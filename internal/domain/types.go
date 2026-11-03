@@ -109,6 +109,42 @@ type PoolStats struct {
 	Utilization    float64 `json:"utilization"` // 0-100 percentage
 	ChildCount     int     `json:"child_count"`
 	DirectChildren int     `json:"direct_children"`
+	// Projection is filled only by GET /pools/{id}/stats.
+	Projection *GrowthProjection `json:"projection,omitempty"`
+}
+
+// ProjectionStatus says whether a GrowthProjection carries a usable rate.
+type ProjectionStatus string
+
+const (
+	// ProjectionOK means the fit found positive growth and a finite runway.
+	ProjectionOK ProjectionStatus = "ok"
+	// ProjectionNoGrowth means usage was flat or shrinking over the window.
+	ProjectionNoGrowth ProjectionStatus = "no_growth"
+	// ProjectionInsufficientHistory means the window holds too little history to fit.
+	ProjectionInsufficientHistory ProjectionStatus = "insufficient_history"
+)
+
+// GrowthProjection extrapolates a pool's recent allocation rate to a runway
+// and a usage forecast.
+type GrowthProjection struct {
+	Status      ProjectionStatus `json:"status"`
+	WindowDays  int              `json:"window_days"`
+	WindowStart time.Time        `json:"window_start"`
+	SampleCount int              `json:"sample_count"`
+	// GrowthPerDay is the fitted slope in IPs per day; negative means shrinking.
+	GrowthPerDay float64 `json:"growth_ips_per_day"`
+	// RunwayDays and ExhaustionDate are set only when Status is ok.
+	RunwayDays     *float64         `json:"runway_days,omitempty"`
+	ExhaustionDate *time.Time       `json:"exhaustion_date,omitempty"`
+	Forecast       []ProjectedUsage `json:"forecast"`
+}
+
+// ProjectedUsage is the expected usage of a pool a number of months ahead.
+type ProjectedUsage struct {
+	Months      int     `json:"months"`
+	UsedIPs     int64   `json:"used_ips"`
+	Utilization float64 `json:"utilization"` // 0-100 percentage
 }
 
 // PoolWithStats combines a Pool with its computed statistics.
