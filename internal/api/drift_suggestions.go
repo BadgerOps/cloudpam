@@ -80,10 +80,17 @@ func (ds *DriftServer) suggestImport(ctx context.Context, inv *discoveryInventor
 		return err
 	}
 	for _, p := range preview.Items {
-		if p.ResourceID == *item.ResourceID {
-			suggestFromPreview(item, p)
+		if p.ResourceID != *item.ResourceID {
+			continue
+		}
+		// The page shows the CIDR detection saw, so acting on a changed one
+		// would create or link a pool the user was never shown.
+		if p.Status != "not_found" && item.ResourceCIDR != "" && p.CIDR != item.ResourceCIDR {
+			suggestReview(item, fmt.Sprintf("the resource CIDR changed from %s to %s since detection; rerun detection", item.ResourceCIDR, p.CIDR))
 			return nil
 		}
+		suggestFromPreview(item, p)
+		return nil
 	}
 	suggestReview(item, "the discovered resource no longer exists; rerun detection")
 	return nil

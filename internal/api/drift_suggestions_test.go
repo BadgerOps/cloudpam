@@ -284,6 +284,26 @@ func TestDriftSuggestions_SubnetIsPreviewedAloneLikeApply(t *testing.T) {
 	}
 }
 
+func TestDriftSuggestions_UnmanagedCIDRChangedSinceDetectionIsReview(t *testing.T) {
+	mux, ms, ds, _ := setupDriftTestServer()
+	ctx := context.Background()
+	acct, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:resized", Name: "Resized", Provider: "aws"})
+	resID := addDiscovered(t, ds, acct.ID, domain.ResourceTypeVPC, "vpc-resized", "10.20.0.0/16", nil)
+	item := itemForResource(t, detectDrift(t, mux), resID)
+	assertSuggestion(t, item, domain.DriftActionCreatePool, nil)
+
+	res, err := ds.GetDiscoveredResource(ctx, resID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.CIDR = "10.21.0.0/16"
+	if err := ds.UpsertDiscoveredResource(ctx, *res); err != nil {
+		t.Fatal(err)
+	}
+
+	assertSuggestion(t, getDriftItem(t, mux, item.ID), domain.DriftActionReview, nil)
+}
+
 func TestDriftSuggestions_RelinkFollowsCurrentResourceCIDR(t *testing.T) {
 	mux, ms, ds, _ := setupDriftTestServer()
 	ctx := context.Background()
