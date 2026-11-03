@@ -161,8 +161,8 @@ func TestResolverPrecedence(t *testing.T) {
 		// The kind selects the default host, so it binds the env key like the endpoint.
 		{
 			name:    "key binding: env provider kind and env key use the env key",
-			env:     Config{Provider: ProviderAnthropic, APIKey: "env-key", Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
-			wantCfg: Config{Provider: ProviderAnthropic, APIKey: "env-key", Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
+			env:     Config{Provider: ProviderAnthropic, APIKey: "env-key", Model: DefaultAnthropicModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
+			wantCfg: Config{Provider: ProviderAnthropic, APIKey: "env-key", Model: DefaultAnthropicModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
 			wantSources: domain.AIProviderSettingSources{
 				Provider: domain.AISettingSourceEnvironment, Endpoint: domain.AISettingSourceDefault, Model: domain.AISettingSourceDefault,
 				APIKey: domain.AISettingSourceEnvironment, MaxTokens: domain.AISettingSourceDefault,
@@ -174,7 +174,7 @@ func TestResolverPrecedence(t *testing.T) {
 			name:    "key binding: database provider kind never receives the env key",
 			env:     Config{APIKey: "env-key", Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
 			doc:     &domain.AIProviderSettings{Provider: ProviderAnthropic},
-			wantCfg: Config{Provider: ProviderAnthropic, Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
+			wantCfg: Config{Provider: ProviderAnthropic, Model: DefaultAnthropicModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
 			wantSources: domain.AIProviderSettingSources{
 				Provider: domain.AISettingSourceDatabase, Endpoint: domain.AISettingSourceDefault, Model: domain.AISettingSourceDefault,
 				APIKey: domain.AISettingSourceNone, MaxTokens: domain.AISettingSourceDefault,

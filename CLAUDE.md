@@ -468,7 +468,7 @@ When adding endpoints:
 ### AI Planning
 - `CLOUDPAM_LLM_PROVIDER`: Provider protocol, `openai` (default, any OpenAI-compatible API) or `anthropic` (Messages API)
 - `CLOUDPAM_LLM_API_KEY`: API key for the provider (optional when using an authless OpenAI-compatible endpoint; always required for `anthropic`)
-- `CLOUDPAM_LLM_MODEL`: Model name (default: `gpt-4o`)
+- `CLOUDPAM_LLM_MODEL`: Model name (default: `gpt-4o`, or `claude-opus-5-5` when the provider is `anthropic`)
 - `CLOUDPAM_LLM_ENDPOINT`: Base URL override for Ollama/vLLM/Azure; with no API key, a non-empty endpoint enables authless custom-provider mode
 - `CLOUDPAM_LLM_MAX_TOKENS`: Max response tokens (default: `4096`)
 - `CLOUDPAM_LLM_TEMPERATURE`: Temperature (default: `0.7`)

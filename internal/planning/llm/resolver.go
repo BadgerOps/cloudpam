@@ -115,7 +115,15 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 
 	cfg.Provider, src.Provider = pickString(stored.Provider, r.env.Provider, DefaultProvider)
 	cfg.Endpoint, src.Endpoint = pickString(stored.Endpoint, r.env.Endpoint, "")
-	cfg.Model, src.Model = pickString(stored.Model, r.env.Model, DefaultModel)
+	// ConfigFromEnv fills the model with its kind's default when
+	// CLOUDPAM_LLM_MODEL is unset; that value must not follow a stored kind
+	// change, so it is treated as unset and the effective kind's default
+	// applies.
+	envModel := r.env.Model
+	if envModel == DefaultModelFor(r.env.Provider) {
+		envModel = ""
+	}
+	cfg.Model, src.Model = pickString(stored.Model, envModel, DefaultModelFor(cfg.Provider))
 
 	switch {
 	case stored.MaxTokens > 0:
@@ -166,7 +174,7 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 			Temperature: cfg.Temperature,
 		}}
 		if link.Config.Model == "" {
-			link.Config.Model = DefaultModel
+			link.Config.Model = DefaultModelFor(fb.Provider)
 		}
 		if fb.APIKeyEncrypted != "" {
 			key, err := r.decryptKey(fb.APIKeyEncrypted)

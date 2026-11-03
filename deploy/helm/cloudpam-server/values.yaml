@@ -86,7 +86,7 @@ config:
   # secrets.CLOUDPAM_OIDC_ENCRYPTION_KEY.
   CLOUDPAM_LLM_PROVIDER: ""          # openai
   CLOUDPAM_LLM_ENDPOINT: ""          # https://api.openai.com/v1 or https://api.anthropic.com
-  CLOUDPAM_LLM_MODEL: ""             # gpt-4o
+  CLOUDPAM_LLM_MODEL: ""             # gpt-4o; claude-opus-5-5 for anthropic
   CLOUDPAM_LLM_MAX_TOKENS: ""        # 4096
   CLOUDPAM_LLM_TEMPERATURE: ""       # 0.7
 

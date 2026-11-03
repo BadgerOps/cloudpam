@@ -1059,7 +1059,7 @@ config:
   CLOUDPAM_TRACING_ENDPOINT: ""      # http://localhost:4318
   CLOUDPAM_LLM_PROVIDER: ""          # openai (or anthropic)
   CLOUDPAM_LLM_ENDPOINT: ""          # OpenAI
-  CLOUDPAM_LLM_MODEL: ""             # gpt-4o
+  CLOUDPAM_LLM_MODEL: ""             # gpt-4o; claude-opus-5-5 for anthropic
   RATE_LIMIT_RPS: ""                 # 100
 
 secrets:

@@ -140,3 +140,22 @@ func TestManagerBuildsChainFromFallbacks(t *testing.T) {
 		t.Fatal("without fallbacks the primary is returned on its own")
 	}
 }
+
+func TestResolverDefaultsModelPerProviderKind(t *testing.T) {
+	t.Setenv("CLOUDPAM_LLM_PROVIDER", "")
+	t.Setenv("CLOUDPAM_LLM_MODEL", "")
+	doc := &domain.AIProviderSettings{
+		Provider:  ProviderAnthropic,
+		Fallbacks: []domain.AIFallbackProvider{{ID: "a", Provider: ProviderAnthropic}, {ID: "b", Provider: ProviderOpenAI}},
+	}
+	got, err := NewResolver(ConfigFromEnv(), &fakeSettingsSource{doc: doc}, fakeDecrypt).Resolve(context.Background())
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if got.Config.Model != DefaultAnthropicModel || got.Sources.Model != domain.AISettingSourceDefault {
+		t.Errorf("primary model = %q (%s), want %q from the default", got.Config.Model, got.Sources.Model, DefaultAnthropicModel)
+	}
+	if got.Fallbacks[0].Config.Model != DefaultAnthropicModel || got.Fallbacks[1].Config.Model != DefaultModel {
+		t.Errorf("fallback models = %q, %q", got.Fallbacks[0].Config.Model, got.Fallbacks[1].Config.Model)
+	}
+}

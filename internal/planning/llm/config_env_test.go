@@ -20,6 +20,19 @@ func TestConfigFromEnvProviderKind(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnvDefaultModelFollowsProviderKind(t *testing.T) {
+	for _, tc := range []struct{ kind, want string }{
+		{"", DefaultModel},
+		{"anthropic", DefaultAnthropicModel},
+	} {
+		t.Setenv("CLOUDPAM_LLM_PROVIDER", tc.kind)
+		t.Setenv("CLOUDPAM_LLM_MODEL", "")
+		if got := ConfigFromEnv().Model; got != tc.want {
+			t.Errorf("provider %q: Model = %q, want %q", tc.kind, got, tc.want)
+		}
+	}
+}
+
 // TestConfigFromEnvNumericFallbacks pins the behaviour that a malformed or
 // out-of-range numeric override is ignored in favour of the documented default,
 // rather than propagating a zero value into the provider.

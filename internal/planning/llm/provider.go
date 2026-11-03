@@ -103,7 +103,19 @@ const (
 	DefaultModel       = "gpt-4o"
 	DefaultMaxTokens   = int64(4096)
 	DefaultTemperature = 0.7
+
+	// DefaultAnthropicModel is the model an Anthropic provider uses when
+	// none is set; DefaultModel is an OpenAI model the Messages API rejects.
+	DefaultAnthropicModel = "claude-opus-5-5"
 )
+
+// DefaultModelFor returns the built-in model for a provider kind.
+func DefaultModelFor(kind string) string {
+	if kind == ProviderAnthropic {
+		return DefaultAnthropicModel
+	}
+	return DefaultModel
+}
 
 // ConfigFromEnv reads LLM configuration from environment variables. An
 // unsupported CLOUDPAM_LLM_PROVIDER is logged and ignored, like a malformed
@@ -135,7 +147,7 @@ func ConfigFromEnv() Config {
 
 	model := os.Getenv("CLOUDPAM_LLM_MODEL")
 	if model == "" {
-		model = DefaultModel
+		model = DefaultModelFor(provider)
 	}
 
 	return Config{
