@@ -770,7 +770,6 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 		item.ResourceType = res.ResourceType
 		item.CIDR = res.CIDR
 		item.LinkedPoolID = res.PoolID
-		indexByProviderID[res.ResourceID] = len(items)
 
 		if res.AccountID != req.AccountID {
 			item.Issues = append(item.Issues, "account_mismatch")
@@ -778,6 +777,7 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 			items = append(items, item)
 			continue
 		}
+		indexByProviderID[res.ResourceID] = len(items)
 		if res.PoolID != nil {
 			item.Status = "already_linked"
 			item.ProposedAction = "none"
