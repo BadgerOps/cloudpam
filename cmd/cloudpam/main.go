@@ -205,12 +205,17 @@ func main() {
 		}
 	}
 
+	secretKey, secretKeyEphemeral := parseOIDCEncryptionKey(logger)
+
 	// Initialize discovery subsystem
 	discoveryStore := selectDiscoveryStore(logger, store)
 	networkStore := selectNetworkStore(logger, store)
 	syncService := discovery.NewSyncService(discoveryStore)
 	syncService.RegisterCollector(awscollector.New())
 	syncService.RegisterCollector(gcpcollector.New())
+	credentials := discovery.NewAccountCredentials(store, secretKey, !secretKeyEphemeral)
+	syncService.SetCredentials(credentials)
+	credentialSrv := api.NewAccountCredentialServer(srv, credentials, syncService)
 	discoverySrv := api.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
 	discoverySrv.SetNetworkStore(networkStore)
 	logger.Info("discovery subsystem initialized", "collectors", "aws,gcp")
@@ -226,10 +231,6 @@ func main() {
 	recSrv := api.NewRecommendationServer(srv, recService, recStore)
 	logger.Info("recommendation subsystem initialized")
 
-	// The application secret key and the settings store come before the AI
-	// subsystem: the AI provider is resolved from stored settings (with an
-	// encrypted API key) on every operation.
-	secretKey, secretKeyEphemeral := parseOIDCEncryptionKey(logger)
 	settingsStore := selectSettingsStore(logger, store)
 
 	// Initialize AI planning subsystem
@@ -286,6 +287,7 @@ func main() {
 	roleSrv := api.NewRoleServer(srv, roleStore)
 	roleSrv.RegisterProtectedRoleRoutes(dualMW, logger.Slog())
 	discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
+	credentialSrv.RegisterProtectedAccountCredentialRoutes(dualMW, logger.Slog())
 	networkSrv.RegisterProtectedNetworkRoutes(dualMW, logger.Slog())
 	analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 	recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
@@ -597,9 +599,10 @@ func aiConfigSource(s domain.AIProviderSettingSources) string {
 }
 
 // parseOIDCEncryptionKey reads the hex-encoded AES-256 application secret key
-// from CLOUDPAM_OIDC_ENCRYPTION_KEY. It protects OIDC client secrets and AI
-// provider API keys. If not set, it generates a random key and reports it as
-// ephemeral (anything encrypted with it won't survive restarts).
+// from CLOUDPAM_OIDC_ENCRYPTION_KEY. It protects stored account credentials,
+// OIDC client secrets and AI provider API keys. If not set, it generates a
+// random key and reports it as ephemeral (anything encrypted with it won't
+// survive restarts).
 func parseOIDCEncryptionKey(logger observability.Logger) (key []byte, ephemeral bool) {
 	hexKey := os.Getenv("CLOUDPAM_OIDC_ENCRYPTION_KEY")
 	if hexKey != "" {
@@ -622,7 +625,7 @@ func parseOIDCEncryptionKey(logger observability.Logger) (key []byte, ephemeral 
 		logger.Error("failed to generate secret encryption key", "error", err)
 		os.Exit(1)
 	}
-	logger.Warn("CLOUDPAM_OIDC_ENCRYPTION_KEY not set — using auto-generated key (OIDC provider and AI provider secrets won't survive restarts; the AI provider page cannot store an API key)")
+	logger.Warn("CLOUDPAM_OIDC_ENCRYPTION_KEY not set — using auto-generated key (OIDC provider and AI provider secrets won't survive restarts; the AI provider page cannot store an API key and account credentials cannot be stored)")
 	return key, true
 }
 

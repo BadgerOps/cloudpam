@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/getsentry/sentry-go"
 
@@ -109,6 +110,24 @@ func (s *Server) writeErr(ctx context.Context, w http.ResponseWriter, code int, 
 		s.logger.WarnContext(ctx, "request failed", fields...)
 	}
 	writeJSON(w, code, apiError{Error: msg, Detail: detail})
+}
+
+const maxStrictJSONBody = 64 << 10
+
+// decodeStrictJSON rejects unknown fields so a misspelled field ("apikey") is a
+// 400 rather than a silently dropped value.
+func (s *Server) decodeStrictJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxStrictJSONBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		detail := "expected a json object"
+		if msg := err.Error(); strings.HasPrefix(msg, "json: unknown field") {
+			detail = strings.TrimPrefix(msg, "json: ")
+		}
+		s.writeErr(r.Context(), w, http.StatusBadRequest, "invalid request body", detail)
+		return false
+	}
+	return true
 }
 
 // writeStoreErr maps a storage-layer error to the appropriate HTTP status code
