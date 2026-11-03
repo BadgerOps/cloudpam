@@ -357,8 +357,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 - [x] Schema generation from parameters
 - [x] Schema validation with detailed errors (conflict detection). Apply does not check that generated children sit inside their parents, because the wizard can emit children outside them today
 - [ ] ASCII art visualization of generated schema — not implemented (the wizard renders an interactive tree instead)
-- [x] Schema export — Terraform (`cloudpam_pool` resources for the CloudPAM provider, 0.23.1) and CSV from the Preview step
-- [ ] Schema export as JSON or YAML — not implemented
+- [x] Schema export — Terraform (`cloudpam_pool` resources for the CloudPAM provider, 0.23.1), CSV, JSON and YAML from the Preview step. JSON and YAML are the `POST /api/v1/schema/apply` request body (#285)
 
 **Success Criteria**:
 - 5+ built-in templates available
