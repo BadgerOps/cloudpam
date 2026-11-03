@@ -61,6 +61,12 @@ type tokenTransport struct {
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// AfterFunc runs cancel on its own goroutine even when t.ctx is already done, so
+	// without this check a request can leave before that cancel lands.
+	if err := t.ctx.Err(); err != nil {
+		t.lastErr = err
+		return nil, err
+	}
 	ctx, cancel := context.WithCancel(req.Context())
 	stop := context.AfterFunc(t.ctx, cancel)
 	release := func() { stop(); cancel() }
