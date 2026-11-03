@@ -3,7 +3,8 @@ import { Key, Plus, Ban, Copy, Check, AlertCircle } from 'lucide-react'
 import { useApiKeys } from '../hooks/useApiKeys'
 import { useSecuritySettings } from '../hooks/useSettings'
 import { usePendingAction } from '../hooks/usePendingAction'
-import type { ApiKeyCreateResponse, ApiKeyRateLimit } from '../api/types'
+import StatusBadge from '../components/StatusBadge'
+import type { ApiKeyCreateResponse, ApiKeyInfo, ApiKeyRateLimit } from '../api/types'
 
 // Must match backend validScopes in auth_handlers.go createAPIKey
 const SCOPE_OPTIONS = [
@@ -26,6 +27,22 @@ const SCOPE_LABELS: Record<string, string> = {
   'discovery:write': 'Discovery Write',
   'audit:read': 'Audit Read',
   '*': 'Admin (all)',
+}
+
+type KeyStatus = NonNullable<ApiKeyInfo['expiry_status']>
+
+const KEY_STATUS_LABELS: Record<KeyStatus, string> = {
+  active: 'Active',
+  expiring: 'Expiring',
+  expired: 'Expired',
+  no_expiry: 'No expiry',
+  revoked: 'Revoked',
+}
+
+function keyStatus(k: ApiKeyInfo): { status: KeyStatus; label: string } {
+  const status: KeyStatus = k.revoked ? 'revoked' : (k.expiry_status ?? 'active')
+  const label = status === 'expiring' ? `Expiring ${k.expires_in_days ?? 0}d` : KEY_STATUS_LABELS[status]
+  return { status, label }
 }
 
 export default function ApiKeysPage() {
@@ -99,23 +116,6 @@ export default function ApiKeysPage() {
     if (days === undefined) return '—'
     if (days === 0) return '<1 day'
     return `${days}d`
-  }
-
-  function statusBadge(k: { revoked: boolean; expiry_status?: string; expires_in_days?: number | null }): [string, string] {
-    if (k.revoked || k.expiry_status === 'revoked') {
-      return ['Revoked', 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400']
-    }
-    if (k.expiry_status === 'expired') {
-      return ['Expired', 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400']
-    }
-    if (k.expiry_status === 'expiring') {
-      const days = k.expires_in_days ?? 0
-      return [`Expiring ${days}d`, 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400']
-    }
-    if (k.expiry_status === 'no_expiry') {
-      return ['No expiry', 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300']
-    }
-    return ['Active', 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400']
   }
 
   if (!canList) {
@@ -340,14 +340,7 @@ export default function ApiKeysPage() {
                     {k.rate_limit ? `${k.rate_limit.requests_per_second}/s, burst ${k.rate_limit.burst}` : 'Default'}
                   </td>
                   <td className="px-4 py-3">
-                    {(() => {
-                      const [label, classes] = statusBadge(k)
-                      return (
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${classes}`}>
-                          {label}
-                        </span>
-                      )
-                    })()}
+                    <StatusBadge {...keyStatus(k)} />
                   </td>
                   <td className="px-4 py-3 text-right">
                     {!k.revoked && canRevoke && (

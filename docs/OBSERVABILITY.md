@@ -1,10 +1,10 @@
 # CloudPAM Observability Architecture
 
-> **Implemented vs design.** Shipped today: structured `slog` logs, a custom Prometheus text exporter at `/metrics` (`internal/observability/metrics.go`), Sentry, opt-in OTLP/HTTP tracing (`internal/observability/tracing.go`, off unless `CLOUDPAM_TRACING_ENABLED=true`), and CEF-over-syslog audit forwarding. Also shipped: a local stack, `deploy/docker-compose.observability.yml`, that runs Prometheus, Grafana (with a provisioned request dashboard), and Jaeger, with no log pipeline (see [7.1](#71-local-development) and [8](#8-grafana-dashboards)). Not shipped: Vector sidecar as a product integration, Splunk HEC / CloudWatch / Cloud Logging connectors, and OTel SDK metrics. See [CURRENT_STATUS.md](CURRENT_STATUS.md) and [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md).
+> **Implemented vs design.** Shipped today: structured `slog` logs, a custom Prometheus text exporter at `/metrics` (`internal/observability/metrics.go`), Sentry, opt-in OTLP/HTTP tracing (`internal/observability/tracing.go`, off unless `CLOUDPAM_TRACING_ENABLED=true`), and CEF-over-syslog audit forwarding. Also shipped: a local stack, `deploy/docker-compose.observability.yml`, that runs Prometheus, Grafana (with a provisioned request dashboard), and Jaeger, with no log pipeline (see [7.1](#71-local-development) and [8](#8-grafana-dashboards)). Also shipped: an optional Vector sidecar in the server Helm chart that receives the CEF audit stream ([2.1](#21-vector-sidecar-for-audit-events-helm)). Not shipped: in-process Splunk HEC / CloudWatch / Cloud Logging connectors, and OTel SDK metrics. See [CURRENT_STATUS.md](CURRENT_STATUS.md) and [SIEM_INTEGRATION.md](SIEM_INTEGRATION.md).
 
 ## Overview
 
-CloudPAM implements a comprehensive observability stack covering structured logging, metrics collection, distributed tracing, and audit logging. The architecture follows cloud-native best practices with pluggable backends for enterprise integration. The diagram includes **target** backends (Vector, Splunk HEC, CloudWatch) that are not wired in this repository.
+CloudPAM implements a comprehensive observability stack covering structured logging, metrics collection, distributed tracing, and audit logging. The architecture follows cloud-native best practices with pluggable backends for enterprise integration. The diagram is the target design. Today the Vector sidecar receives audit events over syslog, not application logs, and the backends it reaches (Splunk HEC, CloudWatch, and others) are Vector sinks you configure, not CloudPAM connectors.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
@@ -136,79 +136,108 @@ See [SIEM Integration](SIEM_INTEGRATION.md) for the full design: the JSON and
 CEF format decisions, the planned webhook and file sinks, event taxonomy,
 delivery semantics, and redaction rules.
 
-### 2.1 Why Vector?
+### 2.1 Vector sidecar for audit events (Helm)
 
-| Aspect | Vector | Fluentd |
-|--------|--------|---------|
-| Language | Rust (memory-efficient) | Ruby (flexible) |
-| Startup | <100ms | 1-2 seconds |
-| Memory | 20-50 MB | 50-100 MB |
-| Config | TOML (simple) | Ruby/JSON (complex) |
-| Performance | Higher throughput | Proven, solid |
+The server chart (`deploy/helm/cloudpam-server`) can run Vector as a sidecar
+that receives every audit event. Turn it on with `vector.enabled=true`:
 
-### 2.2 Deployment Pattern: Sidecar
+```bash
+helm upgrade --install cloudpam deploy/helm/cloudpam-server --set vector.enabled=true
+```
 
-CloudPAM deploys Vector as a sidecar container in Kubernetes:
+What the chart does when it is on:
+
+- Runs `timberio/vector:0.59.0-alpine` as a native sidecar (an init
+  container with `restartPolicy: Always`, Kubernetes 1.29 or later). It starts
+  before the server and stops after it, so events written during startup and
+  graceful shutdown still reach it. A startup probe (`nc -z 127.0.0.1 5514`)
+  holds the server back until Vector accepts connections, because the server
+  drops an audit event it cannot deliver.
+- Sets `CLOUDPAM_AUDIT_SYSLOG_ADDR=127.0.0.1:5514` and
+  `CLOUDPAM_AUDIT_SYSLOG_NETWORK=tcp`. The server sends each audit event as
+  CEF inside one RFC 5424 syslog record over the pod's loopback. The render
+  fails if `config` also sets either variable, because then the sidecar would
+  receive nothing.
+- Mounts the Vector config from the `<release>-cloudpam-server-vector`
+  ConfigMap and rolls the pod when it changes.
+
+The default config, `deploy/helm/cloudpam-server/files/vector.toml`, parses
+the CEF into a `.cef` object and prints each event as JSON on the sidecar's
+stdout, so `kubectl logs <pod> -c vector` shows the audit stream. A login
+looks like this (trimmed):
+
+```json
+{"appname":"cloudpam","msgid":"login","facility":"local4","severity":"info",
+ "cef":{"deviceVendor":"BadgerOps","deviceProduct":"CloudPAM","name":"session.login",
+        "act":"login","outcome":"success","cs4":"admin","cs4Label":"resource_name"},
+ "message":"CEF:0|BadgerOps|CloudPAM|0.23.11|login|session.login|3|act=login outcome=success ..."}
+```
+
+To ship the events to a SIEM, set `vector.config` to your own Vector TOML. It
+must keep the syslog source on `127.0.0.1:5514` in tcp mode (the render fails
+otherwise) and adds sinks. Pass sink credentials with `vector.env`:
 
 ```yaml
-# Pod structure
-containers:
-  - name: cloudpam        # Main application
-    volumeMounts:
-      - name: logs
-        mountPath: /var/log/cloudpam
+vector:
+  enabled: true
+  env:
+    - name: SPLUNK_HEC_TOKEN
+      valueFrom:
+        secretKeyRef: {name: splunk-hec, key: token}
+  config: |
+    data_dir = "/var/lib/vector"
 
-  - name: vector          # Log shipping sidecar
-    image: timberio/vector:0.34
-    volumeMounts:
-      - name: logs
-        mountPath: /var/log/cloudpam
-        readOnly: true
+    [sources.cloudpam_audit]
+    type = "syslog"
+    mode = "tcp"
+    address = "127.0.0.1:5514"
+
+    [transforms.cloudpam_audit_cef]
+    type = "remap"
+    inputs = ["cloudpam_audit"]
+    source = '''
+    cef, err = parse_cef(.message)
+    if err == null {
+      .cef = cef
+    }
+    '''
+
+    [sinks.splunk]
+    type = "splunk_hec_logs"
+    inputs = ["cloudpam_audit_cef"]
+    endpoint = "https://splunk.example.com:8088"
+    default_token = "${SPLUNK_HEC_TOKEN}"
+    index = "cloudpam_audit"
+    sourcetype = "cloudpam:audit"
+    encoding.codec = "json"
 ```
 
-Benefits:
-- Decouples log shipping from application
-- Independent updates to shipping config
-- Handles backpressure gracefully
-- Supports multiple destinations simultaneously
+Any Vector sink works the same way (`aws_cloudwatch_logs`,
+`gcp_stackdriver_logs`, `datadog_logs`, `elasticsearch`, `aws_s3`). See the
+[Vector sink reference](https://vector.dev/docs/reference/configuration/sinks/).
 
-### 2.3 Supported Destinations
+Delivery stays best effort. The server persists every audit event in its own
+database first. When the sidecar is not listening, the server logs
+`audit syslog forwarding failed` and keeps going.
 
-| Destination | Use Case | Configuration |
-|-------------|----------|---------------|
-| **Syslog** | Enterprise log aggregation | TCP/UDP to syslog server |
-| **Splunk** | SIEM integration | HTTP Event Collector (HEC) |
-| **AWS CloudWatch** | AWS-native logging | IAM role authentication |
-| **GCP Cloud Logging** | GCP-native logging | Service account |
-| **Datadog** | SaaS observability | API key |
-| **Elasticsearch** | Self-hosted search | Bulk API |
+**Tested end to end.** `just vector-e2e` (`scripts/vector-sidecar-e2e.sh`)
+creates a kind cluster (or reuses the one named by `CLUSTER`, which it never
+deletes), keeps its kubeconfig private so your current context is untouched,
+installs the chart with `vector.enabled=true` and the
+release image, signs in once, and passes only when the login event comes out
+of the sidecar with its CEF parsed. CI validates the default config with the
+pinned Vector image on every chart change (`.github/workflows/helm.yml`).
 
-### 2.4 Vector Configuration
+### 2.2 Application logs
 
-See `deploy/vector/vector.toml` for full configuration. Key sections:
-
-```toml
-# Collect logs from CloudPAM
-[sources.app_logs]
-type = "file"
-includes = ["/var/log/cloudpam/*.log"]
-
-# Parse JSON and enrich
-[transforms.parse]
-type = "remap"
-inputs = ["app_logs"]
-source = '''
-. = parse_json!(.message)
-.kubernetes.pod_name = get_env_var!("POD_NAME")
-'''
-
-# Ship to multiple destinations
-[sinks.splunk]
-type = "splunk_hec"
-inputs = ["parse"]
-endpoint = "${SPLUNK_HEC_URL}"
-token = "${SPLUNK_HEC_TOKEN}"
-```
+Application logs are JSON on the server's stdout. They do not pass through the
+sidecar. Collect them with your platform's node log agent. For Vector,
+`deploy/k8s/vector-daemonset.yaml` is a standalone example DaemonSet: it reads
+container logs from every node with the `kubernetes_logs` source, keeps pods in
+the `cloudpam` namespace, parses the JSON, and prints it on stdout. Its config
+passes `vector validate` on the Vector 0.34.1 image it pins, but it is not part
+of either chart and CI does not test it. Add your own sinks before you rely on
+it.
 
 ## 3. Metrics (Prometheus text at `/metrics`)
 
@@ -518,15 +547,16 @@ See mockup: `cloudpam-audit-log.html`
 | `CLOUDPAM_TRACING_ENDPOINT` | http://localhost:4318 | OTLP/HTTP collector base URL; `/v1/traces` is appended when the URL has no path |
 | `CLOUDPAM_TRACING_SAMPLE_RATE` | 1.0 | Head sampling probability, greater than 0 and at most 1 |
 
-### 6.2 Vector Environment Variables
+### 6.2 Vector sidecar values
 
-| Variable | Description |
-|----------|-------------|
-| `SPLUNK_HEC_URL` | Splunk HEC endpoint |
-| `SPLUNK_HEC_TOKEN` | Splunk HEC authentication token |
-| `AWS_REGION` | AWS region for CloudWatch |
-| `GCP_PROJECT_ID` | GCP project for Cloud Logging |
-| `SYSLOG_ADDRESS` | Syslog server address |
+| Value | Default | Description |
+|-------|---------|-------------|
+| `vector.enabled` | false | Run the sidecar and point audit syslog forwarding at it |
+| `vector.image.tag` | 0.59.0-alpine | Vector image tag (`vector.image.repository` is `timberio/vector`) |
+| `vector.startupProbe` | `nc -z -w 1 127.0.0.1 5514`, every 1s, 60 tries | Gates the server's start on the syslog listener; replace it for an image without `nc` |
+| `vector.config` | `files/vector.toml` | Vector TOML; must keep the tcp syslog source on 127.0.0.1:5514 |
+| `vector.env` | [] | Raw env entries for the sidecar, for sink credentials |
+| `vector.resources` | 20m/64Mi requests, 200m/256Mi limits | Sidecar resources |
 
 ## 7. Deployment
 
@@ -547,7 +577,7 @@ docker compose -f deploy/docker-compose.observability.yml up -d
 
 Prometheus reaches the host through `host.docker.internal`, which the compose file maps to the host gateway so it also works on Linux. If CloudPAM listens on another port, edit the target in `deploy/prometheus/prometheus.yml`. To send traces to Jaeger, start CloudPAM with `CLOUDPAM_TRACING_ENABLED=true` (the default endpoint, `http://localhost:4318`, is Jaeger's OTLP/HTTP port).
 
-The local compose stack runs Prometheus, Grafana (provisioned request dashboard), and Jaeger. It ships no log pipeline: no Vector, Loki, or Promtail. Vector is deployed by the Kubernetes DaemonSet (`deploy/k8s/vector-daemonset.yaml`); the sample `deploy/vector/vector.toml` needs updating for Vector 0.34.1, which rejects its `encoding.codec` form.
+The local compose stack runs Prometheus, Grafana (provisioned request dashboard), and Jaeger. It ships no log pipeline: no Vector, Loki, or Promtail. In Kubernetes, the server chart's Vector sidecar carries audit events ([2.1](#21-vector-sidecar-for-audit-events-helm)) and a node agent collects stdout ([2.2](#22-application-logs)).
 
 ### 7.2 Kubernetes
 
@@ -555,11 +585,11 @@ The local compose stack runs Prometheus, Grafana (provisioned request dashboard)
 # Deploy observability stack
 kubectl apply -f deploy/k8s/observability-stack.yaml
 
-# Deploy Vector DaemonSet
+# Example Vector DaemonSet for application logs (section 2.2)
 kubectl apply -f deploy/k8s/vector-daemonset.yaml
 
-# Deploy CloudPAM with sidecar
-kubectl apply -f deploy/k8s/cloudpam-deployment.yaml
+# CloudPAM with the Vector audit sidecar (section 2.1)
+helm upgrade --install cloudpam deploy/helm/cloudpam-server --namespace cloudpam --set vector.enabled=true
 ```
 
 ### 7.3 Cloud-Specific
@@ -620,6 +650,6 @@ groups:
 
 - [Go Interfaces](internal/observability/interfaces.go) - Logger, Metrics, Tracer interfaces
 - [OpenAPI Spec](openapi-observability.yaml) - Audit log API endpoints
-- [Vector Config](deploy/vector/vector.toml) - Log shipping configuration
+- [Vector sidecar config](../deploy/helm/cloudpam-server/files/vector.toml) - Default audit sidecar configuration
 - [K8s Manifests](deploy/k8s/) - Kubernetes deployment files
 - [Audit Log UI](cloudpam-audit-log.html) - In-app audit viewer mockup

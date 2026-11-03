@@ -1238,18 +1238,12 @@ The release-instance label is stable when `nameOverride` or `fullnameOverride` c
 Reset a local user's password from inside a running CloudPAM pod so the command uses the same database environment as the server:
 
 ```bash
-kubectl exec -n <namespace> deploy/<cloudpam-deployment> -- \
-  env CLOUDPAM_RESET_PASSWORD='<new-password>' \
-  cloudpam -reset-password <username>
-```
-
-To avoid shell history, pass the new password on stdin:
-
-```bash
 printf '%s\n' '<new-password>' | \
   kubectl exec -i -n <namespace> deploy/<cloudpam-deployment> -- \
   cloudpam -reset-password <username>
 ```
+
+The release image is built on `cgr.dev/chainguard/static` and contains no shell and no `env`, so the password has to arrive on stdin; `kubectl exec ... -- env CLOUDPAM_RESET_PASSWORD=... cloudpam` fails with `executable file not found`.
 
 The command exits non-zero if the user does not exist, the password fails policy validation, or the pod cannot reach the configured backing store.
 
@@ -1368,6 +1362,7 @@ ingress:
 - PostgreSQL: Daily automated backups, point-in-time recovery enabled
 - Retain backups for 7 days (dev) / 30 days (prod)
 - Test restore procedures quarterly
+- Procedures for SQLite (WAL-aware) and PostgreSQL backups, restores, upgrades, rollback, key rotation, and admin lockout recovery are in [RUNBOOKS.md](RUNBOOKS.md)
 
 ### Multi-Region (Future)
 - Active-passive with read replicas

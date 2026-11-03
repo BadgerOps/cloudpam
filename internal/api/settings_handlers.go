@@ -15,8 +15,9 @@ import (
 // SettingsServer handles settings API endpoints.
 type SettingsServer struct {
 	*Server
-	settingsStore storage.SettingsStore
-	ai            aiProviderDeps
+	settingsStore   storage.SettingsStore
+	ai              aiProviderDeps
+	logDestinations func() []domain.LogDestination
 }
 
 // NewSettingsServer creates a new SettingsServer.
@@ -43,6 +44,8 @@ func (ss *SettingsServer) RegisterProtectedSettingsRoutes(dualMW func(http.Handl
 		dualMW(adminWrite(http.HandlerFunc(ss.handleUpdateAIProviderSettings))))
 	ss.handleOpenAPIRoute("POST /api/v1/settings/ai/test",
 		dualMW(adminWrite(http.HandlerFunc(ss.handleTestAIProvider))))
+	ss.handleOpenAPIRoute("GET /api/v1/settings/log-destinations",
+		dualMW(adminRead(http.HandlerFunc(ss.handleListLogDestinations))))
 }
 
 // RegisterSettingsRoutes registers settings endpoints without RBAC (for tests).
@@ -54,6 +57,7 @@ func (ss *SettingsServer) RegisterSettingsRoutes() {
 	ss.handleOpenAPIRouteFunc("GET /api/v1/settings/ai", ss.handleGetAIProviderSettings)
 	ss.handleOpenAPIRouteFunc("PATCH /api/v1/settings/ai", ss.handleUpdateAIProviderSettings)
 	ss.handleOpenAPIRouteFunc("POST /api/v1/settings/ai/test", ss.handleTestAIProvider)
+	ss.handleOpenAPIRouteFunc("GET /api/v1/settings/log-destinations", ss.handleListLogDestinations)
 }
 
 func (ss *SettingsServer) handleGetSecuritySettings(w http.ResponseWriter, r *http.Request) {

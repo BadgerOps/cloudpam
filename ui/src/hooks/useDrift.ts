@@ -46,7 +46,7 @@ export function useDrift() {
           err instanceof Error ? err.message : 'Failed to load drift items',
         )
       } finally {
-        setLoading(false)
+        if (isCurrent(token)) setLoading(false)
       }
     },
     [begin, isCurrent],

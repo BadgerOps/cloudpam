@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite" // CGO-less SQLite driver
+	"cloudpam/internal/storage/sqlitedb"
 )
 
 // SQLiteKeyStore is a SQLite-backed implementation of KeyStore.
@@ -19,13 +19,9 @@ type SQLiteKeyStore struct {
 
 // NewSQLiteKeyStore creates a new SQLite-backed key store.
 func NewSQLiteKeyStore(dsn string) (*SQLiteKeyStore, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set pragmas: %w", err)
 	}
 	return &SQLiteKeyStore{db: db}, nil
 }

@@ -19,7 +19,7 @@ func setupRecService(t *testing.T) (*RecommendationService, *storage.MemoryStore
 	st := storage.NewMemoryStore()
 	recStore := storage.NewMemoryRecommendationStore(st)
 	analysisSvc := NewAnalysisService(st)
-	recSvc := NewRecommendationService(analysisSvc, recStore, st, storePlacer{st})
+	recSvc := NewRecommendationService(analysisSvc, recStore, storePlacer{st})
 	return recSvc, st
 }
 
@@ -248,28 +248,16 @@ func TestDismiss_WithReason(t *testing.T) {
 }
 
 func TestScoreAllocation_Alignment(t *testing.T) {
-	svc, st := setupRecService(t)
-
-	pool, _ := st.CreatePool(context.Background(), domain.CreatePool{
-		Name: "Net", CIDR: "10.0.0.0/16", Type: domain.PoolTypeSupernet,
-		Description: "test",
-	})
-
 	// 10.0.0.0/24 is aligned on its natural boundary.
-	score := svc.scoreAllocation("10.0.0.0/24", pool, 0)
+	score := scoreAllocation("10.0.0.0/24", nil, 0)
 	if score < 30 {
 		t.Errorf("aligned /24 score = %d, expected >= 30 (alignment bonus)", score)
 	}
-	_ = st
 }
 
 func TestScoreAllocation_RFC1918(t *testing.T) {
-	svc, _ := setupRecService(t)
-
-	pool := domain.Pool{ID: 1, Name: "Public", CIDR: "8.8.8.0/24", Type: domain.PoolTypeSubnet}
-
-	privateScore := svc.scoreAllocation("10.0.0.0/24", pool, 0)
-	publicScore := svc.scoreAllocation("8.8.4.0/24", pool, 0)
+	privateScore := scoreAllocation("10.0.0.0/24", nil, 0)
+	publicScore := scoreAllocation("8.8.4.0/24", nil, 0)
 
 	if privateScore <= publicScore {
 		t.Errorf("RFC1918 score (%d) should be higher than public (%d)", privateScore, publicScore)
@@ -277,12 +265,8 @@ func TestScoreAllocation_RFC1918(t *testing.T) {
 }
 
 func TestScoreAllocation_DesiredPrefixLen(t *testing.T) {
-	svc, _ := setupRecService(t)
-
-	pool := domain.Pool{ID: 1, Name: "Net", CIDR: "10.0.0.0/16", Type: domain.PoolTypeSupernet}
-
-	exactMatch := svc.scoreAllocation("10.0.0.0/28", pool, 28)
-	noMatch := svc.scoreAllocation("10.0.0.0/20", pool, 28)
+	exactMatch := scoreAllocation("10.0.0.0/28", nil, 28)
+	noMatch := scoreAllocation("10.0.0.0/20", nil, 28)
 
 	if exactMatch <= noMatch {
 		t.Errorf("exact prefix len match (%d) should score higher than mismatch (%d)", exactMatch, noMatch)

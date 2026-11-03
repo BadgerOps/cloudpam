@@ -135,6 +135,24 @@ describe('UsersAdminPanel action gating', () => {
     expect(await screen.findByTitle('Deactivate user')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /create user/i })).toBeNull()
   })
+
+  // The revoke endpoint accepts the admin role or the account owner, not a
+  // users:* permission, so a custom role holding every users permission still
+  // gets 403 and must not see the control.
+  it('exposes sign out everywhere only to the admin role', async () => {
+    stubFetch()
+    renderWith(['users:list', 'users:update', 'users:delete'], <UsersAdminPanel />)
+
+    expect(await screen.findByText('alice')).toBeTruthy()
+    expect(screen.queryByTitle('Sign out everywhere')).toBeNull()
+  })
+
+  it('exposes sign out everywhere to an admin', async () => {
+    stubFetch()
+    renderWith([], <UsersAdminPanel />, 'admin')
+
+    expect(await screen.findByTitle('Sign out everywhere')).toBeTruthy()
+  })
 })
 
 describe('ApiKeysPage feature gating', () => {

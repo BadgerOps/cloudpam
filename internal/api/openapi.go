@@ -483,11 +483,15 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"SetupRequest", reflect.TypeOf(openAPISetupRequest{})},
 		{"SetupResponse", reflect.TypeOf(openAPISetupResponse{})},
 		{"Pool", reflect.TypeOf(domain.Pool{})},
+		{"PoolList", reflect.TypeOf([]domain.Pool{})},
 		{"PoolStats", reflect.TypeOf(domain.PoolStats{})},
+		{"GrowthProjection", reflect.TypeOf(domain.GrowthProjection{})},
+		{"ProjectedUsage", reflect.TypeOf(domain.ProjectedUsage{})},
 		{"PoolWithStats", reflect.TypeOf(domain.PoolWithStats{})},
 		{"CreatePool", reflect.TypeOf(domain.CreatePool{})},
 		{"UpdatePool", reflect.TypeOf(domain.UpdatePool{})},
 		{"Account", reflect.TypeOf(domain.Account{})},
+		{"AccountList", reflect.TypeOf([]domain.Account{})},
 		{"CreateAccount", reflect.TypeOf(domain.CreateAccount{})},
 		{"UpdateAccount", reflect.TypeOf(domain.CreateAccount{})},
 		{"ImportResponse", reflect.TypeOf(openAPIImportResponse{})},
@@ -544,6 +548,8 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"AIProviderSettingSources", reflect.TypeOf(domain.AIProviderSettingSources{})},
 		{"UpdateAIProviderSettingsRequest", reflect.TypeOf(domain.UpdateAIProviderSettingsRequest{})},
 		{"AIProviderTestResponse", reflect.TypeOf(domain.AIProviderTestResponse{})},
+		{"LogDestinationsResponse", reflect.TypeOf(domain.LogDestinationsResponse{})},
+		{"LogDestination", reflect.TypeOf(domain.LogDestination{})},
 		{"LoginRequest", reflect.TypeOf(openAPILoginRequest{})},
 		{"LoginResponse", reflect.TypeOf(openAPILoginResponse{})},
 		{"MeResponse", reflect.TypeOf(openAPIMeResponse{})},
@@ -748,6 +754,8 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 	case "/api/v1/pools/":
 		return routesForKnown([][2]string{
 			{http.MethodGet, "/api/v1/pools/hierarchy"},
+			{http.MethodGet, "/api/v1/pools/deleted"},
+			{http.MethodPost, "/api/v1/pools/{poolId}/restore"},
 			{http.MethodGet, "/api/v1/pools/{poolId}"},
 			{http.MethodPatch, "/api/v1/pools/{poolId}"},
 			{http.MethodDelete, "/api/v1/pools/{poolId}"},
@@ -758,6 +766,8 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/accounts")
 	case "/api/v1/accounts/":
 		return routesForKnown([][2]string{
+			{http.MethodGet, "/api/v1/accounts/deleted"},
+			{http.MethodPost, "/api/v1/accounts/{accountId}/restore"},
 			{http.MethodGet, "/api/v1/accounts/{accountId}"},
 			{http.MethodPatch, "/api/v1/accounts/{accountId}"},
 			{http.MethodDelete, "/api/v1/accounts/{accountId}"},
@@ -790,7 +800,10 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 	case "/api/v1/discovery/sync":
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/discovery/sync")
 	case "/api/v1/discovery/sync/":
-		return routesForMethodPath(http.MethodGet, "/api/v1/discovery/sync/{syncJobId}")
+		return routesForKnown([][2]string{
+			{http.MethodGet, "/api/v1/discovery/sync/latest"},
+			{http.MethodGet, "/api/v1/discovery/sync/{syncJobId}"},
+		})
 	case "/api/v1/discovery/ingest":
 		return routesForMethodPath(http.MethodPost, "/api/v1/discovery/ingest")
 	case "/api/v1/discovery/ingest/org":
@@ -873,6 +886,8 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPatch}, "/api/v1/settings/ai")
 	case "/api/v1/settings/ai/test":
 		return routesForMethodPath(http.MethodPost, "/api/v1/settings/ai/test")
+	case "/api/v1/settings/log-destinations":
+		return routesForMethodPath(http.MethodGet, "/api/v1/settings/log-destinations")
 	case "/api/v1/settings/oidc/providers":
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/settings/oidc/providers")
 	case "/api/v1/settings/oidc/providers/{id}":
@@ -1043,16 +1058,20 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "GET", Path: "/api/v1/pools", Summary: "List pools", Tag: "Pools", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("include_stats", "Include utilization statistics", "boolean")}},
 		{Method: "POST", Path: "/api/v1/pools", Summary: "Create pool", Description: "Returns 400 when the CIDR overlaps a pool with the same parent, and 409 when a pool with the same CIDR already exists under that parent. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Pools", RequestSchema: "CreatePool", SuccessStatus: "201", ResponseSchema: "Pool", ResponseDescription: "Pool created"},
 		{Method: "GET", Path: "/api/v1/pools/hierarchy", Summary: "Get pool hierarchy", Tag: "Pools", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("root_id", "Optional root pool ID", "integer")}},
+		{Method: "GET", Path: "/api/v1/pools/deleted", Summary: "List soft-deleted pools", Description: "Returns soft-deleted pools with deleted_at, most recently deleted first. Requires pools:delete.", Tag: "Pools", ResponseSchema: "PoolList"},
+		{Method: "POST", Path: "/api/v1/pools/{poolId}/restore", Summary: "Restore a soft-deleted pool", Description: "Clears deleted_at and returns the pool. Only this pool is restored; restore a cascade-deleted parent first, then its children. Returns 404 when no soft-deleted pool has this id, and 409 when its parent or account is still deleted, a live pool now holds its CIDR, or its CIDR overlaps a live pool with the same parent. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds. Requires pools:delete.", Tag: "Pools", ResponseSchema: "Pool", ResponseDescription: "Pool restored"},
 		{Method: "GET", Path: "/api/v1/pools/{poolId}", Summary: "Get pool", Tag: "Pools", ResponseSchema: "Pool"},
 		{Method: "PATCH", Path: "/api/v1/pools/{poolId}", Summary: "Update pool metadata", Tag: "Pools", RequestSchema: "UpdatePool", ResponseSchema: "Pool"},
-		{Method: "DELETE", Path: "/api/v1/pools/{poolId}", Summary: "Delete pool", Tag: "Pools", ResponseDescription: "Pool deleted", Parameters: []openAPIParameter{queryParam("force", "Force recursive delete where supported", "boolean")}},
+		{Method: "DELETE", Path: "/api/v1/pools/{poolId}", Summary: "Delete pool", Description: "Without force, returns 409 when the pool has child pools. Takes the same lock as POST /api/v1/pools, so a child created concurrently is either refused or seen by the delete. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Pools", ResponseDescription: "Pool deleted", Parameters: []openAPIParameter{queryParam("force", "Force recursive delete where supported", "boolean")}},
 		{Method: "GET", Path: "/api/v1/pools/{poolId}/blocks", Summary: "Enumerate candidate blocks", Tag: "Blocks", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("new_prefix_len", "Requested block prefix length", "integer"), queryParam("page", "Page number (1-based; a page past the end is empty)", "integer"), queryParam("page_size", "Page size, or \"all\". Omitting it (or passing \"all\") expands the whole pool, which is rejected with 400 above 65536 blocks; paginate instead.", "integer")}},
 		{Method: "GET", Path: "/api/v1/pools/{poolId}/stats", Summary: "Get pool utilization statistics", Tag: "Pools", ResponseSchema: "PoolStats"},
 		{Method: "GET", Path: "/api/v1/accounts", Summary: "List accounts", Tag: "Accounts", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/accounts", Summary: "Create account", Tag: "Accounts", RequestSchema: "CreateAccount", SuccessStatus: "201", ResponseSchema: "Account", ResponseDescription: "Account created"},
+		{Method: "GET", Path: "/api/v1/accounts/deleted", Summary: "List soft-deleted accounts", Description: "Returns soft-deleted accounts with deleted_at, most recently deleted first. Requires accounts:delete.", Tag: "Accounts", ResponseSchema: "AccountList"},
+		{Method: "POST", Path: "/api/v1/accounts/{accountId}/restore", Summary: "Restore a soft-deleted account", Description: "Clears deleted_at and returns the account. Pools deleted with it stay deleted, and a stored discovery credential removed by the delete is not restored. Returns 404 when no soft-deleted account has this id, and 409 when a live account now holds its key. Requires accounts:delete.", Tag: "Accounts", ResponseSchema: "Account", ResponseDescription: "Account restored"},
 		{Method: "GET", Path: "/api/v1/accounts/{accountId}", Summary: "Get account", Tag: "Accounts", ResponseSchema: "Account"},
 		{Method: "PATCH", Path: "/api/v1/accounts/{accountId}", Summary: "Update account", Tag: "Accounts", RequestSchema: "UpdateAccount", ResponseSchema: "Account"},
-		{Method: "DELETE", Path: "/api/v1/accounts/{accountId}", Summary: "Delete account", Tag: "Accounts", ResponseDescription: "Account deleted"},
+		{Method: "DELETE", Path: "/api/v1/accounts/{accountId}", Summary: "Delete account", Description: "With force, also deletes every pool assigned to the account and their descendants, under the same lock as POST /api/v1/pools. On PostgreSQL, a forced delete returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Accounts", ResponseDescription: "Account deleted", Parameters: []openAPIParameter{queryParam("force", "Also delete the pools assigned to the account and their descendants", "boolean")}},
 		{Method: "GET", Path: "/api/v1/blocks", Summary: "List assigned blocks", Tag: "Blocks", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("q", "Search query", "string"), queryParam("pool_id", "Pool ID", "integer"), queryParam("account_id", "Account ID", "integer"), queryParam("page", "Page number (1-based; a page past the end is empty)", "integer"), queryParam("page_size", "Page size (default 50, max 500, or \"all\")", "integer")}},
 		{Method: "GET", Path: "/api/v1/export", Summary: "Export pools and accounts as CSV ZIP", Tag: "Export", ResponseSchema: "String", ResponseContentType: "application/zip"},
 		{Method: "POST", Path: "/api/v1/import/accounts", Summary: "Import accounts from CSV", Description: "Each row passes the same key and name validation as POST /api/v1/accounts; a row that fails is reported in errors by row number and not stored, and the other rows are imported.", Tag: "Import", RequestSchema: "Object", ResponseSchema: "ImportResponse"},
@@ -1065,10 +1084,11 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "POST", Path: "/api/v1/discovery/resources/{resourceId}/link", Summary: "Link discovered resource to pool", Tag: "Discovery", RequestSchema: "LinkResourceRequest", ResponseSchema: "StatusResponse"},
 		{Method: "DELETE", Path: "/api/v1/discovery/resources/{resourceId}/link", Summary: "Unlink discovered resource from pool", Tag: "Discovery", SuccessStatus: "200", ResponseSchema: "StatusResponse"},
 		{Method: "POST", Path: "/api/v1/discovery/import", Summary: "Import discovered resources as pools", Description: "Links a resource to an existing pool that carries its discovery_resource_id tag or has the same account, parent, type, and CIDR. Otherwise creates a pool under the pool of its parent resource, or at the top level. A pool that is not inside its parent or overlaps a pool with the same parent is reported in errors and not stored. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Discovery", RequestSchema: "DiscoveryImportRequest", ResponseSchema: "DiscoveryImportResponse"},
-		{Method: "POST", Path: "/api/v1/discovery/import/preview", Summary: "Preview selected discovery import", Description: "A proposed parent pool, whether selected, linked to the discovered parent, or created for it in the same request, must belong to the import account and contain the resource CIDR as a strict child, the rule apply enforces. Otherwise the item is blocked with an outside_pool, account_mismatch or missing_parent issue.", Tag: "Discovery", RequestSchema: "DiscoveryImportPreviewRequest", ResponseSchema: "DiscoveryImportPreviewResponse"},
+		{Method: "POST", Path: "/api/v1/discovery/import/preview", Summary: "Preview selected discovery import", Description: "Each item is checked against the parent apply will place it under: the pool created or linked for its selected provider parent in the same request, else the proposed parent pool. A subnet whose selected parent is not itself importable is blocked with missing_parent. An existing parent must belong to the import account and contain the resource CIDR as a strict child, or the item is blocked with an outside_pool, account_mismatch or missing_parent issue; an existing child of that parent overlapping the CIDR is reported as a conflict.", Tag: "Discovery", RequestSchema: "DiscoveryImportPreviewRequest", ResponseSchema: "DiscoveryImportPreviewResponse"},
 		{Method: "POST", Path: "/api/v1/discovery/import/apply", Summary: "Apply selected discovery import", Description: "A subnet goes under the pool created or linked for its VPC in the same request, before the parent the preview proposed. A resource whose proposed parent does not contain it is blocked by the preview with an outside_pool issue and only counted in skipped; a forced item that still fails placement, or a created pool that overlaps a pool with the same parent, is reported in errors and skipped. If a newly created parent cannot be linked, its descendants are skipped and the failed subtree is removed. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Discovery", RequestSchema: "DiscoveryImportApplyRequest", ResponseSchema: "DiscoveryImportApplyResponse"},
 		{Method: "GET", Path: "/api/v1/discovery/sync", Summary: "List discovery sync jobs", Tag: "Discovery", ResponseSchema: "SyncJobsResponse", Parameters: []openAPIParameter{queryParam("account_id", "Account ID", "integer"), queryParam("limit", "Maximum jobs to return", "integer")}},
 		{Method: "POST", Path: "/api/v1/discovery/sync", Summary: "Trigger discovery sync", Tag: "Discovery", RequestSchema: "SyncRequest", ResponseSchema: "Object"},
+		{Method: "GET", Path: "/api/v1/discovery/sync/latest", Summary: "List each account's latest discovery sync job", Tag: "Discovery", ResponseSchema: "SyncJobsResponse"},
 		{Method: "GET", Path: "/api/v1/discovery/sync/{syncJobId}", Summary: "Get discovery sync job", Tag: "Discovery", ResponseSchema: "SyncJob"},
 		{Method: "POST", Path: "/api/v1/discovery/ingest", Summary: "Ingest agent discovery resources", Tag: "Discovery", RequestSchema: "IngestRequest", ResponseSchema: "IngestResponse"},
 		{Method: "POST", Path: "/api/v1/discovery/ingest/org", Summary: "Ingest AWS Organizations resources", Tag: "Discovery", RequestSchema: "BulkIngestRequest", ResponseSchema: "BulkIngestResponse"},
@@ -1101,7 +1121,7 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "POST", Path: "/api/v1/analysis/gaps", Summary: "Run gap analysis", Tag: "Analysis", RequestSchema: "GapAnalysisRequest", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/analysis/fragmentation", Summary: "Run fragmentation analysis", Tag: "Analysis", RequestSchema: "AnalysisRequest", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/analysis/compliance", Summary: "Run compliance checks", Tag: "Analysis", RequestSchema: "AnalysisRequest", ResponseSchema: "Object"},
-		{Method: "POST", Path: "/api/v1/recommendations/generate", Summary: "Generate recommendations", Tag: "Recommendations", RequestSchema: "GenerateRecommendationsRequest", ResponseSchema: "GenerateRecommendationsResponse"},
+		{Method: "POST", Path: "/api/v1/recommendations/generate", Summary: "Generate recommendations", Description: "Replaces each pool's pending recommendations. Allocation recommendations cover the pool's free blocks in address order, at most 64 per pool. With desired_prefix_len set, every free block splits down to that length, clamped to be longer than the pool's prefix and no longer than /30; a free block already at or beyond that length is offered whole. Without it, an empty pool is offered as its two halves and every other free block whole.", Tag: "Recommendations", RequestSchema: "GenerateRecommendationsRequest", ResponseSchema: "GenerateRecommendationsResponse"},
 		{Method: "GET", Path: "/api/v1/recommendations", Summary: "List recommendations", Tag: "Recommendations", ResponseSchema: "RecommendationsListResponse", Parameters: paginatedFilterParams("pool_id", "type", "status", "priority")},
 		{Method: "GET", Path: "/api/v1/recommendations/{recommendationId}", Summary: "Get recommendation", Tag: "Recommendations", ResponseSchema: "Recommendation"},
 		{Method: "POST", Path: "/api/v1/recommendations/{recommendationId}/apply", Summary: "Apply recommendation", Description: "An allocation recommendation creates its suggested CIDR under the recommendation's pool, checked as POST /api/v1/pools does. Returns 400 when the CIDR is not inside that pool, and 409 when it overlaps or equals a pool with the same parent. The recommendation then stays pending. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Recommendations", RequestSchema: "ApplyRecommendationRequest", ResponseSchema: "Recommendation"},
@@ -1117,6 +1137,7 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "PATCH", Path: "/api/v1/settings/network-schema-policy", Summary: "Update network schema policy", Tag: "Settings", RequestSchema: "NetworkSchemaPolicy", ResponseSchema: "NetworkSchemaPolicy"},
 		{Method: "GET", Path: "/api/v1/settings/ai", Summary: "Get AI provider settings", Description: "Returns the effective AI provider configuration (stored value, then CLOUDPAM_LLM_* environment variable, then built-in default per field), where each value came from, and the last test result. An environment value equal to the built-in default is reported with source default. CLOUDPAM_LLM_API_KEY applies only when the endpoint comes from the environment or the default; with a stored endpoint only a stored key is used, otherwise sources.api_key is none. The API key is never returned; api_key_configured reports whether one is in effect. The last test result applies only while the effective endpoint, model and key source are the ones that were tested; otherwise the state is configured and last_tested_at records when the previous configuration was tested.", Tag: "Settings", ResponseSchema: "AIProviderSettingsResponse"},
 		{Method: "PATCH", Path: "/api/v1/settings/ai", Summary: "Update AI provider settings", Description: "Omitted fields are kept; unknown fields are rejected with 400 and the field name. An empty endpoint or model, or max_tokens 0, clears the stored value; clear_temperature and clear_api_key clear those. A supplied api_key is encrypted at rest. Returns 409 when CLOUDPAM_OIDC_ENCRYPTION_KEY is not set and the request carries an api_key, and when the stored settings changed concurrently three times in a row (reload and retry). Returns 400 when the request changes or clears the stored endpoint while a stored key exists without also sending api_key or clear_api_key, and for link-local or metadata endpoint addresses. Changing the endpoint, model or key resets the state to configured.", Tag: "Settings", RequestSchema: "UpdateAIProviderSettingsRequest", ResponseSchema: "AIProviderSettingsResponse"},
+		{Method: "GET", Path: "/api/v1/settings/log-destinations", Summary: "List log destinations", Description: "Returns the audit forwarding targets configured from the CLOUDPAM_AUDIT_SYSLOG_* environment variables with their live delivery health: delivered and failed counts, the last success and failure times, the last error, and a state of invalid (the configuration was rejected at startup; see config_error), idle (no event sent yet), ok (the last send succeeded) or failing (the last send failed). A send counts as delivered when the socket write succeeds; syslog has no acknowledgement, so this does not confirm the collector received the event (over UDP a write succeeds with nothing listening). Addresses are not redacted. The list is empty when forwarding is off.", Tag: "Settings", ResponseSchema: "LogDestinationsResponse"},
 		{Method: "POST", Path: "/api/v1/settings/ai/test", Summary: "Test AI provider", Description: "Sends a short completion and a streaming completion to the effective provider (15s budget) and records the outcome. Returns 200 whatever the provider outcome; read ok and the sanitized error.", Tag: "Settings", ResponseSchema: "AIProviderTestResponse"},
 		{Method: "GET", Path: "/api/v1/auth/login", Summary: "Login", Tag: "Auth", Security: false, RequestSchema: "LoginRequest", ResponseSchema: "LoginResponse"},
 		{Method: "POST", Path: "/api/v1/auth/login", Summary: "Login", Tag: "Auth", Security: false, RequestSchema: "LoginRequest", ResponseSchema: "LoginResponse"},
