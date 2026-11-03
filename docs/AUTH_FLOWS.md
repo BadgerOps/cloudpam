@@ -271,7 +271,7 @@ Administrators manage API key policy from **Configuration > Security** via `GET/
 
 #### Audit Retention
 
-The same settings document carries `audit_retention_days`. A background job runs on startup and then every hour; it reads the setting fresh each pass and deletes audit events older than that many days. `0` keeps events forever. A fresh install starts at 90 days, and a settings document saved before the field existed decodes to `0`, so an upgrade never purges history until an operator sets a value. The first pass with a non-zero setting is a dry run that logs `audit retention dry run` with the number of events a purge would remove and deletes nothing; the purge starts on the next pass.
+The same settings document carries `audit_retention_days`. A background job runs on startup and then every hour; it reads the setting fresh each pass and deletes audit events older than that many days. `0` keeps events forever and is the default on every install, so neither a fresh install nor an upgrade purges history until an operator sets a value. The first pass with a non-zero setting is a dry run that logs `audit retention dry run` with the number of events a purge would remove and deletes nothing; the purge starts on the next pass.
 
 `GET /api/v1/audit/export?format=csv|json` (scope `audit:read`) downloads every event that matches the list endpoint's `actor`, `action`, `resource_type`, `since` and `until` filters. CSV cells that start with `=`, `+`, `-`, `@`, tab or carriage return are prefixed with an apostrophe so a spreadsheet does not run them as formulas.
 

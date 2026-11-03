@@ -9,11 +9,6 @@ const (
 	MaxLoginRateLimitPerMin = 60
 )
 
-// DefaultAuditRetentionDays is how long a fresh install keeps audit events.
-// Settings documents written before the field existed decode to 0, which keeps
-// events forever, so an upgrade never purges history until an operator opts in.
-const DefaultAuditRetentionDays = 90
-
 // MaxAuditRetentionDays bounds audit_retention_days.
 const MaxAuditRetentionDays = 3650
 
@@ -33,7 +28,10 @@ type SecuritySettings struct {
 	APIKeyRotationReminderDays    int                 `json:"api_key_rotation_reminder_days"`
 	APIKeyAllowedScopesByRole     map[string][]string `json:"api_key_allowed_scopes_by_role"`
 	// AuditRetentionDays is the age after which the retention job purges
-	// audit events. 0 keeps events forever.
+	// audit events. 0 keeps events forever and is the default on every
+	// install, because a store with no saved settings document also reports
+	// the defaults and an upgrade must never purge history until an operator
+	// sets a value.
 	AuditRetentionDays int `json:"audit_retention_days"`
 }
 
@@ -53,7 +51,7 @@ func DefaultSecuritySettings() SecuritySettings {
 		APIKeyMaxLifetimeDays:         0,
 		APIKeyRotationReminderDays:    14,
 		APIKeyAllowedScopesByRole:     DefaultAPIKeyAllowedScopesByRole(),
-		AuditRetentionDays:            DefaultAuditRetentionDays,
+		AuditRetentionDays:            0,
 	}
 }
 

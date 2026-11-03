@@ -304,13 +304,7 @@ func main() {
 	}
 
 	// Audit retention: dry run on startup, purge hourly from then on.
-	retention := audit.NewRetention(auditLogger, func(ctx context.Context) (time.Duration, error) {
-		settings, err := settingsStore.GetSecuritySettings(ctx)
-		if err != nil {
-			return 0, err
-		}
-		return time.Duration(settings.AuditRetentionDays) * 24 * time.Hour, nil
-	}, logger.Slog())
+	retention := audit.NewRetention(auditLogger, auditRetentionPolicy(settingsStore), logger.Slog())
 	go retention.Run(context.Background(), audit.RetentionInterval)
 
 	// Background session cleanup every 15 minutes.
@@ -533,6 +527,18 @@ func closeIfPossible(logger observability.Logger, v any, name string) {
 }
 
 // bootstrapAdmin creates the initial admin user if it doesn't already exist.
+// auditRetentionPolicy reads audit_retention_days from the settings store on
+// every pass, so a change applies without a restart.
+func auditRetentionPolicy(settings storage.SettingsStore) audit.RetentionPolicySource {
+	return func(ctx context.Context) (time.Duration, error) {
+		current, err := settings.GetSecuritySettings(ctx)
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(current.AuditRetentionDays) * 24 * time.Hour, nil
+	}
+}
+
 func bootstrapAdmin(logger observability.Logger, userStore auth.UserStore, username, password string) {
 	existing, _ := userStore.GetByUsername(context.Background(), username)
 	if existing != nil {
