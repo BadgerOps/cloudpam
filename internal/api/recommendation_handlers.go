@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,10 @@ type RecommendationServer struct {
 	srv      *Server
 	recSvc   *planning.RecommendationService
 	recStore storage.RecommendationStore
+	// authorize is set by RegisterProtectedRecommendationRoutes. It decides permissions the
+	// route middleware cannot know before the recommendation is loaded.
+	authorize func(ctx context.Context, resource, action string) error
+	logger    *slog.Logger
 }
 
 // NewRecommendationServer creates a new RecommendationServer.
@@ -37,6 +42,11 @@ func (rs *RecommendationServer) RegisterProtectedRecommendationRoutes(dualMW Mid
 	readMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionRead, logger)
 	createMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionCreate, logger)
 	updateMW := RequirePermissionMiddleware(auth.ResourcePools, auth.ActionUpdate, logger)
+	rs.authorize = auth.RequirePermission
+	rs.logger = logger
+	if rs.logger == nil {
+		rs.logger = slog.Default()
+	}
 
 	rs.srv.handleOpenAPIRoute("/api/v1/recommendations/generate", dualMW(createMW(http.HandlerFunc(rs.handleGenerate))))
 	rs.srv.handleOpenAPIRoute("/api/v1/recommendations", dualMW(readMW(http.HandlerFunc(rs.handleList))))
@@ -173,6 +183,9 @@ func (rs *RecommendationServer) handleApply(w http.ResponseWriter, r *http.Reque
 		// Allow empty body for compliance recommendations.
 		req = domain.ApplyRecommendationRequest{}
 	}
+	if !rs.allowApply(w, r, id) {
+		return
+	}
 
 	rec, err := rs.recSvc.Apply(r.Context(), id, req)
 	if err != nil {
@@ -180,6 +193,35 @@ func (rs *RecommendationServer) handleApply(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, rec)
+}
+
+// allowApply answers 403 and returns false when the caller may not apply the recommendation.
+// Reclaim and consolidation delete pools, so beyond the route's pools:update they need
+// pools:delete. A recommendation's type never changes, so checking it before Apply is safe.
+func (rs *RecommendationServer) allowApply(w http.ResponseWriter, r *http.Request, id string) bool {
+	if rs.authorize == nil {
+		return true
+	}
+	rec, err := rs.recStore.GetRecommendation(r.Context(), id)
+	if err != nil {
+		rs.srv.writeStoreErr(r.Context(), w, err)
+		return false
+	}
+	if rec.Type != domain.RecommendationTypeReclaim && rec.Type != domain.RecommendationTypeConsolidation {
+		return true
+	}
+	if err := rs.authorize(r.Context(), auth.ResourcePools, auth.ActionDelete); err != nil {
+		rs.logger.WarnContext(r.Context(), "authorization denied", appendRequestID(r.Context(), []any{
+			"method", r.Method,
+			"path", r.URL.Path,
+			"recommendation_type", string(rec.Type),
+			"required_resource", auth.ResourcePools,
+			"required_action", auth.ActionDelete,
+		})...)
+		writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
+		return false
+	}
+	return true
 }
 
 // handleDismiss dismisses a recommendation.

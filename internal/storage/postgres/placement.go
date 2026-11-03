@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -131,6 +132,11 @@ func (t placementTx) ListPools(context.Context) ([]domain.Pool, error) {
 	return listPools(t.work, t.tx, t.orgID)
 }
 
+func (t placementTx) GetPool(_ context.Context, id int64) (domain.Pool, bool, error) {
+	p, found, err := getPool(t.work, t.tx, t.orgID, id)
+	return p, found, placementBusy(t.caller, err)
+}
+
 // RestorePool needs no savepoint: a restore is the placement's only write, and its
 // error rolls the whole transaction back.
 func (t placementTx) RestorePool(_ context.Context, id int64) (domain.Pool, bool, error) {
@@ -156,6 +162,16 @@ func (t placementTx) CreatePool(_ context.Context, in domain.CreatePool) (domain
 	return p, nil
 }
 
+func (t placementTx) UpdatePool(_ context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error) {
+	p, found, err := updatePool(t.work, t.tx, t.orgID, id, update)
+	return p, found, placementBusy(t.caller, err)
+}
+
+func (t placementTx) UpdatePoolCIDR(_ context.Context, id int64, cidr string) (domain.Pool, bool, error) {
+	p, found, err := updatePoolCIDR(t.work, t.tx, t.orgID, id, cidr)
+	return p, found, placementBusy(t.caller, err)
+}
+
 func (t placementTx) DeletePool(_ context.Context, id int64) (bool, error) {
 	ok, err := deletePool(t.work, t.tx, t.orgID, id)
 	return ok, placementBusy(t.caller, err)
@@ -169,4 +185,15 @@ func (t placementTx) DeletePoolCascade(_ context.Context, id int64) (bool, error
 func (t placementTx) DeleteAccountCascade(_ context.Context, id int64) (bool, error) {
 	ok, err := deleteAccountCascade(t.work, t.tx, t.orgID, id)
 	return ok, placementBusy(t.caller, err)
+}
+
+var _ storage.PlacementLinks = placementTx{}
+
+func (t placementTx) PoolResourceIDs(_ context.Context, poolID int64) ([]uuid.UUID, error) {
+	ids, err := poolResourceIDs(t.work, t.tx, t.orgID, poolID)
+	return ids, placementBusy(t.caller, err)
+}
+
+func (t placementTx) LinkResourceToPool(_ context.Context, resourceID uuid.UUID, poolID int64) error {
+	return placementBusy(t.caller, linkResourceToPool(t.work, t.tx, t.orgID, resourceID, poolID))
 }

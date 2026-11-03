@@ -231,7 +231,7 @@ func main() {
 
 	// Initialize recommendation subsystem
 	recStore := selectRecommendationStore(logger, store)
-	recService := planning.NewRecommendationService(analysisService, recStore, srv)
+	recService := planning.NewRecommendationService(analysisService, recStore, store, discoveryStore, srv)
 	recSrv := api.NewRecommendationServer(srv, recService, recStore)
 	logger.Info("recommendation subsystem initialized")
 

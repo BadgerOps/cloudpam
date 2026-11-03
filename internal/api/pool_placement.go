@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning"
 	"cloudpam/internal/storage"
@@ -140,7 +142,7 @@ func (s *Server) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Po
 
 func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
 	var out []placedPool
-	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
+	err := s.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		var err error
 		out, err = place(work, ps, policy, batch)
 		return err
@@ -156,7 +158,7 @@ func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []p
 // delete then sees that child, instead of the child landing under a deleted parent (#269).
 func (s *Server) deletePool(ctx context.Context, id int64, cascade bool) (bool, error) {
 	var ok bool
-	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
+	err := s.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		var err error
 		if cascade {
 			ok, err = ps.DeletePoolCascade(work, id)
@@ -172,7 +174,7 @@ func (s *Server) deletePool(ctx context.Context, id int64, cascade bool) (bool, 
 // lock, for the same reason as deletePool.
 func (s *Server) deleteAccountCascade(ctx context.Context, id int64) (bool, error) {
 	var ok bool
-	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
+	err := s.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		var err error
 		ok, err = ps.DeleteAccountCascade(work, id)
 		return err
@@ -186,7 +188,7 @@ func (s *Server) deleteAccountCascade(ctx context.Context, id int64) (bool, erro
 func (s *Server) restorePool(ctx context.Context, deleted domain.Pool) (domain.Pool, bool, error) {
 	var p domain.Pool
 	var ok bool
-	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
+	err := s.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		live, err := ps.ListPools(work)
 		if err != nil {
 			return err
@@ -208,9 +210,11 @@ func (s *Server) restorePool(ctx context.Context, deleted domain.Pool) (domain.P
 	return p, ok, err
 }
 
-// withPlacementLock runs fn holding placeGate and, on a store several processes share, the store's
+// WithPlacement runs fn holding placeGate and, on a store several processes share, the store's
 // placement lock, all within placementBudget. fn must use work and ps for every read and write.
-func (s *Server) withPlacementLock(ctx context.Context, fn func(work context.Context, ps storage.PlacementStore) error) error {
+// Code that resizes or deletes a pool needs it too, not only code that creates pools, or a
+// placement running at the same time can check against a stale range.
+func (s *Server) WithPlacement(ctx context.Context, fn func(work context.Context, ps storage.PlacementStore) error) error {
 	work, cancel := context.WithTimeout(ctx, placementBudget)
 	defer cancel()
 
@@ -228,7 +232,25 @@ func (s *Server) withPlacementLock(ctx context.Context, fn func(work context.Con
 	}))
 }
 
-// placementGate serializes placements, restores and pool deletes inside one process. Unlike a mutex, a request
+// errLinkPoolGone reports that the pool a resource was being linked to was deleted before the
+// link got the placement guard.
+var errLinkPoolGone = errors.New("pool not found")
+
+// linkResource links a discovered resource to a live pool under the placement guard, which reclaim,
+// resize and consolidation also hold while they read or move a pool's links. The pool is rechecked
+// under the guard because one of them may have deleted it while this request waited.
+func (s *Server) linkResource(ctx context.Context, ds storage.DiscoveryStore, resourceID uuid.UUID, poolID int64) error {
+	return s.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		if _, found, err := ps.GetPool(work, poolID); err != nil {
+			return err
+		} else if !found {
+			return fmt.Errorf("pool %d: %w", poolID, errLinkPoolGone)
+		}
+		return storage.LinksIn(ps, ds).LinkResourceToPool(work, resourceID, poolID)
+	})
+}
+
+// placementGate serializes placements, resizes, restores and pool deletes inside one process. Unlike a mutex, a request
 // waiting for it gives up when its context ends, so the placement budget also bounds the
 // time spent queued behind another placement.
 type placementGate struct {

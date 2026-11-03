@@ -137,6 +137,7 @@ type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+// execQuerier adds Exec for the writes that run both on the pool and inside a placement transaction.
 type execQuerier interface {
 	querier
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
@@ -289,13 +290,16 @@ func createPool(ctx context.Context, q querier, orgID string, in domain.CreatePo
 }
 
 func (s *Store) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error) {
+	return getPool(ctx, s.pool, s.orgID, id)
+}
+
+func getPool(ctx context.Context, q querier, orgID string, id int64) (domain.Pool, bool, error) {
 	query := fmt.Sprintf(`
 		SELECT p.%s
 		FROM pools p
 		WHERE p.seq_id = $1 AND p.organization_id = $2 AND p.deleted_at IS NULL`, poolColumnsWithParentAccount())
 
-	row := s.pool.QueryRow(ctx, query, id, s.orgID)
-	return scanPool(row)
+	return scanPool(q.QueryRow(ctx, query, id, orgID))
 }
 
 func (s *Store) UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error) {
@@ -361,15 +365,19 @@ func (s *Store) UpdatePoolMeta(ctx context.Context, id int64, name *string, acco
 }
 
 func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error) {
+	return updatePool(ctx, s.pool, s.orgID, id, update)
+}
+
+func updatePool(ctx context.Context, q execQuerier, orgID string, id int64, update domain.UpdatePool) (domain.Pool, bool, error) {
 	setClauses := []string{}
-	args := []any{id, s.orgID}
+	args := []any{id, orgID}
 	argIdx := 3
 
 	// Resolve account
 	var accountUUID *string
 	if update.AccountID != nil {
 		var uuid string
-		err := s.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, *update.AccountID, s.orgID).Scan(&uuid)
+		err := q.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, *update.AccountID, orgID).Scan(&uuid)
 		if err != nil {
 			return domain.Pool{}, false, fmt.Errorf("account not found: %w", storage.ErrNotFound)
 		}
@@ -407,13 +415,13 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 	}
 
 	if len(setClauses) == 0 {
-		return s.GetPool(ctx, id)
+		return getPool(ctx, q, orgID, id)
 	}
 
 	query := fmt.Sprintf(`UPDATE pools SET %s WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
 		strings.Join(setClauses, ", "))
 
-	tag, err := s.pool.Exec(ctx, query, args...)
+	tag, err := q.Exec(ctx, query, args...)
 	if err != nil {
 		return domain.Pool{}, false, err
 	}
@@ -421,7 +429,34 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 		return domain.Pool{}, false, nil
 	}
 
-	return s.GetPool(ctx, id)
+	return getPool(ctx, q, orgID, id)
+}
+
+func (s *Store) UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error) {
+	var p domain.Pool
+	var found bool
+	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
+		var err error
+		p, found, err = updatePoolCIDR(work, tx, s.orgID, id, cidr)
+		return err
+	})
+	return p, found, err
+}
+
+func updatePoolCIDR(ctx context.Context, q execQuerier, orgID string, id int64, cidr string) (domain.Pool, bool, error) {
+	tag, err := q.Exec(ctx,
+		`UPDATE pools SET cidr = $3::inet, updated_at = NOW() WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
+		id, orgID, cidr)
+	if isUniqueViolation(err) {
+		return domain.Pool{}, false, fmt.Errorf("a pool already uses %s: %w", cidr, storage.ErrConflict)
+	}
+	if err != nil {
+		return domain.Pool{}, false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.Pool{}, false, nil
+	}
+	return getPool(ctx, q, orgID, id)
 }
 
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {

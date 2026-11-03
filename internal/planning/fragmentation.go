@@ -71,7 +71,7 @@ func (s *AnalysisService) AnalyzeFragmentation(ctx context.Context, poolID int64
 		if err != nil || stats == nil {
 			continue
 		}
-		if stats.Utilization < 25 && stats.ChildCount == 0 {
+		if stats.Utilization < lowUtilizationPercent && stats.ChildCount == 0 {
 			oversizedCount++
 			result.Issues = append(result.Issues, FragmentationIssue{
 				Type:        FragmentOversized,

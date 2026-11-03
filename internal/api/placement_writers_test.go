@@ -358,7 +358,7 @@ func setupRecommendationApplyServer(t *testing.T) (*Server, *storage.MemoryStore
 	t.Helper()
 	srv, st := setupTestServer()
 	recStore := storage.NewMemoryRecommendationStore(st)
-	recSvc := planning.NewRecommendationService(planning.NewAnalysisService(st), recStore, srv)
+	recSvc := planning.NewRecommendationService(planning.NewAnalysisService(st), recStore, st, storage.NewMemoryDiscoveryStore(st), srv)
 	NewRecommendationServer(srv, recSvc, recStore).RegisterRecommendationRoutes()
 	return srv, st, recStore
 }
@@ -682,9 +682,10 @@ func TestPoolsAreCreatedAndDeletedOnlyUnderThePlacementLock(t *testing.T) {
 			if err != nil {
 				return err
 			}
+			guarded := callsOnGuardedPlacementStore(file)
 			ast.Inspect(file, func(n ast.Node) bool {
 				call, ok := n.(*ast.CallExpr)
-				if !ok {
+				if !ok || guarded[call] {
 					return true
 				}
 				sel, ok := call.Fun.(*ast.SelectorExpr)
@@ -694,8 +695,14 @@ func TestPoolsAreCreatedAndDeletedOnlyUnderThePlacementLock(t *testing.T) {
 				switch sel.Sel.Name {
 				case "CreatePool", "RestorePool":
 					t.Errorf("%s calls %s directly; create or restore pools through placePools, Server.PlacePool or Server.restorePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()), sel.Sel.Name)
-				case "DeletePool", "DeletePoolCascade", "DeleteAccountCascade":
-					t.Errorf("%s calls %s directly; delete through Server.deletePool or Server.deleteAccountCascade so a concurrent placement cannot put a child under the deleted pool", fset.Position(call.Pos()), sel.Sel.Name)
+				case "DeletePool", "DeletePoolCascade", "DeleteAccountCascade", "UpdatePoolCIDR":
+					t.Errorf("%s calls %s directly; delete or resize through Server.deletePool, Server.deleteAccountCascade or the PlacementStore a WithPlacement callback receives, so a concurrent placement cannot check against a range that is changing", fset.Position(call.Pos()), sel.Sel.Name)
+				case "LinkResourceToPool":
+					if _, onStoreField := sel.X.(*ast.SelectorExpr); onStoreField {
+						t.Errorf("%s calls %s on a store directly; link through Server.linkResource, which rechecks the pool under the placement guard, so a reclaim or consolidation cannot delete the pool between the check and the link", fset.Position(call.Pos()), sel.Sel.Name)
+					}
+				case "UpdatePool", "UpdatePoolMeta", "UpdatePoolAccount":
+					t.Errorf("%s calls %s directly; update pool metadata through the PlacementStore a WithPlacement callback receives, so a reclaim cannot delete a pool it saw before the update", fset.Position(call.Pos()), sel.Sel.Name)
 				}
 				return true
 			})
@@ -705,4 +712,45 @@ func TestPoolsAreCreatedAndDeletedOnlyUnderThePlacementLock(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// callsOnGuardedPlacementStore returns the calls made on the storage.PlacementStore parameter of
+// a function literal passed straight to a WithPlacement call. Those run under the placement lock.
+func callsOnGuardedPlacementStore(file *ast.File) map[*ast.CallExpr]bool {
+	guarded := map[*ast.CallExpr]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := call.Fun.(*ast.SelectorExpr); !ok || sel.Sel.Name != "WithPlacement" {
+			return true
+		}
+		for _, arg := range call.Args {
+			lit, ok := arg.(*ast.FuncLit)
+			if !ok {
+				continue
+			}
+			stores := map[string]bool{}
+			for _, field := range lit.Type.Params.List {
+				if typ, ok := field.Type.(*ast.SelectorExpr); ok && typ.Sel.Name == "PlacementStore" {
+					for _, name := range field.Names {
+						stores[name.Name] = true
+					}
+				}
+			}
+			ast.Inspect(lit.Body, func(n ast.Node) bool {
+				if inner, ok := n.(*ast.CallExpr); ok {
+					if sel, ok := inner.Fun.(*ast.SelectorExpr); ok {
+						if recv, ok := sel.X.(*ast.Ident); ok && stores[recv.Name] {
+							guarded[inner] = true
+						}
+					}
+				}
+				return true
+			})
+		}
+		return true
+	})
+	return guarded
 }

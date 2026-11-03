@@ -138,6 +138,10 @@ func (p lockedPlacer) PlacePool(ctx context.Context, in domain.CreatePool) (doma
 	return out, err
 }
 
+func (p lockedPlacer) WithPlacement(ctx context.Context, fn func(context.Context, storage.PlacementStore) error) error {
+	return p.s.WithPlacementLock(ctx, func(ps storage.PlacementStore) error { return fn(ctx, ps) })
+}
+
 func TestRecommendationServiceRoundTripsThroughPostgres(t *testing.T) {
 	resetDB(t)
 	ctx := context.Background()
@@ -148,7 +152,7 @@ func TestRecommendationServiceRoundTripsThroughPostgres(t *testing.T) {
 	}
 	mustCreatePool(t, s, "child", "10.0.0.0/26", &parent.ID)
 
-	svc := planning.NewRecommendationService(planning.NewAnalysisService(s), s, lockedPlacer{s})
+	svc := planning.NewRecommendationService(planning.NewAnalysisService(s), s, s, s, lockedPlacer{s})
 	first, err := svc.Generate(ctx, domain.GenerateRecommendationsRequest{PoolIDs: []int64{parent.ID}})
 	if err != nil {
 		t.Fatalf("first generate: %v", err)

@@ -14,12 +14,16 @@ func (p storePlacer) PlacePool(ctx context.Context, in domain.CreatePool) (domai
 	return p.CreatePool(ctx, in)
 }
 
+func (p storePlacer) WithPlacement(ctx context.Context, fn func(context.Context, storage.PlacementStore) error) error {
+	return fn(ctx, p.Store)
+}
+
 func setupRecService(t *testing.T) (*RecommendationService, *storage.MemoryStore) {
 	t.Helper()
 	st := storage.NewMemoryStore()
 	recStore := storage.NewMemoryRecommendationStore(st)
 	analysisSvc := NewAnalysisService(st)
-	recSvc := NewRecommendationService(analysisSvc, recStore, storePlacer{st})
+	recSvc := NewRecommendationService(analysisSvc, recStore, st, storage.NewMemoryDiscoveryStore(st), storePlacer{st})
 	return recSvc, st
 }
 
