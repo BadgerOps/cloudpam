@@ -4,6 +4,18 @@ import type { AuditEvent, AuditListResponse } from '../api/types'
 
 const PAGE_SIZE = 25
 
+export type AuditExportFormat = 'csv' | 'json'
+
+// Builds the download URL for GET /api/v1/audit/export with the same filters
+// the page is showing, so the file matches what the user sees.
+export function auditExportUrl(format: AuditExportFormat, action?: string, resourceType?: string): string {
+  const params = new URLSearchParams()
+  params.set('format', format)
+  if (action) params.set('action', action)
+  if (resourceType) params.set('resource_type', resourceType)
+  return `/api/v1/audit/export?${params}`
+}
+
 interface AuditQuery {
   limit: number
   action?: string

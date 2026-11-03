@@ -16,6 +16,7 @@ export interface SecuritySettings {
   api_key_max_lifetime_days: number
   api_key_rotation_reminder_days: number
   api_key_allowed_scopes_by_role: Record<string, string[]>
+  audit_retention_days: number
 }
 
 export function useSecuritySettings() {

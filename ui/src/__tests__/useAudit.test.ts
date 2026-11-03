@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useAudit } from '../hooks/useAudit'
+import { useAudit, auditExportUrl } from '../hooks/useAudit'
 
 const mockGet = vi.hoisted(() => vi.fn())
 vi.mock('../api/client', () => ({
@@ -10,6 +10,17 @@ vi.mock('../api/client', () => ({
 function auditResponse(total: number) {
   return { events: [{ id: 'e1', action: 'create', resource_type: 'pool' }], total }
 }
+
+describe('auditExportUrl', () => {
+  it('carries the active filters into the download', () => {
+    expect(auditExportUrl('csv', 'create', 'pool')).toBe('/api/v1/audit/export?format=csv&action=create&resource_type=pool')
+  })
+
+  it('omits unset filters', () => {
+    expect(auditExportUrl('json')).toBe('/api/v1/audit/export?format=json')
+    expect(auditExportUrl('csv', undefined, 'account')).toBe('/api/v1/audit/export?format=csv&resource_type=account')
+  })
+})
 
 describe('useAudit pagination', () => {
   beforeEach(() => {
