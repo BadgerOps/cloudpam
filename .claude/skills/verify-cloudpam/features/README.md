@@ -45,5 +45,6 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Create a cloud account](./create-account.md) covers the Cloud Accounts form, duplicate-key refusal, editing an account, API creation, and deletion. Proven journey: `journeys/create-account.cjs`.
 - [Search](./search.md) covers the header search box, CIDR containment lookups, and the search API. Proven journey: `journeys/search.cjs` (its last step fails at e0818fd on a product bug; see the feature file).
 - [Navigation permissions](./navigation-permissions.md) covers which sidebar links a limited user sees, the redirect from gated URLs, the header API keys shortcut, and the matching API refusals. Proven journey: `journeys/navigation-permissions.cjs`.
+- [Account credentials](./account-credentials.md) covers the Credentials modal on an AWS or GCP account row, saving a credential, the summary-only API view, the provider test, clearing, and the audit events. Proven journey: `journeys/account-credentials.cjs`.
 
 Not yet mapped (the sidebar reaches them, no recipe here): Dashboard, Allocated Blocks, Discovery, Drift Detection, Audit Log, Schema Planner, Recommendations, AI Planner, API Keys, Release Notes (and the update banner), Identity, Configuration, Log Destinations, and the `Import/Export` button. A proof that needs one of these starts by adding its feature file.

@@ -1071,6 +1071,8 @@ secrets:
 existingSecret: ""
 ```
 
+`CLOUDPAM_OIDC_ENCRYPTION_KEY` is required to store account credentials. It encrypts OIDC client secrets, the AI provider API key, and the per-account discovery credentials saved through the Accounts page. When it is not set the server generates a key at startup and logs a warning, and `PUT /api/v1/accounts/{id}/credentials` answers `409` because a credential encrypted with a one-off key would be unreadable after a restart. Set it to a 32-byte hex string (`openssl rand -hex 32`) in `secrets` or in `existingSecret`, and keep the same value across upgrades and replicas.
+
 ### Install with SQLite
 
 The default install runs one replica with the database on a 1Gi PersistentVolumeClaim mounted at `/data`, and rolls out with `strategy: Recreate` so two pods never open the same file. The chart refuses `replicaCount` above 1 while `storage.backend` is `sqlite`.
