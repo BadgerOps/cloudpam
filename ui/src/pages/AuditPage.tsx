@@ -43,6 +43,7 @@ export default function AuditPage() {
           <option value="create">Created</option>
           <option value="update">Updated</option>
           <option value="delete">Deleted</option>
+          <option value="restore">Restored</option>
         </select>
         <select
           value={resourceFilter}

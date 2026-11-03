@@ -10,6 +10,7 @@ import DashboardPage from './pages/DashboardPage'
 import PoolsPage from './pages/PoolsPage'
 import BlocksPage from './pages/BlocksPage'
 import AccountsPage from './pages/AccountsPage'
+import RecentlyDeletedPage from './pages/RecentlyDeletedPage'
 import AuditPage from './pages/AuditPage'
 import DiscoveryPage from './pages/DiscoveryPage'
 import SchemaPage from './pages/SchemaPage'
@@ -33,6 +34,7 @@ const PAGES: Record<RoutePath, ComponentType> = {
   '/pools': PoolsPage,
   '/blocks': BlocksPage,
   '/accounts': AccountsPage,
+  '/deleted': RecentlyDeletedPage,
   '/discovery': DiscoveryPage,
   '/drift': DriftPage,
   '/audit': AuditPage,

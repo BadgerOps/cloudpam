@@ -127,6 +127,7 @@ describe('color helpers', () => {
     expect(getActionBadgeClass('create')).toContain('green')
     expect(getActionBadgeClass('update')).toContain('blue')
     expect(getActionBadgeClass('delete')).toContain('red')
+    expect(getActionBadgeClass('restore')).toContain('green')
   })
 
   it('getStatusBadgeClass colors account lifecycle states distinctly', () => {
