@@ -68,13 +68,14 @@ func blockedAddrControl(_, address string, _ syscall.RawConn) error {
 // URLs whose host is not a blocked literal address; resolution is covered by
 // the dialer. The http.Client drops Authorization on cross-domain redirects
 // but copies custom headers, so the Anthropic x-api-key is dropped here once
-// the redirect leaves the configured host.
+// the redirect leaves the configured origin. The scheme counts: an https
+// endpoint redirecting to http on the same host would send the key in clear.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	// via holds the initial request plus the redirects followed so far.
 	if len(via) > maxRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxRedirects)
 	}
-	if req.URL.Host != via[0].URL.Host {
+	if req.URL.Scheme != via[0].URL.Scheme || req.URL.Host != via[0].URL.Host {
 		req.Header.Del("x-api-key")
 	}
 	return validateRedirectTarget(req.URL)

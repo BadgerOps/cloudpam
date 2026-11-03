@@ -275,3 +275,32 @@ func TestAnthropicKeyStaysWithTheConfiguredHost(t *testing.T) {
 		t.Fatalf("cross-host redirect forwarded x-api-key = %q, want it stripped", got)
 	}
 }
+
+func TestAnthropicKeyIsDroppedOnAnHTTPSToHTTPRedirect(t *testing.T) {
+	initial, err := http.NewRequest(http.MethodPost, "https://api.example.com/v1/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		target  string
+		keepKey bool
+	}{
+		"same origin":           {"https://api.example.com/moved/v1/messages", true},
+		"same host, downgraded": {"http://api.example.com/v1/messages", false},
+		"different host, https": {"https://other.example.com/v1/messages", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req, err := http.NewRequest(http.MethodPost, tc.target, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("x-api-key", "sk-secret")
+			if err := checkRedirect(req, []*http.Request{initial}); err != nil {
+				t.Fatalf("checkRedirect: %v", err)
+			}
+			if kept := req.Header.Get("x-api-key") != ""; kept != tc.keepKey {
+				t.Fatalf("x-api-key kept = %v, want %v", kept, tc.keepKey)
+			}
+		})
+	}
+}
