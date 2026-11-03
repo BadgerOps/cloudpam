@@ -21,6 +21,9 @@ type Store interface {
 	UpdatePoolMeta(ctx context.Context, id int64, name *string, accountID *int64) (domain.Pool, bool, error)
 	// UpdatePool updates pool metadata with support for new fields (type, status, description, tags).
 	UpdatePool(ctx context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error)
+	// UpdatePoolCIDR replaces a pool's CIDR. It does not check containment or overlap;
+	// callers that change a pool's range must keep it inside its parent and clear of its siblings.
+	UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error)
 	DeletePool(ctx context.Context, id int64) (bool, error)
 	DeletePoolCascade(ctx context.Context, id int64) (bool, error)
 	// Enhanced pool methods for hierarchy and statistics
@@ -208,6 +211,19 @@ func (m *MemoryStore) UpdatePool(ctx context.Context, id int64, update domain.Up
 			p.Tags = nil
 		}
 	}
+	p.UpdatedAt = time.Now().UTC()
+	m.pools[id] = p
+	return clonePool(p), true, nil
+}
+
+func (m *MemoryStore) UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.pools[id]
+	if !ok || p.DeletedAt != nil {
+		return domain.Pool{}, false, nil
+	}
+	p.CIDR = cidr
 	p.UpdatedAt = time.Now().UTC()
 	m.pools[id] = p
 	return clonePool(p), true, nil

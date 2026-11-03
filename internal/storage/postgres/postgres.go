@@ -416,6 +416,19 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 	return s.GetPool(ctx, id)
 }
 
+func (s *Store) UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE pools SET cidr = $3::inet, updated_at = NOW() WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
+		id, s.orgID, cidr)
+	if err != nil {
+		return domain.Pool{}, false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.Pool{}, false, nil
+	}
+	return s.GetPool(ctx, id)
+}
+
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
 	// Check for children
 	var childCount int

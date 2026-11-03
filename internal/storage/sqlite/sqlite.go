@@ -364,6 +364,18 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 	return s.GetPool(ctx, id)
 }
 
+func (s *Store) UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx, `UPDATE pools SET cidr=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, cidr, now, id)
+	if err != nil {
+		return domain.Pool{}, false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.Pool{}, false, nil
+	}
+	return s.GetPool(ctx, id)
+}
+
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
 	// check children (only non-deleted)
 	var cnt int
