@@ -126,9 +126,13 @@ func (s *RecommendationService) consolidationRecommendations(ctx context.Context
 	return recs
 }
 
-// applyConsolidation widens the first source pool to the merged block and deletes the second,
-// under the placement guard so no placement runs between the checks and the writes. Widening
-// before deleting means the merged range is never free for another pool to take. The kept pool
+// consolidationUndoTimeout bounds putting the absorbed pool back after a failed widen.
+const consolidationUndoTimeout = 5 * time.Second
+
+// applyConsolidation deletes the second source pool and widens the first to the merged block,
+// under the placement guard so no placement runs between the checks and the writes. Deleting
+// first means the two never overlap, even when the widen fails on a store whose writes commit
+// one by one; the guard keeps the freed range from being taken before the widen. The kept pool
 // keeps its ID, name and tags; discovered resources linked to the deleted pool move to it, and the
 // requested name and account are set on it under the same guard.
 //
@@ -160,21 +164,24 @@ func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *dom
 			if err := rejectDuplicateCIDR(pools, rec.SuggestedCIDR); err != nil {
 				return err
 			}
-			widened, found, err := ps.UpdatePoolCIDR(work, ids[0], rec.SuggestedCIDR)
-			if err != nil {
-				return fmt.Errorf("widen pool %d to %s: %w", ids[0], rec.SuggestedCIDR, err)
-			}
-			if !found {
-				return fmt.Errorf("pool %d: %w", ids[0], storage.ErrNotFound)
-			}
 			deleted, err := ps.DeletePool(work, ids[1])
-			if err != nil || !deleted {
-				// Stores without a placement transaction keep the widened range unless it is put back.
-				_, _, _ = ps.UpdatePoolCIDR(work, ids[0], cidrs[0])
+			if err != nil {
+				return fmt.Errorf("delete pool %d: %w", ids[1], err)
+			}
+			if !deleted {
+				return fmt.Errorf("pool %d: %w", ids[1], storage.ErrNotFound)
+			}
+			widened, found, err := ps.UpdatePoolCIDR(work, ids[0], rec.SuggestedCIDR)
+			if err != nil || !found {
+				// Stores without a placement transaction keep the delete, so bring the absorbed pool
+				// back. work may already be cancelled or past its budget, hence a fresh bound.
+				undo, cancel := context.WithTimeout(context.WithoutCancel(work), consolidationUndoTimeout)
+				_, _, _ = ps.RestorePool(undo, ids[1])
+				cancel()
 				if err == nil {
 					err = storage.ErrNotFound
 				}
-				return fmt.Errorf("delete pool %d: %w", ids[1], err)
+				return fmt.Errorf("widen pool %d to %s: %w", ids[0], rec.SuggestedCIDR, err)
 			}
 			kept = widened
 		}

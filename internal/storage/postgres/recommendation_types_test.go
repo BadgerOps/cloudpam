@@ -4,11 +4,13 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning"
+	"cloudpam/internal/storage"
 )
 
 func recommendationOfType(t *testing.T, items []domain.Recommendation, typ domain.RecommendationType) domain.Recommendation {
@@ -82,6 +84,56 @@ func TestConsolidationAndResizeRoundTripThroughPostgres(t *testing.T) {
 		rec, err := s.GetRecommendation(ctx, id)
 		if err != nil || rec.Status != domain.RecommendationStatusApplied || rec.UpdatedAt.Before(time.Now().Add(-time.Minute)) {
 			t.Errorf("rec %s: %+v err=%v, want applied just now", id, rec, err)
+		}
+	}
+}
+
+// failingWidenPlacer runs the placement in PostgreSQL's transaction but fails the widen, after
+// consolidation has already deleted the absorbed pool inside that transaction, and fails the undo.
+type failingWidenPlacer struct{ lockedPlacer }
+
+type failingWidenStore struct{ storage.PlacementStore }
+
+func (failingWidenStore) UpdatePoolCIDR(context.Context, int64, string) (domain.Pool, bool, error) {
+	return domain.Pool{}, false, errors.New("widen failed")
+}
+
+// RestorePool fails too, so only the transaction's rollback can bring the absorbed pool back.
+func (failingWidenStore) RestorePool(context.Context, int64) (domain.Pool, bool, error) {
+	return domain.Pool{}, false, errors.New("restore failed")
+}
+
+func (p failingWidenPlacer) WithPlacement(ctx context.Context, fn func(context.Context, storage.PlacementStore) error) error {
+	return p.lockedPlacer.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		return fn(work, failingWidenStore{ps})
+	})
+}
+
+// On PostgreSQL the delete and the widen share one transaction, so a failed widen rolls the
+// delete back without any undo step.
+func TestConsolidationFailedWidenRollsBackTheDeleteOnPostgres(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	s := testDB.store
+	corp := mustCreatePool(t, s, "corp", "10.0.0.0/16", nil)
+	a := mustCreatePool(t, s, "a", "10.0.1.0/25", &corp.ID)
+	b := mustCreatePool(t, s, "b", "10.0.1.128/25", &corp.ID)
+
+	gen := planning.NewRecommendationService(planning.NewAnalysisService(s), s, s, s, lockedPlacer{s})
+	resp, err := gen.Generate(ctx, domain.GenerateRecommendationsRequest{PoolIDs: []int64{corp.ID}})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	rec := recommendationOfType(t, resp.Items, domain.RecommendationTypeConsolidation)
+
+	failing := planning.NewRecommendationService(planning.NewAnalysisService(s), s, s, s, failingWidenPlacer{lockedPlacer{s}})
+	if _, err := failing.Apply(ctx, rec.ID, domain.ApplyRecommendationRequest{}); err == nil {
+		t.Fatal("apply with a failing widen reported success")
+	}
+	for _, p := range []domain.Pool{a, b} {
+		got, found, err := s.GetPool(ctx, p.ID)
+		if err != nil || !found || got.CIDR != p.CIDR {
+			t.Fatalf("pool %d after the rolled-back apply = %+v found=%v err=%v, want it live at %s", p.ID, got, found, err, p.CIDR)
 		}
 	}
 }
