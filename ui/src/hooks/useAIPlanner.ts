@@ -18,7 +18,8 @@ export function useAIPlanner() {
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Set when a fallback provider answered the latest message; the primary
-  // was unreachable or failed. Cleared when the next message is sent.
+  // was unreachable or failed. Cleared when the next message is sent or the
+  // session changes.
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null)
   const streamingTextRef = useRef('')
   const applyingRef = useRef(false)
@@ -34,6 +35,7 @@ export function useAIPlanner() {
     setStreaming(false)
     setStreamingText('')
     streamingTextRef.current = ''
+    setFallbackNotice(null)
   }, [])
 
   const fetchSessions = useCallback(async () => {

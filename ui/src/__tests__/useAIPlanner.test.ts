@@ -246,4 +246,38 @@ describe('useAIPlanner', () => {
     await waitFor(() => expect(mockStreamPost).toHaveBeenCalledTimes(2))
     expect(result.current.fallbackNotice).toBeNull()
   })
+
+  it('clears the fallback notice when another session is opened', async () => {
+    mockGet
+      .mockResolvedValueOnce(conversation('a') as never)
+      .mockResolvedValueOnce(conversation('b') as never)
+
+    let streamCallbacks: SSECallbacks | undefined
+    mockStreamPost.mockImplementation((_path, _data, callbacks) => {
+      streamCallbacks = callbacks
+      return new Promise<void>(() => {})
+    })
+
+    const { result } = renderHook(() => useAIPlanner())
+    await act(async () => {
+      await result.current.selectSession('a')
+    })
+    act(() => {
+      void result.current.sendMessage('plan a /16')
+    })
+    await waitFor(() => expect(mockStreamPost).toHaveBeenCalledTimes(1))
+    act(() => {
+      streamCallbacks?.onFallback?.({
+        provider: 'openai gpt-4o',
+        failed: [{ provider: 'anthropic claude-opus-5-5', error: 'provider returned HTTP 529' }],
+      })
+      streamCallbacks?.onDone()
+    })
+    expect(result.current.fallbackNotice).not.toBeNull()
+
+    await act(async () => {
+      await result.current.selectSession('b')
+    })
+    expect(result.current.fallbackNotice).toBeNull()
+  })
 })
