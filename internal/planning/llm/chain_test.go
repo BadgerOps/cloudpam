@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // scriptedProvider answers with a fixed error or a fixed reply and counts calls.
@@ -167,6 +168,34 @@ func TestChainFallsBackWhenTheEndpointIsUnreachable(t *testing.T) {
 	var opErr *net.OpError
 	if !errors.As(notice.Failed[0].Err, &opErr) {
 		t.Fatalf("notice error = %v, want a network error", notice.Failed[0].Err)
+	}
+}
+
+func TestChainFallsBackWhenThePrimaryStallsBeforeAnswering(t *testing.T) {
+	saved := responseHeaderTimeout
+	responseHeaderTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { responseHeaderTimeout = saved })
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(stalled.Close)
+	t.Cleanup(func() { close(release) })
+	primary := NewOpenAIProvider(Config{Endpoint: stalled.URL + "/v1", Model: "m"})
+	secondary := ok("fallback", "answered")
+	c := NewChain([]Link{{Provider: primary, Label: "openai m"}, {Provider: secondary, Label: "fallback"}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil || out.Content != "answered" {
+		t.Fatalf("Complete = %+v, %v, want the fallback to answer", out, err)
+	}
+	events, err := c.StreamComplete(ctx, []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+	notice, text, _ := drain(t, events)
+	if text != "answered" || notice == nil || notice.Failed[0].Label != "openai m" {
+		t.Fatalf("text %q notice %+v, want the stalled primary named and the fallback answering", text, notice)
 	}
 }
 
