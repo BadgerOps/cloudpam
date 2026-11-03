@@ -213,6 +213,16 @@ func TestGenerate_ResizeRecs(t *testing.T) {
 		}
 	})
 
+	t.Run("a pool linked to a discovered resource is not resized", func(t *testing.T) {
+		svc, st, disc := setupTypedRecService(t)
+		pool := mustPool(t, st, "Imported", "10.0.0.0/16", nil, nil)
+		mustPool(t, st, "a", "10.0.0.0/24", &pool.ID, nil)
+		linkResource(t, st, disc, pool, "10.0.0.0/16")
+		if recs := recsOfType(generateFor(t, svc, pool.ID), domain.RecommendationTypeResize); len(recs) != 0 {
+			t.Errorf("got %+v, want none while the cloud resource still occupies the whole pool", recs)
+		}
+	})
+
 	t.Run("a leaf pool is not resized", func(t *testing.T) {
 		svc, st, _ := setupTypedRecService(t)
 		pool := mustPool(t, st, "Leaf", "10.0.0.0/16", nil, nil)
@@ -424,6 +434,39 @@ func TestApply_ResizeRefusesWhenChildrenMoved(t *testing.T) {
 	got, _, _ := st.GetPool(ctx, pool.ID)
 	if got.CIDR != "10.0.0.0/16" {
 		t.Errorf("pool cidr changed to %q although the apply was refused", got.CIDR)
+	}
+}
+
+// linkResource stores a discovered VPC with cidr in a new account and links it to pool.
+func linkResource(t *testing.T, st storage.Store, disc storage.DiscoveryStore, pool domain.Pool, cidr string) {
+	t.Helper()
+	ctx := context.Background()
+	acct, err := st.CreateAccount(ctx, domain.CreateAccount{Key: "aws:" + cidr, Name: "linked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := disc.UpsertDiscoveredResource(ctx, domain.DiscoveredResource{
+		AccountID: acct.ID, Provider: "aws", ResourceType: domain.ResourceTypeVPC, ResourceID: "vpc-" + cidr,
+		CIDR: cidr, PoolID: &pool.ID, Status: domain.DiscoveryStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApply_ResizeRefusesNewlyLinkedPool(t *testing.T) {
+	ctx := context.Background()
+	svc, st, disc := setupTypedRecService(t)
+	pool := mustPool(t, st, "Sparse", "10.0.0.0/16", nil, nil)
+	mustPool(t, st, "a", "10.0.0.0/24", &pool.ID, nil)
+	rec := recsOfType(generateFor(t, svc, pool.ID), domain.RecommendationTypeResize)[0]
+
+	linkResource(t, st, disc, pool, "10.0.0.0/16")
+
+	if _, err := svc.Apply(ctx, rec.ID, domain.ApplyRecommendationRequest{}); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("err=%v, want ErrConflict", err)
+	}
+	if got, _, _ := st.GetPool(ctx, pool.ID); got.CIDR != "10.0.0.0/16" {
+		t.Errorf("pool cidr changed to %q although a linked resource still occupies it", got.CIDR)
 	}
 }
 

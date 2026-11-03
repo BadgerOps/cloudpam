@@ -71,7 +71,7 @@ func (s *RecommendationService) Generate(ctx context.Context, req domain.Generat
 		recs = append(recs, s.allocationRecommendations(ctx, pool, req.DesiredPrefixLen, now)...)
 		recs = append(recs, s.complianceRecommendations(ctx, pool, now)...)
 		recs = append(recs, s.consolidationRecommendations(ctx, pool, tree, now)...)
-		if rec := s.resizeRecommendation(ctx, pool, tree, now); rec != nil {
+		if rec := s.resizeRecommendation(ctx, pool, tree, linked, now); rec != nil {
 			recs = append(recs, *rec)
 		}
 		if rec := s.reclaimRecommendation(pool, tree, linked, now); rec != nil {

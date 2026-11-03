@@ -57,9 +57,11 @@ func scoreResize(utilization float64, freedBits int) int {
 	return min(score, 100)
 }
 
-func (s *RecommendationService) resizeRecommendation(ctx context.Context, pool domain.Pool, tree poolTree, now time.Time) *domain.Recommendation {
+// resizeRecommendation skips a pool linked to a discovered resource, since the resource still
+// occupies the pool's whole recorded range whatever its child pools use.
+func (s *RecommendationService) resizeRecommendation(ctx context.Context, pool domain.Pool, tree poolTree, linked map[int64][]uuid.UUID, now time.Time) *domain.Recommendation {
 	children := tree.childrenOf(pool.ID)
-	if len(children) == 0 {
+	if len(children) == 0 || len(linked[pool.ID]) > 0 {
 		return nil
 	}
 	stats, err := s.mainStore.CalculatePoolUtilization(ctx, pool.ID)
@@ -108,7 +110,8 @@ func shrinkTargetFor(pool domain.Pool, children []domain.Pool) (netip.Prefix, bo
 }
 
 // applyResize shrinks the pool to the suggested block under the placement guard, so no child
-// can be placed in the range being given up between the check and the write. A block inside the
+// can be placed in the range being given up, and no resource linked to the pool, between the
+// check and the write. A block inside the
 // pool's own range cannot leave the parent or overlap a sibling.
 func (s *RecommendationService) applyResize(ctx context.Context, rec *domain.Recommendation) (*int64, error) {
 	target, err := netip.ParsePrefix(rec.SuggestedCIDR)
@@ -121,6 +124,9 @@ func (s *RecommendationService) applyResize(ctx context.Context, rec *domain.Rec
 			return fmt.Errorf("list pools: %w", err)
 		}
 		if err := checkShrink(pools, rec.PoolID, rec.Metadata["current_cidr"], target); err != nil {
+			return err
+		}
+		if err := s.rejectLinked(work, rec.PoolID); err != nil {
 			return err
 		}
 		if _, found, err := ps.UpdatePoolCIDR(work, rec.PoolID, target.String()); err != nil {

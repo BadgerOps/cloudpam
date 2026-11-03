@@ -69,6 +69,18 @@ func (s *RecommendationService) linkedResources(ctx context.Context) (map[int64]
 	return byPool, nil
 }
 
+// rejectLinked fails with ErrConflict when a discovered resource is linked to pool.
+func (s *RecommendationService) rejectLinked(ctx context.Context, pool int64) error {
+	linked, err := s.linkedResources(ctx)
+	if err != nil {
+		return err
+	}
+	if len(linked[pool]) > 0 {
+		return fmt.Errorf("pool %d now has linked discovered resources: %w", pool, storage.ErrConflict)
+	}
+	return nil
+}
+
 // relinkResources moves every discovered resource linked to pool from onto pool to.
 func (s *RecommendationService) relinkResources(ctx context.Context, from, to int64) error {
 	linked, err := s.linkedResources(ctx)
