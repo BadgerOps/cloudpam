@@ -57,7 +57,7 @@ func (s *RecommendationService) Generate(ctx context.Context, req domain.Generat
 		gap, err := s.analysis.AnalyzeGaps(ctx, pool.ID)
 		if err == nil && gap != nil {
 			for _, block := range allocatableBlocks(pool.CIDR, gap.AvailableBlocks, req.DesiredPrefixLen) {
-				score := s.scoreAllocation(block.CIDR, pool, req.DesiredPrefixLen)
+				score := scoreAllocation(block.CIDR, gap.AllocatedBlocks, req.DesiredPrefixLen)
 				rec := domain.Recommendation{
 					ID:            uuid.New().String(),
 					PoolID:        pool.ID,
@@ -225,7 +225,8 @@ func candidatePrefixLen(parentBits, blockBits, desiredPrefixLen int) (int, bool)
 }
 
 // scoreAllocation scores an available block (0-100) for allocation quality.
-func (s *RecommendationService) scoreAllocation(cidrStr string, pool domain.Pool, desiredPrefixLen int) int {
+// children are the pool's existing allocations, as AnalyzeGaps already fetched them.
+func scoreAllocation(cidrStr string, children []AllocatedBlock, desiredPrefixLen int) int {
 	prefix, err := netip.ParsePrefix(cidrStr)
 	if err != nil {
 		return 0
@@ -264,21 +265,16 @@ func (s *RecommendationService) scoreAllocation(cidrStr string, pool domain.Pool
 	}
 
 	// Contiguity (+20): adjacent to an existing child allocation.
-	// Check by looking at pool's children.
-	children, err := s.mainStore.GetPoolChildren(context.Background(), pool.ID)
-	if err == nil {
-		blockInterval := prefixToInterval(prefix)
-		for _, child := range children {
-			cp, err := netip.ParsePrefix(child.CIDR)
-			if err != nil {
-				continue
-			}
-			ci := prefixToInterval(cp.Masked())
-			// Adjacent if blocks touch.
-			if ci.end+1 == blockInterval.start || blockInterval.end+1 == ci.start {
-				score += 20
-				break
-			}
+	blockInterval := prefixToInterval(prefix)
+	for _, child := range children {
+		cp, err := netip.ParsePrefix(child.CIDR)
+		if err != nil {
+			continue
+		}
+		ci := prefixToInterval(cp.Masked())
+		if ci.end+1 == blockInterval.start || blockInterval.end+1 == ci.start {
+			score += 20
+			break
 		}
 	}
 
