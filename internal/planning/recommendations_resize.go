@@ -123,6 +123,9 @@ func (s *RecommendationService) applyResize(ctx context.Context, rec *domain.Rec
 		if err != nil {
 			return fmt.Errorf("list pools: %w", err)
 		}
+		if resizedTo(pools, rec.PoolID, target) {
+			return nil
+		}
 		if err := checkShrink(pools, rec.PoolID, rec.Metadata["current_cidr"], target); err != nil {
 			return err
 		}
@@ -140,6 +143,17 @@ func (s *RecommendationService) applyResize(ctx context.Context, rec *domain.Rec
 		return nil, err
 	}
 	return &rec.PoolID, nil
+}
+
+// resizedTo reports whether the pool already holds target, as after an earlier apply of the same
+// recommendation whose status write failed. That is the end state the recommendation asks for.
+func resizedTo(pools []domain.Pool, id int64, target netip.Prefix) bool {
+	for _, p := range pools {
+		if p.ID == id {
+			return p.CIDR == target.String()
+		}
+	}
+	return false
 }
 
 // checkShrink confirms the pool still has the range the recommendation saw, that target lies

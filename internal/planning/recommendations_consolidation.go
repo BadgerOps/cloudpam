@@ -12,6 +12,7 @@ import (
 
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
+	"cloudpam/internal/validation"
 )
 
 // mergeCandidate is a pair of sibling leaf pools that are the two halves of one aligned block.
@@ -142,6 +143,12 @@ func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *dom
 	ids, cidrs, err := consolidationSources(rec)
 	if err != nil {
 		return nil, err
+	}
+	if req.Name != "" {
+		req.Name = strings.TrimSpace(req.Name)
+		if err := validation.ValidateName(req.Name); err != nil {
+			return nil, fmt.Errorf("%w: %w", storage.ErrValidation, err)
+		}
 	}
 	if req.AccountID != nil {
 		if _, found, err := s.mainStore.GetAccount(ctx, *req.AccountID); err != nil {

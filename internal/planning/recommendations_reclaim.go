@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strconv"
 	"time"
 
@@ -80,6 +81,11 @@ func (s *RecommendationService) applyReclaim(ctx context.Context, rec *domain.Re
 		pools, err := ps.ListPools(work)
 		if err != nil {
 			return fmt.Errorf("list pools: %w", err)
+		}
+		if !slices.ContainsFunc(pools, func(p domain.Pool) bool { return p.ID == rec.PoolID }) {
+			// Already gone, as after an earlier apply whose status write failed: the end state
+			// the recommendation asks for.
+			return nil
 		}
 		if err := checkReclaimable(pools, rec); err != nil {
 			return err
