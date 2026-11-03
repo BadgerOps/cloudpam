@@ -110,6 +110,9 @@ func (rs *RecommendationServer) handleList(w http.ResponseWriter, r *http.Reques
 		rs.srv.writeStoreErr(r.Context(), w, err)
 		return
 	}
+	if items == nil {
+		items = []domain.Recommendation{}
+	}
 
 	page, pageSize := filters.Page, filters.PageSize
 
