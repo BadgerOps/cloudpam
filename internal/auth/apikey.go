@@ -88,6 +88,37 @@ type APIKey struct {
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"` // nil = no expiration
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	Revoked    bool       `json:"revoked"`
+	RateLimit  *RateLimit `json:"rate_limit,omitempty"` // nil = the server default
+}
+
+// RateLimit is a token bucket: Burst requests at once, refilled at
+// RequestsPerSecond.
+type RateLimit struct {
+	RequestsPerSecond float64 `json:"requests_per_second"`
+	Burst             int     `json:"burst"`
+}
+
+// Enabled reports whether the limit has a positive rate and burst.
+func (l RateLimit) Enabled() bool {
+	return l.RequestsPerSecond > 0 && l.Burst > 0
+}
+
+// rateLimitColumns splits an optional limit into the two nullable columns a
+// store keeps it in.
+func rateLimitColumns(l *RateLimit) (rps *float64, burst *int) {
+	if l == nil {
+		return nil, nil
+	}
+	return &l.RequestsPerSecond, &l.Burst
+}
+
+// rateLimitFromColumns is the inverse of rateLimitColumns. A row with only
+// one column set has no limit.
+func rateLimitFromColumns(rps *float64, burst *int) *RateLimit {
+	if rps == nil || burst == nil {
+		return nil
+	}
+	return &RateLimit{RequestsPerSecond: *rps, Burst: *burst}
 }
 
 // IsExpired returns true if the API key has expired.
@@ -135,6 +166,7 @@ type GenerateAPIKeyOptions struct {
 	Name      string
 	Scopes    []string
 	ExpiresAt *time.Time
+	RateLimit *RateLimit
 }
 
 // GenerateAPIKey creates a new API key with the given options.
@@ -179,6 +211,7 @@ func GenerateAPIKey(opts GenerateAPIKeyOptions) (plaintext string, apiKey *APIKe
 		CreatedAt: time.Now().UTC(),
 		ExpiresAt: opts.ExpiresAt,
 		Revoked:   false,
+		RateLimit: copyRateLimit(opts.RateLimit),
 	}
 
 	return plaintext, apiKey, nil
