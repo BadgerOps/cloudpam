@@ -8,13 +8,31 @@ import {
   AlertCircle,
   Info,
   Play,
+  Wand2,
 } from 'lucide-react'
 import { useDrift } from '../hooks/useDrift'
 import { usePagedFilters } from '../hooks/usePagedFilters'
 import Pager from '../components/Pager'
 import { useToast } from '../hooks/useToast'
 import { formatTimeAgo } from '../utils/format'
-import type { DriftItem } from '../api/types'
+import type { DriftAction, DriftItem } from '../api/types'
+
+const SUGGESTION_LABELS: Record<DriftAction, string> = {
+  link_pool: 'Link to pool',
+  create_pool: 'Create pool',
+  deprecate_pool: 'Deprecate pool',
+  review: 'Review by hand',
+}
+
+function suggestionText(item: DriftItem): string {
+  const action = item.suggested_action
+  if (!action) return ''
+  if (action === 'create_pool') {
+    return item.suggested_pool_id ? `Create pool under #${item.suggested_pool_id}` : 'Create top-level pool'
+  }
+  if (action === 'review') return SUGGESTION_LABELS.review
+  return `${SUGGESTION_LABELS[action]} #${item.suggested_pool_id}`
+}
 
 export default function DriftPage() {
   const { query, filters, setFilters, setPage } = usePagedFilters({
@@ -24,8 +42,9 @@ export default function DriftPage() {
   })
   const [detecting, setDetecting] = useState(false)
   const [showIgnoreModal, setShowIgnoreModal] = useState<DriftItem | null>(null)
+  const [applyingId, setApplyingId] = useState<string | null>(null)
 
-  const { data, loading, error, fetch, detect, resolve, ignore } = useDrift()
+  const { data, loading, error, fetch, detect, resolve, ignore, applySuggestion } = useDrift()
   const { showToast } = useToast()
 
   const loadDrifts = useCallback(() => {
@@ -67,6 +86,23 @@ export default function DriftPage() {
         err instanceof Error ? err.message : 'Resolve failed',
         'error',
       )
+    }
+  }
+
+  const handleApply = async (item: DriftItem) => {
+    setApplyingId(item.id)
+    try {
+      await applySuggestion(item)
+      showToast(`${suggestionText(item)}: applied and resolved`, 'success')
+      loadDrifts()
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Apply failed',
+        'error',
+      )
+      loadDrifts()
+    } finally {
+      setApplyingId(null)
     }
   }
 
@@ -194,6 +230,8 @@ export default function DriftPage() {
               <DriftRow
                 key={item.id}
                 item={item}
+                applying={applyingId === item.id}
+                onApply={() => handleApply(item)}
                 onResolve={() => handleResolve(item.id)}
                 onIgnore={() => setShowIgnoreModal(item)}
               />
@@ -264,13 +302,18 @@ function SummaryCard({
 
 function DriftRow({
   item,
+  applying,
+  onApply,
   onResolve,
   onIgnore,
 }: {
   item: DriftItem
+  applying: boolean
+  onApply: () => void
   onResolve: () => void
   onIgnore: () => void
 }) {
+  const applicable = item.suggested_action !== undefined && item.suggested_action !== 'review'
   return (
     <tr className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
       <td className="px-4 py-3">
@@ -284,6 +327,17 @@ function DriftRow({
         {item.description && (
           <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate max-w-md">
             {item.description}
+          </div>
+        )}
+        {item.status === 'open' && item.suggested_action && (
+          <div
+            className="text-xs mt-1 text-blue-700 dark:text-blue-300"
+            title={item.suggestion_reason}
+          >
+            Suggested: {suggestionText(item)}
+            {item.suggestion_reason && (
+              <span className="text-gray-500 dark:text-gray-400"> ({item.suggestion_reason})</span>
+            )}
           </div>
         )}
       </td>
@@ -302,6 +356,17 @@ function DriftRow({
       <td className="px-4 py-3">
         {item.status === 'open' && (
           <div className="flex gap-1">
+            {applicable && (
+              <button
+                onClick={onApply}
+                disabled={applying}
+                className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded disabled:opacity-50"
+                title={`Apply: ${suggestionText(item)}`}
+                aria-label={`Apply suggestion: ${suggestionText(item)}`}
+              >
+                <Wand2 className={`w-4 h-4 ${applying ? 'animate-pulse' : ''}`} />
+              </button>
+            )}
             <button
               onClick={onResolve}
               className="p-1.5 text-green-600 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"

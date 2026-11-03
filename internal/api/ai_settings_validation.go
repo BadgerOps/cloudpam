@@ -14,6 +14,16 @@ import (
 // and an actionable detail, or "" when the request is valid. Details never echo
 // the submitted api key.
 func validateAIProviderUpdate(req *domain.UpdateAIProviderSettingsRequest) (string, string) {
+	if req.Provider != nil {
+		if detail := validateAIProviderKind(strings.TrimSpace(*req.Provider), true); detail != "" {
+			return "provider", detail
+		}
+	}
+	if req.Fallbacks != nil {
+		if field, detail := validateAIFallbacks(*req.Fallbacks); field != "" {
+			return field, detail
+		}
+	}
 	if req.Endpoint != nil {
 		if detail := validateAIEndpoint(strings.TrimSpace(*req.Endpoint)); detail != "" {
 			return "endpoint", detail
@@ -39,6 +49,50 @@ func validateAIProviderUpdate(req *domain.UpdateAIProviderSettingsRequest) (stri
 		}
 		if strings.TrimSpace(*req.APIKey) == "" {
 			return "api_key", "must not be empty; omit it to keep the stored key or set clear_api_key to remove it"
+		}
+	}
+	return "", ""
+}
+
+// validateAIProviderKind accepts a supported kind, and "" when allowEmpty
+// (the primary's "" clears the stored value; a fallback must name its kind).
+func validateAIProviderKind(kind string, allowEmpty bool) string {
+	if kind == "" && allowEmpty {
+		return ""
+	}
+	if !llm.ValidProviderKind(strings.ToLower(kind)) {
+		return "must be one of " + strings.Join(llm.ProviderKinds, ", ")
+	}
+	return ""
+}
+
+// validateAIFallbacks checks the stateless rules of a PATCH fallback list:
+// the count, each entry's kind, endpoint and model, and that a key is either
+// non-empty or omitted. Rules that need the stored document (unknown ids, a
+// key that would move host, a kind that cannot run keyless) are applied when
+// the list is merged.
+func validateAIFallbacks(fallbacks []domain.AIFallbackProviderUpdate) (string, string) {
+	if len(fallbacks) > domain.MaxAIFallbackProviders {
+		return "fallbacks", fmt.Sprintf("at most %d fallback providers", domain.MaxAIFallbackProviders)
+	}
+	for i, fb := range fallbacks {
+		field := fmt.Sprintf("fallbacks[%d]", i)
+		if detail := validateAIProviderKind(strings.TrimSpace(fb.Provider), false); detail != "" {
+			return field + ".provider", detail
+		}
+		if detail := validateAIEndpoint(strings.TrimSpace(fb.Endpoint)); detail != "" {
+			return field + ".endpoint", detail
+		}
+		if len(strings.TrimSpace(fb.Model)) > domain.MaxAIProviderModelLength {
+			return field + ".model", fmt.Sprintf("must be at most %d characters", domain.MaxAIProviderModelLength)
+		}
+		if fb.APIKey != nil {
+			if fb.ClearAPIKey {
+				return field + ".api_key", "send either api_key or clear_api_key, not both"
+			}
+			if strings.TrimSpace(*fb.APIKey) == "" {
+				return field + ".api_key", "must not be empty; omit it to keep the stored key or set clear_api_key to remove it"
+			}
 		}
 	}
 	return "", ""

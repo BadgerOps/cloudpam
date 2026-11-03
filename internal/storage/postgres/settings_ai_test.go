@@ -75,6 +75,10 @@ func TestAIProviderSettingsPostgresRoundTrip(t *testing.T) {
 		APIKeyEncrypted: ct,
 		State:           domain.AIProviderStateVerified,
 		LastTestedAt:    &tested,
+		Fallbacks: []domain.AIFallbackProvider{
+			{ID: "fb1", Provider: "anthropic", Model: "claude", APIKeyEncrypted: ct},
+			{ID: "fb2", Provider: "openai", Endpoint: "http://vllm:8000/v1"},
+		},
 	}
 	if err := s.UpdateAIProviderSettings(ctx, in); err != nil {
 		t.Fatalf("UpdateAIProviderSettings: %v", err)
@@ -91,6 +95,9 @@ func TestAIProviderSettingsPostgresRoundTrip(t *testing.T) {
 	got, err = reopenStore(t).GetAIProviderSettings(ctx)
 	if err != nil {
 		t.Fatalf("GetAIProviderSettings: %v", err)
+	}
+	if len(got.Fallbacks) != 2 || got.Fallbacks[0] != in.Fallbacks[0] || got.Fallbacks[1] != in.Fallbacks[1] {
+		t.Fatalf("fallbacks round trip mismatch: %+v", got.Fallbacks)
 	}
 	if got.Model != "gpt-4o-mini" || got.Temperature == nil || *got.Temperature != 1.1 || got.State != domain.AIProviderStateVerified {
 		t.Fatalf("round trip mismatch: %+v", got)

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -26,15 +25,10 @@ func runMigrations(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_info (id INTEGER PRIMARY KEY CHECK(id=1), schema_version INTEGER NOT NULL, min_supported_schema INTEGER NOT NULL DEFAULT 1, app_version TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
-	// discover migrations dir
-	var useFS fs.FS
-	if dir, err := findMigrationsDir(); err == nil {
-		useFS = os.DirFS(dir)
-	} else {
-		// fallback to embedded
-		useFS = migfs.Files
-	}
-	entries, err := fs.ReadDir(useFS, ".")
+	// Always the migrations compiled into the binary. Reading a migrations/
+	// directory found from the working directory let a binary run inside an
+	// older or unrelated checkout apply that checkout's migrations instead.
+	entries, err := fs.ReadDir(migfs.Files, ".")
 	if err != nil {
 		return err
 	}
@@ -78,22 +72,7 @@ func runMigrations(db *sql.DB) error {
 		if applied[f.version] {
 			continue
 		}
-		var sqlBytes []byte
-		// read from selected fs
-		if of, ok := useFS.(fs.ReadFileFS); ok {
-			b, e := of.ReadFile(f.path)
-			if e != nil {
-				return e
-			}
-			sqlBytes = b
-		} else {
-			// should not happen, but keep fallback
-			b, e := os.ReadFile(filepath.Clean(f.path))
-			if e != nil {
-				return e
-			}
-			sqlBytes = b
-		}
+		sqlBytes, err := fs.ReadFile(migfs.Files, f.path)
 		if err != nil {
 			return err
 		}
@@ -123,41 +102,6 @@ func runMigrations(db *sql.DB) error {
                     ON CONFLICT(id) DO UPDATE SET schema_version=excluded.schema_version, app_version=excluded.app_version, applied_at=excluded.applied_at`,
 		latest, appVersion, time.Now().UTC().Format(time.RFC3339))
 	return nil
-}
-
-func findMigrationsDir() (string, error) {
-	// Try common relative paths from various working dirs
-	candidates := []string{
-		"migrations",
-		filepath.Join("..", "migrations"),
-		filepath.Join("..", "..", "migrations"),
-		filepath.Join("..", "..", "..", "migrations"),
-		filepath.Join("..", "..", "..", "..", "migrations"),
-	}
-	for _, c := range candidates {
-		ok, err := dirHasSQL(c)
-		if err == nil && ok {
-			return c, nil
-		}
-	}
-	return "", fmt.Errorf("migrations directory not found; tried %v", candidates)
-}
-
-func dirHasSQL(dir string) (bool, error) {
-	var found bool
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if strings.HasSuffix(d.Name(), ".sql") {
-			found = true
-		}
-		return nil
-	})
-	return found, err
 }
 
 // applyMigration runs one migration in a transaction with foreign keys off, the

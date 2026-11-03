@@ -194,6 +194,25 @@ describe('AccountsPage edit', () => {
   })
 })
 
+describe('AccountsPage credentials action', () => {
+  it('offers Credentials on aws and gcp rows only', () => {
+    mockUseAccounts.mockReturnValue({
+      accounts: [...accounts, { id: 3, key: 'azure:00000000-0000-0000-0000-000000000000', name: 'az-net', provider: 'azure', created_at: '2026-01-01T00:00:00Z' }],
+      loading: false,
+      error: null,
+      fetchAccounts,
+      createAccount,
+      updateAccount,
+      deleteAccount,
+    })
+    renderPage()
+
+    expect(within(screen.getByRole('row', { name: /prod-platform/ })).getByRole('button', { name: 'Credentials' })).toBeTruthy()
+    expect(within(screen.getByRole('row', { name: /staging-net/ })).getByRole('button', { name: 'Credentials' })).toBeTruthy()
+    expect(within(screen.getByRole('row', { name: /az-net/ })).queryByRole('button', { name: 'Credentials' })).toBeNull()
+  })
+})
+
 describe('AccountsPage create', () => {
   it('submits every writable field', async () => {
     createAccount.mockResolvedValue({ ...prod, id: 3 })

@@ -29,7 +29,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 | Core IPAM | Implemented | Pools, accounts, blocks, search, import/export, validation, audit. IPv4 only |
 | Discovery: AWS | Implemented | Single-account and AWS Organizations discovery, agent flow, IaC helpers |
 | Discovery: GCP | Implemented, narrower than AWS | Server collector for networks, subnetworks, and external IPs. Agent is AWS-only. Azure is still missing |
-| Drift Detection | Implemented | Detection, listing, resolve, and ignore workflows are in place. No reconciliation suggestions |
+| Drift Detection | Implemented | Detection, listing, resolve, and ignore workflows are in place. Open items carry a suggested action (link, create pool, deprecate pool, or review) with one-click apply on the Drift page |
 | Smart Planning | Implemented | Analysis and recommendations APIs exist; schema planner is in the UI. Analysis has no dedicated page |
 | AI Planning | Implemented, optional | OpenAI-compatible backend, SSE chat, stored sessions, plan extraction/apply. Env-only config |
 | OIDC / SSO | Implemented | Provider management, discovery, group mapping, JIT provisioning, local-auth toggle. No MFA |
@@ -174,7 +174,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 - [ ] OAuth2 flows for each cloud provider — not yet implemented
 - [ ] Credential encryption/decryption system — not yet implemented
 - [x] Account management endpoints: `/api/v1/accounts/*`
-- [ ] Health check endpoints for connected accounts — not implemented; a failed sync job is the only connectivity signal
+- [x] Health check endpoints for connected accounts: `POST /api/v1/accounts/{id}/test` (connectivity badge on the Accounts page and the discovery wizard)
 - [x] Account listing with status
 
 **Success Criteria**:
@@ -253,7 +253,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 **Deliverables**:
 - [x] Drift detection engine
 - [x] Drift reporting endpoints
-- [ ] Reconciliation suggestions — not yet implemented
+- [x] Reconciliation suggestions
 - [x] Cloud account management UI
 - [x] Sync status dashboard
 - [x] Resource discovery browser

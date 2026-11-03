@@ -139,6 +139,16 @@ export interface Account {
   deleted_at?: string
 }
 
+// ConnectivityTestResult is the response of POST /api/v1/accounts/{id}/test.
+export interface ConnectivityTestResult {
+  tested_at: string
+  status: 'ok' | 'failed'
+  error?: string
+  latency_ms: number
+  identity?: string
+  source: 'host' | 'stored_credential'
+}
+
 export interface CreateAccountRequest {
   key: string
   name: string
@@ -920,6 +930,7 @@ export interface ComplianceReport {
 export type DriftType = 'unmanaged' | 'cidr_mismatch' | 'orphaned_pool' | 'name_mismatch' | 'account_drift'
 export type DriftSeverity = 'critical' | 'warning' | 'info'
 export type DriftStatus = 'open' | 'resolved' | 'ignored'
+export type DriftAction = 'link_pool' | 'create_pool' | 'deprecate_pool' | 'review'
 
 export interface DriftItem {
   id: string
@@ -935,6 +946,9 @@ export interface DriftItem {
   pool_cidr?: string
   details?: Record<string, string>
   ignore_reason?: string
+  suggested_action?: DriftAction
+  suggested_pool_id?: number
+  suggestion_reason?: string
   resolved_at?: string
   detected_at: string
   updated_at: string
@@ -1024,8 +1038,11 @@ export interface FragmentationAnalysis {
 // The API never returns the API key itself, only whether one is configured.
 export type AIProviderState = 'not_configured' | 'configured' | 'verified' | 'failing'
 export type AISettingSource = 'database' | 'environment' | 'default' | 'none'
+// The protocol: any OpenAI-compatible API, or the Anthropic Messages API.
+export type AIProviderKind = 'openai' | 'anthropic'
 
 export interface AIProviderSettingSources {
+  provider: AISettingSource
   endpoint: AISettingSource
   model: AISettingSource
   api_key: AISettingSource
@@ -1033,7 +1050,18 @@ export interface AIProviderSettingSources {
   temperature: AISettingSource
 }
 
+// One stored fallback provider, tried in order when the primary cannot be
+// reached or answers 5xx. Max tokens and temperature follow the primary.
+export interface AIFallbackProvider {
+  id: string
+  provider: AIProviderKind
+  endpoint: string
+  model: string
+  api_key_configured: boolean
+}
+
 export interface AIProviderSettings {
+  provider: AIProviderKind
   endpoint: string
   model: string
   max_tokens: number
@@ -1045,11 +1073,25 @@ export interface AIProviderSettings {
   last_tested_at?: string
   last_test_error?: string
   last_test_model?: string
+  fallbacks: AIFallbackProvider[]
 }
 
-// PATCH body. Omitted fields are kept; "" for endpoint/model and 0 for
-// max_tokens clear the stored value.
+// One entry of the PATCH fallback list. An entry with the id of a stored
+// fallback keeps its key unless api_key or clear_api_key is sent; an entry
+// without an id is new.
+export interface AIFallbackProviderUpdate {
+  id?: string
+  provider: AIProviderKind
+  endpoint?: string
+  model?: string
+  api_key?: string
+  clear_api_key?: boolean
+}
+
+// PATCH body. Omitted fields are kept; "" for provider/endpoint/model and 0
+// for max_tokens clear the stored value. fallbacks replaces the whole list.
 export interface UpdateAIProviderSettingsRequest {
+  provider?: AIProviderKind | ''
   endpoint?: string
   model?: string
   max_tokens?: number
@@ -1057,6 +1099,17 @@ export interface UpdateAIProviderSettingsRequest {
   clear_temperature?: boolean
   api_key?: string
   clear_api_key?: boolean
+  fallbacks?: AIFallbackProviderUpdate[]
+}
+
+export interface AIFallbackTestResult {
+  id: string
+  provider: AIProviderKind
+  endpoint: string
+  model: string
+  ok: boolean
+  latency_ms: number
+  error?: string
 }
 
 export interface AIProviderTestResult {
@@ -1068,7 +1121,60 @@ export interface AIProviderTestResult {
   streaming_supported: boolean
   error?: string
   tested_at: string
+  fallbacks?: AIFallbackTestResult[]
 }
+
+// "event: fallback" on the chat stream: an earlier provider failed and a
+// later one is answering. Sent before the first delta.
+export interface ChatFallbackNotice {
+  provider: string
+  failed: { provider: string; error: string }[]
+}
+
+// --- Account credential types ---
+
+export type CredentialType = 'aws_assume_role' | 'gcp_service_account'
+
+export interface CredentialSummary {
+  role_arn?: string
+  has_external_id?: boolean
+  client_email?: string
+  project_id?: string
+}
+
+export type CredentialTestStatus = 'ok' | 'failed'
+
+export interface CredentialTest {
+  tested_at: string
+  status: CredentialTestStatus
+  error?: string
+}
+
+export interface CredentialTestResult extends CredentialTest {
+  identity?: string
+}
+
+export interface AccountCredential {
+  account_id: number
+  type: CredentialType
+  summary: CredentialSummary
+  last_test?: CredentialTest
+  created_at: string
+  updated_at: string
+}
+
+export interface AWSAssumeRoleInput {
+  role_arn: string
+  external_id?: string
+}
+
+export interface GCPServiceAccountInput {
+  key_json: string
+}
+
+export type PutAccountCredentialRequest =
+  | { type: 'aws_assume_role'; aws_assume_role: AWSAssumeRoleInput }
+  | { type: 'gcp_service_account'; gcp_service_account: GCPServiceAccountInput }
 
 // Audit forwarding targets (GET /api/v1/settings/log-destinations). Configured
 // from CLOUDPAM_AUDIT_SYSLOG_* at startup; the health fields are live.

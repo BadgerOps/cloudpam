@@ -1,11 +1,13 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/domain"
@@ -75,7 +77,19 @@ func (ss *SettingsServer) aiSettingsResponse(r *http.Request) (*domain.AIProvide
 		return nil, err
 	}
 	cfg := resolved.Config
+	fallbacks := make([]domain.AIFallbackProviderResponse, 0, len(resolved.Fallbacks))
+	for _, fb := range resolved.Fallbacks {
+		fallbacks = append(fallbacks, domain.AIFallbackProviderResponse{
+			ID:               fb.ID,
+			Provider:         fb.Config.Provider,
+			Endpoint:         llm.RedactEndpoint(fb.Config.Endpoint),
+			Model:            fb.Config.Model,
+			APIKeyConfigured: fb.APIKeyConfigured,
+		})
+	}
 	resp := &domain.AIProviderSettingsResponse{
+		Provider:               cfg.Provider,
+		Fallbacks:              fallbacks,
 		Endpoint:               llm.RedactEndpoint(cfg.Endpoint),
 		Model:                  cfg.Model,
 		MaxTokens:              cfg.MaxTokens,
@@ -122,16 +136,7 @@ func testResultStale(resolved llm.Resolved) bool {
 func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var req domain.UpdateAIProviderSettingsRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
-	// A misspelled field ("apikey") would otherwise be ignored and the caller
-	// would believe the value was saved.
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		detail := "expected a json object"
-		if msg := err.Error(); strings.HasPrefix(msg, "json: unknown field") {
-			detail = strings.TrimPrefix(msg, "json: ") // unknown field "apikey"
-		}
-		ss.writeErr(ctx, w, http.StatusBadRequest, "invalid request body", detail)
+	if !ss.decodeStrictJSON(w, r, &req) {
 		return
 	}
 	if field, detail := validateAIProviderUpdate(&req); field != "" {
@@ -139,18 +144,38 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 		return
 	}
 	deps := ss.aiDeps()
-	if req.APIKey != nil && !deps.storageAvailable {
+	if (req.APIKey != nil || fallbackKeysSupplied(req.Fallbacks)) && !deps.storageAvailable {
 		ss.writeErr(ctx, w, http.StatusConflict, errEphemeralAPIKey, "")
 		return
 	}
 
-	var encrypted string
-	if req.APIKey != nil {
-		var err error
-		if encrypted, err = secrets.Encrypt(strings.TrimSpace(*req.APIKey), deps.encKey); err != nil {
+	encrypt := func(key string) (string, bool) {
+		ct, err := secrets.Encrypt(strings.TrimSpace(key), deps.encKey)
+		if err != nil {
 			// The error never contains the key; keep the response generic anyway.
 			ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to encrypt api key", "")
+			return "", false
+		}
+		return ct, true
+	}
+	var encrypted string
+	if req.APIKey != nil {
+		var ok bool
+		if encrypted, ok = encrypt(*req.APIKey); !ok {
 			return
+		}
+	}
+	var encryptedFallbacks []string
+	if req.Fallbacks != nil {
+		encryptedFallbacks = make([]string, len(*req.Fallbacks))
+		for i, fb := range *req.Fallbacks {
+			if fb.APIKey == nil {
+				continue
+			}
+			var ok bool
+			if encryptedFallbacks[i], ok = encrypt(*fb.APIKey); !ok {
+				return
+			}
 		}
 	}
 
@@ -164,15 +189,30 @@ func (ss *SettingsServer) handleUpdateAIProviderSettings(w http.ResponseWriter, 
 			ss.writeErr(ctx, w, http.StatusInternalServerError, "failed to load ai provider settings", err.Error())
 			return
 		}
-		// The stored key is bound to the stored endpoint: moving the endpoint must
-		// not silently send that key to the new host.
-		if req.Endpoint != nil && strings.TrimSpace(*req.Endpoint) != doc.Endpoint &&
-			doc.APIKeyEncrypted != "" && req.APIKey == nil && !req.ClearAPIKey {
-			ss.writeErr(ctx, w, http.StatusBadRequest, "invalid endpoint", errEndpointNeedsKey)
+		// The stored key is bound to the stored endpoint and kind: moving either
+		// must not silently send that key to the new host.
+		endpointMoves := req.Endpoint != nil && strings.TrimSpace(*req.Endpoint) != doc.Endpoint
+		kindMoves := req.Provider != nil && strings.ToLower(strings.TrimSpace(*req.Provider)) != doc.Provider
+		if (endpointMoves || kindMoves) && doc.APIKeyEncrypted != "" && req.APIKey == nil && !req.ClearAPIKey {
+			field := "endpoint"
+			if kindMoves {
+				field = "provider"
+			}
+			ss.writeErr(ctx, w, http.StatusBadRequest, "invalid "+field, errEndpointNeedsKey)
 			return
 		}
 		asRead := doc.UpdatedAt
 		changed, material := applyAIProviderUpdate(doc, &req, encrypted)
+		if req.Fallbacks != nil {
+			fallbacksChanged, detail := applyFallbackUpdate(doc, *req.Fallbacks, encryptedFallbacks)
+			if detail != "" {
+				ss.writeErr(ctx, w, http.StatusBadRequest, "invalid fallbacks", detail)
+				return
+			}
+			if fallbacksChanged {
+				changed = append(changed, "fallbacks")
+			}
+		}
 		if len(changed) == 0 {
 			// Nothing to store: keep UpdatedAt (and so any in-flight test result)
 			// and the audit log untouched.
@@ -225,6 +265,12 @@ func stampAIProviderUpdate(doc *domain.AIProviderSettings, material bool) {
 func applyAIProviderUpdate(doc *domain.AIProviderSettings, req *domain.UpdateAIProviderSettingsRequest, encryptedKey string) ([]string, bool) {
 	changed := []string{}
 	material := false
+	if req.Provider != nil {
+		if v := strings.ToLower(strings.TrimSpace(*req.Provider)); v != doc.Provider {
+			doc.Provider = v
+			changed, material = append(changed, "provider"), true
+		}
+	}
 	if req.Endpoint != nil {
 		if v := strings.TrimSpace(*req.Endpoint); v != doc.Endpoint {
 			doc.Endpoint = v
@@ -259,4 +305,75 @@ func applyAIProviderUpdate(doc *domain.AIProviderSettings, req *domain.UpdateAIP
 		changed, material = append(changed, "api_key"), true
 	}
 	return changed, material
+}
+
+// fallbackKeysSupplied reports whether any entry of a PATCH fallback list
+// carries an api_key, which needs durable key storage.
+func fallbackKeysSupplied(fallbacks *[]domain.AIFallbackProviderUpdate) bool {
+	if fallbacks == nil {
+		return false
+	}
+	for _, fb := range *fallbacks {
+		if fb.APIKey != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// applyFallbackUpdate replaces doc.Fallbacks with the request list, in its
+// order. An entry addressed by id keeps its stored key unless the request
+// replaces or clears it; a new entry gets an id. encrypted holds the
+// ciphertext for each entry that supplied a key. It returns whether the
+// stored list changed, or an actionable detail when the request cannot be
+// applied against the stored document (an unknown id, a key that would move
+// to another host, or a provider that cannot run without a key).
+func applyFallbackUpdate(doc *domain.AIProviderSettings, updates []domain.AIFallbackProviderUpdate, encrypted []string) (bool, string) {
+	stored := make(map[string]domain.AIFallbackProvider, len(doc.Fallbacks))
+	for _, fb := range doc.Fallbacks {
+		stored[fb.ID] = fb
+	}
+	next := make([]domain.AIFallbackProvider, 0, len(updates))
+	for i, u := range updates {
+		entry := domain.AIFallbackProvider{
+			ID:       strings.TrimSpace(u.ID),
+			Provider: strings.ToLower(strings.TrimSpace(u.Provider)),
+			Endpoint: strings.TrimSpace(u.Endpoint),
+			Model:    strings.TrimSpace(u.Model),
+		}
+		if entry.ID == "" {
+			entry.ID = uuid.New().String()
+		} else {
+			prev, ok := stored[entry.ID]
+			if !ok {
+				return false, fmt.Sprintf("fallback %d: unknown id %q; omit the id to add a new fallback", i+1, entry.ID)
+			}
+			delete(stored, entry.ID)
+			moves := prev.Endpoint != entry.Endpoint || prev.Provider != entry.Provider
+			if moves && prev.APIKeyEncrypted != "" && u.APIKey == nil && !u.ClearAPIKey {
+				return false, fmt.Sprintf("fallback %d: re-enter api_key or set clear_api_key when changing the endpoint or provider of a fallback with a stored key", i+1)
+			}
+			if u.APIKey == nil && !u.ClearAPIKey {
+				entry.APIKeyEncrypted = prev.APIKeyEncrypted
+			}
+		}
+		if u.APIKey != nil {
+			entry.APIKeyEncrypted = encrypted[i]
+		}
+		switch {
+		case entry.Provider == llm.ProviderAnthropic && entry.APIKeyEncrypted == "":
+			return false, fmt.Sprintf("fallback %d: an anthropic fallback needs api_key", i+1)
+		case entry.Endpoint == "" && entry.APIKeyEncrypted == "":
+			return false, fmt.Sprintf("fallback %d: needs api_key, or an endpoint for an authless OpenAI-compatible server", i+1)
+		}
+		next = append(next, entry)
+	}
+	changed := len(next) != len(doc.Fallbacks)
+	for i := 0; !changed && i < len(next); i++ {
+		changed = next[i] != doc.Fallbacks[i]
+	}
+	if changed {
+		doc.Fallbacks = next
+	}
+	return changed, ""
 }

@@ -120,11 +120,12 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 		args = append(args, opts.Until.Format(time.RFC3339Nano))
 	}
 
-	// Count total
 	var total int
-	countQuery := "SELECT COUNT(*) FROM audit_logs WHERE " + where
-	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, err
+	if !opts.SkipCount {
+		countQuery := "SELECT COUNT(*) FROM audit_logs WHERE " + where
+		if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	// Apply pagination
@@ -135,7 +136,13 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 		opts.Limit = 1000
 	}
 
-	query := "SELECT id, timestamp, actor, actor_type, action, resource_type, resource_id, resource_name, changes, request_id, ip_address, status_code FROM audit_logs WHERE " + where + " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+	if opts.After != nil {
+		// Same text comparison as the ORDER BY, so the cursor and the sort agree.
+		ts := opts.After.Timestamp.Format(time.RFC3339Nano)
+		where += " AND (timestamp < ? OR (timestamp = ? AND id < ?))"
+		args = append(args, ts, ts, opts.After.ID)
+	}
+	query := "SELECT id, timestamp, actor, actor_type, action, resource_type, resource_id, resource_name, changes, request_id, ip_address, status_code FROM audit_logs WHERE " + where + " ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?"
 	args = append(args, opts.Limit, opts.Offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -170,6 +177,17 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 	}
 
 	return events, total, rows.Err()
+}
+
+// DeleteOlderThan removes every event with a timestamp before the cutoff.
+func (s *SQLiteAuditLogger) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	// Stored timestamps keep their offset and variable fractional digits, so
+	// a text comparison is not chronological.
+	res, err := s.db.ExecContext(ctx, `DELETE FROM audit_logs WHERE julianday(timestamp) < julianday(?)`, before.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // GetByResource retrieves audit events for a specific resource.

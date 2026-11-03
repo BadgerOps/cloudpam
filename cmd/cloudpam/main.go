@@ -205,6 +205,8 @@ func main() {
 		}
 	}
 
+	secretKey, secretKeyEphemeral := parseOIDCEncryptionKey(logger)
+
 	// Initialize discovery subsystem
 	discoveryStore := selectDiscoveryStore(logger, store)
 	networkStore := selectNetworkStore(logger, store)
@@ -215,6 +217,9 @@ func main() {
 	gcpCollector := gcpcollector.New()
 	gcpCollector.SetLimiter(discoveryLimiter(logger, "CLOUDPAM_DISCOVERY_GCP_RPS"))
 	syncService.RegisterCollector(gcpCollector)
+	credentials := discovery.NewAccountCredentials(store, secretKey, !secretKeyEphemeral)
+	syncService.SetCredentials(credentials)
+	credentialSrv := api.NewAccountCredentialServer(srv, credentials, syncService)
 	discoverySrv := api.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
 	discoverySrv.SetNetworkStore(networkStore)
 	logger.Info("discovery subsystem initialized", "collectors", "aws,gcp")
@@ -230,10 +235,6 @@ func main() {
 	recSrv := api.NewRecommendationServer(srv, recService, recStore)
 	logger.Info("recommendation subsystem initialized")
 
-	// The application secret key and the settings store come before the AI
-	// subsystem: the AI provider is resolved from stored settings (with an
-	// encrypted API key) on every operation.
-	secretKey, secretKeyEphemeral := parseOIDCEncryptionKey(logger)
 	settingsStore := selectSettingsStore(logger, store)
 
 	// Initialize AI planning subsystem
@@ -250,7 +251,7 @@ func main() {
 	// Initialize drift detection subsystem
 	driftStore := selectDriftStore(logger, store)
 	driftDetector := discovery.NewDriftDetector(store, discoveryStore, driftStore)
-	driftSrv := api.NewDriftServer(srv, driftDetector, driftStore)
+	driftSrv := api.NewDriftServer(srv, driftDetector, driftStore, discoverySrv)
 	logger.Info("drift detection subsystem initialized")
 
 	// Initialize settings subsystem
@@ -291,6 +292,7 @@ func main() {
 	roleSrv := api.NewRoleServer(srv, roleStore)
 	roleSrv.RegisterProtectedRoleRoutes(dualMW, logger.Slog())
 	discoverySrv.RegisterProtectedDiscoveryRoutes(dualMW, logger.Slog())
+	credentialSrv.RegisterProtectedAccountCredentialRoutes(dualMW, logger.Slog())
 	networkSrv.RegisterProtectedNetworkRoutes(dualMW, logger.Slog())
 	analysisSrv.RegisterProtectedAnalysisRoutes(dualMW, logger.Slog())
 	recSrv.RegisterProtectedRecommendationRoutes(dualMW, logger.Slog())
@@ -307,6 +309,10 @@ func main() {
 	} else {
 		logger.Info("authentication enforced", "users", len(existingUsers))
 	}
+
+	// Audit retention: dry run on startup, purge hourly from then on.
+	retention := audit.NewRetention(auditLogger, auditRetentionPolicy(settingsStore), logger.Slog())
+	go retention.Run(context.Background(), audit.RetentionInterval)
 
 	// Background session cleanup every 15 minutes.
 	go func() {
@@ -559,6 +565,18 @@ func closeIfPossible(logger observability.Logger, v any, name string) {
 }
 
 // bootstrapAdmin creates the initial admin user if it doesn't already exist.
+// auditRetentionPolicy reads audit_retention_days from the settings store on
+// every pass, so a change applies without a restart.
+func auditRetentionPolicy(settings storage.SettingsStore) audit.RetentionPolicySource {
+	return func(ctx context.Context) (time.Duration, error) {
+		current, err := settings.GetSecuritySettings(ctx)
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(current.AuditRetentionDays) * 24 * time.Hour, nil
+	}
+}
+
 func bootstrapAdmin(logger observability.Logger, userStore auth.UserStore, username, password string) {
 	existing, _ := userStore.GetByUsername(context.Background(), username)
 	if existing != nil {
@@ -612,6 +630,7 @@ func logAIPlanningStatus(logger observability.Logger, providers llm.ProviderSour
 		return
 	}
 	logger.Info("ai planning enabled",
+		"provider", resolved.Config.Provider,
 		"model", resolved.Config.Model,
 		"endpoint", llm.RedactEndpoint(resolved.Config.Endpoint),
 		"source", aiConfigSource(resolved.Sources))
@@ -619,12 +638,12 @@ func logAIPlanningStatus(logger observability.Logger, providers llm.ProviderSour
 
 // aiConfigSource summarizes where the effective AI configuration came from.
 func aiConfigSource(s domain.AIProviderSettingSources) string {
-	for _, src := range []string{s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
+	for _, src := range []string{s.Provider, s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
 		if src == domain.AISettingSourceDatabase {
 			return domain.AISettingSourceDatabase
 		}
 	}
-	for _, src := range []string{s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
+	for _, src := range []string{s.Provider, s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
 		if src == domain.AISettingSourceEnvironment {
 			return domain.AISettingSourceEnvironment
 		}
@@ -633,9 +652,10 @@ func aiConfigSource(s domain.AIProviderSettingSources) string {
 }
 
 // parseOIDCEncryptionKey reads the hex-encoded AES-256 application secret key
-// from CLOUDPAM_OIDC_ENCRYPTION_KEY. It protects OIDC client secrets and AI
-// provider API keys. If not set, it generates a random key and reports it as
-// ephemeral (anything encrypted with it won't survive restarts).
+// from CLOUDPAM_OIDC_ENCRYPTION_KEY. It protects stored account credentials,
+// OIDC client secrets and AI provider API keys. If not set, it generates a
+// random key and reports it as ephemeral (anything encrypted with it won't
+// survive restarts).
 func parseOIDCEncryptionKey(logger observability.Logger) (key []byte, ephemeral bool) {
 	hexKey := os.Getenv("CLOUDPAM_OIDC_ENCRYPTION_KEY")
 	if hexKey != "" {
@@ -658,7 +678,7 @@ func parseOIDCEncryptionKey(logger observability.Logger) (key []byte, ephemeral 
 		logger.Error("failed to generate secret encryption key", "error", err)
 		os.Exit(1)
 	}
-	logger.Warn("CLOUDPAM_OIDC_ENCRYPTION_KEY not set — using auto-generated key (OIDC provider and AI provider secrets won't survive restarts; the AI provider page cannot store an API key)")
+	logger.Warn("CLOUDPAM_OIDC_ENCRYPTION_KEY not set — using auto-generated key (OIDC provider and AI provider secrets won't survive restarts; the AI provider page cannot store an API key and account credentials cannot be stored)")
 	return key, true
 }
 

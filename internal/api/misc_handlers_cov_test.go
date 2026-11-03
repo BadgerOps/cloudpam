@@ -221,6 +221,8 @@ func TestSecuritySettingsValidationCov(t *testing.T) {
 			s.APIKeyDefaultExpiryDays = 90
 		}), "invalid api_key_default_expiry_days"},
 		{"rotation reminder too large", patch(func(s *domain.SecuritySettings) { s.APIKeyRotationReminderDays = 366 }), "invalid api_key_rotation_reminder_days"},
+		{"audit retention negative", patch(func(s *domain.SecuritySettings) { s.AuditRetentionDays = -1 }), "invalid audit_retention_days"},
+		{"audit retention too large", patch(func(s *domain.SecuritySettings) { s.AuditRetentionDays = 3651 }), "invalid audit_retention_days"},
 		{"unknown role in scope policy", patch(func(s *domain.SecuritySettings) {
 			s.APIKeyAllowedScopesByRole = map[string][]string{"wizard": {"pools:read"}}
 		}), "invalid api_key_allowed_scopes_by_role"},

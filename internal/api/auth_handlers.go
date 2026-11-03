@@ -84,6 +84,7 @@ func (as *AuthServer) RegisterProtectedAuthRoutes(logger *slog.Logger) {
 	// Audit endpoints - requires audit:read permission
 	auditReadMW := RequirePermissionMiddleware(auth.ResourceAudit, auth.ActionRead, logger)
 	as.handleOpenAPIRoute("/api/v1/audit", authMW(auditReadMW(http.HandlerFunc(as.handleAuditList))))
+	as.handleOpenAPIRoute("/api/v1/audit/export", authMW(auditReadMW(http.HandlerFunc(as.handleAuditExport))))
 }
 
 // protectedAPIKeysHandler returns a handler for /api/v1/auth/keys with RBAC.
@@ -621,26 +622,9 @@ func (as *AuthServer) handleAuditList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse filters
-	opts := audit.ListOptions{
-		Limit:        limit,
-		Offset:       offset,
-		Actor:        q.Get("actor"),
-		Action:       q.Get("action"),
-		ResourceType: q.Get("resource_type"),
-	}
-
-	// Parse time filters
-	if v := q.Get("since"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			opts.Since = &t
-		}
-	}
-	if v := q.Get("until"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			opts.Until = &t
-		}
-	}
+	opts := auditFilters(q)
+	opts.Limit = limit
+	opts.Offset = offset
 
 	// Query audit logs
 	events, total, err := as.auditLogger.List(ctx, opts)

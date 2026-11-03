@@ -400,3 +400,44 @@ func testGCPPayload(t *testing.T) discovery.GCPServiceAccount {
 	}
 	return sa
 }
+
+func TestHostIdentityRunsCallerIdentityAsTheHostChain(t *testing.T) {
+	h := newCredentialHarness(t, "us-west-2")
+	account := domain.Account{ID: 4, Provider: "aws", Regions: []string{"ap-south-1"}}
+
+	identity, err := h.collector.Identity(context.Background(), account)
+	if err != nil {
+		t.Fatalf("Identity() error = %v", err)
+	}
+	if identity != testSessionARN {
+		t.Fatalf("Identity() = %q, want %q", identity, testSessionARN)
+	}
+	if h.sts.assumeIn != nil {
+		t.Fatal("host Identity assumed a role")
+	}
+	if len(h.loads) != 1 || h.loads[0].region != "ap-south-1" || h.loads[0].creds != nil {
+		t.Fatalf("config loads = %+v, want one host-chain load in the first account region", h.loads)
+	}
+
+	h.sts.identityErr = stsAPIError(403, "InvalidClientTokenId")
+	_, err = h.collector.Identity(context.Background(), account)
+	var pe *discovery.ProbeError
+	if !errors.As(err, &pe) || pe.Step != discovery.ProbeStepGetCallerIdentity || pe.Code != "InvalidClientTokenId" {
+		t.Fatalf("Identity() error = %v, want a get_caller_identity ProbeError", err)
+	}
+}
+
+func TestHostIdentityNamesAnEmptyCredentialChain(t *testing.T) {
+	h := newCredentialHarness(t, "us-east-1")
+	h.collector.loadConfig = func(context.Context, string, awssdk.CredentialsProvider) (awssdk.Config, error) {
+		return awssdk.Config{Region: "us-east-1", Credentials: awssdk.CredentialsProviderFunc(func(context.Context) (awssdk.Credentials, error) {
+			return awssdk.Credentials{}, errors.New("no EC2 IMDS role found")
+		})}, nil
+	}
+
+	_, err := h.collector.Identity(context.Background(), domain.Account{ID: 1})
+	var pe *discovery.ProbeError
+	if !errors.As(err, &pe) || pe.Error() != "credentials: unavailable" {
+		t.Fatalf("Identity() error = %v, want credentials: unavailable", err)
+	}
+}

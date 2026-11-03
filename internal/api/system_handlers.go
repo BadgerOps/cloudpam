@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 
 	apidocs "cloudpam/docs"
-	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	webui "cloudpam/web"
 )
@@ -376,13 +375,9 @@ func (s *Server) handleAuditList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	opts := audit.ListOptions{
-		Limit:        limit,
-		Offset:       offset,
-		Actor:        q.Get("actor"),
-		Action:       q.Get("action"),
-		ResourceType: q.Get("resource_type"),
-	}
+	opts := auditFilters(q)
+	opts.Limit = limit
+	opts.Offset = offset
 
 	events, total, err := s.auditLogger.List(r.Context(), opts)
 	if err != nil {

@@ -232,12 +232,51 @@ func TestDiscoveryImportApply_OverlappingSiblingIsItemError(t *testing.T) {
 	upsertDiscoveredForImportTest(t, ds, vpc)
 
 	resp := applyDiscoveryImportForTest(t, d, account.ID, vpc.ID)
+	if resp.PoolsCreated != 0 || resp.Preview.ConflictCount != 1 || len(resp.Preview.Items[0].ConflictPoolIDs) != 1 {
+		t.Fatalf("want the vpc reported as a conflict with the other account's pool, got %+v", resp)
+	}
 
-	if resp.PoolsCreated != 0 || !hasErrorContaining(resp.Errors, "overlaps") {
-		t.Fatalf("want no pool created and an overlap error, got %+v", resp)
+	// The forced path skips the preview verdict; placement still refuses the overlap.
+	forced, err := d.applyDiscoveryImport(t.Context(), domain.DiscoveryImportApplyRequest{AccountID: account.ID, ResourceIDs: []uuid.UUID{vpc.ID}}, discoveryImportApplyOptions{AllowBlocked: true})
+	if err != nil {
+		t.Fatalf("forced apply: %v", err)
+	}
+	if forced.PoolsCreated != 0 || !hasErrorContaining(forced.Errors, "overlaps") {
+		t.Fatalf("want no pool created and an overlap error, got %+v", forced)
 	}
 	if storedCIDRs(t, st)["10.1.0.0/16"] {
 		t.Fatal("a pool overlapping another account's top-level pool was stored")
+	}
+}
+
+func TestDiscoveryImportApply_OtherAccountAncestorIsNotAConflict(t *testing.T) {
+	d, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:2", Name: "dev", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "dev-space", CIDR: "10.0.0.0/8", AccountID: &other.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "shared", CIDR: "10.1.0.0/16", ParentID: &foreign.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vpc := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, "vpc-1", "10.1.4.0/22", nil)
+	upsertDiscoveredForImportTest(t, ds, vpc)
+
+	resp := applyDiscoveryImportForTest(t, d, account.ID, vpc.ID)
+	if resp.PoolsCreated != 1 {
+		t.Fatalf("want the vpc imported under the shared pool, got %+v", resp)
+	}
+	created, _, _ := st.GetPool(t.Context(), resp.CreatedPoolIDs[0])
+	if created.ParentID == nil || *created.ParentID != shared.ID {
+		t.Fatalf("created pool parent = %v, want %d", created.ParentID, shared.ID)
 	}
 }
 

@@ -237,7 +237,7 @@ The storage layer uses build tags to switch between implementations:
 | `internal/observability` | Logging, metrics, OpenTelemetry tracing (opt-in, OTLP/HTTP) | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
-| `internal/planning/llm` | LLM provider abstraction (OpenAI-compatible) | Implemented (Phase 4) |
+| `internal/planning/llm` | LLM provider abstraction (OpenAI-compatible and Anthropic Messages API, ordered fallback chain) | Implemented (Phase 4) |
 | `internal/auth/oidc` | OIDC provider integration (discovery, exchange, claims, crypto) | Implemented (Phase 5) |
 
 ### HTTP Layer
@@ -253,6 +253,10 @@ The storage layer uses build tags to switch between implementations:
   - `/api/v1/pools/{id}/blocks` - enumerate candidate subnets for a pool
   - `/api/v1/accounts` - account CRUD
   - `/api/v1/accounts/{id}` - single account GET/PATCH/DELETE
+  - `/api/v1/accounts/{id}/credentials` - stored discovery credential summary (GET, `accounts:read`); never returns the payload
+  - `/api/v1/accounts/{id}/credentials` - store or replace the encrypted credential (PUT, `accounts:update`); 409 when the encryption key is ephemeral
+  - `/api/v1/accounts/{id}/credentials` - delete the stored credential (DELETE, `accounts:update`)
+  - `/api/v1/accounts/{id}/credentials/test` - run one read-only call as the stored credential and record the outcome (POST, `accounts:update`)
   - `/api/v1/blocks` - list assigned blocks (sub-pools with filters)
   - `/api/v1/export` - data export as CSV in ZIP
   - `/api/v1/import/{type}` - CSV import for accounts or pools
@@ -416,7 +420,7 @@ When adding endpoints:
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` — 30 hooks: useAccounts, useAIPlanner, useAISettings, useApiKeys, useAttention, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useLogDestinations, useNetwork, useOIDCAdmin, useOIDCProviders, usePagedFilters, usePendingAction, usePoolAnalysis, usePoolProjection, usePools, useRecentlyDeleted, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
+- API hooks in `ui/src/hooks/` — 31 hooks: useAccountCredential, useAccounts, useAIPlanner, useAISettings, useApiKeys, useAttention, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useLogDestinations, useNetwork, useOIDCAdmin, useOIDCProviders, usePagedFilters, usePendingAction, usePoolAnalysis, usePoolProjection, usePools, useRecentlyDeleted, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)
@@ -439,6 +443,7 @@ When adding endpoints:
 
 ### OIDC/SSO
 - `CLOUDPAM_OIDC_ENCRYPTION_KEY`: 32-byte hex-encoded AES-256 application secret key (`internal/secrets`); encrypts OIDC client secrets and AI provider API keys saved under Configuration → AI Provider (auto-generated with warning if not set; then the AI provider page cannot store an API key)
+  - The same key protects stored per-account discovery credentials (`PUT /api/v1/accounts/{id}/credentials` answers 409 while the key is auto-generated)
 - `CLOUDPAM_OIDC_CALLBACK_URL`: OIDC callback URL (default: `http://localhost:8080/api/v1/auth/oidc/callback`)
 
 ### Observability
@@ -466,8 +471,9 @@ When adding endpoints:
 - `CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS`: Comma-separated account IDs to skip
 
 ### AI Planning
-- `CLOUDPAM_LLM_API_KEY`: API key for OpenAI-compatible endpoint (optional when using an authless custom endpoint)
-- `CLOUDPAM_LLM_MODEL`: Model name (default: `gpt-4o`)
+- `CLOUDPAM_LLM_PROVIDER`: Provider protocol, `openai` (default, any OpenAI-compatible API) or `anthropic` (Messages API)
+- `CLOUDPAM_LLM_API_KEY`: API key for the provider (optional when using an authless OpenAI-compatible endpoint; always required for `anthropic`)
+- `CLOUDPAM_LLM_MODEL`: Model name (default: `gpt-4o`, or `claude-opus-5-5` when the provider is `anthropic`)
 - `CLOUDPAM_LLM_ENDPOINT`: Base URL override for Ollama/vLLM/Azure; with no API key, a non-empty endpoint enables authless custom-provider mode
 - `CLOUDPAM_LLM_MAX_TOKENS`: Max response tokens (default: `4096`)
 - `CLOUDPAM_LLM_TEMPERATURE`: Temperature (default: `0.7`)

@@ -24,7 +24,8 @@ export SKILL_DIR REPO_ROOT
 
 VERIFY_USERNAME="${CLOUDPAM_VERIFY_USERNAME:-verify-admin}"
 VERIFY_PASSWORD="${CLOUDPAM_VERIFY_PASSWORD:-VerifyDev12345!}"
-# Fixed dev-only key so the server does not log an auto-generated-key warning on every launch.
+# Fixed throwaway key for the disposable instance. Never inherited, never written to the env file,
+# so a real deployment key in the caller's environment cannot reach logs or evidence.
 VERIFY_OIDC_KEY="0000000000000000000000000000000000000000000000000000000000000001"
 
 log() { printf '[cloudpam-verify] %s\n' "$*" >&2; }

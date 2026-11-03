@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react'
-import { get, post } from '../api/client'
+import { get, patch, post } from '../api/client'
 import { useLatestRequest } from './useLatestRequest'
 import type {
+  DiscoveryImportApplyResponse,
   DriftListResponse,
   RunDriftDetectionResponse,
   DriftItem,
@@ -81,5 +82,34 @@ export function useDrift() {
     return resp
   }, [])
 
-  return { data, loading, error, fetch, detect, resolve, ignore }
+  // applySuggestion runs the item's suggested action through the existing
+  // discovery or pool endpoint, then resolves the item. The server derives the
+  // suggestion on each read, so it is fetched again first: a pool linked or a
+  // resource changed since the page loaded must not be acted on.
+  const applySuggestion = useCallback(async (shown: DriftItem) => {
+    const item = await get<DriftItem>(`/api/v1/drift/${shown.id}`)
+    if (item.suggested_action !== shown.suggested_action || item.suggested_pool_id !== shown.suggested_pool_id) {
+      throw new Error(`The suggestion changed since the page loaded: ${item.suggestion_reason || 'review the item again'}`)
+    }
+    const { suggested_action: action, suggested_pool_id: poolId, resource_id: resourceId } = item
+    if (action === 'link_pool' && resourceId && poolId) {
+      await post(`/api/v1/discovery/resources/${resourceId}/link`, { pool_id: poolId })
+    } else if (action === 'create_pool' && resourceId) {
+      const resp = await post<DiscoveryImportApplyResponse>('/api/v1/discovery/import/apply', {
+        account_id: item.account_id,
+        resource_ids: [resourceId],
+      })
+      if (resp.pools_created + resp.resources_linked === 0) {
+        const issues = resp.preview.items.flatMap((i) => [...i.issues, ...(i.evidence ?? [])])
+        throw new Error(`Import skipped: ${[...resp.errors, ...issues].join('; ') || 'no change made'}`)
+      }
+    } else if (action === 'deprecate_pool' && poolId) {
+      await patch(`/api/v1/pools/${poolId}`, { status: 'deprecated' })
+    } else {
+      throw new Error('This drift item has no suggestion to apply')
+    }
+    return post<DriftItem>(`/api/v1/drift/${item.id}/resolve`, {})
+  }, [])
+
+  return { data, loading, error, fetch, detect, resolve, ignore, applySuggestion }
 }

@@ -18,7 +18,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 | Discovery: AWS | Complete | Single-account and Organizations, AssumeRole, standalone agent, ingest/heartbeat, bootstrap register/approve, IAM Terraform/CloudFormation helpers |
 | Discovery: GCP | Partial | Server collector for networks, subnetworks, and external IPs. No org mode, no agent, no IaC helpers. Uses Application Default Credentials on the CloudPAM host |
 | Discovery: Azure | Missing | Account keys accept `azure:<subscription-uuid>` and the UI offers Azure; there is no collector. Sync fails with `no collector registered for provider` |
-| Drift | Complete | Detect, list, resolve, ignore. No automatic reconciliation suggestions |
+| Drift | Complete | Detect, list, resolve, ignore. Open items carry a suggested action with one-click apply |
 | Network objects | Complete | Merged network view, conflicts, persisted objects and relationships. `DELETE` returns `409` while child objects name the object as their parent; relationships that reference it are removed with it |
 | Analysis engine | Complete as API | `POST /api/v1/analysis`, `/gaps`, `/fragmentation`, `/compliance`. `/fragmentation` and the full report score fragmentation for only the first pool. Gaps and fragmentation are shown in the pool detail panel (#281); compliance results and a dedicated Analysis page have **no UI** |
 | Recommendations | Partial | Allocation and compliance only. Consolidation / resize / reclaim are commented stubs. Stored in a table on SQLite and PostgreSQL (#315) |
@@ -53,7 +53,7 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 
 `pool_utilization_cache` exists in SQL and is never written from Go.
 
-Audit events are never purged on any backend. Retention enforcement is tracked in #292.
+Audit retention is enforced by `internal/audit/retention.go` from the `audit_retention_days` security setting.
 
 ---
 
@@ -103,9 +103,9 @@ Enable with `CLOUDPAM_LLM_API_KEY` and/or `CLOUDPAM_LLM_ENDPOINT`, or on the Con
 
 ## Discovery: shipped vs remaining
 
-**Shipped:** AWS + GCP collectors on the server; AWS agent; bootstrap tokens; register / approve / reject; ingest and org ingest; drift detect/resolve/ignore; merged network objects and relationships; schema policy evaluation (request-scoped and persistable via API).
+**Shipped:** AWS + GCP collectors on the server; AWS agent; bootstrap tokens; register / approve / reject; ingest and org ingest; drift detect/resolve/ignore with reconciliation suggestions; merged network objects and relationships; schema policy evaluation (request-scoped and persistable via API).
 
-**Not shipped:** Azure collector; GCP in the agent; per-account stored credentials; incremental sync; in-process scheduled sync; collector rate limiter; reconciliation suggestions.
+**Not shipped:** Azure collector; GCP in the agent; per-account stored credentials; incremental sync; in-process scheduled sync; collector rate limiter.
 
 The Discovery UI at `/discovery` has four tabs: Resources, Network, Sync History, Agents. GCP and Azure in the account picker have no matching wizard path; the wizard is AWS-shaped (IAM role, org mode, Terraform/CloudFormation snippets).
 
