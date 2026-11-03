@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Users, Plus, AlertCircle, UserCheck, UserX, LockOpen } from 'lucide-react'
-import { useUsers } from '../hooks/useUsers'
+import { Users, Plus, AlertCircle, UserCheck, UserX, LockOpen, LogOut } from 'lucide-react'
+import { useUsers, useSignOutEverywhere } from '../hooks/useUsers'
 import { useRoles } from '../hooks/useRoles'
 import { usePendingAction } from '../hooks/usePendingAction'
 import { useAuth } from '../hooks/useAuth'
@@ -16,10 +16,15 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
   // internal/api/user_handlers.go guards each verb separately: POST needs
   // users:create, PATCH (role, reactivate, unlock) needs users:update, and
   // DELETE (deactivate) needs users:delete. users:list only grants the listing.
-  const { hasPermission } = useAuth()
+  const { hasPermission, role } = useAuth()
   const canCreate = hasPermission('users:create')
   const canUpdate = hasPermission('users:update')
   const canDeactivate = hasPermission('users:delete')
+  // POST /revoke-sessions accepts the admin role or the account owner, not a
+  // users:* permission, so a custom role holding users:update still gets 403.
+  const canSignOutOthers = role === 'admin'
+  const signOutEverywhere = useSignOutEverywhere()
+  const { pending: signingOut, run: handleSignOutEverywhere } = usePendingAction(signOutEverywhere)
   // Falling back to the built-in roles keeps the form usable when the roles
   // API fails, but the failure itself must be visible: silently offering only
   // built-ins hides any custom role the operator has configured, and assigning
@@ -323,6 +328,16 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{u.failed_login_attempts ?? 0}</td>
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(u.last_login_at)}</td>
                   <td className="px-4 py-3 text-right">
+                    {canSignOutOthers && (
+                      <button
+                        onClick={() => void handleSignOutEverywhere(u)}
+                        disabled={signingOut}
+                        title="Sign out everywhere"
+                        className="p-1.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-50"
+                      >
+                        <LogOut className="w-4 h-4" />
+                      </button>
+                    )}
                     {isLocked(u) && canUpdate && (
                       <button
                         onClick={() => handleUnlock(u.id)}

@@ -5,9 +5,11 @@ import type { UserInfo } from '../api/types'
 
 const mockUseUsers = vi.fn()
 const mockUseRoles = vi.fn()
+const mockSignOutEverywhere = vi.fn()
 
 vi.mock('../hooks/useUsers', () => ({
   useUsers: () => mockUseUsers(),
+  useSignOutEverywhere: () => mockSignOutEverywhere,
 }))
 
 vi.mock('../hooks/useRoles', () => ({
@@ -18,7 +20,7 @@ vi.mock('../hooks/useRoles', () => ({
 // duplicate-submit handling, not authorization, so grant everything here;
 // permission gating is covered by permissionGating.test.tsx.
 vi.mock('../hooks/useAuth', () => ({
-  useAuth: () => ({ hasPermission: () => true }),
+  useAuth: () => ({ hasPermission: () => true, role: 'admin' }),
 }))
 
 function deferred<T>() {
@@ -174,5 +176,52 @@ describe('UsersAdminPanel role loading failures', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create User' }))
     const values = screen.getAllByRole('option').map(o => (o as HTMLOptionElement).value)
     expect(values).toContain('custom-auditor')
+  })
+})
+
+describe('UsersAdminPanel sign out everywhere', () => {
+  const alice = { id: 'u2', username: 'alice', role: 'viewer', is_active: true } as UserInfo
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseRoles.mockReturnValue({ roles: [] })
+    mockUseUsers.mockReturnValue({
+      users: [alice],
+      loading: false,
+      error: null,
+      create: vi.fn(),
+      update: vi.fn(),
+      deactivate: vi.fn(),
+      unlock: vi.fn(),
+    })
+  })
+
+  it('offers the action on the user row and hands it the row user', () => {
+    mockSignOutEverywhere.mockResolvedValue(undefined)
+
+    render(<UsersAdminPanel />)
+    fireEvent.click(screen.getByTitle('Sign out everywhere'))
+
+    expect(mockSignOutEverywhere).toHaveBeenCalledTimes(1)
+    expect(mockSignOutEverywhere.mock.calls[0][0]).toMatchObject({ id: 'u2', username: 'alice' })
+  })
+
+  it('ignores a second click while the first revoke is in flight', async () => {
+    const pending = deferred<void>()
+    mockSignOutEverywhere.mockReturnValue(pending.promise)
+
+    render(<UsersAdminPanel />)
+    const button = screen.getByTitle('Sign out everywhere')
+    fireEvent.click(button)
+    fireEvent.click(button)
+
+    expect(mockSignOutEverywhere).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(button).toHaveProperty('disabled', true))
+
+    await act(async () => {
+      pending.resolve()
+      await pending.promise
+    })
+    await waitFor(() => expect(button).toHaveProperty('disabled', false))
   })
 })
