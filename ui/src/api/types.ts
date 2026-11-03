@@ -861,6 +861,7 @@ export interface ApplyPlanResponse {
 export type DriftType = 'unmanaged' | 'cidr_mismatch' | 'orphaned_pool' | 'name_mismatch' | 'account_drift'
 export type DriftSeverity = 'critical' | 'warning' | 'info'
 export type DriftStatus = 'open' | 'resolved' | 'ignored'
+export type DriftAction = 'link_pool' | 'create_pool' | 'deprecate_pool' | 'review'
 
 export interface DriftItem {
   id: string
@@ -876,6 +877,9 @@ export interface DriftItem {
   pool_cidr?: string
   details?: Record<string, string>
   ignore_reason?: string
+  suggested_action?: DriftAction
+  suggested_pool_id?: number
+  suggestion_reason?: string
   resolved_at?: string
   detected_at: string
   updated_at: string
