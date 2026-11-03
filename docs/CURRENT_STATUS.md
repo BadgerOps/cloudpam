@@ -28,7 +28,7 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 | Auth | Complete | Local users, sessions, API keys (`Authorization: Bearer cpam_…`), custom-role RBAC, OIDC/SSO with JIT and group mapping. Auth is always on. **No MFA** |
 | Observability | Partial | slog, custom Prometheus `/metrics`, Sentry, opt-in OTLP/HTTP tracing (`CLOUDPAM_TRACING_ENABLED`). Vector sidecar configs exist but are not integrated. `deploy/docker-compose.observability.yml` starts Prometheus, Grafana (provisioned request dashboard), and Jaeger from a clean checkout, with no log pipeline; `deploy/vector/vector.toml` needs updating for Vector 0.34.1 |
 | SIEM | Partial | CEF-over-syslog via `CLOUDPAM_AUDIT_SYSLOG_*`. Log Destinations UI is documentation, not destination CRUD. No Splunk HEC / CloudWatch / Cloud Logging connectors |
-| Updates | Complete, host-managed | Release check and file-triggered upgrade when `CLOUDPAM_CONTROL_DIR` is set; otherwise trigger returns 501 |
+| Updates | Complete, host-managed | Release check and file-triggered upgrade through `CLOUDPAM_CONTROL_DIR` (default `/var/lib/cloudpam-control`); the trigger always writes the request file, and nothing happens unless a host watcher runs. See [RUNBOOKS.md](RUNBOOKS.md#22-host-managed-upgrade-through-the-control-directory) |
 | Multi-tenancy | Not enforced | Postgres stores pin `defaultOrgID`. SQLite `organizations` table is unused by pools/users. Single-tenant appliance |
 | Addressing | IPv4 only | `ErrIPv6NotSupported`. Dual-stack is a new workstream, not a flag. GCP discovery can ingest IPv6 addresses that cannot become managed pools |
 

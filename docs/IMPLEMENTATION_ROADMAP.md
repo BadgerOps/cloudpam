@@ -679,7 +679,7 @@ For CloudPAM AI, the roadmap should follow those patterns instead of keeping AI 
 - [ ] Cost tracking system — not yet implemented
 - [ ] Security audit report — not yet implemented
 - [x] Complete API documentation (OpenAPI 3.1 spec)
-- [ ] Operations runbooks — not yet implemented
+- [x] Operations runbooks ([RUNBOOKS.md](RUNBOOKS.md))
 
 **Success Criteria**:
 - Rate limits prevent abuse
