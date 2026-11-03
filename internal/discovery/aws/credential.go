@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	smithy "github.com/aws/smithy-go"
 
@@ -41,7 +42,7 @@ func (c *Collector) WithCredential(ctx context.Context, account domain.Account, 
 	return &assumedRoleCollector{Collector: &Collector{
 		credsProvider: aws.NewCredentialsCache(provider),
 		loadConfig:    c.loadConfig,
-		newEC2Client:  c.newEC2Client,
+		newEC2Client:  func(cfg aws.Config) ec2API { return stsRedactingEC2{client: c.ec2Client(cfg)} },
 		newSTSClient:  c.newSTSClient,
 	}}, nil
 }
@@ -85,14 +86,28 @@ func (c *assumedRoleCollector) Identity(ctx context.Context, account domain.Acco
 	return aws.ToString(out.Arn), nil
 }
 
-// Discover reduces a failed AssumeRole to a ProbeError, because the STS message
-// names the calling identity and the role.
-func (c *assumedRoleCollector) Discover(ctx context.Context, account domain.Account) ([]domain.DiscoveredResource, error) {
-	resources, err := c.Collector.Discover(ctx, account)
+type stsRedactingEC2 struct{ client ec2API }
+
+func (e stsRedactingEC2) DescribeVpcs(ctx context.Context, in *ec2.DescribeVpcsInput, opts ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
+	out, err := e.client.DescribeVpcs(ctx, in, opts...)
+	return out, redactSTSFailure(err)
+}
+
+func (e stsRedactingEC2) DescribeSubnets(ctx context.Context, in *ec2.DescribeSubnetsInput, opts ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
+	out, err := e.client.DescribeSubnets(ctx, in, opts...)
+	return out, redactSTSFailure(err)
+}
+
+func (e stsRedactingEC2) DescribeAddresses(ctx context.Context, in *ec2.DescribeAddressesInput, opts ...func(*ec2.Options)) (*ec2.DescribeAddressesOutput, error) {
+	out, err := e.client.DescribeAddresses(ctx, in, opts...)
+	return out, redactSTSFailure(err)
+}
+
+func redactSTSFailure(err error) error {
 	if op := stsOperationError(err); op != nil {
-		return resources, probeError(discovery.ProbeStepAssumeRole, op)
+		return probeError(discovery.ProbeStepAssumeRole, op)
 	}
-	return resources, err
+	return err
 }
 
 // stsOperationError searches the whole tree because errors.As stops at the EC2
