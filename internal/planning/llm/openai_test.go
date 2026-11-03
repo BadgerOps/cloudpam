@@ -15,6 +15,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestLimitedBodyOverflowErrorIsSticky(t *testing.T) {
@@ -577,5 +581,124 @@ func TestOpenAIProviderStreamIgnoresEmptyFinishReason(t *testing.T) {
 	}
 	if doneSeen != 1 || finish != "stop" {
 		t.Fatalf("done events = %d (finish %q), want exactly 1 with finish %q", doneSeen, finish, "stop")
+	}
+}
+
+// recordedSpans installs one recording provider per test binary, because the
+// package tracer delegates to the first global provider and never to a later one.
+var recordedSpans = sync.OnceValue(func() *tracetest.InMemoryExporter {
+	exporter := tracetest.NewInMemoryExporter()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter)))
+	return exporter
+})
+
+// streamSpanEnded reports whether the stream span for endpoint has been exported.
+func streamSpanEnded(exporter *tracetest.InMemoryExporter, endpoint string) bool {
+	for _, span := range exporter.GetSpans() {
+		if span.Name != "llm.chat.completions" {
+			continue
+		}
+		for _, kv := range span.Attributes {
+			if kv.Key == "server.address" && kv.Value.AsString() == endpoint {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestOpenAIProviderStreamEndsWhenContextIsCancelled covers #375: a consumer
+// that stops reading before the terminal event (a cancelled handler, a panic
+// swallowed by the recovery middleware) must not pin the producer on a channel
+// send. Once the context ends, the producer has to close the body, end the
+// stream span and close the channel on its own.
+func TestOpenAIProviderStreamEndsWhenContextIsCancelled(t *testing.T) {
+	exporter := recordedSpans()
+	exporter.Reset()
+
+	const pending = 500 // well beyond the 64-slot channel buffer
+	data := make([]string, 0, pending)
+	for i := 0; i < pending; i++ {
+		data = append(data, chunk("late", ""))
+	}
+	stub := newSSEStub(t, true, data...)
+
+	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: stub.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := provider.StreamComplete(ctx, []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+
+	// One event proves the producer is streaming; after that nobody reads.
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no event within 3s")
+	}
+	cancel()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for !streamSpanEnded(exporter, stub.URL) {
+		if time.Now().After(deadline) {
+			t.Fatal("stream span still open 3s after the context was cancelled: the producer is stuck")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case <-stub.disconnected:
+	case <-time.After(3 * time.Second):
+		t.Fatal("response body was not closed after the context was cancelled")
+	}
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		case <-timeout:
+			t.Fatal("stream channel not closed after the context was cancelled")
+		}
+	}
+}
+
+// TestOpenAIProviderStreamReusesTheConnection covers #375: a stream that ends
+// normally must leave the connection in the transport's pool, which needs the
+// body read to EOF. Providers send a usage chunk and [DONE] after the
+// finish_reason chunk, and end the response right after [DONE].
+func TestOpenAIProviderStreamReusesTheConnection(t *testing.T) {
+	for name, data := range map[string][]string{
+		"finish_reason then usage and [DONE]": {
+			chunk("Hi", "stop"),
+			`{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`,
+			"[DONE]",
+		},
+		"[DONE] only": {chunk("Hi", ""), "[DONE]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newSSEStub(t, false, data...)
+			provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: stub.URL})
+			for i := 0; i < 2; i++ {
+				ch, err := provider.StreamComplete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
+				if err != nil {
+					t.Fatalf("StreamComplete %d: %v", i, err)
+				}
+				var content string
+				for evt := range ch {
+					if evt.Err != nil {
+						t.Fatalf("stream %d: unexpected error %v", i, evt.Err)
+					}
+					content += evt.Delta
+				}
+				if content != "Hi" {
+					t.Fatalf("stream %d content = %q, want %q", i, content, "Hi")
+				}
+			}
+			if got := stub.conns.Load(); got != 1 {
+				t.Fatalf("two streams opened %d connections, want 1 (the first was not pooled)", got)
+			}
+		})
 	}
 }
