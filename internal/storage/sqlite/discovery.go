@@ -189,6 +189,28 @@ func (s *Store) LinkResourceToPool(ctx context.Context, resourceID uuid.UUID, po
 	return nil
 }
 
+// PoolResourceIDs returns the IDs of the discovered resources linked to a pool.
+func (s *Store) PoolResourceIDs(ctx context.Context, poolID int64) ([]uuid.UUID, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT id FROM discovered_resources WHERE pool_id = ?", poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []uuid.UUID
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("discovered resource id %q: %w", raw, err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // UnlinkResource removes the pool link from a discovered resource.
 func (s *Store) UnlinkResource(ctx context.Context, resourceID uuid.UUID) error {
 	res, err := s.db.ExecContext(ctx,

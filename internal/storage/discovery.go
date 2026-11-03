@@ -26,6 +26,9 @@ type DiscoveryStore interface {
 	// LinkResourceToPool links a discovered resource to a managed pool.
 	LinkResourceToPool(ctx context.Context, resourceID uuid.UUID, poolID int64) error
 
+	// PoolResourceIDs returns the IDs of the discovered resources linked to a pool.
+	PoolResourceIDs(ctx context.Context, poolID int64) ([]uuid.UUID, error)
+
 	// UnlinkResource removes the pool link from a discovered resource.
 	UnlinkResource(ctx context.Context, resourceID uuid.UUID) error
 

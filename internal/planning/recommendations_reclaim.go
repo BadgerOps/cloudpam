@@ -84,7 +84,7 @@ func (s *RecommendationService) applyReclaim(ctx context.Context, rec *domain.Re
 		if err := checkReclaimable(pools, rec); err != nil {
 			return err
 		}
-		if err := s.rejectLinked(work, rec.PoolID); err != nil {
+		if err := s.rejectLinked(work, ps, rec.PoolID); err != nil {
 			return err
 		}
 		deleted, err := ps.DeletePool(work, rec.PoolID)

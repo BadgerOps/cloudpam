@@ -153,7 +153,7 @@ func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *dom
 		}
 		if merged, ok := alreadyMerged(pools, rec, ids); ok {
 			kept = merged
-			return nil
+			return s.relinkResources(work, ps, ids[1], kept.ID)
 		}
 		if err := checkUnchangedLeaves(pools, rec.PoolID, ids, cidrs); err != nil {
 			return err
@@ -178,13 +178,9 @@ func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *dom
 			return fmt.Errorf("delete pool %d: %w", ids[1], err)
 		}
 		kept = widened
-		return nil
+		return s.relinkResources(work, ps, ids[1], kept.ID)
 	})
 	if err != nil {
-		return nil, err
-	}
-
-	if err := s.relinkResources(ctx, ids[1], kept.ID); err != nil {
 		return nil, err
 	}
 	if req.Name != "" || req.AccountID != nil {

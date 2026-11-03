@@ -141,9 +141,13 @@ func (s *Store) MarkStaleResources(ctx context.Context, accountID int64, before 
 }
 
 func (s *Store) LinkResourceToPool(ctx context.Context, resourceID uuid.UUID, poolID int64) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE discovered_resources
+	return linkResourceToPool(ctx, s.pool, s.orgID, resourceID, poolID)
+}
+
+func linkResourceToPool(ctx context.Context, q execQuerier, orgID string, resourceID uuid.UUID, poolID int64) error {
+	tag, err := q.Exec(ctx, `UPDATE discovered_resources
 		SET pool_id = $1
-		WHERE id = $2 AND organization_id = $3`, poolID, resourceID, s.orgID)
+		WHERE id = $2 AND organization_id = $3`, poolID, resourceID, orgID)
 	if err != nil {
 		return err
 	}
@@ -151,6 +155,18 @@ func (s *Store) LinkResourceToPool(ctx context.Context, resourceID uuid.UUID, po
 		return storage.ErrNotFound
 	}
 	return nil
+}
+
+func (s *Store) PoolResourceIDs(ctx context.Context, poolID int64) ([]uuid.UUID, error) {
+	return poolResourceIDs(ctx, s.pool, s.orgID, poolID)
+}
+
+func poolResourceIDs(ctx context.Context, q querier, orgID string, poolID int64) ([]uuid.UUID, error) {
+	rows, err := q.Query(ctx, `SELECT id FROM discovered_resources WHERE organization_id = $1 AND pool_id = $2`, orgID, poolID)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 }
 
 func (s *Store) UnlinkResource(ctx context.Context, resourceID uuid.UUID) error {

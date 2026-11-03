@@ -238,6 +238,10 @@ func (d *DiscoveryServer) handleLink(w http.ResponseWriter, r *http.Request, id 
 		}
 
 		if err := d.srv.linkResource(r.Context(), d.store, id, body.PoolID); err != nil {
+			if errors.Is(err, errLinkPoolGone) {
+				d.srv.writeErr(r.Context(), w, http.StatusNotFound, "pool not found", "")
+				return
+			}
 			if errors.Is(err, storage.ErrNotFound) {
 				d.srv.writeErr(r.Context(), w, http.StatusNotFound, "resource not found", "")
 				return

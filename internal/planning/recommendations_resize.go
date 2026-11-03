@@ -126,7 +126,7 @@ func (s *RecommendationService) applyResize(ctx context.Context, rec *domain.Rec
 		if err := checkShrink(pools, rec.PoolID, rec.Metadata["current_cidr"], target); err != nil {
 			return err
 		}
-		if err := s.rejectLinked(work, rec.PoolID); err != nil {
+		if err := s.rejectLinked(work, ps, rec.PoolID); err != nil {
 			return err
 		}
 		if _, found, err := ps.UpdatePoolCIDR(work, rec.PoolID, target.String()); err != nil {

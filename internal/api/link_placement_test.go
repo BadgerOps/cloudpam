@@ -59,3 +59,52 @@ func TestLinkResource_WaitsForThePlacementGuard(t *testing.T) {
 		t.Fatalf("resource %+v err=%v, want linked to pool %d", got, err, pool.ID)
 	}
 }
+
+// A reclaim or consolidation can delete the pool while a link request waits for the guard, so the
+// link must recheck the pool under the guard instead of linking to the deleted one.
+func TestLinkResource_RejectsAPoolDeletedWhileWaiting(t *testing.T) {
+	d, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := createRootPool(t, d.srv, "10.6.0.0/16")
+	res := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, "vpc-1", "10.6.0.0/16", nil)
+	upsertDiscoveredForImportTest(t, ds, res)
+
+	release := make(chan struct{})
+	held := make(chan struct{})
+	holder := make(chan error, 1)
+	go func() {
+		holder <- d.srv.WithPlacement(context.Background(), func(work context.Context, ps storage.PlacementStore) error {
+			close(held)
+			<-release
+			_, err := ps.DeletePool(work, pool.ID)
+			return err
+		})
+	}()
+	<-held
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/discovery/resources/"+res.ID.String()+"/link", strings.NewReader(`{"pool_id":`+strconv.FormatInt(pool.ID, 10)+`}`))
+		req.Header.Set("Content-Type", "application/json")
+		d.srv.mux.ServeHTTP(rr, req)
+		done <- rr
+	}()
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	if err := <-holder; err != nil {
+		t.Fatalf("delete under the guard: %v", err)
+	}
+
+	rr := <-done
+	if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), "pool not found") {
+		t.Fatalf("link to a pool deleted while it waited = %d %s, want 404 pool not found", rr.Code, rr.Body.String())
+	}
+	got, err := ds.GetDiscoveredResource(t.Context(), res.ID)
+	if err != nil || got.PoolID != nil {
+		t.Fatalf("resource %+v err=%v, want it left unlinked", got, err)
+	}
+}

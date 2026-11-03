@@ -146,6 +146,19 @@ func (m *MemoryDiscoveryStore) LinkResourceToPool(_ context.Context, resourceID 
 	return nil
 }
 
+func (m *MemoryDiscoveryStore) PoolResourceIDs(_ context.Context, poolID int64) ([]uuid.UUID, error) {
+	m.store.mu.RLock()
+	defer m.store.mu.RUnlock()
+
+	var ids []uuid.UUID
+	for id, r := range m.resources {
+		if r.PoolID != nil && *r.PoolID == poolID {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 func (m *MemoryDiscoveryStore) UnlinkResource(_ context.Context, resourceID uuid.UUID) error {
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()

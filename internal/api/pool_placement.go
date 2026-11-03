@@ -130,12 +130,21 @@ func (s *Server) WithPlacement(ctx context.Context, fn func(work context.Context
 	}))
 }
 
-// linkResource links a discovered resource to an existing pool under the placement guard.
-// Reclaim and resize read a pool's links under the same guard, so a link cannot land between
-// their check and their write.
+// errLinkPoolGone reports that the pool a resource was being linked to was deleted before the
+// link got the placement guard.
+var errLinkPoolGone = errors.New("pool not found")
+
+// linkResource links a discovered resource to a live pool under the placement guard, which reclaim,
+// resize and consolidation also hold while they read or move a pool's links. The pool is rechecked
+// under the guard because one of them may have deleted it while this request waited.
 func (s *Server) linkResource(ctx context.Context, ds storage.DiscoveryStore, resourceID uuid.UUID, poolID int64) error {
-	return s.WithPlacement(ctx, func(work context.Context, _ storage.PlacementStore) error {
-		return ds.LinkResourceToPool(work, resourceID, poolID)
+	return s.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		if _, found, err := ps.GetPool(work, poolID); err != nil {
+			return err
+		} else if !found {
+			return fmt.Errorf("pool %d: %w", poolID, errLinkPoolGone)
+		}
+		return storage.LinksIn(ps, ds).LinkResourceToPool(work, resourceID, poolID)
 	})
 }
 
