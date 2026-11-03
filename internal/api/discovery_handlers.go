@@ -1194,12 +1194,6 @@ func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID i
 			resp.Skipped++
 			continue
 		}
-		if _, err := netip.ParsePrefix(res.CIDR); err != nil {
-			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: invalid CIDR %q", res.ResourceID, res.CIDR))
-			resp.Skipped++
-			continue
-		}
-
 		poolType := domain.PoolTypeSubnet
 		if res.ResourceType == domain.ResourceTypeVPC {
 			poolType = domain.PoolTypeVPC
