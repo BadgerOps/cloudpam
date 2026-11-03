@@ -774,7 +774,7 @@ Useful Graphēon reference points in `~/code/grapheon`:
 - Improve long-running task feedback for discovery, drift, updates, and AI/provider validation
 
 **Deliverables**:
-- [ ] Dashboard redesign with higher-signal stat cards and quick actions
+- [x] Dashboard redesign with higher-signal stat cards and quick actions — `DashboardPage` leads with a "Needs attention" grid (utilization, open drift, pending recommendations, compliance findings, latest sync per account, version) on the `MetricCard` primitive, each card linking into its workflow (#310)
 - [ ] Config/operations surfaces modeled more closely on Graphēon's `Config.jsx`
 - [ ] Identity/provider admin flows modeled more closely on Graphēon's `AuthAdmin.jsx`
 - [ ] Explicit progress, success, and failure states for background operations

@@ -100,6 +100,9 @@ func (ds *DriftServer) handleList(w http.ResponseWriter, r *http.Request) {
 		ds.srv.writeStoreErr(r.Context(), w, err)
 		return
 	}
+	if items == nil {
+		items = []domain.DriftItem{}
+	}
 
 	page, pageSize := filters.Page, filters.PageSize
 

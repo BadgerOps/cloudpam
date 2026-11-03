@@ -877,6 +877,28 @@ export interface ApplyPlanResponse {
   pool_map: Record<string, number>
 }
 
+// --- Compliance types ---
+
+export type ComplianceSeverity = 'error' | 'warning' | 'info'
+
+export interface ComplianceViolation {
+  rule_id: string
+  severity: ComplianceSeverity
+  pool_id: number
+  pool_name: string
+  cidr?: string
+  message: string
+  remediation?: string
+}
+
+export interface ComplianceReport {
+  total_checks: number
+  passed: number
+  failed: number
+  warnings: number
+  violations: ComplianceViolation[] | null
+}
+
 // --- Drift detection types ---
 
 export type DriftType = 'unmanaged' | 'cidr_mismatch' | 'orphaned_pool' | 'name_mismatch' | 'account_drift'

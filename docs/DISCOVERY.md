@@ -970,6 +970,14 @@ curl -X DELETE http://localhost:8080/api/v1/discovery/resources/{resource-uuid}/
 curl 'http://localhost:8080/api/v1/discovery/sync?account_id=1&limit=10'
 ```
 
+### List Each Account's Latest Sync Job
+
+Returns one job per account that has synced at least once, in a single response. The dashboard uses it to show sync health for every account without one request per account.
+
+```bash
+curl http://localhost:8080/api/v1/discovery/sync/latest
+```
+
 ### Get Sync Job Details
 
 ```bash

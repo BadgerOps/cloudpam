@@ -791,7 +791,10 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 	case "/api/v1/discovery/sync":
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/discovery/sync")
 	case "/api/v1/discovery/sync/":
-		return routesForMethodPath(http.MethodGet, "/api/v1/discovery/sync/{syncJobId}")
+		return routesForKnown([][2]string{
+			{http.MethodGet, "/api/v1/discovery/sync/latest"},
+			{http.MethodGet, "/api/v1/discovery/sync/{syncJobId}"},
+		})
 	case "/api/v1/discovery/ingest":
 		return routesForMethodPath(http.MethodPost, "/api/v1/discovery/ingest")
 	case "/api/v1/discovery/ingest/org":
@@ -1070,6 +1073,7 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "POST", Path: "/api/v1/discovery/import/apply", Summary: "Apply selected discovery import", Description: "A subnet goes under the pool created or linked for its VPC in the same request, before the parent the preview proposed. A resource whose proposed parent does not contain it is blocked by the preview with an outside_pool issue and only counted in skipped; a forced item that still fails placement, or a created pool that overlaps a pool with the same parent, is reported in errors and skipped. If a newly created parent cannot be linked, its descendants are skipped and the failed subtree is removed. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Discovery", RequestSchema: "DiscoveryImportApplyRequest", ResponseSchema: "DiscoveryImportApplyResponse"},
 		{Method: "GET", Path: "/api/v1/discovery/sync", Summary: "List discovery sync jobs", Tag: "Discovery", ResponseSchema: "SyncJobsResponse", Parameters: []openAPIParameter{queryParam("account_id", "Account ID", "integer"), queryParam("limit", "Maximum jobs to return", "integer")}},
 		{Method: "POST", Path: "/api/v1/discovery/sync", Summary: "Trigger discovery sync", Tag: "Discovery", RequestSchema: "SyncRequest", ResponseSchema: "Object"},
+		{Method: "GET", Path: "/api/v1/discovery/sync/latest", Summary: "List each account's latest discovery sync job", Tag: "Discovery", ResponseSchema: "SyncJobsResponse"},
 		{Method: "GET", Path: "/api/v1/discovery/sync/{syncJobId}", Summary: "Get discovery sync job", Tag: "Discovery", ResponseSchema: "SyncJob"},
 		{Method: "POST", Path: "/api/v1/discovery/ingest", Summary: "Ingest agent discovery resources", Tag: "Discovery", RequestSchema: "IngestRequest", ResponseSchema: "IngestResponse"},
 		{Method: "POST", Path: "/api/v1/discovery/ingest/org", Summary: "Ingest AWS Organizations resources", Tag: "Discovery", RequestSchema: "BulkIngestRequest", ResponseSchema: "BulkIngestResponse"},

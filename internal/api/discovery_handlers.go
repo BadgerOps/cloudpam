@@ -1571,7 +1571,8 @@ func (d *DiscoveryServer) listSyncJobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, domain.SyncJobsResponse{Items: jobs})
 }
 
-// handleSyncSubroutes handles GET /api/v1/discovery/sync/{id}
+// handleSyncSubroutes handles GET /api/v1/discovery/sync/latest and
+// GET /api/v1/discovery/sync/{id}
 func (d *DiscoveryServer) handleSyncSubroutes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -1580,6 +1581,10 @@ func (d *DiscoveryServer) handleSyncSubroutes(w http.ResponseWriter, r *http.Req
 	}
 
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/discovery/sync/")
+	if idStr == "latest" {
+		d.listLatestSyncJobs(w, r)
+		return
+	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid sync job id", "")
@@ -1596,6 +1601,27 @@ func (d *DiscoveryServer) handleSyncSubroutes(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+// listLatestSyncJobs returns each account's most recent sync job in one
+// response, so a fleet-wide view costs one request instead of one per account
+// against the global rate limiter. Accounts that never synced are omitted.
+func (d *DiscoveryServer) listLatestSyncJobs(w http.ResponseWriter, r *http.Request) {
+	accounts, err := d.srv.store.ListAccounts(r.Context())
+	if err != nil {
+		d.srv.writeStoreErr(r.Context(), w, err)
+		return
+	}
+	jobs := []domain.SyncJob{}
+	for _, account := range accounts {
+		latest, err := d.store.ListSyncJobs(r.Context(), account.ID, 1)
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list sync jobs failed", err.Error())
+			return
+		}
+		jobs = append(jobs, latest...)
+	}
+	writeJSON(w, http.StatusOK, domain.SyncJobsResponse{Items: jobs})
 }
 
 // protectedResourcesSubroutes returns a handler for /api/v1/discovery/resources/ with RBAC.
