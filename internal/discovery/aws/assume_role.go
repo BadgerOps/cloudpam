@@ -19,15 +19,16 @@ func AssumeRole(ctx context.Context, accountID, roleName, externalID string) (aw
 		return nil, fmt.Errorf("load aws config: %w", err)
 	}
 
-	stsClient := sts.NewFromConfig(cfg)
+	return newAssumeRoleProvider(sts.NewFromConfig(cfg), roleARN, externalID, ""), nil
+}
 
-	var opts []func(*stscreds.AssumeRoleOptions)
-	if externalID != "" {
-		opts = append(opts, func(o *stscreds.AssumeRoleOptions) {
-			o.ExternalID = &externalID
-		})
-	}
-
-	provider := stscreds.NewAssumeRoleProvider(stsClient, roleARN, opts...)
-	return provider, nil
+func newAssumeRoleProvider(client stscreds.AssumeRoleAPIClient, roleARN, externalID, sessionName string) *stscreds.AssumeRoleProvider {
+	return stscreds.NewAssumeRoleProvider(client, roleARN, func(o *stscreds.AssumeRoleOptions) {
+		if externalID != "" {
+			o.ExternalID = aws.String(externalID)
+		}
+		if sessionName != "" {
+			o.RoleSessionName = sessionName
+		}
+	})
 }

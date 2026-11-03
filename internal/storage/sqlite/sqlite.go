@@ -633,6 +633,7 @@ func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
 		return false, fmt.Errorf("account in use by pools: %w", storage.ErrConflict)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	// account_credentials_drop_on_account_soft_delete removes the stored credential.
 	res, err := s.db.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
 	if err != nil {
 		return false, err
@@ -691,7 +692,7 @@ func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error
 			return false, err
 		}
 	}
-	// Soft-delete account
+	// Soft-delete account; account_credentials_drop_on_account_soft_delete removes the stored credential.
 	if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id); err != nil {
 		return false, err
 	}

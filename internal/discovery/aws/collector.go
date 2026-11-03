@@ -52,6 +52,7 @@ type Collector struct {
 	credsProvider aws.CredentialsProvider
 	loadConfig    func(context.Context, string, aws.CredentialsProvider) (aws.Config, error)
 	newEC2Client  func(aws.Config) ec2API
+	newSTSClient  func(aws.Config) stsAPI
 }
 
 type ec2API interface {
