@@ -63,6 +63,7 @@ config:
   CLOUDPAM_OIDC_CALLBACK_URL: ""     # none
 
   # Audit events as CEF over syslog. On when CLOUDPAM_AUDIT_SYSLOG_ADDR is set.
+  # vector.enabled sets ADDR and NETWORK to the sidecar; leave them empty then.
   CLOUDPAM_AUDIT_SYSLOG_ADDR: ""     # host:port
   CLOUDPAM_AUDIT_SYSLOG_NETWORK: ""  # udp (udp or tcp; no TLS)
   CLOUDPAM_AUDIT_SYSLOG_APP_NAME: "" # cloudpam
@@ -92,6 +93,12 @@ config:
   # limiting at the ingress.
   RATE_LIMIT_RPS: ""                 # 100
   RATE_LIMIT_BURST: ""               # 200
+
+  # Cap on discovery API calls per second to each cloud provider, shared by
+  # every sync of that provider. Set it when a large estate hits EC2 or
+  # Compute API throttling. 0 is unlimited.
+  CLOUDPAM_DISCOVERY_AWS_RPS: ""     # 0
+  CLOUDPAM_DISCOVERY_GCP_RPS: ""     # 0
 
   # Sentry. The DSN lives under secrets.
   SENTRY_ENVIRONMENT: ""             # production
@@ -198,3 +205,44 @@ extraVolumes: []
 
 # Extra volume mounts
 extraVolumeMounts: []
+
+# Vector sidecar for audit events. Enabling it sets CLOUDPAM_AUDIT_SYSLOG_ADDR
+# to 127.0.0.1:5514 and CLOUDPAM_AUDIT_SYSLOG_NETWORK to tcp, so leave both
+# empty under config. Each audit event reaches Vector as CEF in an RFC 5424
+# syslog record. It runs as a native sidecar, which needs Kubernetes 1.29 or
+# later. Application logs are JSON on the server's stdout and do not pass
+# through the sidecar; collect them with a node agent such as
+# deploy/k8s/vector-daemonset.yaml.
+vector:
+  enabled: false
+  image:
+    repository: timberio/vector
+    tag: 0.59.0-alpine
+    pullPolicy: IfNotPresent
+  # Holds the server back until the sidecar accepts connections on its syslog
+  # listener; the server drops an audit event it cannot deliver. The default
+  # runs busybox nc, so an image without it (the distroless tags) needs a
+  # different probe here.
+  startupProbe:
+    exec:
+      command: ["nc", "-z", "-w", "1", "127.0.0.1", "5514"]
+    periodSeconds: 1
+    failureThreshold: 60
+  # Vector TOML config. Empty uses files/vector.toml, which parses the CEF into
+  # .cef and prints each event as JSON on the sidecar's stdout. A config of
+  # your own must keep that file's syslog source (tcp on 127.0.0.1:5514) and
+  # adds the sinks, for example splunk_hec_logs or aws_cloudwatch_logs.
+  config: ""
+  # Raw env entries for the sidecar, for sink credentials, for example
+  #   - name: SPLUNK_HEC_TOKEN
+  #     valueFrom:
+  #       secretKeyRef: {name: splunk-hec, key: token}
+  # and reference them in config as "${SPLUNK_HEC_TOKEN}".
+  env: []
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 20m
+      memory: 64Mi

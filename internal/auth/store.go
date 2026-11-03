@@ -115,19 +115,7 @@ func (s *MemoryKeyStore) List(_ context.Context) ([]*APIKey, error) {
 
 	result := make([]*APIKey, 0, len(s.keys))
 	for _, key := range s.keys {
-		// Return copy without hash/salt for security
-		k := &APIKey{
-			ID:         key.ID,
-			Prefix:     key.Prefix,
-			Name:       key.Name,
-			Scopes:     append([]string(nil), key.Scopes...),
-			OwnerID:    key.OwnerID,
-			CreatedAt:  key.CreatedAt,
-			ExpiresAt:  key.ExpiresAt,
-			LastUsedAt: key.LastUsedAt,
-			Revoked:    key.Revoked,
-		}
-		result = append(result, k)
+		result = append(result, copyWithoutSecrets(key))
 	}
 
 	return result, nil
@@ -184,24 +172,21 @@ func (s *MemoryKeyStore) ListByOwner(_ context.Context, ownerID string) ([]*APIK
 	var result []*APIKey
 	for _, key := range s.keys {
 		if key.OwnerID != nil && *key.OwnerID == ownerID {
-			k := &APIKey{
-				ID:         key.ID,
-				Prefix:     key.Prefix,
-				Name:       key.Name,
-				Scopes:     append([]string(nil), key.Scopes...),
-				OwnerID:    key.OwnerID,
-				CreatedAt:  key.CreatedAt,
-				ExpiresAt:  key.ExpiresAt,
-				LastUsedAt: key.LastUsedAt,
-				Revoked:    key.Revoked,
-			}
-			result = append(result, k)
+			result = append(result, copyWithoutSecrets(key))
 		}
 	}
 	if result == nil {
 		result = []*APIKey{}
 	}
 	return result, nil
+}
+
+// copyWithoutSecrets is the list shape: a deep copy with no hash or salt.
+func copyWithoutSecrets(key *APIKey) *APIKey {
+	dup := copyAPIKey(key)
+	dup.Hash = nil
+	dup.Salt = nil
+	return dup
 }
 
 // copyAPIKey creates a deep copy of an APIKey.
@@ -244,7 +229,17 @@ func copyAPIKey(key *APIKey) *APIKey {
 		dup.LastUsedAt = &t
 	}
 
+	dup.RateLimit = copyRateLimit(key.RateLimit)
+
 	return dup
+}
+
+func copyRateLimit(l *RateLimit) *RateLimit {
+	if l == nil {
+		return nil
+	}
+	dup := *l
+	return &dup
 }
 
 func copyBytes(dst, src []byte) {

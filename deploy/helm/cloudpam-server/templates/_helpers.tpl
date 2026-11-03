@@ -84,9 +84,16 @@ Get the secret name
 {{- if eq .Values.storage.backend "sqlite" -}}
 {{- $_ := set $env "SQLITE_DSN" .Values.storage.sqlite.dsn -}}
 {{- end -}}
+{{- if .Values.vector.enabled -}}
+{{- $_ := set $env "CLOUDPAM_AUDIT_SYSLOG_ADDR" (include "cloudpam-server.vectorSyslogAddr" .) -}}
+{{- $_ := set $env "CLOUDPAM_AUDIT_SYSLOG_NETWORK" "tcp" -}}
+{{- end -}}
 {{- range $name, $value := .Values.config -}}
 {{- if has $name (list "ADDR" "PORT" "APP_VERSION" "SQLITE_DSN") -}}
 {{- fail (printf "config.%s is set by the chart (image.tag, storage.sqlite.dsn, the fixed port 8080)" $name) -}}
+{{- end -}}
+{{- if and $.Values.vector.enabled (has $name (list "CLOUDPAM_AUDIT_SYSLOG_ADDR" "CLOUDPAM_AUDIT_SYSLOG_NETWORK")) (include "cloudpam-server.envString" $value) -}}
+{{- fail (printf "config.%s is set by the chart while vector.enabled sends audit events to the sidecar; leave it empty, or disable vector to forward straight to your syslog server" $name) -}}
 {{- end -}}
 {{- if regexMatch (include "cloudpam-server.secretNamePattern" $) $name -}}
 {{- fail (printf "config.%s looks like a credential; set secrets.%s instead" $name $name) -}}
@@ -114,6 +121,19 @@ Get the secret name
 {{- end }}true
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{/* The sidecar's audit listener. files/vector.toml listens on the same address. */}}
+{{- define "cloudpam-server.vectorSyslogAddr" -}}
+127.0.0.1:5514
+{{- end }}
+
+{{- define "cloudpam-server.vectorConfig" -}}
+{{- $config := .Values.vector.config | default (.Files.Get "files/vector.toml") -}}
+{{- if not (contains (include "cloudpam-server.vectorSyslogAddr" .) $config) -}}
+{{- fail (printf "vector.config must keep a syslog source in tcp mode on %s, where the server sends audit events" (include "cloudpam-server.vectorSyslogAddr" .)) -}}
+{{- end -}}
+{{- $config -}}
 {{- end }}
 
 {{- define "cloudpam-server.validateStorage" -}}

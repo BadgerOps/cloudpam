@@ -1,0 +1,319 @@
+package api
+
+import (
+	"context"
+	"log/slog"
+	"math"
+	"net/http"
+	"os"
+	"strconv"
+	"sync"
+	"time"
+
+	"cloudpam/internal/auth"
+
+	"golang.org/x/time/rate"
+)
+
+// RateLimitConfig is the server-wide token bucket limit. It is the same shape
+// an API key stores as its own limit.
+type RateLimitConfig = auth.RateLimit
+
+// DefaultRateLimitConfig returns the default rate limiting configuration.
+// It reads RATE_LIMIT_RPS and RATE_LIMIT_BURST from environment variables,
+// falling back to 100 RPS and 200 burst if not set.
+func DefaultRateLimitConfig() RateLimitConfig {
+	rps := defaultRateLimitRPS
+	burst := defaultRateLimitBurst
+
+	if v := os.Getenv("RATE_LIMIT_RPS"); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 64); err == nil && parsed > 0 {
+			rps = parsed
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_BURST"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			burst = parsed
+		}
+	}
+
+	return RateLimitConfig{
+		RequestsPerSecond: rps,
+		Burst:             burst,
+	}
+}
+
+// bucketKey names one token bucket. The prefix keeps an API key id, a user
+// id and an address from ever naming the same bucket.
+type bucketKey string
+
+func ipBucket(host string) bucketKey { return bucketKey("ip:" + host) }
+
+// credentialBucket is an address's budget for credential-bearing requests
+// that authentication rejects. It is separate from ipBucket so anonymous
+// traffic from a shared address (a reverse proxy) cannot lock out principals
+// whose own buckets are untouched.
+func credentialBucket(host string) bucketKey { return bucketKey("cred:" + host) }
+func apiKeyBucket(id string) bucketKey       { return bucketKey("key:" + id) }
+func userBucket(id string) bucketKey         { return bucketKey("user:" + id) }
+
+type bucket struct {
+	limiter  *rate.Limiter
+	limit    auth.RateLimit
+	lastSeen time.Time
+	// held counts tokens reserved by credential-bearing requests whose
+	// principal is not yet known. They are unavailable to anyone else until
+	// the request settles.
+	held int
+}
+
+// rateLimiter owns every bucket. A bucket is rebuilt when its limit changes
+// and dropped once it has gone rateLimiterVisitorTTL without a request and
+// refilled to its burst, so dropping it never hands out tokens it had not
+// earned back.
+type rateLimiter struct {
+	defaults RateLimitConfig
+	logger   *slog.Logger
+
+	mu        sync.Mutex
+	buckets   map[bucketKey]*bucket
+	lastSweep time.Time
+}
+
+func newRateLimiter(defaults RateLimitConfig, logger *slog.Logger) *rateLimiter {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &rateLimiter{defaults: defaults, logger: logger, buckets: make(map[bucketKey]*bucket)}
+}
+
+// bucketLocked returns key's bucket under limit. The caller holds l.mu.
+func (l *rateLimiter) bucketLocked(now time.Time, key bucketKey, limit auth.RateLimit) *bucket {
+	b, ok := l.buckets[key]
+	if !ok || b.limit != limit {
+		b = &bucket{limiter: rate.NewLimiter(rate.Limit(limit.RequestsPerSecond), limit.Burst), limit: limit}
+		l.buckets[key] = b
+	}
+	b.lastSeen = now
+
+	if l.lastSweep.IsZero() || now.Sub(l.lastSweep) > minimumCleanupInterval {
+		for k, stale := range l.buckets {
+			if stale.held == 0 && now.Sub(stale.lastSeen) > rateLimiterVisitorTTL &&
+				stale.limiter.TokensAt(now) >= float64(stale.limit.Burst) {
+				delete(l.buckets, k)
+			}
+		}
+		l.lastSweep = now
+	}
+	return b
+}
+
+// available is the tokens nobody has taken or reserved. The caller holds l.mu.
+func (b *bucket) available(now time.Time) float64 {
+	return b.limiter.TokensAt(now) - float64(b.held)
+}
+
+// decision is one bucket's answer for one request.
+type decision struct {
+	allowed   bool
+	limit     auth.RateLimit
+	remaining int
+	resetAt   time.Time
+}
+
+func newDecision(now time.Time, limit auth.RateLimit, allowed bool, available float64) decision {
+	return decision{
+		allowed:   allowed,
+		limit:     limit,
+		remaining: int(math.Max(0, math.Floor(available))),
+		resetAt:   now.Add(time.Duration(float64(time.Second) / limit.RequestsPerSecond)),
+	}
+}
+
+// take charges one token to key's bucket. A limit that is not enabled admits
+// everything and keeps no bucket.
+func (l *rateLimiter) take(now time.Time, key bucketKey, limit auth.RateLimit) decision {
+	if !limit.Enabled() {
+		return decision{allowed: true}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.bucketLocked(now, key, limit)
+	allowed := b.available(now) >= 1 && b.limiter.AllowN(now, 1)
+	return newDecision(now, limit, allowed, b.available(now))
+}
+
+// hold reserves one token in key's bucket for a request whose principal is
+// not yet known. The returned bucket is nil when nothing was reserved; pass
+// it to settle exactly once.
+func (l *rateLimiter) hold(now time.Time, key bucketKey, limit auth.RateLimit) (decision, *bucket) {
+	if !limit.Enabled() {
+		return decision{allowed: true}, nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.bucketLocked(now, key, limit)
+	if b.available(now) < 1 {
+		return newDecision(now, limit, false, b.available(now)), nil
+	}
+	b.held++
+	return newDecision(now, limit, true, b.available(now)), b
+}
+
+// settle ends a hold. With charge it spends the reserved token; without, it
+// returns the token to the bucket.
+func (l *rateLimiter) settle(b *bucket, charge bool) {
+	if b == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b.held--
+	if charge {
+		b.limiter.AllowN(time.Now(), 1)
+	}
+}
+
+func (d decision) retryAfterSeconds() int {
+	s := int(math.Ceil(1 / d.limit.RequestsPerSecond))
+	if s < 1 {
+		return 1
+	}
+	return s
+}
+
+// writeHeaders sets the X-RateLimit-* headers for the bucket that answered.
+func (d decision) writeHeaders(w http.ResponseWriter) {
+	if !d.limit.Enabled() {
+		return
+	}
+	w.Header().Set("X-RateLimit-Limit", strconv.FormatFloat(d.limit.RequestsPerSecond, 'f', -1, 64))
+	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(d.remaining))
+	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(d.resetAt.Unix(), 10))
+}
+
+func (l *rateLimiter) reject(w http.ResponseWriter, r *http.Request, key bucketKey, d decision) {
+	attrs := appendRequestID(r.Context(), []any{
+		"method", r.Method,
+		"path", r.URL.Path,
+		"status", http.StatusTooManyRequests,
+		"bucket", string(key),
+	})
+	l.logger.WarnContext(r.Context(), "rate limit exceeded", attrs...)
+	w.Header().Set("Retry-After", strconv.Itoa(d.retryAfterSeconds()))
+	writeJSON(w, http.StatusTooManyRequests, apiError{Error: "too many requests"})
+}
+
+// principalClaim is the outer limiter's hand-off for a request that carries
+// credentials. The request holds a token in its address's credential bucket
+// until the auth middleware charges the principal, which returns the token; a
+// request nobody claimed spends it, so a rejected credential still costs the
+// address.
+type principalClaim struct {
+	limiter *rateLimiter
+	ip      *bucket
+	settled bool
+}
+
+func (c *principalClaim) settle(chargeIP bool) {
+	if c.settled {
+		return
+	}
+	c.settled = true
+	c.limiter.settle(c.ip, chargeIP)
+}
+
+const principalClaimContextKey contextKey = "rateLimitClaim"
+
+// hasCredentials reports whether the request carries something the auth
+// middleware could turn into a principal.
+func hasCredentials(r *http.Request) bool {
+	if r.Header.Get("Authorization") != "" {
+		return true
+	}
+	c, err := r.Cookie("session")
+	return err == nil && c.Value != ""
+}
+
+// RateLimitMiddleware enforces a token bucket per principal. A request with
+// no credentials is charged to its client address. A request with
+// credentials is charged to the API key or user that the auth middleware
+// resolves, under the key's own limit when it has one; until then it holds a
+// token in the address's credential bucket, and pays it if the credential is
+// rejected. Anonymous requests never draw on the credential bucket, so they
+// cannot starve authenticated principals behind the same address. Every limited
+// response carries X-RateLimit-Limit, X-RateLimit-Remaining and
+// X-RateLimit-Reset, and a 429 carries Retry-After.
+//
+// With cfg disabled, addresses and users are not limited, but an API key with
+// its own limit still is.
+func RateLimitMiddleware(cfg RateLimitConfig, logger *slog.Logger) Middleware {
+	l := newRateLimiter(cfg, logger)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			now := time.Now()
+			ip := ipBucket(clientKey(r))
+
+			if !hasCredentials(r) {
+				d := l.take(now, ip, cfg)
+				d.writeHeaders(w)
+				if !d.allowed {
+					l.reject(w, r, ip, d)
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			cred := credentialBucket(clientKey(r))
+			d, held := l.hold(now, cred, cfg)
+			d.writeHeaders(w)
+			if !d.allowed {
+				l.reject(w, r, cred, d)
+				return
+			}
+			claim := &principalClaim{limiter: l, ip: held}
+			defer claim.settle(true)
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalClaimContextKey, claim)))
+		})
+	}
+}
+
+// allowPrincipal charges the authenticated principal's bucket and writes 429
+// when it is empty. It reports whether the request may proceed. Without a
+// claim in the context there is no limiter in front of this handler, and the
+// request proceeds.
+func allowPrincipal(w http.ResponseWriter, r *http.Request) bool {
+	claim, _ := r.Context().Value(principalClaimContextKey).(*principalClaim)
+	if claim == nil {
+		return true
+	}
+	key, limit, ok := principalBucket(r.Context(), claim.limiter.defaults)
+	if !ok {
+		return true
+	}
+	claim.settle(false)
+	d := claim.limiter.take(time.Now(), key, limit)
+	d.writeHeaders(w)
+	if !d.allowed {
+		claim.limiter.reject(w, r, key, d)
+		return false
+	}
+	return true
+}
+
+// principalBucket names the bucket an authenticated request is charged to
+// and the limit it runs under.
+func principalBucket(ctx context.Context, defaults RateLimitConfig) (bucketKey, auth.RateLimit, bool) {
+	if k := auth.APIKeyFromContext(ctx); k != nil {
+		if k.RateLimit != nil {
+			return apiKeyBucket(k.ID), *k.RateLimit, true
+		}
+		return apiKeyBucket(k.ID), defaults, true
+	}
+	if s := auth.SessionFromContext(ctx); s != nil {
+		return userBucket(s.UserID), defaults, true
+	}
+	return "", auth.RateLimit{}, false
+}

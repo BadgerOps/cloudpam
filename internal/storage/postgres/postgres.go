@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
@@ -97,19 +98,20 @@ func (s *Store) Stats() *storage.DBStats {
 
 const poolColumns = `seq_id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at`
 
-func scanPool(row pgx.Row) (domain.Pool, bool, error) {
+// scanPool scans the poolColumnsWithParentAccount columns, then any extra columns into extra.
+func scanPool(row pgx.Row, extra ...any) (domain.Pool, bool, error) {
 	var p domain.Pool
 	var parentSeq, accountSeq *int64
 	var tagsJSON []byte
 	var createdAt, updatedAt time.Time
 
-	err := row.Scan(
+	err := row.Scan(append([]any{
 		&p.ID, &p.Name, &p.CIDR,
 		&parentSeq, &accountSeq,
 		&p.Type, &p.Status, &p.Source,
 		&p.Description, &tagsJSON,
 		&createdAt, &updatedAt,
-	)
+	}, extra...)...)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return domain.Pool{}, false, nil
@@ -427,7 +429,14 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 }
 
 func (s *Store) UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error) {
-	return updatePoolCIDR(ctx, s.pool, s.orgID, id, cidr)
+	var p domain.Pool
+	var found bool
+	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
+		var err error
+		p, found, err = updatePoolCIDR(work, tx, s.orgID, id, cidr)
+		return err
+	})
+	return p, found, err
 }
 
 func updatePoolCIDR(ctx context.Context, q execQuerier, orgID string, id int64, cidr string) (domain.Pool, bool, error) {
@@ -447,11 +456,16 @@ func updatePoolCIDR(ctx context.Context, q execQuerier, orgID string, id int64, 
 }
 
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
-	return deletePool(ctx, s.pool, s.orgID, id)
+	var deleted bool
+	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
+		var err error
+		deleted, err = deletePool(work, tx, s.orgID, id)
+		return err
+	})
+	return deleted, err
 }
 
 func deletePool(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
-	// Check for children
 	var childCount int
 	err := q.QueryRow(ctx, `
 		SELECT COUNT(*) FROM pools
@@ -474,14 +488,23 @@ func deletePool(ctx context.Context, q execQuerier, orgID string, id int64) (boo
 }
 
 func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
-	// Use recursive CTE to find all descendants, then soft-delete all
-	tag, err := s.pool.Exec(ctx, `
+	var deleted bool
+	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
+		var err error
+		deleted, err = deletePoolCascade(work, tx, s.orgID, id)
+		return err
+	})
+	return deleted, err
+}
+
+func deletePoolCascade(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
+	tag, err := q.Exec(ctx, `
 		WITH RECURSIVE subtree AS (
 			SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL
 			UNION ALL
 			SELECT p.id FROM pools p JOIN subtree s ON p.parent_id = s.id WHERE p.deleted_at IS NULL
 		)
-		UPDATE pools SET deleted_at = NOW() WHERE id IN (SELECT id FROM subtree)`, id, s.orgID)
+		UPDATE pools SET deleted_at = NOW() WHERE id IN (SELECT id FROM subtree)`, id, orgID)
 	if err != nil {
 		return false, err
 	}
@@ -766,18 +789,19 @@ func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
 	return out, rows.Err()
 }
 
-func scanAccount(rows pgx.Rows) (domain.Account, error) {
+// scanAccount scans the accountColumns columns, then any extra columns into extra.
+func scanAccount(rows pgx.Rows, extra ...any) (domain.Account, error) {
 	var a domain.Account
 	var provider, externalID, description, platform, tier, environment *string
 	var regionsJSON []byte
 	var createdAt, updatedAt time.Time
 
-	if err := rows.Scan(
+	if err := rows.Scan(append([]any{
 		&a.ID, &a.Key, &a.Name,
 		&provider, &externalID, &description,
 		&platform, &tier, &environment,
 		&regionsJSON, &createdAt, &updatedAt,
-	); err != nil {
+	}, extra...)...); err != nil {
 		return domain.Account{}, err
 	}
 
@@ -900,39 +924,50 @@ func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Accou
 }
 
 func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
-	// Check for pools referencing this account
-	var poolCount int
-	err := s.pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM pools
-		WHERE account_id = (SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2)
-		  AND deleted_at IS NULL`, id, s.orgID).Scan(&poolCount)
-	if err != nil {
-		return false, err
-	}
-	if poolCount > 0 {
-		return false, fmt.Errorf("account in use by pools: %w", storage.ErrConflict)
-	}
-
-	// account_credentials_drop_on_account_soft_delete removes the stored credential.
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE accounts SET deleted_at = NOW()
-		WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID)
-	if err != nil {
-		return false, err
-	}
-	return tag.RowsAffected() > 0, nil
+	var deleted bool
+	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
+		var poolCount int
+		if err := tx.QueryRow(work, `
+			SELECT COUNT(*) FROM pools
+			WHERE account_id = (SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2)
+			  AND deleted_at IS NULL`, id, s.orgID).Scan(&poolCount); err != nil {
+			return err
+		}
+		if poolCount > 0 {
+			return fmt.Errorf("account in use by pools: %w", storage.ErrConflict)
+		}
+		// account_credentials_drop_on_account_soft_delete removes the stored credential.
+		tag, err := tx.Exec(work, `
+			UPDATE accounts SET deleted_at = NOW()
+			WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID)
+		deleted = err == nil && tag.RowsAffected() > 0
+		return err
+	})
+	return deleted, err
 }
 
 func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
-	// Get account UUID
+	var deleted bool
+	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
+		var err error
+		deleted, err = deleteAccountCascade(work, tx, s.orgID, id)
+		return err
+	})
+	return deleted, err
+}
+
+func deleteAccountCascade(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
 	var accountUUID string
-	err := s.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID).Scan(&accountUUID)
+	err := q.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, orgID).Scan(&accountUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		return false, nil // not found
+		return false, err
 	}
 
 	// Soft-delete pools linked to this account and their descendants
-	_, err = s.pool.Exec(ctx, `
+	_, err = q.Exec(ctx, `
 		WITH RECURSIVE pool_tree AS (
 			SELECT id FROM pools WHERE account_id = $1 AND deleted_at IS NULL
 			UNION ALL
@@ -944,7 +979,7 @@ func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error
 	}
 
 	// Soft-delete the account; account_credentials_drop_on_account_soft_delete removes the stored credential.
-	tag, err := s.pool.Exec(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, accountUUID)
+	tag, err := q.Exec(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, accountUUID)
 	if err != nil {
 		return false, err
 	}

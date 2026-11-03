@@ -21,6 +21,7 @@ import (
 	"cloudpam/internal/cidr"
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
+	"cloudpam/internal/storage/sqlitedb"
 )
 
 type Store struct {
@@ -41,7 +42,7 @@ const (
 )
 
 func New(dsn string) (*Store, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -52,10 +53,6 @@ func New(dsn string) (*Store, error) {
 	db.SetConnMaxLifetime(time.Duration(envIntOrDefault("SQLITE_CONN_MAX_LIFETIME_SECS", defaultConnMaxLifetime)) * time.Second)
 	db.SetConnMaxIdleTime(time.Duration(envIntOrDefault("SQLITE_CONN_MAX_IDLE_SECS", defaultConnMaxIdleTime)) * time.Second)
 
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	if err := runMigrations(db); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -111,61 +108,7 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE deleted_at IS NULL ORDER BY id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []domain.Pool
-	for rows.Next() {
-		var p domain.Pool
-		var createdAt, updatedAt sql.NullString
-		var parent, account sql.NullInt64
-		var poolType, poolStatus, poolSource, description, tagsJSON sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &poolType, &poolStatus, &poolSource, &description, &tagsJSON, &createdAt, &updatedAt); err != nil {
-			return nil, err
-		}
-		if parent.Valid {
-			p.ParentID = &parent.Int64
-		}
-		if account.Valid {
-			p.AccountID = &account.Int64
-		}
-		// Set new fields with defaults
-		p.Type = domain.PoolTypeSubnet
-		if poolType.Valid && poolType.String != "" {
-			p.Type = domain.PoolType(poolType.String)
-		}
-		p.Status = domain.PoolStatusActive
-		if poolStatus.Valid && poolStatus.String != "" {
-			p.Status = domain.PoolStatus(poolStatus.String)
-		}
-		p.Source = domain.PoolSourceManual
-		if poolSource.Valid && poolSource.String != "" {
-			p.Source = domain.PoolSource(poolSource.String)
-		}
-		if description.Valid {
-			p.Description = description.String
-		}
-		if tagsJSON.Valid && tagsJSON.String != "" && tagsJSON.String != "{}" {
-			var tags map[string]string
-			if err := json.Unmarshal([]byte(tagsJSON.String), &tags); err == nil {
-				p.Tags = tags
-			}
-		}
-		if createdAt.Valid {
-			if t, e := time.Parse(time.RFC3339, createdAt.String); e == nil {
-				p.CreatedAt = t
-			}
-		}
-		if updatedAt.Valid {
-			if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-				p.UpdatedAt = t
-			}
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return s.queryPools(ctx, `WHERE deleted_at IS NULL ORDER BY id ASC`)
 }
 
 func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
@@ -235,54 +178,12 @@ func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Po
 }
 
 func (s *Store) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error) {
-	var p domain.Pool
-	var createdAt, updatedAt sql.NullString
-	var parent, account sql.NullInt64
-	var poolType, poolStatus, poolSource, description, tagsJSON sql.NullString
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE id=? AND deleted_at IS NULL`, id)
-	if err := row.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &poolType, &poolStatus, &poolSource, &description, &tagsJSON, &createdAt, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Pool{}, false, nil
-		}
+	p, err := scanPool(s.db.QueryRowContext(ctx, `SELECT `+poolColumns+` FROM pools WHERE id=? AND deleted_at IS NULL`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Pool{}, false, nil
+	}
+	if err != nil {
 		return domain.Pool{}, false, err
-	}
-	if parent.Valid {
-		p.ParentID = &parent.Int64
-	}
-	if account.Valid {
-		p.AccountID = &account.Int64
-	}
-	// Set new fields with defaults
-	p.Type = domain.PoolTypeSubnet
-	if poolType.Valid && poolType.String != "" {
-		p.Type = domain.PoolType(poolType.String)
-	}
-	p.Status = domain.PoolStatusActive
-	if poolStatus.Valid && poolStatus.String != "" {
-		p.Status = domain.PoolStatus(poolStatus.String)
-	}
-	p.Source = domain.PoolSourceManual
-	if poolSource.Valid && poolSource.String != "" {
-		p.Source = domain.PoolSource(poolSource.String)
-	}
-	if description.Valid {
-		p.Description = description.String
-	}
-	if tagsJSON.Valid && tagsJSON.String != "" && tagsJSON.String != "{}" {
-		var tags map[string]string
-		if err := json.Unmarshal([]byte(tagsJSON.String), &tags); err == nil {
-			p.Tags = tags
-		}
-	}
-	if createdAt.Valid {
-		if t, e := time.Parse(time.RFC3339, createdAt.String); e == nil {
-			p.CreatedAt = t
-		}
-	}
-	if updatedAt.Valid {
-		if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-			p.UpdatedAt = t
-		}
 	}
 	return p, true, nil
 }
@@ -377,114 +278,51 @@ func (s *Store) UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (doma
 }
 
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
-	// check children (only non-deleted)
-	var cnt int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
-		return false, err
-	}
-	if cnt > 0 {
-		return false, fmt.Errorf("pool has child pools: %w", storage.ErrConflict)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	var deleted bool
+	err := s.withWriteLock(ctx, func(c *sql.Conn) error {
+		var cnt int
+		if err := c.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE parent_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
+			return err
+		}
+		if cnt > 0 {
+			return fmt.Errorf("pool has child pools: %w", storage.ErrConflict)
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		res, err := c.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		deleted = n > 0
+		return nil
+	})
+	return deleted, err
 }
 
 func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
-	// Load all non-deleted pools, compute subtree, soft-delete
-	ps, err := s.ListPools(ctx)
-	if err != nil {
-		return false, err
-	}
-	exists := false
-	children := map[int64][]int64{}
-	for _, p := range ps {
-		if p.ID == id {
-			exists = true
-		}
-		if p.ParentID != nil {
-			children[*p.ParentID] = append(children[*p.ParentID], p.ID)
-		}
-	}
-	if !exists {
-		return false, nil
-	}
-	// BFS
-	queue := []int64{id}
-	order := []int64{}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		order = append(order, cur)
-		for _, ch := range children[cur] {
-			queue = append(queue, ch)
-		}
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, pid := range order {
-		_, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, pid)
+	var deleted bool
+	err := s.withWriteLock(ctx, func(c *sql.Conn) error {
+		now := time.Now().UTC().Format(time.RFC3339)
+		res, err := c.ExecContext(ctx, `
+			WITH RECURSIVE subtree(id) AS (
+				SELECT id FROM pools WHERE id=? AND deleted_at IS NULL
+				UNION
+				SELECT p.id FROM pools p JOIN subtree t ON p.parent_id = t.id WHERE p.deleted_at IS NULL
+			)
+			UPDATE pools SET deleted_at=?, updated_at=? WHERE id IN (SELECT id FROM subtree)`, id, now, now)
 		if err != nil {
-			return false, err
+			return err
 		}
-	}
-	return true, nil
+		n, _ := res.RowsAffected()
+		deleted = n > 0
+		return nil
+	})
+	return deleted, err
 }
 
 // Accounts
 func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE deleted_at IS NULL ORDER BY id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []domain.Account
-	for rows.Next() {
-		var a domain.Account
-		var ts string
-		var provider, extid, desc, platform, tier, env sql.NullString
-		var regions, updatedAt sql.NullString
-		if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
-			return nil, err
-		}
-		if provider.Valid {
-			a.Provider = provider.String
-		}
-		if extid.Valid {
-			a.ExternalID = extid.String
-		}
-		if desc.Valid {
-			a.Description = desc.String
-		}
-		if platform.Valid {
-			a.Platform = platform.String
-		}
-		if tier.Valid {
-			a.Tier = tier.String
-		}
-		if env.Valid {
-			a.Environment = env.String
-		}
-		if regions.Valid && regions.String != "" {
-			var arr []string
-			if err := json.Unmarshal([]byte(regions.String), &arr); err == nil {
-				a.Regions = arr
-			}
-		}
-		if t, e := time.Parse(time.RFC3339, ts); e == nil {
-			a.CreatedAt = t
-		}
-		if updatedAt.Valid {
-			if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-				a.UpdatedAt = t
-			}
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
+	return s.queryAccounts(ctx, `WHERE deleted_at IS NULL ORDER BY id ASC`)
 }
 
 func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error) {
@@ -509,95 +347,23 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
 }
 
 func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=? AND deleted_at IS NULL`, id)
-	var a domain.Account
-	var ts string
-	var provider, extid, desc, platform, tier, env sql.NullString
-	var regions, updatedAt sql.NullString
-	if err := row.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Account{}, false, nil
-		}
+	a, err := scanAccount(s.db.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM accounts WHERE id=? AND deleted_at IS NULL`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Account{}, false, nil
+	}
+	if err != nil {
 		return domain.Account{}, false, err
-	}
-	if provider.Valid {
-		a.Provider = provider.String
-	}
-	if extid.Valid {
-		a.ExternalID = extid.String
-	}
-	if desc.Valid {
-		a.Description = desc.String
-	}
-	if platform.Valid {
-		a.Platform = platform.String
-	}
-	if tier.Valid {
-		a.Tier = tier.String
-	}
-	if env.Valid {
-		a.Environment = env.String
-	}
-	if regions.Valid && regions.String != "" {
-		var arr []string
-		if err := json.Unmarshal([]byte(regions.String), &arr); err == nil {
-			a.Regions = arr
-		}
-	}
-	if t, e := time.Parse(time.RFC3339, ts); e == nil {
-		a.CreatedAt = t
-	}
-	if updatedAt.Valid {
-		if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-			a.UpdatedAt = t
-		}
 	}
 	return a, true, nil
 }
 
 func (s *Store) GetAccountByKey(ctx context.Context, key string) (*domain.Account, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE key=? AND deleted_at IS NULL`, key)
-	var a domain.Account
-	var ts string
-	var provider, extid, desc, platform, tier, env sql.NullString
-	var regions, updatedAt sql.NullString
-	if err := row.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, storage.ErrNotFound
-		}
+	a, err := scanAccount(s.db.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM accounts WHERE key=? AND deleted_at IS NULL`, key))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, storage.ErrNotFound
+	}
+	if err != nil {
 		return nil, err
-	}
-	if provider.Valid {
-		a.Provider = provider.String
-	}
-	if extid.Valid {
-		a.ExternalID = extid.String
-	}
-	if desc.Valid {
-		a.Description = desc.String
-	}
-	if platform.Valid {
-		a.Platform = platform.String
-	}
-	if tier.Valid {
-		a.Tier = tier.String
-	}
-	if env.Valid {
-		a.Environment = env.String
-	}
-	if regions.Valid && regions.String != "" {
-		var arr []string
-		if err := json.Unmarshal([]byte(regions.String), &arr); err == nil {
-			a.Regions = arr
-		}
-	}
-	if t, e := time.Parse(time.RFC3339, ts); e == nil {
-		a.CreatedAt = t
-	}
-	if updatedAt.Valid {
-		if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-			a.UpdatedAt = t
-		}
 	}
 	return &a, nil
 }
@@ -637,78 +403,52 @@ func (s *Store) UpdateAccount(ctx context.Context, id int64, update domain.Accou
 }
 
 func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
-	var cnt int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
-		return false, err
-	}
-	if cnt > 0 {
-		return false, fmt.Errorf("account in use by pools: %w", storage.ErrConflict)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	// account_credentials_drop_on_account_soft_delete removes the stored credential.
-	res, err := s.db.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	var deleted bool
+	err := s.withWriteLock(ctx, func(c *sql.Conn) error {
+		var cnt int
+		if err := c.QueryRowContext(ctx, `SELECT COUNT(1) FROM pools WHERE account_id=? AND deleted_at IS NULL`, id).Scan(&cnt); err != nil {
+			return err
+		}
+		if cnt > 0 {
+			return fmt.Errorf("account in use by pools: %w", storage.ErrConflict)
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		// account_credentials_drop_on_account_soft_delete removes the stored credential.
+		res, err := c.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		deleted = n > 0
+		return nil
+	})
+	return deleted, err
 }
 
+// DeleteAccountCascade soft-deletes the account, every live pool it owns, and those pools' descendants.
 func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
-	// Soft-delete all pools referencing this account, including their descendants, then soft-delete account
-	ps, err := s.ListPools(ctx)
-	if err != nil {
-		return false, err
-	}
-	// Check account exists (non-deleted)
-	var accCnt int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM accounts WHERE id=? AND deleted_at IS NULL`, id).Scan(&accCnt); err != nil {
-		return false, err
-	}
-	if accCnt == 0 {
-		return false, nil
-	}
-	// Build adjacency
-	children := map[int64][]int64{}
-	for _, p := range ps {
-		if p.ParentID != nil {
-			children[*p.ParentID] = append(children[*p.ParentID], p.ID)
+	var deleted bool
+	err := s.withWriteLock(ctx, func(c *sql.Conn) error {
+		now := time.Now().UTC().Format(time.RFC3339)
+		// account_credentials_drop_on_account_soft_delete removes the stored credential.
+		res, err := c.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id)
+		if err != nil {
+			return err
 		}
-	}
-	// Collect roots: pools with account_id = id
-	roots := []int64{}
-	for _, p := range ps {
-		if p.AccountID != nil && *p.AccountID == id {
-			roots = append(roots, p.ID)
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil
 		}
-	}
-	// Collect all to soft-delete
-	toDel := map[int64]struct{}{}
-	var dfs func(int64)
-	dfs = func(n int64) {
-		if _, ok := toDel[n]; ok {
-			return
-		}
-		toDel[n] = struct{}{}
-		for _, ch := range children[n] {
-			dfs(ch)
-		}
-	}
-	for _, r := range roots {
-		dfs(r)
-	}
-	// Soft-delete pools
-	now := time.Now().UTC().Format(time.RFC3339)
-	for pid := range toDel {
-		if _, err := s.db.ExecContext(ctx, `UPDATE pools SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, pid); err != nil {
-			return false, err
-		}
-	}
-	// Soft-delete account; account_credentials_drop_on_account_soft_delete removes the stored credential.
-	if _, err := s.db.ExecContext(ctx, `UPDATE accounts SET deleted_at=?, updated_at=? WHERE id=? AND deleted_at IS NULL`, now, now, id); err != nil {
-		return false, err
-	}
-	return true, nil
+		deleted = true
+		_, err = c.ExecContext(ctx, `
+			WITH RECURSIVE subtree(id) AS (
+				SELECT id FROM pools WHERE account_id=? AND deleted_at IS NULL
+				UNION
+				SELECT p.id FROM pools p JOIN subtree t ON p.parent_id = t.id WHERE p.deleted_at IS NULL
+			)
+			UPDATE pools SET deleted_at=?, updated_at=? WHERE id IN (SELECT id FROM subtree)`, id, now, now)
+		return err
+	})
+	return deleted, err
 }
 
 // GetPoolWithStats returns a pool with its computed statistics.

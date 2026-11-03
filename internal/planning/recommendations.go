@@ -157,8 +157,8 @@ func (s *RecommendationService) allocationRecommendations(ctx context.Context, p
 		return nil
 	}
 	var recs []domain.Recommendation
-	for _, block := range allocatableBlocks(pool.CIDR, gap.AvailableBlocks) {
-		score := s.scoreAllocation(block.CIDR, pool, desiredPrefixLen)
+	for _, block := range allocatableBlocks(pool.CIDR, gap.AvailableBlocks, desiredPrefixLen) {
+		score := scoreAllocation(block.CIDR, gap.AllocatedBlocks, desiredPrefixLen)
 		recs = append(recs, domain.Recommendation{
 			ID:            uuid.New().String(),
 			PoolID:        pool.ID,
@@ -211,41 +211,66 @@ func (s *RecommendationService) applyAllocation(ctx context.Context, rec *domain
 	return &newPool.ID, nil
 }
 
+// maxAllocationCandidates bounds the allocation recommendations one generation
+// stores per pool. Splitting an empty /8 down to /30s would otherwise write
+// millions of rows for one request.
+const maxAllocationCandidates = 64
+
 // allocatableBlocks turns the free blocks of a pool into blocks a child pool can
-// hold. A child must have a longer prefix than its parent, so the only free block
-// that cannot be allocated as-is is the pool's own range (an empty pool). That
-// block is offered as its two halves; a pool whose halves would exceed the
-// validation prefix bound cannot be split and gets no allocation.
-func allocatableBlocks(poolCIDR string, free []AvailableBlock) []AvailableBlock {
+// hold, in address order and at most maxAllocationCandidates of them. See
+// candidatePrefixLen for the length each free block is offered at.
+func allocatableBlocks(poolCIDR string, free []AvailableBlock, desiredPrefixLen int) []AvailableBlock {
 	parent, err := netip.ParsePrefix(poolCIDR)
 	if err != nil {
 		return free
 	}
 	parent = parent.Masked()
 
-	out := make([]AvailableBlock, 0, len(free)+1)
+	var out []AvailableBlock
 	for _, block := range free {
 		p, err := netip.ParsePrefix(block.CIDR)
-		if err != nil || p.Bits() > parent.Bits() {
-			out = append(out, block)
+		if err != nil {
 			continue
 		}
-		halfBits := parent.Bits() + 1
-		if halfBits > validation.MaxPrefixLength {
+		bits, ok := candidatePrefixLen(parent.Bits(), p.Bits(), desiredPrefixLen)
+		if !ok {
 			continue
 		}
-		iv := prefixToInterval(parent)
-		halfSize := uint32(1) << (32 - halfBits)
-		for _, start := range []uint32{iv.start, iv.start + halfSize} {
-			half := netip.PrefixFrom(uint32ToIPv4(start), halfBits)
-			out = append(out, AvailableBlock{CIDR: half.String(), AddressCount: prefixAddressCount(half)})
+		iv := prefixToInterval(p.Masked())
+		size := uint64(1) << (32 - bits)
+		for start := uint64(iv.start); start <= uint64(iv.end); start += size {
+			candidate := netip.PrefixFrom(uint32ToIPv4(uint32(start)), bits)
+			out = append(out, AvailableBlock{CIDR: candidate.String(), AddressCount: prefixAddressCount(candidate)})
+			if len(out) == maxAllocationCandidates {
+				return out
+			}
 		}
 	}
 	return out
 }
 
+// candidatePrefixLen returns the prefix length to offer a free block of blockBits
+// at, inside a pool of parentBits. A child must have a longer prefix than its
+// parent, so a pool that cannot hold one gets no candidate at all. With
+// desiredPrefixLen set, the block splits down to that length, clamped to
+// (parentBits, validation.MaxPrefixLength]. Unset, the pool's own range (an empty
+// pool) splits into halves and every other block stays whole. A block already at
+// or beyond the target stays whole.
+func candidatePrefixLen(parentBits, blockBits, desiredPrefixLen int) (int, bool) {
+	minChild := parentBits + 1
+	if minChild > validation.MaxPrefixLength {
+		return 0, false
+	}
+	target := minChild
+	if desiredPrefixLen > 0 {
+		target = min(max(desiredPrefixLen, minChild), validation.MaxPrefixLength)
+	}
+	return max(target, blockBits), true
+}
+
 // scoreAllocation scores an available block (0-100) for allocation quality.
-func (s *RecommendationService) scoreAllocation(cidrStr string, pool domain.Pool, desiredPrefixLen int) int {
+// children are the pool's existing allocations, as AnalyzeGaps already fetched them.
+func scoreAllocation(cidrStr string, children []AllocatedBlock, desiredPrefixLen int) int {
 	prefix, err := netip.ParsePrefix(cidrStr)
 	if err != nil {
 		return 0
@@ -284,21 +309,16 @@ func (s *RecommendationService) scoreAllocation(cidrStr string, pool domain.Pool
 	}
 
 	// Contiguity (+20): adjacent to an existing child allocation.
-	// Check by looking at pool's children.
-	children, err := s.mainStore.GetPoolChildren(context.Background(), pool.ID)
-	if err == nil {
-		blockInterval := prefixToInterval(prefix)
-		for _, child := range children {
-			cp, err := netip.ParsePrefix(child.CIDR)
-			if err != nil {
-				continue
-			}
-			ci := prefixToInterval(cp.Masked())
-			// Adjacent if blocks touch.
-			if ci.end+1 == blockInterval.start || blockInterval.end+1 == ci.start {
-				score += 20
-				break
-			}
+	blockInterval := prefixToInterval(prefix)
+	for _, child := range children {
+		cp, err := netip.ParsePrefix(child.CIDR)
+		if err != nil {
+			continue
+		}
+		ci := prefixToInterval(cp.Masked())
+		if ci.end+1 == blockInterval.start || blockInterval.end+1 == ci.start {
+			score += 20
+			break
 		}
 	}
 
