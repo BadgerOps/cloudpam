@@ -219,3 +219,96 @@ func TestDriftSuggestions_OnlyOpenItemsCarryOne(t *testing.T) {
 		t.Fatalf("resolved item carries a suggestion: %+v", resolved)
 	}
 }
+
+func getDriftItem(t *testing.T, mux *stdhttp.ServeMux, id string) domain.DriftItem {
+	t.Helper()
+	rr := doDriftJSON(t, mux, stdhttp.MethodGet, "/api/v1/drift/"+id, "", stdhttp.StatusOK)
+	var item domain.DriftItem
+	if err := json.NewDecoder(rr.Body).Decode(&item); err != nil {
+		t.Fatal(err)
+	}
+	return item
+}
+
+func TestDriftSuggestions_SubnetIsPreviewedAloneLikeApply(t *testing.T) {
+	mux, ms, ds, _ := setupDriftTestServer()
+	ctx := context.Background()
+	acct, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:pair", Name: "Pair", Provider: "aws"})
+	vpcID := addDiscovered(t, ds, acct.ID, domain.ResourceTypeVPC, "vpc-pair", "10.8.0.0/16", nil)
+	subnet, err := ds.GetDiscoveredResource(ctx, addDiscovered(t, ds, acct.ID, domain.ResourceTypeSubnet, "subnet-pair", "10.8.1.0/24", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := "vpc-pair"
+	subnet.ParentResourceID = &parent
+	if err := ds.UpsertDiscoveredResource(ctx, *subnet); err != nil {
+		t.Fatal(err)
+	}
+
+	items := detectDrift(t, mux)
+	assertSuggestion(t, itemForResource(t, items, vpcID), domain.DriftActionCreatePool, nil)
+	listed := itemForResource(t, items, subnet.ID)
+	assertSuggestion(t, listed, domain.DriftActionReview, nil)
+	if detail := getDriftItem(t, mux, listed.ID); detail.SuggestedAction != listed.SuggestedAction || detail.SuggestionReason != listed.SuggestionReason {
+		t.Fatalf("detail suggestion %q (%s) differs from list %q (%s)", detail.SuggestedAction, detail.SuggestionReason, listed.SuggestedAction, listed.SuggestionReason)
+	}
+
+	rr := doDriftJSON(t, mux, stdhttp.MethodPost, "/api/v1/discovery/import/apply",
+		fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s"]}`, acct.ID, subnet.ID), stdhttp.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.NewDecoder(rr.Body).Decode(&applied); err != nil {
+		t.Fatal(err)
+	}
+	if applied.PoolsCreated != 0 {
+		t.Fatalf("single-subnet apply created %d pools, so review was the wrong suggestion", applied.PoolsCreated)
+	}
+}
+
+func TestDriftSuggestions_RelinkFollowsCurrentResourceCIDR(t *testing.T) {
+	mux, ms, ds, _ := setupDriftTestServer()
+	ctx := context.Background()
+	acct, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:moving", Name: "Moving", Provider: "aws"})
+	linked := addPool(t, ms, domain.CreatePool{Name: "linked", CIDR: "10.2.0.0/16", AccountID: &acct.ID})
+	addPool(t, ms, domain.CreatePool{Name: "first", CIDR: "10.3.0.0/16", AccountID: &acct.ID})
+	second := addPool(t, ms, domain.CreatePool{Name: "second", CIDR: "10.4.0.0/16", AccountID: &acct.ID})
+	resID := addDiscovered(t, ds, acct.ID, domain.ResourceTypeVPC, "vpc-moving", "10.3.0.0/16", &linked.ID)
+	item := itemForResource(t, detectDrift(t, mux), resID)
+
+	setCIDR := func(cidr string) {
+		t.Helper()
+		res, err := ds.GetDiscoveredResource(ctx, resID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.CIDR = cidr
+		if err := ds.UpsertDiscoveredResource(ctx, *res); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	setCIDR("10.4.0.0/16")
+	assertSuggestion(t, getDriftItem(t, mux, item.ID), domain.DriftActionLinkPool, &second.ID)
+
+	setCIDR("10.2.0.0/16")
+	assertSuggestion(t, getDriftItem(t, mux, item.ID), domain.DriftActionReview, nil)
+
+	setCIDR("10.3.0.0/16")
+	if err := ds.UnlinkResource(ctx, resID); err != nil {
+		t.Fatal(err)
+	}
+	assertSuggestion(t, getDriftItem(t, mux, item.ID), domain.DriftActionReview, nil)
+}
+
+func TestDriftSuggestions_OrphanRelinkedAfterDetectionIsNotDeprecated(t *testing.T) {
+	mux, ms, ds, _ := setupDriftTestServer()
+	ctx := context.Background()
+	acct, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:back", Name: "Back", Provider: "aws"})
+	pool := addPool(t, ms, domain.CreatePool{Name: "back", CIDR: "10.6.0.0/16", AccountID: &acct.ID, Source: domain.PoolSourceDiscovered})
+
+	items := detectDrift(t, mux)
+	if len(items) != 1 || items[0].Type != domain.DriftTypeOrphanedPool {
+		t.Fatalf("expected one orphaned pool item, got %+v", items)
+	}
+	addDiscovered(t, ds, acct.ID, domain.ResourceTypeVPC, "vpc-back", "10.6.0.0/16", &pool.ID)
+	assertSuggestion(t, getDriftItem(t, mux, items[0].ID), domain.DriftActionReview, nil)
+}

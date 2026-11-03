@@ -102,7 +102,7 @@ Apply creates pools with the same checks as `POST /api/v1/pools`, under the same
 
 ### Drift Reconciliation Suggestions
 
-`GET /api/v1/drift`, `GET /api/v1/drift/{id}` and `POST /api/v1/drift/detect` return a suggestion on every open drift item. The server derives it from the current pools and resources on each read and does not store it, so a suggestion reflects pools created since detection ran.
+`GET /api/v1/drift`, `GET /api/v1/drift/{id}` and `POST /api/v1/drift/detect` return a suggestion on every open drift item. The server derives it from the current pools and resources on each read and does not store it, so a suggestion reflects pools created since detection ran. When the resource's link, CIDR or status changed since detection, or an active resource links to an orphaned pool again, the suggestion is `review` until detection runs again.
 
 | `suggested_action` | When | `suggested_pool_id` | Applied by |
 |--------------------|------|---------------------|------------|
@@ -111,7 +111,7 @@ Apply creates pools with the same checks as `POST /api/v1/pools`, under the same
 | `deprecate_pool` | A discovered-source pool has no active linked resource and is not deprecated yet. | The orphaned pool. | `PATCH /api/v1/pools/{id}` with `{"status":"deprecated"}` |
 | `review` | Anything else, such as an overlap, a missing parent VPC, an EIP or NIC, or a CIDR mismatch with no matching pool. | Absent. | By hand |
 
-`suggestion_reason` says why in one line. Unmanaged resources are classified by the import preview above, so a `create_pool` or `link_pool` suggestion is exactly what apply will do. The Drift page shows the suggestion under each open item. Its apply button calls the listed endpoint and then resolves the item. If import apply skips the resource, the item stays open and the page reports why.
+`suggestion_reason` says why in one line. Each unmanaged resource is classified by the import preview above with only that resource selected, so a `create_pool` or `link_pool` suggestion is exactly what apply will do. The Drift page shows the suggestion under each open item. Its apply button calls the listed endpoint and then resolves the item. If import apply skips the resource, the item stays open and the page reports why.
 
 ## Merged Network Views
 
