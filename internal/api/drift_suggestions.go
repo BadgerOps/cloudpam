@@ -197,6 +197,8 @@ func suggestDeprecate(item *domain.DriftItem, poolsByID map[int64]domain.Pool, a
 	switch {
 	case !ok:
 		suggestReview(item, "the pool no longer exists")
+	case pool.AccountID == nil || *pool.AccountID != item.AccountID:
+		suggestReview(item, "the pool moved to another account since detection; rerun detection")
 	case activeLinks[pool.ID]:
 		suggestReview(item, "an active discovered resource links to this pool again; rerun detection")
 	case pool.Status == domain.PoolStatusDeprecated:

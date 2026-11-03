@@ -312,3 +312,21 @@ func TestDriftSuggestions_OrphanRelinkedAfterDetectionIsNotDeprecated(t *testing
 	addDiscovered(t, ds, acct.ID, domain.ResourceTypeVPC, "vpc-back", "10.6.0.0/16", &pool.ID)
 	assertSuggestion(t, getDriftItem(t, mux, items[0].ID), domain.DriftActionReview, nil)
 }
+
+func TestDriftSuggestions_OrphanMovedToAnotherAccountIsNotDeprecated(t *testing.T) {
+	mux, ms, ds, _ := setupDriftTestServer()
+	ctx := context.Background()
+	from, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:from", Name: "From", Provider: "aws"})
+	to, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:to", Name: "To", Provider: "aws"})
+	pool := addPool(t, ms, domain.CreatePool{Name: "moved", CIDR: "10.6.0.0/16", AccountID: &from.ID, Source: domain.PoolSourceDiscovered})
+
+	items := detectDrift(t, mux)
+	if len(items) != 1 || items[0].Type != domain.DriftTypeOrphanedPool {
+		t.Fatalf("expected one orphaned pool item, got %+v", items)
+	}
+	if _, _, err := ms.UpdatePool(ctx, pool.ID, domain.UpdatePool{AccountID: &to.ID}); err != nil {
+		t.Fatal(err)
+	}
+	addDiscovered(t, ds, to.ID, domain.ResourceTypeVPC, "vpc-moved", "10.6.0.0/16", &pool.ID)
+	assertSuggestion(t, getDriftItem(t, mux, items[0].ID), domain.DriftActionReview, nil)
+}
