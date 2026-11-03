@@ -23,6 +23,7 @@ func TestDefaultSecuritySettingsValues(t *testing.T) {
 		{"APIKeyDefaultExpiryDays", s.APIKeyDefaultExpiryDays, 0},
 		{"APIKeyMaxLifetimeDays", s.APIKeyMaxLifetimeDays, 0},
 		{"APIKeyRotationReminderDays", s.APIKeyRotationReminderDays, 14},
+		{"AuditRetentionDays", s.AuditRetentionDays, 90},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -151,11 +152,15 @@ func TestNormalizeSecuritySettingsFillsMissingFields(t *testing.T) {
 		SessionDurationHours:          8,
 		AccountLockoutCooldownMinutes: 0,
 		APIKeyRotationReminderDays:    -3,
+		AuditRetentionDays:            -1,
 	}
 
 	got := NormalizeSecuritySettings(settings)
 	if got != settings {
 		t.Fatal("NormalizeSecuritySettings should normalize the supplied pointer in place")
+	}
+	if got.AuditRetentionDays != 0 {
+		t.Errorf("negative AuditRetentionDays = %d, want 0 (disabled); a stored document without the field must not inherit the fresh-install default", got.AuditRetentionDays)
 	}
 	if got.SessionDurationHours != 8 {
 		t.Errorf("explicit SessionDurationHours was overwritten: %d", got.SessionDurationHours)

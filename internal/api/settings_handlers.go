@@ -120,6 +120,10 @@ func (ss *SettingsServer) handleUpdateSecuritySettings(w http.ResponseWriter, r 
 		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_rotation_reminder_days", "must be between 0 and 365")
 		return
 	}
+	if input.AuditRetentionDays < 0 || input.AuditRetentionDays > domain.MaxAuditRetentionDays {
+		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid audit_retention_days", fmt.Sprintf("must be between 0 and %d", domain.MaxAuditRetentionDays))
+		return
+	}
 	if denied := validateAPIKeyScopePolicy(input.APIKeyAllowedScopesByRole); denied != "" {
 		ss.writeErr(r.Context(), w, http.StatusBadRequest, "invalid api_key_allowed_scopes_by_role", "scope policy contains an invalid or elevated scope")
 		return
