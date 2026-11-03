@@ -31,13 +31,38 @@ func (l secondPageFailsAuditLogger) List(ctx context.Context, opts audit.ListOpt
 	return l.AuditLogger.List(ctx, opts)
 }
 
-func TestAuditExportAbortsTheConnectionWhenALaterPageFails(t *testing.T) {
+// purgeBetweenPagesAuditLogger serves the first export page, then purges the
+// oldest events the way a retention pass landing mid-export would.
+type purgeBetweenPagesAuditLogger struct {
+	*audit.MemoryAuditLogger
+	cutoff time.Time
+}
+
+func (l purgeBetweenPagesAuditLogger) List(ctx context.Context, opts audit.ListOptions) ([]*audit.AuditEvent, int, error) {
+	events, total, err := l.MemoryAuditLogger.List(ctx, opts)
+	if err == nil && opts.Offset == 0 {
+		if _, err := l.DeleteOlderThan(ctx, l.cutoff); err != nil {
+			return nil, 0, err
+		}
+	}
+	return events, total, err
+}
+
+// multiPageMemoryAuditLogger holds a few more events than one export page.
+func multiPageMemoryAuditLogger(t *testing.T) (*audit.MemoryAuditLogger, time.Time) {
+	t.Helper()
 	mem := audit.NewMemoryAuditLogger(audit.WithMaxEvents(5000))
 	base := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	for i := range auditExportPageSize + 5 {
 		logAuditEvents(t, mem, &audit.AuditEvent{ID: fmt.Sprintf("evt-%04d", i), Timestamp: base.Add(time.Duration(i) * time.Second), Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1"})
 	}
-	auditLogger := secondPageFailsAuditLogger{mem}
+	return mem, base
+}
+
+// exportCSVRecovering runs a CSV export through the logging middleware and
+// returns the recorded body with whatever the handler panicked.
+func exportCSVRecovering(t *testing.T, auditLogger audit.AuditLogger) (*httptest.ResponseRecorder, any) {
+	t.Helper()
 	mux := stdhttp.NewServeMux()
 	logger := observability.NewLogger(observability.Config{Level: "info", Format: "json", Output: io.Discard})
 	srv := NewServer(mux, storage.NewMemoryStore(), logger, nil, auditLogger)
@@ -52,12 +77,27 @@ func TestAuditExportAbortsTheConnectionWhenALaterPageFails(t *testing.T) {
 		defer func() { recovered = recover() }()
 		handler.ServeHTTP(rr, req)
 	}()
+	return rr, recovered
+}
+
+func TestAuditExportAbortsTheConnectionWhenALaterPageFails(t *testing.T) {
+	mem, _ := multiPageMemoryAuditLogger(t)
+	rr, recovered := exportCSVRecovering(t, secondPageFailsAuditLogger{mem})
 
 	if recovered != stdhttp.ErrAbortHandler {
 		t.Fatalf("recovered %v, want http.ErrAbortHandler so net/http closes the connection and the download fails instead of completing short", recovered)
 	}
 	if strings.Contains(rr.Body.String(), "internal server error") {
 		t.Fatalf("a JSON error was appended to the CSV stream:\n%s", rr.Body.String()[len(rr.Body.String())-200:])
+	}
+}
+
+func TestAuditExportAbortsWhenARetentionPurgeShrinksTheLogMidExport(t *testing.T) {
+	mem, base := multiPageMemoryAuditLogger(t)
+	_, recovered := exportCSVRecovering(t, purgeBetweenPagesAuditLogger{MemoryAuditLogger: mem, cutoff: base.Add(10 * time.Second)})
+
+	if recovered != stdhttp.ErrAbortHandler {
+		t.Fatalf("recovered %v, want http.ErrAbortHandler so a download that lost rows to the purge fails instead of completing short", recovered)
 	}
 }
 

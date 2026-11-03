@@ -106,8 +106,13 @@ func (as *AuthServer) handleAuditExport(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 		written += len(events)
-		if len(events) == 0 || written >= total {
+		if written >= total {
 			break
+		}
+		if len(events) == 0 {
+			// A retention purge between pages removed rows the first page
+			// counted, so the archive would be short with no sign of it.
+			abort(fmt.Errorf("audit log shrank during export: %d of %d events reachable", written, total))
 		}
 		opts.Offset = written
 		if events, _, err = as.auditLogger.List(ctx, opts); err != nil {
