@@ -133,7 +133,7 @@ Files and functions this verification describes:
 - `migrations/0001_init.sql` and `migrations/0023_partial_unique_live_rows.sql`: `uniq_pools_parent_cidr`; `migrations/postgres/001_core_schema.up.sql`: `idx_pools_org_cidr`.
 - Other writers: `ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`.
 
-sync commit: 214651da5704c582befebd15f0164d97afb3a76d
+sync commit: fbb1dc5f074a7f614fceb5ef46c44d9adf6d9180
 
 `run.sh` prints DRIFT and exits 4 when any covered file in the working tree differs from the sync commit. The covered files are the model's sources above plus the other writers (`ai_handlers.go`, `export_handlers.go`, `discovery_handlers.go`, `internal/planning/recommendations.go`). When that happens: re-read the code cited above, fix the model if the code's steps changed (new lock, new transaction boundary, new constraint, new writer), rerun, and only then move the sync commit to a commit on master. A drift on one of the other writers means re-reading it and updating its entry in "Writers besides POST /pools", not the model: those paths are read, not modelled, and the question is whether the writer still places every pool through `placePools`. If a change made `multi-process-local.cfg` hold, confirm whether the model can still fail before recording anything. Never weaken a rule or widen a skip to make a run pass.
 
@@ -157,5 +157,7 @@ sync commit: 214651da5704c582befebd15f0164d97afb3a76d
 - After #338 the five configs give the same results and state counts, and `repro.sh` and `repro-postgres.sh` pass again on the real binary. The former bypass writers are covered by tests, not by the model: `TestConcurrentPoolsAndCSVImportStoreOne` (one process) and the postgres-tagged `TestCSVImportAndCreatePool_TwoReplicas_StoreOne` (two replicas) each stored overlapping pools before the change and store one after it.
 
 - Resync to 214651d (2026-11-03), after #374 (`validatePoolFields` inside `place`), #268 (partial `uniq_pools_parent_cidr`), #269 (pool deletes under `withPlacementLock`) and #270 (restore under `withPlacementLock`): none adds a lock, moves a transaction boundary or adds a creation path outside `placePools`, so `PoolCreate.tla` and `MC.tla` are unchanged. The five configs give the same results and state counts (18/20/68/71 distinct states, and the L1 violation at depth 5 with 26). `repro.sh` (in-memory, port 18180) and `repro-postgres.sh` (two `-tags postgres` processes) pass on the binary: 40 attempts with exactly one `201` each, the repeated CIDR `201`/`409`, 81 pools with no overlapping siblings. The delete and restore orderings are covered by tests, not the model (see "Not covered").
+
+- Resync to fbb1dc5 (2026-11-03), after #282 (consolidation, resize and reclaim apply; `UpdatePoolCIDR`, `UpdatePool` and resource links under `Server.WithPlacement`, which replaces `withPlacementLock`) and #277: every new writer runs inside one `WithPlacement` callback, so the modelled lock and check ordering is unchanged; see "Writers besides POST /pools". The five configs give the same results and state counts, and `repro.sh` passes on the binary.
 
 Note: `.gitignore` ignores `.claude/*` but re-includes `.claude/skills/`, so this folder is tracked; its `out/` directory is ignored by the local `.gitignore`.
