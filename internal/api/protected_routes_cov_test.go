@@ -132,6 +132,7 @@ func TestProtectedFeatureRoutesAuthzCov(t *testing.T) {
 		{"discovery agent heartbeat", http.MethodPost, "/api/v1/discovery/agents/heartbeat", `{}`, string(auth.RoleViewer), string(auth.RoleOperator)},
 		{"discovery agent approve", http.MethodPost, "/api/v1/discovery/agents/not-a-uuid/approve", `{}`, string(auth.RoleViewer), string(auth.RoleOperator)},
 		{"discovery agent delete", http.MethodDelete, "/api/v1/discovery/agents/not-a-uuid", "", string(auth.RoleViewer), string(auth.RoleAdmin)},
+		{"account connectivity test", http.MethodPost, "/api/v1/accounts/999/test", "", string(auth.RoleViewer), string(auth.RoleOperator)},
 
 		{"network flat", http.MethodGet, "/api/v1/network/flat", "", string(auth.RoleAuditor), string(auth.RoleViewer)},
 		{"network hierarchy", http.MethodGet, "/api/v1/network/hierarchy", "", string(auth.RoleAuditor), string(auth.RoleViewer)},
