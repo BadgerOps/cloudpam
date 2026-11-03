@@ -6,7 +6,7 @@ import type { LogDestination, LogDestinationState } from '../api/types'
 const STATE_BADGES: Record<LogDestinationState, { label: string; className: string }> = {
   invalid: { label: 'Rejected', className: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' },
   idle: { label: 'Waiting for events', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' },
-  ok: { label: 'Delivering', className: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' },
+  ok: { label: 'Sending', className: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' },
   failing: { label: 'Failing', className: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' },
 }
 
@@ -61,7 +61,7 @@ function DestinationCard({ destination }: { destination: LogDestination }) {
             <dd className="font-medium text-gray-900 dark:text-gray-100">{destination.app_name || 'cloudpam'}</dd>
           </div>
           <div>
-            <dt className="text-gray-500 dark:text-gray-400">Delivered</dt>
+            <dt className="text-gray-500 dark:text-gray-400">Sent</dt>
             <dd className="font-medium text-gray-900 dark:text-gray-100">{destination.delivered}</dd>
           </div>
           <div>
@@ -69,16 +69,24 @@ function DestinationCard({ destination }: { destination: LogDestination }) {
             <dd className="font-medium text-gray-900 dark:text-gray-100">{destination.failed}</dd>
           </div>
           <div>
-            <dt className="text-gray-500 dark:text-gray-400">Last success</dt>
+            <dt className="text-gray-500 dark:text-gray-400">Last successful send</dt>
             <dd className="font-medium text-gray-900 dark:text-gray-100">{formatTime(destination.last_success_at)}</dd>
           </div>
         </dl>
       )}
 
+      {destination.state !== 'invalid' && (
+        <p data-testid="log-destination-receipt-note" className="text-xs text-gray-500 dark:text-gray-400">
+          Sent counts writes the {destination.network.toUpperCase()} socket accepted. Syslog has no acknowledgement, so receipt is
+          unconfirmed{destination.network === 'udp' ? ': over UDP a send succeeds even when no collector is listening' : ''}.
+          Check the collector to confirm events arrive.
+        </p>
+      )}
+
       {destination.state !== 'invalid' && destination.last_error && (
         <div className={`rounded-lg border p-3 text-sm ${lastErrorTone}`}>
           <p className="font-medium">
-            {destination.state === 'failing' ? 'Last delivery failed' : 'Earlier delivery failed'} at {formatTime(destination.last_failure_at)}
+            {destination.state === 'failing' ? 'Last send failed' : 'Earlier send failed'} at {formatTime(destination.last_failure_at)}
           </p>
           <p className="mt-1 break-words font-mono text-xs">{destination.last_error}</p>
         </div>
@@ -143,7 +151,7 @@ export default function LogDestinationsPage() {
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Audit forwarding is off</h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
             No destination is configured. Set <code>CLOUDPAM_AUDIT_SYSLOG_ADDR</code> on the server to forward every
-            audit event as CEF over syslog, then restart it. This page then shows whether events reach the collector.
+            audit event as CEF over syslog, then restart it. This page then shows whether CloudPAM can send events to it.
           </p>
         </section>
       )}

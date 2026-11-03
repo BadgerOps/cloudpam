@@ -71,7 +71,7 @@ describe('LogDestinationsPage', () => {
     expect(screen.getByText('12')).toBeTruthy()
     expect(screen.getByText('2')).toBeTruthy()
     expect(screen.getByText('dial tcp 203.0.113.9:514: connection refused')).toBeTruthy()
-    expect(screen.getByText(/Last delivery failed at/)).toBeTruthy()
+    expect(screen.getByText(/Last send failed at/)).toBeTruthy()
   })
 
   it('reports a delivering destination without an error box', async () => {
@@ -80,8 +80,20 @@ describe('LogDestinationsPage', () => {
     }))
     render(<LogDestinationsPage />)
 
-    expect((await screen.findByTestId('log-destination-state')).textContent).toBe('Delivering')
-    expect(screen.queryByText(/delivery failed/)).toBeNull()
+    expect((await screen.findByTestId('log-destination-state')).textContent).toBe('Sending')
+    expect(screen.queryByText(/send failed/)).toBeNull()
+  })
+
+  it('says a successful UDP send does not confirm receipt', async () => {
+    fetchMock.mockResolvedValue(json(200, {
+      destinations: [destination({ network: 'udp', state: 'ok', delivered: 5, last_success_at: '2026-11-02T10:00:00Z' })],
+    }))
+    render(<LogDestinationsPage />)
+
+    const note = await screen.findByTestId('log-destination-receipt-note')
+    expect(note.textContent).toMatch(/receipt is\s+unconfirmed/)
+    expect(note.textContent).toMatch(/no collector is listening/)
+    expect(screen.queryByText(/Delivering|Delivered/)).toBeNull()
   })
 
   it('shows why a configured destination was rejected', async () => {
@@ -103,7 +115,7 @@ describe('LogDestinationsPage', () => {
 
     expect((await screen.findByTestId('log-destination-state')).textContent).toBe('Waiting for events')
     fireEvent.click(screen.getByRole('button', { name: /refresh/i }))
-    await waitFor(() => expect(screen.getByTestId('log-destination-state').textContent).toBe('Delivering'))
+    await waitFor(() => expect(screen.getByTestId('log-destination-state').textContent).toBe('Sending'))
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
