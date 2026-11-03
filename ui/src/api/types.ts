@@ -1055,3 +1055,28 @@ export interface AIProviderTestResult {
   error?: string
   tested_at: string
 }
+
+// Audit forwarding targets (GET /api/v1/settings/log-destinations). Configured
+// from CLOUDPAM_AUDIT_SYSLOG_* at startup; the health fields are live.
+// invalid: the configuration was rejected at startup (see config_error).
+// idle: enabled, no event sent yet. ok / failing: the outcome of the last send.
+export type LogDestinationState = 'invalid' | 'idle' | 'ok' | 'failing'
+
+export interface LogDestination {
+  type: string
+  format: string
+  network: string
+  address: string
+  app_name?: string
+  state: LogDestinationState
+  config_error?: string
+  delivered: number
+  failed: number
+  last_success_at?: string
+  last_failure_at?: string
+  last_error?: string
+}
+
+export interface LogDestinationsResponse {
+  destinations: LogDestination[]
+}

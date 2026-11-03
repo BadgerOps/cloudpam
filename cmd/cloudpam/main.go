@@ -177,7 +177,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	auditLogger := configureAuditSyslogForwarding(logger, selectAuditLogger(logger), version)
+	auditLogger, logDestinations := configureAuditSyslogForwarding(logger, selectAuditLogger(logger), version)
 	keyStore := selectKeyStore(logger)
 	userStore := selectUserStore(logger)
 	roleStore := selectRoleStore(logger, userStore)
@@ -256,6 +256,7 @@ func main() {
 	// Initialize settings subsystem
 	settingsSrv := api.NewSettingsServer(srv, settingsStore)
 	settingsSrv.SetAIProvider(aiProviders, aiResolver, secretKey, !secretKeyEphemeral)
+	settingsSrv.SetLogDestinations(logDestinations)
 	srv.SetSettingsStore(settingsStore)
 	logger.Info("settings subsystem initialized")
 
@@ -430,10 +431,15 @@ func discoveryLimiter(logger observability.Logger, name string) *discovery.Limit
 	return discovery.NewLimiter(rps)
 }
 
-func configureAuditSyslogForwarding(logger observability.Logger, auditLogger audit.AuditLogger, appVersion string) audit.AuditLogger {
+// configureAuditSyslogForwarding wraps auditLogger with the CEF-over-syslog
+// sink when CLOUDPAM_AUDIT_SYSLOG_ADDR is set. The returned source reports the
+// destination for GET /api/v1/settings/log-destinations: nil when forwarding
+// is off, an invalid entry when the configuration was rejected, otherwise the
+// sink's live delivery health.
+func configureAuditSyslogForwarding(logger observability.Logger, auditLogger audit.AuditLogger, appVersion string) (audit.AuditLogger, func() []domain.LogDestination) {
 	addr := strings.TrimSpace(os.Getenv("CLOUDPAM_AUDIT_SYSLOG_ADDR"))
 	if addr == "" {
-		return auditLogger
+		return auditLogger, nil
 	}
 	network := envOr("CLOUDPAM_AUDIT_SYSLOG_NETWORK", "udp")
 	appName := envOr("CLOUDPAM_AUDIT_SYSLOG_APP_NAME", "cloudpam")
@@ -447,16 +453,26 @@ func configureAuditSyslogForwarding(logger observability.Logger, auditLogger aud
 	})
 	if err != nil {
 		logger.Warn("audit syslog forwarding disabled", "error", err, "address", addr, "network", network)
-		return auditLogger
+		invalid := domain.LogDestination{
+			Type:        "syslog",
+			Format:      "cef",
+			Network:     network,
+			Address:     addr,
+			AppName:     appName,
+			State:       domain.LogDestinationStateInvalid,
+			ConfigError: err.Error(),
+		}
+		return auditLogger, func() []domain.LogDestination { return []domain.LogDestination{invalid} }
 	}
 	logger.Info("audit syslog forwarding enabled", "address", addr, "network", strings.ToLower(strings.TrimSpace(network)), "format", "cef")
-	return audit.NewForwardingAuditLogger(auditLogger, []audit.Sink{sink}, func(ctx context.Context, event *audit.AuditEvent, err error) {
+	forwarding := audit.NewForwardingAuditLogger(auditLogger, []audit.Sink{sink}, func(ctx context.Context, event *audit.AuditEvent, err error) {
 		fields := []any{"error", err}
 		if event != nil {
 			fields = append(fields, "audit_event_id", event.ID, "action", event.Action, "resource_type", event.ResourceType)
 		}
 		logger.WarnContext(ctx, "audit syslog forwarding failed", fields...)
 	})
+	return forwarding, func() []domain.LogDestination { return []domain.LogDestination{sink.Destination()} }
 }
 
 func cleanAppVersion(v string) string {
