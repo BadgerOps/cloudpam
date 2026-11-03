@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"cloudpam/internal/cidr"
@@ -134,6 +135,11 @@ func scanPool(row pgx.Row, extra ...any) (domain.Pool, bool, error) {
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type execQuerier interface {
+	querier
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
@@ -421,39 +427,57 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
 	var deleted bool
 	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
-		var childCount int
-		if err := tx.QueryRow(work, `
-			SELECT COUNT(*) FROM pools
-			WHERE parent_id = (SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2)
-			  AND deleted_at IS NULL`, id, s.orgID).Scan(&childCount); err != nil {
-			return err
-		}
-		if childCount > 0 {
-			return fmt.Errorf("pool has child pools: %w", storage.ErrConflict)
-		}
-		tag, err := tx.Exec(work, `
-			UPDATE pools SET deleted_at = NOW()
-			WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID)
-		deleted = err == nil && tag.RowsAffected() > 0
+		var err error
+		deleted, err = deletePool(work, tx, s.orgID, id)
 		return err
 	})
 	return deleted, err
 }
 
+func deletePool(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
+	var childCount int
+	err := q.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pools
+		WHERE parent_id = (SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2)
+		  AND deleted_at IS NULL`, id, orgID).Scan(&childCount)
+	if err != nil {
+		return false, err
+	}
+	if childCount > 0 {
+		return false, fmt.Errorf("pool has child pools: %w", storage.ErrConflict)
+	}
+
+	tag, err := q.Exec(ctx, `
+		UPDATE pools SET deleted_at = NOW()
+		WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, orgID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
 	var deleted bool
 	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
-		tag, err := tx.Exec(work, `
-			WITH RECURSIVE subtree AS (
-				SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL
-				UNION ALL
-				SELECT p.id FROM pools p JOIN subtree s ON p.parent_id = s.id WHERE p.deleted_at IS NULL
-			)
-			UPDATE pools SET deleted_at = NOW() WHERE id IN (SELECT id FROM subtree)`, id, s.orgID)
-		deleted = err == nil && tag.RowsAffected() > 0
+		var err error
+		deleted, err = deletePoolCascade(work, tx, s.orgID, id)
 		return err
 	})
 	return deleted, err
+}
+
+func deletePoolCascade(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
+	tag, err := q.Exec(ctx, `
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL
+			UNION ALL
+			SELECT p.id FROM pools p JOIN subtree s ON p.parent_id = s.id WHERE p.deleted_at IS NULL
+		)
+		UPDATE pools SET deleted_at = NOW() WHERE id IN (SELECT id FROM subtree)`, id, orgID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // =============================================================================
@@ -894,29 +918,41 @@ func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
 func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
 	var deleted bool
 	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
-		var accountUUID string
-		err := tx.QueryRow(work, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID).Scan(&accountUUID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(work, `
-			WITH RECURSIVE pool_tree AS (
-				SELECT id FROM pools WHERE account_id = $1 AND deleted_at IS NULL
-				UNION ALL
-				SELECT p.id FROM pools p JOIN pool_tree pt ON p.parent_id = pt.id WHERE p.deleted_at IS NULL
-			)
-			UPDATE pools SET deleted_at = NOW() WHERE id IN (SELECT id FROM pool_tree)`, accountUUID); err != nil {
-			return err
-		}
-		// account_credentials_drop_on_account_soft_delete removes the stored credential.
-		tag, err := tx.Exec(work, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, accountUUID)
-		deleted = err == nil && tag.RowsAffected() > 0
+		var err error
+		deleted, err = deleteAccountCascade(work, tx, s.orgID, id)
 		return err
 	})
 	return deleted, err
+}
+
+func deleteAccountCascade(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
+	var accountUUID string
+	err := q.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, orgID).Scan(&accountUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	// Soft-delete pools linked to this account and their descendants
+	_, err = q.Exec(ctx, `
+		WITH RECURSIVE pool_tree AS (
+			SELECT id FROM pools WHERE account_id = $1 AND deleted_at IS NULL
+			UNION ALL
+			SELECT p.id FROM pools p JOIN pool_tree pt ON p.parent_id = pt.id WHERE p.deleted_at IS NULL
+		)
+		UPDATE pools SET deleted_at = NOW() WHERE id IN (SELECT id FROM pool_tree)`, accountUUID)
+	if err != nil {
+		return false, err
+	}
+
+	// Soft-delete the account; account_credentials_drop_on_account_soft_delete removes the stored credential.
+	tag, err := q.Exec(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, accountUUID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {

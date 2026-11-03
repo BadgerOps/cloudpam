@@ -107,8 +107,8 @@ func (e *containmentError) Error() string {
 	return "invalid sub-pool cidr: " + e.Cause.Error()
 }
 
-// placementBudget bounds a placement from the moment it queues on placeGate to its last
-// insert. It is a var so tests can shorten it. With the store's 5s commit margin it fits
+// placementBudget bounds a placement or pool delete from the moment it queues on placeGate to
+// its last write. It is a var so tests can shorten it. With the store's 5s commit margin it fits
 // inside the server's 15s write timeout, so a placement never commits after the client
 // has stopped waiting for the response.
 var placementBudget = 10 * time.Second
@@ -140,7 +140,7 @@ func (s *Server) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Po
 
 func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
 	var out []placedPool
-	err := s.withPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		var err error
 		out, err = place(work, ps, policy, batch)
 		return err
@@ -151,13 +151,42 @@ func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []p
 	return out, nil
 }
 
+// deletePool deletes a pool, and with cascade its whole subtree, under the placement lock. A
+// placement that has already listed the pool as a parent therefore stores its child first, and the
+// delete then sees that child, instead of the child landing under a deleted parent (#269).
+func (s *Server) deletePool(ctx context.Context, id int64, cascade bool) (bool, error) {
+	var ok bool
+	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		var err error
+		if cascade {
+			ok, err = ps.DeletePoolCascade(work, id)
+		} else {
+			ok, err = ps.DeletePool(work, id)
+		}
+		return err
+	})
+	return ok, err
+}
+
+// deleteAccountCascade deletes an account and every pool tree assigned to it under the placement
+// lock, for the same reason as deletePool.
+func (s *Server) deleteAccountCascade(ctx context.Context, id int64) (bool, error) {
+	var ok bool
+	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		var err error
+		ok, err = ps.DeleteAccountCascade(work, id)
+		return err
+	})
+	return ok, err
+}
+
 // restorePool brings a soft-deleted pool back under the placement lock, checked against
 // its live parent and siblings the way POST /api/v1/pools checks a new pool. A deleted
 // parent or an overlapping sibling is ErrConflict.
 func (s *Server) restorePool(ctx context.Context, deleted domain.Pool) (domain.Pool, bool, error) {
 	var p domain.Pool
 	var ok bool
-	err := s.withPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+	err := s.withPlacementLock(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		live, err := ps.ListPools(work)
 		if err != nil {
 			return err
@@ -179,9 +208,9 @@ func (s *Server) restorePool(ctx context.Context, deleted domain.Pool) (domain.P
 	return p, ok, err
 }
 
-// withPlacement runs fn holding placeGate and, on a store shared across processes, the
-// store's placement lock, all within placementBudget.
-func (s *Server) withPlacement(ctx context.Context, fn func(work context.Context, ps storage.PlacementStore) error) error {
+// withPlacementLock runs fn holding placeGate and, on a store several processes share, the store's
+// placement lock, all within placementBudget. fn must use work and ps for every read and write.
+func (s *Server) withPlacementLock(ctx context.Context, fn func(work context.Context, ps storage.PlacementStore) error) error {
 	work, cancel := context.WithTimeout(ctx, placementBudget)
 	defer cancel()
 
@@ -199,7 +228,7 @@ func (s *Server) withPlacement(ctx context.Context, fn func(work context.Context
 	}))
 }
 
-// placementGate serializes placements inside one process. Unlike a mutex, a request
+// placementGate serializes placements, restores and pool deletes inside one process. Unlike a mutex, a request
 // waiting for it gives up when its context ends, so the placement budget also bounds the
 // time spent queued behind another placement.
 type placementGate struct {

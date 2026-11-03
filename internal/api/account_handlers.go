@@ -133,12 +133,12 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 			var ok bool
 			force := strings.ToLower(r.URL.Query().Get("force"))
 			if force == "1" || force == "true" || force == "yes" {
-				ok, err = s.store.DeleteAccountCascade(ctx, id)
+				ok, err = s.deleteAccountCascade(ctx, id)
 			} else {
 				ok, err = s.store.DeleteAccount(ctx, id)
 			}
 			if err != nil {
-				s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
+				s.writeDeleteErr(ctx, w, err)
 				return
 			}
 			if !ok {
@@ -227,12 +227,12 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
 		if force == "1" || force == "true" || force == "yes" {
-			ok, err = s.store.DeleteAccountCascade(r.Context(), id)
+			ok, err = s.deleteAccountCascade(r.Context(), id)
 		} else {
 			ok, err = s.store.DeleteAccount(r.Context(), id)
 		}
 		if err != nil {
-			s.writeErr(r.Context(), w, http.StatusConflict, err.Error(), "")
+			s.writeDeleteErr(r.Context(), w, err)
 			return
 		}
 		if !ok {

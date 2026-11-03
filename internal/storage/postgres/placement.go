@@ -155,3 +155,18 @@ func (t placementTx) CreatePool(_ context.Context, in domain.CreatePool) (domain
 	}
 	return p, nil
 }
+
+func (t placementTx) DeletePool(_ context.Context, id int64) (bool, error) {
+	ok, err := deletePool(t.work, t.tx, t.orgID, id)
+	return ok, placementBusy(t.caller, err)
+}
+
+func (t placementTx) DeletePoolCascade(_ context.Context, id int64) (bool, error) {
+	ok, err := deletePoolCascade(t.work, t.tx, t.orgID, id)
+	return ok, placementBusy(t.caller, err)
+}
+
+func (t placementTx) DeleteAccountCascade(_ context.Context, id int64) (bool, error) {
+	ok, err := deleteAccountCascade(t.work, t.tx, t.orgID, id)
+	return ok, placementBusy(t.caller, err)
+}
