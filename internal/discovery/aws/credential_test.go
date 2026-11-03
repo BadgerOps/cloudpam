@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,9 @@ import (
 	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
 	smithy "github.com/aws/smithy-go"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
@@ -30,6 +34,7 @@ import (
 const (
 	testRoleARN    = "arn:aws:iam::123456789012:role/CloudPAMDiscovery"
 	testSessionARN = "arn:aws:sts::123456789012:assumed-role/CloudPAMDiscovery/cloudpam-9"
+	stsLeakMarker  = "LEAK-EXT-ID-7b2c"
 )
 
 type fakeSTS struct {
@@ -191,7 +196,7 @@ func stsAPIError(status int, code string) error {
 	return &smithy.OperationError{ServiceID: "STS", OperationName: "AssumeRole", Err: &awshttp.ResponseError{
 		ResponseError: &smithyhttp.ResponseError{
 			Response: &smithyhttp.Response{Response: &http.Response{StatusCode: status}},
-			Err:      &smithy.GenericAPIError{Code: code, Message: "User is not authorized; ExternalId ext-1 did not match"},
+			Err:      &smithy.GenericAPIError{Code: code, Message: "User is not authorized; ExternalId ext-1 did not match; " + stsLeakMarker},
 		},
 		RequestID: "req-1",
 	}}
@@ -280,8 +285,87 @@ func TestDiscoverReducesAFailedAssumeRoleToAProbeError(t *testing.T) {
 			if !errors.As(err, &pe) || pe.Step != discovery.ProbeStepAssumeRole || pe.Code != "AccessDenied" || pe.Status != 403 {
 				t.Fatalf("Discover() error = %v, want an assume_role ProbeError", err)
 			}
-			if !strings.HasPrefix(err.Error(), "assume_role: ") || strings.Contains(err.Error(), "ext-1") || strings.Contains(err.Error(), "not authorized") {
-				t.Fatalf("Discover() error = %q, want the step without the STS message", err.Error())
+			if strings.Contains(err.Error(), "ext-1") || strings.Contains(err.Error(), "not authorized") {
+				t.Fatalf("Discover() error = %q, want it without the STS message", err.Error())
+			}
+		})
+	}
+}
+
+// recordedSpans installs one recording provider per test binary, because the
+// package tracer delegates to the first global provider and never to a later one.
+var recordedSpans = sync.OnceValue(func() *tracetest.InMemoryExporter {
+	exporter := tracetest.NewInMemoryExporter()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter)))
+	return exporter
+})
+
+type oneSignedCallEC2 struct {
+	sdk      *ec2.Client
+	signedOp string
+}
+
+func (c oneSignedCallEC2) DescribeVpcs(ctx context.Context, in *ec2.DescribeVpcsInput, opts ...func(*ec2.Options)) (*ec2.DescribeVpcsOutput, error) {
+	if c.signedOp != "DescribeVpcs" {
+		return &ec2.DescribeVpcsOutput{}, nil
+	}
+	return c.sdk.DescribeVpcs(ctx, in, opts...)
+}
+
+func (c oneSignedCallEC2) DescribeSubnets(ctx context.Context, in *ec2.DescribeSubnetsInput, opts ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error) {
+	if c.signedOp != "DescribeSubnets" {
+		return &ec2.DescribeSubnetsOutput{}, nil
+	}
+	return c.sdk.DescribeSubnets(ctx, in, opts...)
+}
+
+func (c oneSignedCallEC2) DescribeAddresses(ctx context.Context, in *ec2.DescribeAddressesInput, opts ...func(*ec2.Options)) (*ec2.DescribeAddressesOutput, error) {
+	if c.signedOp != "DescribeAddresses" {
+		return &ec2.DescribeAddressesOutput{}, nil
+	}
+	return c.sdk.DescribeAddresses(ctx, in, opts...)
+}
+
+func TestDiscoverKeepsTheSTSMessageOutOfExportedSpans(t *testing.T) {
+	for _, op := range []string{"DescribeVpcs", "DescribeSubnets", "DescribeAddresses"} {
+		t.Run(op, func(t *testing.T) {
+			spans := recordedSpans()
+			spans.Reset()
+			h := newCredentialHarness(t, "us-east-1")
+			h.sts.assumeErr = stsAPIError(403, "AccessDenied")
+			h.collector.newEC2Client = func(cfg awssdk.Config) ec2API { return oneSignedCallEC2{sdk: ec2.NewFromConfig(cfg), signedOp: op} }
+			account := domain.Account{ID: 1, Provider: "aws", Regions: []string{"us-east-1"}}
+			bound, err := h.collector.WithCredential(context.Background(), account, testRole(t, "ext-1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = bound.Discover(context.Background(), account)
+			if err == nil || strings.Contains(err.Error(), stsLeakMarker) {
+				t.Fatalf("Discover() error = %v, want a failure without the STS message", err)
+			}
+			probed := false
+			for _, s := range spans.GetSpans() {
+				exported := []string{s.Status.Description}
+				for _, kv := range s.Attributes {
+					exported = append(exported, kv.Value.String())
+				}
+				for _, ev := range s.Events {
+					for _, kv := range ev.Attributes {
+						exported = append(exported, kv.Value.String())
+					}
+				}
+				for _, text := range exported {
+					if strings.Contains(text, stsLeakMarker) {
+						t.Errorf("span %s exports the STS message: %q", s.Name, text)
+					}
+				}
+				if s.Name == "aws.ec2."+op && strings.HasPrefix(s.Status.Description, "assume_role: AccessDenied") {
+					probed = true
+				}
+			}
+			if !probed {
+				t.Errorf("no aws.ec2.%s span records the assume_role failure", op)
 			}
 		})
 	}
