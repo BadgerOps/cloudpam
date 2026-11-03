@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 )
@@ -35,11 +37,19 @@ func (s *Store) ListDeletedPools(ctx context.Context) ([]domain.Pool, error) {
 }
 
 func (s *Store) RestorePool(ctx context.Context, id int64) (domain.Pool, bool, error) {
-	return restorePool(ctx, s.pool, s.orgID, id)
+	var p domain.Pool
+	var restored bool
+	err := s.withPlacementTx(ctx, func(work context.Context, tx pgx.Tx) error {
+		var err error
+		p, restored, err = restorePool(work, tx, s.orgID, id)
+		return err
+	})
+	return p, restored, err
 }
 
-// restorePool checks the parent and account in the UPDATE itself, so a parent
-// deleted after the check cannot leave a live pool under it.
+// restorePool checks the parent and account in the UPDATE itself. Callers hold the
+// placement lock, which every pool and account delete also takes, so a parent or
+// account deleted after the check cannot leave a live pool under it.
 func restorePool(ctx context.Context, q querier, orgID string, id int64) (domain.Pool, bool, error) {
 	p, restored, err := scanPool(q.QueryRow(ctx, fmt.Sprintf(`
 		UPDATE pools p SET deleted_at = NULL
