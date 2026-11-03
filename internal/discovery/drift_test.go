@@ -140,6 +140,30 @@ func TestDriftDetector_OrphanedPool(t *testing.T) {
 	}
 }
 
+func TestDriftDetector_DeprecatedOrphanIsNotReported(t *testing.T) {
+	ctx := context.Background()
+	ms := storage.NewMemoryStore()
+	ds := storage.NewMemoryDiscoveryStore(ms)
+	driftStore := storage.NewMemoryDriftStore(ms)
+
+	acct, _ := ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:334", Name: "Acct4", Provider: "aws"})
+	_, _ = ms.CreatePool(ctx, domain.CreatePool{
+		Name:      "retired-vpc",
+		CIDR:      "10.3.0.0/16",
+		AccountID: &acct.ID,
+		Source:    domain.PoolSourceDiscovered,
+		Status:    domain.PoolStatusDeprecated,
+	})
+
+	resp, err := NewDriftDetector(ms, ds, driftStore).Detect(ctx, domain.RunDriftDetectionRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Total != 0 {
+		t.Fatalf("deprecated discovered pool reported as drift: %+v", resp.Items)
+	}
+}
+
 func TestDriftDetector_NoDrift(t *testing.T) {
 	ctx := context.Background()
 	ms := storage.NewMemoryStore()

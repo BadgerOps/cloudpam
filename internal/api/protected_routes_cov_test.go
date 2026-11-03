@@ -53,7 +53,7 @@ func setupProtectedFeatureRoutesCov(t *testing.T) *http.ServeMux {
 	networkSrv.SetNetworkStore(networkStore)
 	networkSrv.RegisterProtectedNetworkRoutes(roleHeaderMiddlewareCov, slogger)
 
-	driftSrv := NewDriftServer(srv, discovery.NewDriftDetector(st, ds, driftStore), driftStore)
+	driftSrv := NewDriftServer(srv, discovery.NewDriftDetector(st, ds, driftStore), driftStore, discSrv)
 	driftSrv.RegisterProtectedDriftRoutes(roleHeaderMiddlewareCov, slogger)
 
 	recStore := storage.NewMemoryRecommendationStore(st)

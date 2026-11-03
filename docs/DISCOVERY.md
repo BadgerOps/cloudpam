@@ -100,6 +100,19 @@ Apply creates pools with the same checks as `POST /api/v1/pools`, under the same
 
 `POST /api/v1/discovery/import` remains available for compatibility, but new integrations should use preview/apply so conflicts and non-pool network objects are visible before conversion. It applies the same checks. It places each VPC at the top level, so a VPC inside an existing top-level pool is reported as an overlap. Use preview and apply to place it under that pool.
 
+### Drift Reconciliation Suggestions
+
+`GET /api/v1/drift`, `GET /api/v1/drift/{id}` and `POST /api/v1/drift/detect` return a suggestion on every open drift item. The server derives it from the current pools and resources on each read and does not store it, so a suggestion reflects pools created since detection ran. When the resource's link, CIDR or status changed since detection, or an active resource links to an orphaned pool again, the suggestion is `review` until detection runs again.
+
+| `suggested_action` | When | `suggested_pool_id` | Applied by |
+|--------------------|------|---------------------|------------|
+| `link_pool` | An unmanaged resource has an exact-CIDR pool in its account (or an unassigned one), or a linked resource's CIDR changed to match another pool. | The pool to link to. | `POST /api/v1/discovery/resources/{id}/link` |
+| `create_pool` | Import preview classifies the unmanaged resource as `importable`. | Its most specific containing pool, or absent for a top-level pool. | `POST /api/v1/discovery/import/apply` with that one resource |
+| `deprecate_pool` | A discovered-source pool has no active linked resource and is not deprecated yet. | The orphaned pool. | `PATCH /api/v1/pools/{id}` with `{"status":"deprecated"}` |
+| `review` | Anything else, such as an overlap, a missing parent VPC, an EIP or NIC, or a CIDR mismatch with no matching pool. | Absent. | By hand |
+
+`suggestion_reason` says why in one line. Each unmanaged resource is classified by the import preview above with only that resource selected, so a `create_pool` or `link_pool` suggestion is exactly what apply will do. Detection does not report a deprecated discovered-source pool as orphaned, so an applied `deprecate_pool` stays reconciled. The Drift page shows the suggestion under each open item. Its apply button calls the listed endpoint and then resolves the item. If import apply skips the resource, the item stays open and the page reports why.
+
 ### Provider Rate Limits
 
 Each collector can pace its provider API calls with a token bucket. The cap is requests per second; the burst is one second's worth of calls. Every page of a listing (`DescribeVpcs`, `DescribeSubnets`, `DescribeAddresses`, Compute `networks`, `aggregated/subnetworks`, `aggregated/addresses`, and Organizations `ListAccounts` in org mode) takes one token first, and concurrent syncs of the same provider share one bucket. The default is unlimited, which leaves throttling to the SDK's own retry.

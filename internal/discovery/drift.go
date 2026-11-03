@@ -145,9 +145,10 @@ func (d *DriftDetector) Detect(ctx context.Context, req domain.RunDriftDetection
 		}
 
 		// Pass 2: Check for orphaned pools (pools with source=discovered whose resource is gone).
+		// A deprecated pool is the accepted end state for an orphan, so it is not reported again.
 		for i := range accountPools {
 			p := &accountPools[i]
-			if p.Source != domain.PoolSourceDiscovered {
+			if p.Source != domain.PoolSourceDiscovered || p.Status == domain.PoolStatusDeprecated {
 				continue
 			}
 			// Check if any active resource is linked to this pool.
