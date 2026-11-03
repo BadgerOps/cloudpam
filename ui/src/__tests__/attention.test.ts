@@ -4,6 +4,7 @@ import type {
   ComplianceReport,
   DriftItem,
   DriftListResponse,
+  PoolWithStats,
   Recommendation,
   RecommendationsListResponse,
   SyncJob,
@@ -14,6 +15,7 @@ import {
   summarizeRecommendations,
   summarizeSync,
   summarizeUpdate,
+  summarizeUtilization,
 } from '../utils/attention'
 
 function drift(id: string, severity: DriftItem['severity']): DriftItem {
@@ -171,6 +173,37 @@ describe('summarizeSync', () => {
 
   it('is healthy when every latest sync completed', () => {
     expect(summarizeSync([{ account: account(1, 'a'), latest: job('completed') }])).toMatchObject({ value: '0', tone: 'ok' })
+  })
+})
+
+describe('summarizeUtilization', () => {
+  const pool = (id: number, utilization: number, children?: PoolWithStats[]): PoolWithStats =>
+    ({
+      id,
+      name: `p${id}`,
+      cidr: `10.${id}.0.0/16`,
+      stats: { total_ips: 0, used_ips: 0, available_ips: 0, utilization, child_count: 0, direct_children: 0 },
+      children,
+    }) as PoolWithStats
+
+  it('says there are no pools', () => {
+    expect(summarizeUtilization([])).toMatchObject({ tone: 'neutral', detail: 'No pools yet' })
+  })
+
+  it('is healthy at or under 60%', () => {
+    expect(summarizeUtilization([pool(1, 60)])).toMatchObject({ value: '0', tone: 'ok' })
+  })
+
+  it('finds nested hot pools and lists the fullest first', () => {
+    const s = summarizeUtilization([pool(1, 10, [pool(2, 70), pool(3, 95)])])
+
+    expect(s).toMatchObject({ value: '2', tone: 'critical', detail: '1 over 80%, 1 over 60%' })
+    expect(s.items.map(i => i.to)).toEqual(['/pools?selected=3', '/pools?selected=2'])
+    expect(s.items[0].detail).toBe('10.3.0.0/16 · 95.0% used')
+  })
+
+  it('warns when nothing is over 80%', () => {
+    expect(summarizeUtilization([pool(1, 61)]).tone).toBe('warning')
   })
 })
 

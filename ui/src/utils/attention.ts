@@ -4,6 +4,7 @@ import type {
   ComplianceSeverity,
   DriftListResponse,
   DriftSeverity,
+  PoolWithStats,
   RecommendationPriority,
   RecommendationsListResponse,
   SyncJob,
@@ -180,4 +181,40 @@ export function summarizeUpdate(update: UpdateCheckResponse): AttentionSummary {
     }
   }
   return { value: update.current_version, tone: 'ok', detail: 'Up to date', items: [] }
+}
+
+// Same thresholds as getUtilizationColor, so the card agrees with the pool tree.
+const UTILIZATION_CRITICAL = 80
+const UTILIZATION_WARNING = 60
+
+export function summarizeUtilization(hierarchy: PoolWithStats[]): AttentionSummary {
+  const utilization = (p: PoolWithStats) => p.stats?.utilization ?? 0
+  const hot: PoolWithStats[] = []
+  let pools = 0
+  const walk = (nodes: PoolWithStats[]) => {
+    for (const node of nodes) {
+      pools++
+      if (utilization(node) > UTILIZATION_WARNING) hot.push(node)
+      if (node.children) walk(node.children)
+    }
+  }
+  walk(hierarchy)
+  if (pools === 0) return { value: '0', tone: 'neutral', detail: 'No pools yet', items: [] }
+  if (hot.length === 0) {
+    return { value: '0', tone: 'ok', detail: `All pools at or under ${UTILIZATION_WARNING}% used`, items: [] }
+  }
+  hot.sort((a, b) => utilization(b) - utilization(a))
+  const critical = hot.filter(p => utilization(p) > UTILIZATION_CRITICAL).length
+  return {
+    value: String(hot.length),
+    tone: critical > 0 ? 'critical' : 'warning',
+    detail: countPhrase([[critical, `over ${UTILIZATION_CRITICAL}%`], [hot.length - critical, `over ${UTILIZATION_WARNING}%`]]),
+    items: hot.slice(0, ITEM_LIMIT).map(p => ({
+      key: String(p.id),
+      label: p.name,
+      detail: `${p.cidr} · ${utilization(p).toFixed(1)}% used`,
+      tone: utilization(p) > UTILIZATION_CRITICAL ? 'critical' : 'warning',
+      to: `/pools?selected=${p.id}`,
+    })),
+  }
 }
