@@ -750,7 +750,6 @@ cloudpam/
 │   ├── docker/             # Docker build files
 │   ├── helm/               # Helm charts
 │   ├── k8s/                # Kubernetes manifests (observability stack)
-│   ├── vector/             # Vector log shipping config
 │   └── docker-compose.observability.yml
 ├── ui/                     # Frontend (React/Vite/TypeScript SPA)
 │   ├── src/
