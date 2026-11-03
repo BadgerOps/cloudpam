@@ -96,19 +96,20 @@ func (s *Store) Stats() *storage.DBStats {
 
 const poolColumns = `seq_id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at`
 
-func (s *Store) scanPool(row pgx.Row) (domain.Pool, bool, error) {
+// scanPool scans the poolColumnsWithParentAccount columns, then any extra columns into extra.
+func scanPool(row pgx.Row, extra ...any) (domain.Pool, bool, error) {
 	var p domain.Pool
 	var parentSeq, accountSeq *int64
 	var tagsJSON []byte
 	var createdAt, updatedAt time.Time
 
-	err := row.Scan(
+	err := row.Scan(append([]any{
 		&p.ID, &p.Name, &p.CIDR,
 		&parentSeq, &accountSeq,
 		&p.Type, &p.Status, &p.Source,
 		&p.Description, &tagsJSON,
 		&createdAt, &updatedAt,
-	)
+	}, extra...)...)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return domain.Pool{}, false, nil
@@ -287,7 +288,7 @@ func (s *Store) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error
 		WHERE p.seq_id = $1 AND p.organization_id = $2 AND p.deleted_at IS NULL`, poolColumnsWithParentAccount())
 
 	row := s.pool.QueryRow(ctx, query, id, s.orgID)
-	return s.scanPool(row)
+	return scanPool(row)
 }
 
 func (s *Store) UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error) {
@@ -732,18 +733,19 @@ func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
 	return out, rows.Err()
 }
 
-func scanAccount(rows pgx.Rows) (domain.Account, error) {
+// scanAccount scans the accountColumns columns, then any extra columns into extra.
+func scanAccount(rows pgx.Rows, extra ...any) (domain.Account, error) {
 	var a domain.Account
 	var provider, externalID, description, platform, tier, environment *string
 	var regionsJSON []byte
 	var createdAt, updatedAt time.Time
 
-	if err := rows.Scan(
+	if err := rows.Scan(append([]any{
 		&a.ID, &a.Key, &a.Name,
 		&provider, &externalID, &description,
 		&platform, &tier, &environment,
 		&regionsJSON, &createdAt, &updatedAt,
-	); err != nil {
+	}, extra...)...); err != nil {
 		return domain.Account{}, err
 	}
 

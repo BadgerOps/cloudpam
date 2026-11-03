@@ -122,6 +122,13 @@ func (t placementTx) ListPools(context.Context) ([]domain.Pool, error) {
 	return listPools(t.work, t.tx, t.orgID)
 }
 
+// RestorePool needs no savepoint: a restore is the placement's only write, and its
+// error rolls the whole transaction back.
+func (t placementTx) RestorePool(_ context.Context, id int64) (domain.Pool, bool, error) {
+	p, ok, err := restorePool(t.work, t.tx, t.orgID, id)
+	return p, ok, placementBusy(t.caller, err)
+}
+
 // CreatePool runs each insert in its own savepoint. A failed INSERT aborts the whole PostgreSQL
 // transaction, and the rest of a schema/apply batch must still be stored.
 func (t placementTx) CreatePool(_ context.Context, in domain.CreatePool) (domain.Pool, error) {

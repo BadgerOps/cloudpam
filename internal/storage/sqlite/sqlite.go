@@ -111,61 +111,7 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE deleted_at IS NULL ORDER BY id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []domain.Pool
-	for rows.Next() {
-		var p domain.Pool
-		var createdAt, updatedAt sql.NullString
-		var parent, account sql.NullInt64
-		var poolType, poolStatus, poolSource, description, tagsJSON sql.NullString
-		if err := rows.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &poolType, &poolStatus, &poolSource, &description, &tagsJSON, &createdAt, &updatedAt); err != nil {
-			return nil, err
-		}
-		if parent.Valid {
-			p.ParentID = &parent.Int64
-		}
-		if account.Valid {
-			p.AccountID = &account.Int64
-		}
-		// Set new fields with defaults
-		p.Type = domain.PoolTypeSubnet
-		if poolType.Valid && poolType.String != "" {
-			p.Type = domain.PoolType(poolType.String)
-		}
-		p.Status = domain.PoolStatusActive
-		if poolStatus.Valid && poolStatus.String != "" {
-			p.Status = domain.PoolStatus(poolStatus.String)
-		}
-		p.Source = domain.PoolSourceManual
-		if poolSource.Valid && poolSource.String != "" {
-			p.Source = domain.PoolSource(poolSource.String)
-		}
-		if description.Valid {
-			p.Description = description.String
-		}
-		if tagsJSON.Valid && tagsJSON.String != "" && tagsJSON.String != "{}" {
-			var tags map[string]string
-			if err := json.Unmarshal([]byte(tagsJSON.String), &tags); err == nil {
-				p.Tags = tags
-			}
-		}
-		if createdAt.Valid {
-			if t, e := time.Parse(time.RFC3339, createdAt.String); e == nil {
-				p.CreatedAt = t
-			}
-		}
-		if updatedAt.Valid {
-			if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-				p.UpdatedAt = t
-			}
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
+	return s.queryPools(ctx, `WHERE deleted_at IS NULL ORDER BY id ASC`)
 }
 
 func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
@@ -235,54 +181,12 @@ func (s *Store) CreatePool(ctx context.Context, in domain.CreatePool) (domain.Po
 }
 
 func (s *Store) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error) {
-	var p domain.Pool
-	var createdAt, updatedAt sql.NullString
-	var parent, account sql.NullInt64
-	var poolType, poolStatus, poolSource, description, tagsJSON sql.NullString
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at FROM pools WHERE id=? AND deleted_at IS NULL`, id)
-	if err := row.Scan(&p.ID, &p.Name, &p.CIDR, &parent, &account, &poolType, &poolStatus, &poolSource, &description, &tagsJSON, &createdAt, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Pool{}, false, nil
-		}
+	p, err := scanPool(s.db.QueryRowContext(ctx, `SELECT `+poolColumns+` FROM pools WHERE id=? AND deleted_at IS NULL`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Pool{}, false, nil
+	}
+	if err != nil {
 		return domain.Pool{}, false, err
-	}
-	if parent.Valid {
-		p.ParentID = &parent.Int64
-	}
-	if account.Valid {
-		p.AccountID = &account.Int64
-	}
-	// Set new fields with defaults
-	p.Type = domain.PoolTypeSubnet
-	if poolType.Valid && poolType.String != "" {
-		p.Type = domain.PoolType(poolType.String)
-	}
-	p.Status = domain.PoolStatusActive
-	if poolStatus.Valid && poolStatus.String != "" {
-		p.Status = domain.PoolStatus(poolStatus.String)
-	}
-	p.Source = domain.PoolSourceManual
-	if poolSource.Valid && poolSource.String != "" {
-		p.Source = domain.PoolSource(poolSource.String)
-	}
-	if description.Valid {
-		p.Description = description.String
-	}
-	if tagsJSON.Valid && tagsJSON.String != "" && tagsJSON.String != "{}" {
-		var tags map[string]string
-		if err := json.Unmarshal([]byte(tagsJSON.String), &tags); err == nil {
-			p.Tags = tags
-		}
-	}
-	if createdAt.Valid {
-		if t, e := time.Parse(time.RFC3339, createdAt.String); e == nil {
-			p.CreatedAt = t
-		}
-	}
-	if updatedAt.Valid {
-		if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-			p.UpdatedAt = t
-		}
 	}
 	return p, true, nil
 }
@@ -424,55 +328,7 @@ func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
 
 // Accounts
 func (s *Store) ListAccounts(ctx context.Context) ([]domain.Account, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE deleted_at IS NULL ORDER BY id ASC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []domain.Account
-	for rows.Next() {
-		var a domain.Account
-		var ts string
-		var provider, extid, desc, platform, tier, env sql.NullString
-		var regions, updatedAt sql.NullString
-		if err := rows.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
-			return nil, err
-		}
-		if provider.Valid {
-			a.Provider = provider.String
-		}
-		if extid.Valid {
-			a.ExternalID = extid.String
-		}
-		if desc.Valid {
-			a.Description = desc.String
-		}
-		if platform.Valid {
-			a.Platform = platform.String
-		}
-		if tier.Valid {
-			a.Tier = tier.String
-		}
-		if env.Valid {
-			a.Environment = env.String
-		}
-		if regions.Valid && regions.String != "" {
-			var arr []string
-			if err := json.Unmarshal([]byte(regions.String), &arr); err == nil {
-				a.Regions = arr
-			}
-		}
-		if t, e := time.Parse(time.RFC3339, ts); e == nil {
-			a.CreatedAt = t
-		}
-		if updatedAt.Valid {
-			if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-				a.UpdatedAt = t
-			}
-		}
-		out = append(out, a)
-	}
-	return out, rows.Err()
+	return s.queryAccounts(ctx, `WHERE deleted_at IS NULL ORDER BY id ASC`)
 }
 
 func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (domain.Account, error) {
@@ -497,95 +353,23 @@ func (s *Store) CreateAccount(ctx context.Context, in domain.CreateAccount) (dom
 }
 
 func (s *Store) GetAccount(ctx context.Context, id int64) (domain.Account, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE id=? AND deleted_at IS NULL`, id)
-	var a domain.Account
-	var ts string
-	var provider, extid, desc, platform, tier, env sql.NullString
-	var regions, updatedAt sql.NullString
-	if err := row.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Account{}, false, nil
-		}
+	a, err := scanAccount(s.db.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM accounts WHERE id=? AND deleted_at IS NULL`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Account{}, false, nil
+	}
+	if err != nil {
 		return domain.Account{}, false, err
-	}
-	if provider.Valid {
-		a.Provider = provider.String
-	}
-	if extid.Valid {
-		a.ExternalID = extid.String
-	}
-	if desc.Valid {
-		a.Description = desc.String
-	}
-	if platform.Valid {
-		a.Platform = platform.String
-	}
-	if tier.Valid {
-		a.Tier = tier.String
-	}
-	if env.Valid {
-		a.Environment = env.String
-	}
-	if regions.Valid && regions.String != "" {
-		var arr []string
-		if err := json.Unmarshal([]byte(regions.String), &arr); err == nil {
-			a.Regions = arr
-		}
-	}
-	if t, e := time.Parse(time.RFC3339, ts); e == nil {
-		a.CreatedAt = t
-	}
-	if updatedAt.Valid {
-		if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-			a.UpdatedAt = t
-		}
 	}
 	return a, true, nil
 }
 
 func (s *Store) GetAccountByKey(ctx context.Context, key string) (*domain.Account, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, key, name, provider, external_id, description, platform, tier, environment, regions, created_at, updated_at FROM accounts WHERE key=? AND deleted_at IS NULL`, key)
-	var a domain.Account
-	var ts string
-	var provider, extid, desc, platform, tier, env sql.NullString
-	var regions, updatedAt sql.NullString
-	if err := row.Scan(&a.ID, &a.Key, &a.Name, &provider, &extid, &desc, &platform, &tier, &env, &regions, &ts, &updatedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, storage.ErrNotFound
-		}
+	a, err := scanAccount(s.db.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM accounts WHERE key=? AND deleted_at IS NULL`, key))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, storage.ErrNotFound
+	}
+	if err != nil {
 		return nil, err
-	}
-	if provider.Valid {
-		a.Provider = provider.String
-	}
-	if extid.Valid {
-		a.ExternalID = extid.String
-	}
-	if desc.Valid {
-		a.Description = desc.String
-	}
-	if platform.Valid {
-		a.Platform = platform.String
-	}
-	if tier.Valid {
-		a.Tier = tier.String
-	}
-	if env.Valid {
-		a.Environment = env.String
-	}
-	if regions.Valid && regions.String != "" {
-		var arr []string
-		if err := json.Unmarshal([]byte(regions.String), &arr); err == nil {
-			a.Regions = arr
-		}
-	}
-	if t, e := time.Parse(time.RFC3339, ts); e == nil {
-		a.CreatedAt = t
-	}
-	if updatedAt.Valid {
-		if t, e := time.Parse(time.RFC3339, updatedAt.String); e == nil {
-			a.UpdatedAt = t
-		}
 	}
 	return &a, nil
 }
