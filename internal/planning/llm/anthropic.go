@@ -197,7 +197,9 @@ func (p *AnthropicProvider) StreamComplete(ctx context.Context, messages []Messa
 // readAnthropicStream forwards one StreamEvent per text delta and exactly one
 // terminal event. The stop reason arrives in message_delta and the stream
 // ends with message_stop; an error event ends it with Err set, and the
-// provider's message is not kept because it can echo request details.
+// provider's message is not kept because it can echo request details. A
+// stream that ends with neither message_stop nor a stop reason was cut off,
+// so it ends with ErrInvalidResponse rather than as a complete answer.
 func readAnthropicStream(r io.Reader, ch chan<- StreamEvent) {
 	done := false
 	stopReason := ""
@@ -226,6 +228,9 @@ func readAnthropicStream(r io.Reader, ch chan<- StreamEvent) {
 	})
 	if done {
 		return
+	}
+	if err == nil && stopReason == "" {
+		err = fmt.Errorf("%w: stream ended before a stop reason", ErrInvalidResponse)
 	}
 	ch <- StreamEvent{Done: true, FinishReason: stopReason, Err: err}
 }

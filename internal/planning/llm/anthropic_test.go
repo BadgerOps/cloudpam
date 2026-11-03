@@ -221,6 +221,31 @@ func TestAnthropicStreamWithoutMessageStopEndsCleanly(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamCutOffBeforeStopReasonEndsWithError(t *testing.T) {
+	cases := map[string]string{
+		"partial text":   "event: content_block_delta\n" + `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}` + "\n\n",
+		"empty body":     "",
+		"not sse at all": `{"type":"message","content":[]}`,
+	}
+	for name, stream := range cases {
+		t.Run(name, func(t *testing.T) {
+			ts := newAnthropicFake(t, &anthropicFake{stream: stream})
+			p := NewAnthropicProvider(Config{APIKey: "k", Model: "m", Endpoint: ts.URL})
+			events, err := p.StreamComplete(context.Background(), anthropicMessages, Options{})
+			if err != nil {
+				t.Fatalf("StreamComplete: %v", err)
+			}
+			var last StreamEvent
+			for evt := range events {
+				last = evt
+			}
+			if !last.Done || !errors.Is(last.Err, ErrInvalidResponse) {
+				t.Fatalf("terminal event = %+v, want done with ErrInvalidResponse", last)
+			}
+		})
+	}
+}
+
 func TestAnthropicNon200IsStatusErrorWithoutBody(t *testing.T) {
 	ts := newAnthropicFake(t, &anthropicFake{status: 529})
 	p := NewAnthropicProvider(Config{APIKey: "k", Model: "m", Endpoint: ts.URL})
