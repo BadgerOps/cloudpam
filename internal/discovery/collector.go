@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -80,6 +81,20 @@ func clipProbeCode(code string) string {
 		}
 	}
 	return b.String()
+}
+
+const maxSyncErrorMessage = 2048
+
+func syncErrorMessage(prefix string, err error) string {
+	msg := prefix + err.Error()
+	if len(msg) <= maxSyncErrorMessage {
+		return msg
+	}
+	cut := maxSyncErrorMessage
+	for cut > 0 && !utf8.RuneStart(msg[cut]) {
+		cut--
+	}
+	return msg[:cut] + "... (truncated)"
 }
 
 const credentialTestTimeout = 15 * time.Second
@@ -240,7 +255,7 @@ func (s *SyncService) Sync(ctx context.Context, account domain.Account) (*domain
 		completedAt := time.Now().UTC()
 		job.Status = domain.SyncJobStatusFailed
 		job.CompletedAt = &completedAt
-		job.ErrorMessage = "credential: " + err.Error()
+		job.ErrorMessage = syncErrorMessage("credential: ", err)
 		_ = s.store.UpdateSyncJob(ctx, job)
 		return &job, fmt.Errorf("credential: %w", err)
 	}
@@ -252,11 +267,12 @@ func (s *SyncService) Sync(ctx context.Context, account domain.Account) (*domain
 		completedAt := time.Now().UTC()
 		job.Status = domain.SyncJobStatusFailed
 		job.CompletedAt = &completedAt
-		job.ErrorMessage = discoverErr.Error()
+		prefix := ""
 		var pe *ProbeError
 		if errors.As(discoverErr, &pe) {
-			job.ErrorMessage = "credential: " + job.ErrorMessage
+			prefix = "credential: "
 		}
+		job.ErrorMessage = syncErrorMessage(prefix, discoverErr)
 		_ = s.store.UpdateSyncJob(ctx, job)
 		return &job, fmt.Errorf("discovery failed: %w", discoverErr)
 	}
@@ -272,7 +288,7 @@ func (s *SyncService) Sync(ctx context.Context, account domain.Account) (*domain
 	job.ResourcesDeleted = staleCount
 	if processErr != nil {
 		job.Status = domain.SyncJobStatusFailed
-		job.ErrorMessage = processErr.Error()
+		job.ErrorMessage = syncErrorMessage("", processErr)
 		_ = s.store.UpdateSyncJob(ctx, job)
 		return &job, fmt.Errorf("process resources: %w", processErr)
 	}
