@@ -174,7 +174,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 - [ ] OAuth2 flows for each cloud provider — not yet implemented
 - [ ] Credential encryption/decryption system — not yet implemented
 - [x] Account management endpoints: `/api/v1/accounts/*`
-- [ ] Health check endpoints for connected accounts — not implemented; a failed sync job is the only connectivity signal
+- [x] Health check endpoints for connected accounts: `POST /api/v1/accounts/{id}/test` (connectivity badge on the Accounts page and the discovery wizard)
 - [x] Account listing with status
 
 **Success Criteria**:
