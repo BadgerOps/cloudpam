@@ -114,6 +114,7 @@ func (as *AuthServer) handleAuditExport(w http.ResponseWriter, r *http.Request) 
 		written += len(events)
 		last := events[len(events)-1]
 		opts.After = &audit.Cursor{Timestamp: last.Timestamp, ID: last.ID}
+		opts.SkipCount = true
 		if events, _, err = as.auditLogger.List(ctx, opts); err != nil {
 			abort(err)
 		}

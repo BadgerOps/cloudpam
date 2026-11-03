@@ -123,11 +123,12 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 		args = append(args, opts.Until.Format(time.RFC3339Nano))
 	}
 
-	// Count total
 	var total int
-	countQuery := "SELECT COUNT(*) FROM audit_logs WHERE " + where
-	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, err
+	if !opts.SkipCount {
+		countQuery := "SELECT COUNT(*) FROM audit_logs WHERE " + where
+		if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	// Apply pagination

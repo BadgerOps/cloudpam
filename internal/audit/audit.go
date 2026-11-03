@@ -46,6 +46,9 @@ type ListOptions struct {
 	// Offset, events logged or purged meanwhile cannot shift the page
 	// boundary. The total still counts every match.
 	After *Cursor
+	// SkipCount returns 0 as the total instead of counting every match, for
+	// a caller paging through a listing whose total it already has.
+	SkipCount bool
 }
 
 // Cursor names an event's place in the newest-first listing order.

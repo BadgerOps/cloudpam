@@ -700,9 +700,15 @@ func checkCursorPaging(t *testing.T, logger AuditLogger) {
 	seen := map[string]bool{}
 	opts := ListOptions{Limit: 7}
 	for page := 0; ; page++ {
-		events, _, err := logger.List(ctx, opts)
+		events, total, err := logger.List(ctx, opts)
 		if err != nil {
 			t.Fatalf("List: %v", err)
+		}
+		if page == 0 && total != 40 {
+			t.Fatalf("first page total = %d, want 40", total)
+		}
+		if page > 0 && total != 0 {
+			t.Fatalf("page %d total = %d with SkipCount, want 0", page, total)
 		}
 		if len(events) == 0 {
 			break
@@ -721,6 +727,7 @@ func checkCursorPaging(t *testing.T, logger AuditLogger) {
 		}
 		last := events[len(events)-1]
 		opts.After = &Cursor{Timestamp: last.Timestamp, ID: last.ID}
+		opts.SkipCount = true
 	}
 	for id := range want {
 		if !seen[id] {

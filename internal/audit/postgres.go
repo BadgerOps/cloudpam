@@ -119,11 +119,12 @@ func (s *PostgresAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Au
 		argIdx++
 	}
 
-	// Count total
 	var total int
-	countQuery := "SELECT COUNT(*) FROM audit_events WHERE " + where
-	if err := s.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, err
+	if !opts.SkipCount {
+		countQuery := "SELECT COUNT(*) FROM audit_events WHERE " + where
+		if err := s.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	// Apply pagination

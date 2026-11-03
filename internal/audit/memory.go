@@ -97,6 +97,9 @@ func (m *MemoryAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 	}
 
 	total := len(filtered)
+	if opts.SkipCount {
+		total = 0
+	}
 	if opts.After != nil {
 		// Events are kept in insertion order, so the cursor is a position.
 		next := len(filtered)
