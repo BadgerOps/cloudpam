@@ -4,7 +4,7 @@ import { useApiKeys } from '../hooks/useApiKeys'
 import { useSecuritySettings } from '../hooks/useSettings'
 import { usePendingAction } from '../hooks/usePendingAction'
 import StatusBadge from '../components/StatusBadge'
-import type { ApiKeyCreateResponse, ApiKeyInfo } from '../api/types'
+import type { ApiKeyCreateResponse, ApiKeyInfo, ApiKeyRateLimit } from '../api/types'
 
 // Must match backend validScopes in auth_handlers.go createAPIKey
 const SCOPE_OPTIONS = [
@@ -46,12 +46,14 @@ function keyStatus(k: ApiKeyInfo): { status: KeyStatus; label: string } {
 }
 
 export default function ApiKeysPage() {
-  const { keys, loading, error, canList, canCreate, canRevoke, create, revoke } = useApiKeys()
+  const { keys, loading, error, canList, canCreate, canRevoke, canSetRateLimit, create, revoke } = useApiKeys()
   const { settings } = useSecuritySettings()
   const [showCreate, setShowCreate] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
   const [selectedScopes, setSelectedScopes] = useState<string[]>(['pools:read', 'accounts:read'])
   const [expiryDays, setExpiryDays] = useState<number | undefined>(undefined)
+  const [rateRps, setRateRps] = useState<number | undefined>(undefined)
+  const [rateBurst, setRateBurst] = useState<number | undefined>(undefined)
   const [createdKey, setCreatedKey] = useState<ApiKeyCreateResponse | null>(null)
   const [copied, setCopied] = useState(false)
   const [createError, setCreateError] = useState('')
@@ -59,16 +61,27 @@ export default function ApiKeysPage() {
   async function createKey() {
     if (!canCreate || !newKeyName.trim()) return
     setCreateError('')
+    let rate_limit: ApiKeyRateLimit | undefined
+    if (rateRps !== undefined || rateBurst !== undefined) {
+      if (!rateRps || !rateBurst || rateRps <= 0 || rateBurst <= 0) {
+        setCreateError('A rate limit needs both requests per second and burst, each above zero')
+        return
+      }
+      rate_limit = { requests_per_second: rateRps, burst: rateBurst }
+    }
     try {
       const res = await create({
         name: newKeyName.trim(),
         scopes: selectedScopes,
         expires_in_days: expiryDays,
+        rate_limit,
       })
       setCreatedKey(res)
       setNewKeyName('')
       setSelectedScopes(['pools:read', 'accounts:read'])
       setExpiryDays(undefined)
+      setRateRps(undefined)
+      setRateBurst(undefined)
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create key')
     }
@@ -219,6 +232,35 @@ export default function ApiKeysPage() {
               )}
             </div>
 
+            {canSetRateLimit && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                  Rate limit (optional, replaces the server default for this key)
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    aria-label="Requests per second"
+                    value={rateRps ?? ''}
+                    onChange={e => setRateRps(e.target.value ? Number(e.target.value) : undefined)}
+                    placeholder="Requests / second"
+                    className="w-48 px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    aria-label="Burst"
+                    value={rateBurst ?? ''}
+                    onChange={e => setRateBurst(e.target.value ? Number(e.target.value) : undefined)}
+                    placeholder="Burst"
+                    className="w-32 px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            )}
+
             {createError && (
               <p className="text-sm text-red-600 dark:text-red-400">{createError}</p>
             )}
@@ -253,6 +295,7 @@ export default function ApiKeysPage() {
               <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Age</th>
               <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Created</th>
               <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Expires</th>
+              <th className="hidden md:table-cell text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Rate limit</th>
               <th className="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Status</th>
               <th className="text-right px-4 py-3 font-medium text-gray-600 dark:text-gray-400">Actions</th>
             </tr>
@@ -260,13 +303,13 @@ export default function ApiKeysPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={9} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                   Loading...
                 </td>
               </tr>
             ) : keys.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={9} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                   <Key className="w-8 h-8 mx-auto mb-2 opacity-40" />
                   No API keys found
                 </td>
@@ -293,6 +336,9 @@ export default function ApiKeysPage() {
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatAge(k.age_days)}</td>
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.created_at)}</td>
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{formatDate(k.expires_at)}</td>
+                  <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                    {k.rate_limit ? `${k.rate_limit.requests_per_second}/s, burst ${k.rate_limit.burst}` : 'Default'}
+                  </td>
                   <td className="px-4 py-3">
                     <StatusBadge {...keyStatus(k)} />
                   </td>
