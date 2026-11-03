@@ -37,17 +37,21 @@ export function useAccountCredential(accountId: number) {
   const [testResult, setTestResult] = useState<CredentialTestResult | null>(null)
   const busy = useRef(false)
   const loadSeq = useRef(0)
+  const stateRef = useRef(state)
+  stateRef.current = state
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<AccountCredential | null> => {
     const seq = ++loadSeq.current
     try {
       const credential = await getAccountCredential(accountId)
-      if (seq !== loadSeq.current) return
+      if (seq !== loadSeq.current) return null
       setState({ kind: 'stored', credential })
+      return credential
     } catch (err) {
-      if (seq !== loadSeq.current) return
+      if (seq !== loadSeq.current) return null
       const e = toError(err, 'Failed to load the credential')
       setState(e.status === 404 ? { kind: 'none' } : { kind: 'error', message: e.error })
+      return null
     }
   }, [accountId])
 
@@ -79,10 +83,11 @@ export function useAccountCredential(accountId: number) {
     busy.current = true
     setTesting(true)
     setTestResult(null)
+    const tested = stateRef.current.kind === 'stored' ? stateRef.current.credential.updated_at : null
     try {
       const result = await testAccountCredential(accountId)
-      setTestResult(result)
-      await refresh()
+      const current = await refresh()
+      setTestResult(current !== null && tested !== null && current.updated_at === tested ? result : null)
       return { ok: true, value: result }
     } catch (err) {
       return { ok: false, ...toError(err, 'Failed to test the credential') }

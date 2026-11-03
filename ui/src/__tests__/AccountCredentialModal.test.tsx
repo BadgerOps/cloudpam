@@ -235,6 +235,29 @@ describe('AccountCredentialModal', () => {
     expect(within(shown).getByText('cloudpam@staging-net.iam.gserviceaccount.com')).toBeTruthy()
   })
 
+  it('discards a test result once the credential was replaced during the test', async () => {
+    const result: CredentialTestResult = { tested_at: '2026-01-03T00:00:00Z', status: 'ok', identity: 'cloudpam@staging-net.iam.gserviceaccount.com' }
+    const replaced: AccountCredential = {
+      ...storedGCP,
+      summary: { client_email: 'other@staging-net.iam.gserviceaccount.com', project_id: 'staging-net' },
+      updated_at: '2026-01-03T00:00:01Z',
+    }
+    let loads = 0
+    serve({
+      GET: () => json(200, loads++ === 0 ? storedGCP : replaced),
+      POST: () => json(200, result),
+    })
+    renderModal(gcpAccount)
+    await waitFor(() => expect(badge()).toBe('Stored'))
+
+    fireEvent.click(modal().getByRole('button', { name: 'Test' }))
+
+    await waitFor(() => expect(modal().getByText('other@staging-net.iam.gserviceaccount.com')).toBeTruthy())
+    expect(screen.queryByTestId('credential-test-result')).toBeNull()
+    expect(screen.queryByText('cloudpam@staging-net.iam.gserviceaccount.com')).toBeNull()
+    expect(badge()).toBe('Stored')
+  })
+
   it('clears after confirm and returns to the none state', async () => {
     serve({
       GET: () => json(200, storedGCP),

@@ -23,7 +23,7 @@ An admin attaches an encrypted cloud credential to an AWS or GCP account from th
 Preconditions:
 
 - Baseline seed present (`prod-platform`, provider aws).
-- The server was launched with `CLOUDPAM_OIDC_ENCRYPTION_KEY` set. `launch` sets a fixed dev key unless one is exported first, and records it in `state/env` as `OIDC_ENCRYPTION_KEY`.
+- The server was launched with `CLOUDPAM_OIDC_ENCRYPTION_KEY` set. `launch` always uses the fixed throwaway key baked into the helper; it ignores any key exported in your environment and does not record it in `state/env`.
 - No account with key `gcp:verify-cred-<id>` exists, where `<id>` is the last 8 digits of `Date.now()`.
 - A throwaway RSA key from `node:crypto` (`generateKeyPairSync('rsa', { modulusLength: 2048 })`, exported as PKCS8 PEM) inside a service-account JSON with `type`, `project_id`, `private_key`, and `client_email`.
 

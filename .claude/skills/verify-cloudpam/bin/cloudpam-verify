@@ -24,7 +24,9 @@ export SKILL_DIR REPO_ROOT
 
 VERIFY_USERNAME="${CLOUDPAM_VERIFY_USERNAME:-verify-admin}"
 VERIFY_PASSWORD="${CLOUDPAM_VERIFY_PASSWORD:-VerifyDev12345!}"
-VERIFY_OIDC_KEY="${CLOUDPAM_OIDC_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000001}"
+# Fixed throwaway key for the disposable instance. Never inherited, never written to the env file,
+# so a real deployment key in the caller's environment cannot reach logs or evidence.
+VERIFY_OIDC_KEY="0000000000000000000000000000000000000000000000000000000000000001"
 
 log() { printf '[cloudpam-verify] %s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
@@ -194,10 +196,9 @@ cmd_launch() {
     echo $! > "$STATE/server.pid"
   )
   PID="$(cat "$STATE/server.pid")"
-  OIDC_ENCRYPTION_KEY="$VERIFY_OIDC_KEY"
 
   local name
-  for name in RUN_ID RUN_DIR STATE EVIDENCE BASE_URL PORT PID APP_VERSION GIT_REV USERNAME PASSWORD COOKIES OIDC_ENCRYPTION_KEY; do
+  for name in RUN_ID RUN_DIR STATE EVIDENCE BASE_URL PORT PID APP_VERSION GIT_REV USERNAME PASSWORD COOKIES; do
     printf '%s=%q\n' "$name" "${!name}"
   done > "$ENV_FILE"
 
