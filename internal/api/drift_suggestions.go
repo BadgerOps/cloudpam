@@ -17,7 +17,8 @@ import (
 // current pools and discovered resources, never from the snapshot stored at
 // detection time. Each unmanaged resource is classified by the discovery import
 // preview with only that resource selected, so a suggestion is exactly what the
-// link or single-resource import apply will do with it.
+// link or single-resource import apply will do with it. Every preview reads one
+// inventory loaded per call, so the cost stays linear in the inventory.
 func (ds *DriftServer) suggestReconciliation(ctx context.Context, items []domain.DriftItem) error {
 	pools, err := ds.srv.store.ListPools(ctx)
 	if err != nil {
@@ -28,6 +29,7 @@ func (ds *DriftServer) suggestReconciliation(ctx context.Context, items []domain
 		poolsByID[p.ID] = p
 	}
 	activeLinks := map[int64]map[int64]bool{}
+	var inv *discoveryInventory
 
 	for i := range items {
 		item := &items[i]
@@ -36,7 +38,12 @@ func (ds *DriftServer) suggestReconciliation(ctx context.Context, items []domain
 		}
 		switch item.Type {
 		case domain.DriftTypeUnmanaged:
-			if err := ds.suggestImport(ctx, item); err != nil {
+			if inv == nil {
+				if inv, err = ds.discovery.loadDiscoveryInventory(ctx); err != nil {
+					return err
+				}
+			}
+			if err := ds.suggestImport(ctx, inv, item); err != nil {
 				return err
 			}
 		case domain.DriftTypeCIDRMismatch:
@@ -59,12 +66,12 @@ func (ds *DriftServer) suggestReconciliation(ctx context.Context, items []domain
 	return nil
 }
 
-func (ds *DriftServer) suggestImport(ctx context.Context, item *domain.DriftItem) error {
+func (ds *DriftServer) suggestImport(ctx context.Context, inv *discoveryInventory, item *domain.DriftItem) error {
 	if item.ResourceID == nil {
 		suggestReview(item, "the drift item has no discovered resource")
 		return nil
 	}
-	preview, err := ds.discovery.previewDiscoveryImport(ctx, domain.DiscoveryImportPreviewRequest{AccountID: item.AccountID, ResourceIDs: []uuid.UUID{*item.ResourceID}})
+	preview, err := ds.discovery.previewWithInventory(ctx, inv, domain.DiscoveryImportPreviewRequest{AccountID: item.AccountID, ResourceIDs: []uuid.UUID{*item.ResourceID}})
 	if err != nil {
 		if isDiscoveryImportClientError(err) {
 			suggestReview(item, err.Error())

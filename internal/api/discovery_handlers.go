@@ -687,20 +687,21 @@ func validateDiscoveryImportSelection(accountID int64, resourceIDs []uuid.UUID) 
 }
 
 func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain.DiscoveryImportPreviewRequest) (domain.DiscoveryImportPreviewResponse, error) {
-	if _, found, err := d.srv.store.GetAccount(ctx, req.AccountID); err != nil {
-		return domain.DiscoveryImportPreviewResponse{}, err
-	} else if !found {
-		return domain.DiscoveryImportPreviewResponse{}, newDiscoveryImportClientError("account not found")
-	}
-
-	pools, err := d.srv.store.ListPools(ctx)
+	inv, err := d.loadDiscoveryInventory(ctx)
 	if err != nil {
 		return domain.DiscoveryImportPreviewResponse{}, err
 	}
-	poolsByID := make(map[int64]domain.Pool, len(pools))
-	for _, pool := range pools {
-		poolsByID[pool.ID] = pool
+	return d.previewWithInventory(ctx, inv, req)
+}
+
+// previewWithInventory classifies the request against an inventory the caller
+// loaded, so one request can preview many resources from a single load.
+func (d *DiscoveryServer) previewWithInventory(ctx context.Context, inv *discoveryInventory, req domain.DiscoveryImportPreviewRequest) (domain.DiscoveryImportPreviewResponse, error) {
+	if !inv.accounts[req.AccountID] {
+		return domain.DiscoveryImportPreviewResponse{}, newDiscoveryImportClientError("account not found")
 	}
+
+	pools, poolsByID := inv.pools, inv.poolsByID
 	var selectedPool *domain.Pool
 	if req.PoolID != nil {
 		pool, ok := poolsByID[*req.PoolID]
@@ -713,7 +714,7 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 		selectedPool = &pool
 	}
 
-	accountResources, err := d.listAllDiscoveredResources(ctx, req.AccountID, domain.DiscoveryFilters{})
+	accountResources, err := inv.accountResources(ctx, req.AccountID)
 	if err != nil {
 		return domain.DiscoveryImportPreviewResponse{}, err
 	}
@@ -734,7 +735,7 @@ func (d *DiscoveryServer) previewDiscoveryImport(ctx context.Context, req domain
 			selectedResources = append(selectedResources, *res)
 		}
 	}
-	duplicates, err := d.duplicateCIDRsByAccount(ctx, req.AccountID, selectedResources)
+	duplicates, err := inv.duplicateCIDRs(ctx, req.AccountID, selectedResources)
 	if err != nil {
 		return domain.DiscoveryImportPreviewResponse{}, err
 	}
@@ -986,40 +987,6 @@ func (d *DiscoveryServer) validateImportParentPool(ctx context.Context, accountI
 		return fmt.Errorf("parent pool account does not match import account")
 	}
 	return nil
-}
-
-func (d *DiscoveryServer) duplicateCIDRsByAccount(ctx context.Context, accountID int64, selected []domain.DiscoveredResource) (map[string][]uuid.UUID, error) {
-	cidrs := make(map[string]bool)
-	for _, res := range selected {
-		if res.CIDR != "" {
-			cidrs[res.CIDR] = true
-		}
-	}
-	out := make(map[string][]uuid.UUID, len(cidrs))
-	if len(cidrs) == 0 {
-		return out, nil
-	}
-	accounts, err := d.srv.store.ListAccounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, account := range accounts {
-		if account.ID == accountID {
-			continue
-		}
-		resources, err := d.listAllDiscoveredResources(ctx, account.ID, domain.DiscoveryFilters{
-			Status: string(domain.DiscoveryStatusActive),
-		})
-		if err != nil {
-			return nil, err
-		}
-		for _, res := range resources {
-			if cidrs[res.CIDR] {
-				out[res.CIDR] = append(out[res.CIDR], res.ID)
-			}
-		}
-	}
-	return out, nil
 }
 
 func (d *DiscoveryServer) listAllDiscoveredResources(ctx context.Context, accountID int64, filters domain.DiscoveryFilters) ([]domain.DiscoveredResource, error) {
