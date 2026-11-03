@@ -47,9 +47,15 @@ func DefaultRateLimitConfig() RateLimitConfig {
 // id and an address from ever naming the same bucket.
 type bucketKey string
 
-func ipBucket(host string) bucketKey   { return bucketKey("ip:" + host) }
-func apiKeyBucket(id string) bucketKey { return bucketKey("key:" + id) }
-func userBucket(id string) bucketKey   { return bucketKey("user:" + id) }
+func ipBucket(host string) bucketKey { return bucketKey("ip:" + host) }
+
+// credentialBucket is an address's budget for credential-bearing requests
+// that authentication rejects. It is separate from ipBucket so anonymous
+// traffic from a shared address (a reverse proxy) cannot lock out principals
+// whose own buckets are untouched.
+func credentialBucket(host string) bucketKey { return bucketKey("cred:" + host) }
+func apiKeyBucket(id string) bucketKey       { return bucketKey("key:" + id) }
+func userBucket(id string) bucketKey         { return bucketKey("user:" + id) }
 
 type bucket struct {
 	limiter  *rate.Limiter
@@ -62,7 +68,9 @@ type bucket struct {
 }
 
 // rateLimiter owns every bucket. A bucket is rebuilt when its limit changes
-// and dropped after rateLimiterVisitorTTL without a request.
+// and dropped once it has gone rateLimiterVisitorTTL without a request and
+// refilled to its burst, so dropping it never hands out tokens it had not
+// earned back.
 type rateLimiter struct {
 	defaults RateLimitConfig
 	logger   *slog.Logger
@@ -90,7 +98,8 @@ func (l *rateLimiter) bucketLocked(now time.Time, key bucketKey, limit auth.Rate
 
 	if l.lastSweep.IsZero() || now.Sub(l.lastSweep) > minimumCleanupInterval {
 		for k, stale := range l.buckets {
-			if stale.held == 0 && now.Sub(stale.lastSeen) > rateLimiterVisitorTTL {
+			if stale.held == 0 && now.Sub(stale.lastSeen) > rateLimiterVisitorTTL &&
+				stale.limiter.TokensAt(now) >= float64(stale.limit.Burst) {
 				delete(l.buckets, k)
 			}
 		}
@@ -196,9 +205,10 @@ func (l *rateLimiter) reject(w http.ResponseWriter, r *http.Request, key bucketK
 }
 
 // principalClaim is the outer limiter's hand-off for a request that carries
-// credentials. The request holds a token in its address bucket until the auth
-// middleware charges the principal, which returns the token; a request nobody
-// claimed spends it, so a rejected credential still costs the address.
+// credentials. The request holds a token in its address's credential bucket
+// until the auth middleware charges the principal, which returns the token; a
+// request nobody claimed spends it, so a rejected credential still costs the
+// address.
 type principalClaim struct {
 	limiter *rateLimiter
 	ip      *bucket
@@ -228,8 +238,10 @@ func hasCredentials(r *http.Request) bool {
 // RateLimitMiddleware enforces a token bucket per principal. A request with
 // no credentials is charged to its client address. A request with
 // credentials is charged to the API key or user that the auth middleware
-// resolves, under the key's own limit when it has one; its address holds a
-// token until then, and pays it if the credential is rejected. Every limited
+// resolves, under the key's own limit when it has one; until then it holds a
+// token in the address's credential bucket, and pays it if the credential is
+// rejected. Anonymous requests never draw on the credential bucket, so they
+// cannot starve authenticated principals behind the same address. Every limited
 // response carries X-RateLimit-Limit, X-RateLimit-Remaining and
 // X-RateLimit-Reset, and a 429 carries Retry-After.
 //
@@ -254,10 +266,11 @@ func RateLimitMiddleware(cfg RateLimitConfig, logger *slog.Logger) Middleware {
 				return
 			}
 
-			d, held := l.hold(now, ip, cfg)
+			cred := credentialBucket(clientKey(r))
+			d, held := l.hold(now, cred, cfg)
 			d.writeHeaders(w)
 			if !d.allowed {
-				l.reject(w, r, ip, d)
+				l.reject(w, r, cred, d)
 				return
 			}
 			claim := &principalClaim{limiter: l, ip: held}

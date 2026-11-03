@@ -218,7 +218,7 @@ The storage layer uses build tags to switch between implementations:
   - Migrations apply automatically on startup
   - Forward-only; no rollback support
   - Use `./cloudpam -migrate status` to check schema version
-  - Current migrations: `0001_init.sql` through `0023_api_key_rate_limit.sql` (23 files; new work starts at `0024`)
+  - Current migrations: `0001_init.sql` through `0024_api_key_rate_limit.sql` (24 files; new work starts at `0025`)
 
 - **PostgreSQL Support** (`-tags postgres`)
   - Production-grade database with native CIDR operations
@@ -456,7 +456,7 @@ When adding endpoints:
 ### Rate Limiting
 - `RATE_LIMIT_RPS`: Requests per second (default: `100`; set to `0` to disable)
 - `RATE_LIMIT_BURST`: Burst size (default: `200`)
-- The global limiter keeps one token bucket per API key, per user, or per TCP peer address for unauthenticated requests. It ignores `X-Forwarded-For`, so unauthenticated clients behind one reverse proxy share a bucket. An API key can carry its own `rate_limit` (set at creation, requires `settings:write`), which applies even with `RATE_LIMIT_RPS=0`. The login limiter and the audit client IP honor `CLOUDPAM_TRUSTED_PROXIES`, and the global limiter does not. Behind a proxy, set `RATE_LIMIT_RPS=0` and limit at the ingress.
+- The global limiter keeps one token bucket per API key, per user, or per TCP peer address for unauthenticated requests. It ignores `X-Forwarded-For`, so unauthenticated clients behind one reverse proxy share a bucket. Requests that carry credentials are admitted against a separate per-address budget that only rejected credentials spend, so anonymous traffic cannot starve authenticated principals behind the same address. An API key can carry its own `rate_limit` (set at creation, requires `settings:write`), which applies even with `RATE_LIMIT_RPS=0`. The login limiter and the audit client IP honor `CLOUDPAM_TRUSTED_PROXIES`, and the global limiter does not. Behind a proxy, set `RATE_LIMIT_RPS=0` and limit at the ingress.
 
 ### Agent (Org Mode)
 - `CLOUDPAM_AWS_ORG_ENABLED`: Enable AWS Organizations discovery mode
@@ -729,7 +729,7 @@ cloudpam/
 │   │   └── llm/            # LLM provider abstraction (OpenAI-compatible)
 │   ├── observability/      # Logging, metrics, tracing
 │   └── docs/               # Internal documentation handlers
-├── migrations/             # SQL migrations (0001-0023)
+├── migrations/             # SQL migrations (0001-0024)
 │   ├── embed.go
 │   ├── 0001_init.sql
 │   ├── 0002_accounts_meta.sql
@@ -741,7 +741,7 @@ cloudpam/
 │   ├── 0020_rbac_permission_catalog.sql # Custom roles + permission catalog
 │   ├── 0021_network_objects_relationships.sql # Network objects + relationships
 │   ├── 0022_account_credentials.sql   # Per-account cloud credentials
-│   ├── 0023_api_key_rate_limit.sql    # Optional per-key rate limit
+│   ├── 0024_api_key_rate_limit.sql    # Optional per-key rate limit
 │   └── postgres/           # PostgreSQL migrations
 ├── deploy/                 # Deployment configurations
 │   ├── terraform/aws-org-discovery/  # AWS Organizations discovery IAM

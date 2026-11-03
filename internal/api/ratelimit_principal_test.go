@@ -213,3 +213,54 @@ func TestRateLimitLongAuthenticatedRequestReleasesTheAddress(t *testing.T) {
 		t.Fatalf("streaming request: status = %d", code)
 	}
 }
+
+func TestRateLimitAnonymousTrafficCannotStarveAFreshPrincipal(t *testing.T) {
+	keys := auth.NewMemoryKeyStore()
+	h := principalLimitedHandler(t, RateLimitConfig{RequestsPerSecond: 0.001, Burst: 1}, keys, auth.NewMemorySessionStore(), auth.NewMemoryUserStore())
+	key := mintKey(t, keys, "unused", nil)
+
+	// An anonymous caller behind the same address spends the address bucket.
+	expectCodes(t, h, principalRequest{}, http.StatusUnauthorized, http.StatusTooManyRequests)
+	if got := sendAs(h, principalRequest{bearer: key}).Code; got != http.StatusOK {
+		t.Fatalf("valid key behind an exhausted anonymous address: status = %d, want 200", got)
+	}
+}
+
+func TestRateLimitRejectedCredentialsDoNotSpendTheAnonymousBudget(t *testing.T) {
+	h := principalLimitedHandler(t, RateLimitConfig{RequestsPerSecond: 0.001, Burst: 1}, auth.NewMemoryKeyStore(), auth.NewMemorySessionStore(), auth.NewMemoryUserStore())
+
+	bad := principalRequest{bearer: "cpam_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
+	expectCodes(t, h, bad, http.StatusUnauthorized, http.StatusTooManyRequests)
+	expectCodes(t, h, principalRequest{}, http.StatusUnauthorized)
+}
+
+func TestRateLimitCleanupKeepsABucketThatHasNotRefilled(t *testing.T) {
+	l := newRateLimiter(RateLimitConfig{RequestsPerSecond: 100, Burst: 200}, newTestLogger())
+	start := time.Now()
+	hourly := auth.RateLimit{RequestsPerSecond: 1.0 / 3600, Burst: 1}
+	if !l.take(start, apiKeyBucket("slow"), hourly).allowed {
+		t.Fatal("first request of an hourly key rejected")
+	}
+
+	// Another principal's request after the idle TTL runs the sweep.
+	later := start.Add(rateLimiterVisitorTTL + time.Minute)
+	l.take(later, apiKeyBucket("other"), l.defaults)
+	if l.take(later, apiKeyBucket("slow"), hourly).allowed {
+		t.Fatal("hourly key admitted again after the idle sweep, before its token refilled")
+	}
+}
+
+func TestRateLimitCleanupDropsARefilledIdleBucket(t *testing.T) {
+	l := newRateLimiter(RateLimitConfig{RequestsPerSecond: 100, Burst: 200}, newTestLogger())
+	start := time.Now()
+	l.take(start, ipBucket("198.51.100.1"), l.defaults)
+
+	later := start.Add(rateLimiterVisitorTTL + time.Minute)
+	l.take(later, ipBucket("198.51.100.2"), l.defaults)
+	l.mu.Lock()
+	_, kept := l.buckets[ipBucket("198.51.100.1")]
+	l.mu.Unlock()
+	if kept {
+		t.Fatal("idle bucket that refilled to its burst was not dropped")
+	}
+}
