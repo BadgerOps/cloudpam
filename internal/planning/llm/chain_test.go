@@ -199,6 +199,37 @@ func TestChainFallsBackWhenThePrimaryStallsBeforeAnswering(t *testing.T) {
 	}
 }
 
+// TestChainFallsBackWhenThePrimaryStallsInsideAnErrorBody: a 5xx whose body
+// never finishes must not hold the request until ctx expires, because the
+// chain does not fall back once ctx is done.
+func TestChainFallsBackWhenThePrimaryStallsInsideAnErrorBody(t *testing.T) {
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":`))
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	t.Cleanup(stalled.Close)
+	t.Cleanup(func() { close(release) })
+	primary := NewOpenAIProvider(Config{Endpoint: stalled.URL + "/v1", Model: "m"})
+	c := NewChain([]Link{{Provider: primary, Label: "openai m"}, {Provider: ok("fallback", "answered"), Label: "fallback"}})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	out, err := c.Complete(ctx, []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil || out.Content != "answered" {
+		t.Fatalf("Complete = %+v, %v, want the fallback to answer", out, err)
+	}
+	events, err := c.StreamComplete(ctx, []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+	if _, text, _ := drain(t, events); text != "answered" {
+		t.Fatalf("streamed text %q, want the fallback to answer", text)
+	}
+}
+
 func TestChainDoesNotFallBackOnClientErrors(t *testing.T) {
 	for _, tc := range []struct {
 		name string

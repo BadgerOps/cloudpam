@@ -268,11 +268,11 @@ func (p *OpenAIProvider) StreamComplete(ctx context.Context, messages []Message,
 	return ch, nil
 }
 
-// drainStream reads what follows the terminal event, normally just the [DONE]
-// sentinel and the end of the response, so the body reaches EOF and the
-// transport pools the connection instead of discarding it. discardBody bounds
-// the bytes, and a provider that holds the socket open after finish_reason
-// (#359) is cut off by closing the body at streamDrainTimeout.
+// drainStream reads the rest of a body the caller is done with (what follows
+// a stream's terminal event, or an error reply), so the body reaches EOF and
+// the transport pools the connection instead of discarding it. discardBody
+// bounds the bytes, and a provider that holds the socket open (#359) is cut
+// off by closing the body at streamDrainTimeout.
 func drainStream(body io.ReadCloser) {
 	timer := time.AfterFunc(streamDrainTimeout, func() { _ = body.Close() })
 	defer timer.Stop()

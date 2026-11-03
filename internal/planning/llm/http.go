@@ -13,7 +13,10 @@ import (
 
 // postJSON sends body as JSON to url with headers and returns the response
 // when its status is 200. Any other status is reported as a StatusError with
-// the body discarded, so provider error bodies never reach callers.
+// the body discarded, so provider error bodies never reach callers. The
+// discard is bounded in time: once headers arrive ResponseHeaderTimeout no
+// longer applies, and a 5xx whose body stalls would otherwise hold the
+// request until ctx ends, after which the chain no longer falls back.
 func postJSON(ctx context.Context, client *http.Client, url string, headers map[string]string, body any) (*http.Response, error) {
 	bodyJSON, err := json.Marshal(body)
 	if err != nil {
@@ -32,7 +35,7 @@ func postJSON(ctx context.Context, client *http.Client, url string, headers map[
 		return nil, fmt.Errorf("http request: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		discardBody(resp.Body)
+		drainStream(resp.Body)
 		_ = resp.Body.Close()
 		return nil, &StatusError{Status: resp.StatusCode}
 	}
