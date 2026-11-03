@@ -8,7 +8,7 @@ It is a companion to `docs/OBSERVABILITY.md`, which owns structured logging, met
 
 **The most important finding is that issue #93 is not a greenfield design.** A working CEF-over-syslog forwarder already exists, is wired into `main.go`, is covered by tests, and is documented. The issue's framing ("what format? CEF, JSON, OCSF?") and its recommendation ("JSON format; webhook + S3/GCS shipping for v1; CEF/OCSF as optional formatters for enterprise") were written without that context and are revised below.
 
-**Still not implemented (as of 0.23.4):** webhook and file sinks shown in the diagram, persisted Log Destinations CRUD, Splunk HEC / CloudWatch / Cloud Logging connectors, and `AuditStore` retention APIs. The `/config/log-destinations` page documents the syslog env vars only. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+**Still not implemented (as of 0.23.4):** webhook and file sinks shown in the diagram, persisted Log Destinations CRUD, and Splunk HEC / CloudWatch / Cloud Logging connectors. The `/config/log-destinations` page documents the syslog env vars only. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -67,7 +67,7 @@ It is a companion to `docs/OBSERVABILITY.md`, which owns structured logging, met
 
 `ListOptions` (`internal/audit/audit.go:33-41`) supports `Limit`, `Offset`, `Actor`, `Action`, `ResourceType`, `Since`, `Until`. The `Since`/`Until` pair is what makes gap-replay feasible (§6.4).
 
-`AuditLogger` (`internal/audit/audit.go:44-53`) is a three-method interface: `Log`, `List`, `GetByResource`. Note that the much richer `AuditStore` interface in `internal/audit/store.go:13-46` (with `Query`, `Count`, `GetByID`, `GetByActor`, `DeleteOlderThan`, `Close`) has **no implementations** — it is aspirational. Any shipper must be written against `AuditLogger`, not `AuditStore`.
+`AuditLogger` (`internal/audit/audit.go`) is a four-method interface: `Log`, `List`, `GetByResource`, `DeleteOlderThan`. Any shipper is written against it.
 
 ### 1.2 Persistence
 

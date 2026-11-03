@@ -303,6 +303,16 @@ func main() {
 		logger.Info("authentication enforced", "users", len(existingUsers))
 	}
 
+	// Audit retention: dry run on startup, purge hourly from then on.
+	retention := audit.NewRetention(auditLogger, func(ctx context.Context) (time.Duration, error) {
+		settings, err := settingsStore.GetSecuritySettings(ctx)
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(settings.AuditRetentionDays) * 24 * time.Hour, nil
+	}, logger.Slog())
+	go retention.Run(context.Background(), audit.RetentionInterval)
+
 	// Background session cleanup every 15 minutes.
 	go func() {
 		ticker := time.NewTicker(15 * time.Minute)
