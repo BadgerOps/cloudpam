@@ -94,29 +94,38 @@ func (s *Server) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Po
 }
 
 func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
-	work, cancel := context.WithTimeout(ctx, placementBudget)
-	defer cancel()
-
-	if err := s.placeGate.acquire(work); err != nil {
-		return nil, busyIfBudgetSpent(ctx, err)
-	}
-	defer s.placeGate.release()
-
-	locker, ok := s.store.(storage.PlacementLocker)
-	if !ok {
-		out, err := place(work, s.store, policy, batch)
-		return out, busyIfBudgetSpent(ctx, err)
-	}
 	var out []placedPool
-	err := locker.WithPlacementLock(work, func(ps storage.PlacementStore) error {
+	err := s.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		var err error
 		out, err = place(work, ps, policy, batch)
 		return err
 	})
 	if err != nil {
-		return nil, busyIfBudgetSpent(ctx, err)
+		return nil, err
 	}
 	return out, nil
+}
+
+// WithPlacement runs fn under the same guard as every pool placement: the in-process gate, the
+// cross-process lock when the store is shared, and the placement budget. fn must do its reads and
+// writes through ps on work. Code that changes or deletes a pool range, not only code that creates
+// pools, needs it, or a placement running at the same time can check against a stale range.
+func (s *Server) WithPlacement(ctx context.Context, fn func(work context.Context, ps storage.PlacementStore) error) error {
+	work, cancel := context.WithTimeout(ctx, placementBudget)
+	defer cancel()
+
+	if err := s.placeGate.acquire(work); err != nil {
+		return busyIfBudgetSpent(ctx, err)
+	}
+	defer s.placeGate.release()
+
+	locker, ok := s.store.(storage.PlacementLocker)
+	if !ok {
+		return busyIfBudgetSpent(ctx, fn(work, s.store))
+	}
+	return busyIfBudgetSpent(ctx, locker.WithPlacementLock(work, func(ps storage.PlacementStore) error {
+		return fn(work, ps)
+	}))
 }
 
 // placementGate serializes placements inside one process. Unlike a mutex, a request

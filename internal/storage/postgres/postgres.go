@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"cloudpam/internal/cidr"
@@ -96,7 +97,7 @@ func (s *Store) Stats() *storage.DBStats {
 
 const poolColumns = `seq_id, name, cidr, parent_id, account_id, type, status, source, description, tags, created_at, updated_at`
 
-func (s *Store) scanPool(row pgx.Row) (domain.Pool, bool, error) {
+func scanPool(row pgx.Row) (domain.Pool, bool, error) {
 	var p domain.Pool
 	var parentSeq, accountSeq *int64
 	var tagsJSON []byte
@@ -132,6 +133,12 @@ func (s *Store) scanPool(row pgx.Row) (domain.Pool, bool, error) {
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// execQuerier adds Exec for the writes that run both on the pool and inside a placement transaction.
+type execQuerier interface {
+	querier
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
@@ -281,13 +288,16 @@ func createPool(ctx context.Context, q querier, orgID string, in domain.CreatePo
 }
 
 func (s *Store) GetPool(ctx context.Context, id int64) (domain.Pool, bool, error) {
+	return getPool(ctx, s.pool, s.orgID, id)
+}
+
+func getPool(ctx context.Context, q querier, orgID string, id int64) (domain.Pool, bool, error) {
 	query := fmt.Sprintf(`
 		SELECT p.%s
 		FROM pools p
 		WHERE p.seq_id = $1 AND p.organization_id = $2 AND p.deleted_at IS NULL`, poolColumnsWithParentAccount())
 
-	row := s.pool.QueryRow(ctx, query, id, s.orgID)
-	return s.scanPool(row)
+	return scanPool(q.QueryRow(ctx, query, id, orgID))
 }
 
 func (s *Store) UpdatePoolAccount(ctx context.Context, id int64, accountID *int64) (domain.Pool, bool, error) {
@@ -417,25 +427,36 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 }
 
 func (s *Store) UpdatePoolCIDR(ctx context.Context, id int64, cidr string) (domain.Pool, bool, error) {
-	tag, err := s.pool.Exec(ctx,
+	return updatePoolCIDR(ctx, s.pool, s.orgID, id, cidr)
+}
+
+func updatePoolCIDR(ctx context.Context, q execQuerier, orgID string, id int64, cidr string) (domain.Pool, bool, error) {
+	tag, err := q.Exec(ctx,
 		`UPDATE pools SET cidr = $3::inet, updated_at = NOW() WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`,
-		id, s.orgID, cidr)
+		id, orgID, cidr)
+	if isUniqueViolation(err) {
+		return domain.Pool{}, false, fmt.Errorf("a pool already uses %s: %w", cidr, storage.ErrConflict)
+	}
 	if err != nil {
 		return domain.Pool{}, false, err
 	}
 	if tag.RowsAffected() == 0 {
 		return domain.Pool{}, false, nil
 	}
-	return s.GetPool(ctx, id)
+	return getPool(ctx, q, orgID, id)
 }
 
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
+	return deletePool(ctx, s.pool, s.orgID, id)
+}
+
+func deletePool(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
 	// Check for children
 	var childCount int
-	err := s.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT COUNT(*) FROM pools
 		WHERE parent_id = (SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2)
-		  AND deleted_at IS NULL`, id, s.orgID).Scan(&childCount)
+		  AND deleted_at IS NULL`, id, orgID).Scan(&childCount)
 	if err != nil {
 		return false, err
 	}
@@ -443,9 +464,9 @@ func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
 		return false, fmt.Errorf("pool has child pools: %w", storage.ErrConflict)
 	}
 
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := q.Exec(ctx, `
 		UPDATE pools SET deleted_at = NOW()
-		WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID)
+		WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, orgID)
 	if err != nil {
 		return false, err
 	}

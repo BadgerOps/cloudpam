@@ -282,7 +282,7 @@ func TestGenerate_ReclaimRecs(t *testing.T) {
 
 func TestApply_Consolidation(t *testing.T) {
 	ctx := context.Background()
-	svc, st, _ := setupTypedRecService(t)
+	svc, st, disc := setupTypedRecService(t)
 	acct, err := st.CreateAccount(ctx, domain.CreateAccount{Key: "aws:1", Name: "prod"})
 	if err != nil {
 		t.Fatal(err)
@@ -290,28 +290,72 @@ func TestApply_Consolidation(t *testing.T) {
 	parent := mustPool(t, st, "Corp", "10.0.0.0/16", nil, nil)
 	a := mustPool(t, st, "a", "10.0.1.0/25", &parent.ID, &acct.ID)
 	b := mustPool(t, st, "b", "10.0.1.128/25", &parent.ID, &acct.ID)
+	if err := disc.UpsertDiscoveredResource(ctx, domain.DiscoveredResource{
+		AccountID: acct.ID, Provider: "aws", ResourceType: domain.ResourceTypeSubnet, ResourceID: "subnet-b",
+		CIDR: "10.0.1.128/26", PoolID: &b.ID, Status: domain.DiscoveryStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	rec := recsOfType(generateFor(t, svc, parent.ID), domain.RecommendationTypeConsolidation)[0]
 
 	applied, err := svc.Apply(ctx, rec.ID, domain.ApplyRecommendationRequest{})
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	if applied.Status != domain.RecommendationStatusApplied || applied.AppliedPoolID == nil {
-		t.Fatalf("applied rec %+v, want applied with a pool id", applied)
+	if applied.Status != domain.RecommendationStatusApplied || applied.AppliedPoolID == nil || *applied.AppliedPoolID != a.ID {
+		t.Fatalf("applied rec %+v, want applied to the kept pool %d", applied, a.ID)
 	}
-	merged, found, _ := st.GetPool(ctx, *applied.AppliedPoolID)
+	merged, found, _ := st.GetPool(ctx, a.ID)
 	if !found || merged.CIDR != "10.0.1.0/24" || merged.ParentID == nil || *merged.ParentID != parent.ID {
-		t.Errorf("merged pool %+v, want 10.0.1.0/24 under %d", merged, parent.ID)
+		t.Errorf("kept pool %+v, want 10.0.1.0/24 under %d", merged, parent.ID)
 	}
-	if merged.AccountID == nil || *merged.AccountID != acct.ID {
-		t.Errorf("merged pool account %v, want the sources' account %d", merged.AccountID, acct.ID)
+	if merged.Name != "a" || merged.AccountID == nil || *merged.AccountID != acct.ID {
+		t.Errorf("kept pool name %q account %v, want its own name and account", merged.Name, merged.AccountID)
 	}
-	if merged.Name != "Consolidated 10.0.1.0/24" {
-		t.Errorf("merged pool name %q", merged.Name)
+	if _, found, _ := st.GetPool(ctx, b.ID); found {
+		t.Errorf("absorbed pool %d still exists after the merge", b.ID)
+	}
+	res, _, err := disc.ListDiscoveredResources(ctx, acct.ID, domain.DiscoveryFilters{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].PoolID == nil || *res[0].PoolID != a.ID {
+		t.Errorf("resource linked to the absorbed pool now links to %v, want %d", res[0].PoolID, a.ID)
+	}
+}
+
+func TestApply_ConsolidationRenamesKeptPool(t *testing.T) {
+	ctx := context.Background()
+	svc, st, _ := setupTypedRecService(t)
+	parent := mustPool(t, st, "Corp", "10.0.0.0/16", nil, nil)
+	a := mustPool(t, st, "a", "10.0.1.0/25", &parent.ID, nil)
+	mustPool(t, st, "b", "10.0.1.128/25", &parent.ID, nil)
+	rec := recsOfType(generateFor(t, svc, parent.ID), domain.RecommendationTypeConsolidation)[0]
+
+	if _, err := svc.Apply(ctx, rec.ID, domain.ApplyRecommendationRequest{Name: "merged"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	kept, _, _ := st.GetPool(ctx, a.ID)
+	if kept.Name != "merged" || kept.AccountID != nil {
+		t.Errorf("kept pool name %q account %v, want merged and no account", kept.Name, kept.AccountID)
+	}
+}
+
+func TestApply_ConsolidationRefusesUsedMergedCIDR(t *testing.T) {
+	ctx := context.Background()
+	svc, st, _ := setupTypedRecService(t)
+	parent := mustPool(t, st, "Corp", "10.0.0.0/16", nil, nil)
+	a := mustPool(t, st, "a", "10.0.1.0/25", &parent.ID, nil)
+	b := mustPool(t, st, "b", "10.0.1.128/25", &parent.ID, nil)
+	rec := recsOfType(generateFor(t, svc, parent.ID), domain.RecommendationTypeConsolidation)[0]
+	mustPool(t, st, "elsewhere", "10.0.1.0/24", nil, nil)
+
+	if _, err := svc.Apply(ctx, rec.ID, domain.ApplyRecommendationRequest{}); !errors.Is(err, storage.ErrConflict) {
+		t.Fatalf("apply onto a used CIDR: err=%v, want ErrConflict", err)
 	}
 	for _, src := range []domain.Pool{a, b} {
-		if _, found, _ := st.GetPool(ctx, src.ID); found {
-			t.Errorf("source pool %d (%s) still exists after the merge", src.ID, src.CIDR)
+		if got, found, _ := st.GetPool(ctx, src.ID); !found || got.CIDR != src.CIDR {
+			t.Errorf("source pool %d is %+v after a refused apply, want %s unchanged", src.ID, got, src.CIDR)
 		}
 	}
 }

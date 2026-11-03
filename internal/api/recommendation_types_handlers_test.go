@@ -68,14 +68,15 @@ func TestRecommendationHandler_ConsolidationListsAndApplies(t *testing.T) {
 	if applied.Status != domain.RecommendationStatusApplied || applied.AppliedPoolID == nil {
 		t.Fatalf("applied %+v", applied)
 	}
-	merged, found, _ := st.GetPool(ctx, *applied.AppliedPoolID)
+	if *applied.AppliedPoolID != a.ID {
+		t.Errorf("applied pool %d, want the kept source %d", *applied.AppliedPoolID, a.ID)
+	}
+	merged, found, _ := st.GetPool(ctx, a.ID)
 	if !found || merged.CIDR != "10.0.1.0/24" || merged.Name != "Merged" {
 		t.Errorf("merged pool %+v", merged)
 	}
-	for _, src := range []int64{a.ID, b.ID} {
-		if _, found, _ := st.GetPool(ctx, src); found {
-			t.Errorf("source pool %d still exists", src)
-		}
+	if _, found, _ := st.GetPool(ctx, b.ID); found {
+		t.Errorf("absorbed pool %d still exists", b.ID)
 	}
 }
 

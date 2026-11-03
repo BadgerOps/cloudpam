@@ -9,12 +9,17 @@ import (
 
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning"
+	"cloudpam/internal/storage"
 )
 
 type storePlacer struct{ s *Store }
 
 func (p storePlacer) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error) {
 	return p.s.CreatePool(ctx, in)
+}
+
+func (p storePlacer) WithPlacement(ctx context.Context, fn func(context.Context, storage.PlacementStore) error) error {
+	return fn(ctx, p.s)
 }
 
 func recommendationOfType(t *testing.T, items []domain.Recommendation, typ domain.RecommendationType) domain.Recommendation {

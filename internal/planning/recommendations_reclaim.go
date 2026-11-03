@@ -39,8 +39,8 @@ func scoreReclaim(idle time.Duration, bits int) int {
 	return min(score, 100)
 }
 
-func (s *RecommendationService) reclaimRecommendation(pool domain.Pool, tree poolTree, linked map[int64]bool, now time.Time) *domain.Recommendation {
-	if !tree.isLeaf(pool.ID) || linked[pool.ID] {
+func (s *RecommendationService) reclaimRecommendation(pool domain.Pool, tree poolTree, linked map[int64][]uuid.UUID, now time.Time) *domain.Recommendation {
+	if !tree.isLeaf(pool.ID) || len(linked[pool.ID]) > 0 {
 		return nil
 	}
 	idle := now.Sub(pool.UpdatedAt)
@@ -72,20 +72,14 @@ func (s *RecommendationService) reclaimRecommendation(pool domain.Pool, tree poo
 	}
 }
 
-// applyReclaim deletes the pool once it is still empty and unlinked.
+// applyReclaim deletes the pool once it is still unlinked. DeletePool itself refuses a pool that
+// gained children.
 func (s *RecommendationService) applyReclaim(ctx context.Context, rec *domain.Recommendation) error {
-	children, err := s.mainStore.GetPoolChildren(ctx, rec.PoolID)
-	if err != nil {
-		return fmt.Errorf("get children of pool %d: %w", rec.PoolID, err)
-	}
-	if len(children) > 0 {
-		return fmt.Errorf("pool %d now has child pools: %w", rec.PoolID, storage.ErrConflict)
-	}
-	linked, err := s.linkedPoolIDs(ctx)
+	linked, err := s.linkedResources(ctx)
 	if err != nil {
 		return err
 	}
-	if linked[rec.PoolID] {
+	if len(linked[rec.PoolID]) > 0 {
 		return fmt.Errorf("pool %d now has linked discovered resources: %w", rec.PoolID, storage.ErrConflict)
 	}
 	deleted, err := s.mainStore.DeletePool(ctx, rec.PoolID)

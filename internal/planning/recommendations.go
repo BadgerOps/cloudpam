@@ -17,6 +17,8 @@ import (
 // and the placement lock.
 type PoolPlacer interface {
 	PlacePool(ctx context.Context, in domain.CreatePool) (domain.Pool, error)
+	// WithPlacement runs fn under that guard, for writes that change or delete a pool range.
+	WithPlacement(ctx context.Context, fn func(work context.Context, ps storage.PlacementStore) error) error
 }
 
 // RecommendationService generates, applies, and dismisses recommendations.
@@ -52,7 +54,7 @@ func (s *RecommendationService) Generate(ctx context.Context, req domain.Generat
 	if err != nil {
 		return nil, err
 	}
-	linked, err := s.linkedPoolIDs(ctx)
+	linked, err := s.linkedResources(ctx)
 	if err != nil {
 		return nil, err
 	}

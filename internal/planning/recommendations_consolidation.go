@@ -126,88 +126,111 @@ func (s *RecommendationService) consolidationRecommendations(ctx context.Context
 	return recs
 }
 
-// applyConsolidation deletes the two source pools and places the merged block under the
-// recommendation's pool through the placement guard. The three writes are not one
-// transaction: when placement fails, the sources stay deleted and the recommendation stays
-// pending, so the caller sees the error and the pools need to be recreated by hand.
+// applyConsolidation widens the first source pool to the merged block and deletes the second,
+// under the placement guard so no placement runs between the checks and the writes. Widening
+// before deleting means the merged range is never free for another pool to take. The kept pool
+// keeps its ID, name and tags; discovered resources linked to the deleted pool move to it.
 func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *domain.Recommendation, req domain.ApplyRecommendationRequest) (*int64, error) {
-	sources, err := s.consolidationSources(ctx, rec)
+	ids, cidrs, err := consolidationSources(rec)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.rejectDuplicateCIDR(ctx, rec.SuggestedCIDR); err != nil {
-		return nil, err
-	}
-	for _, src := range sources {
-		if _, err := s.mainStore.DeletePool(ctx, src.ID); err != nil {
-			return nil, fmt.Errorf("delete source pool %d: %w", src.ID, err)
+	var kept domain.Pool
+	err = s.placer.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		pools, err := ps.ListPools(work)
+		if err != nil {
+			return fmt.Errorf("list pools: %w", err)
 		}
-	}
-
-	name := req.Name
-	if name == "" {
-		name = "Consolidated " + rec.SuggestedCIDR
-	}
-	accountID := req.AccountID
-	if accountID == nil {
-		accountID = sources[0].AccountID
-	}
-	parentID := rec.PoolID
-	merged, err := s.placer.PlacePool(ctx, domain.CreatePool{
-		Name:      name,
-		CIDR:      rec.SuggestedCIDR,
-		ParentID:  &parentID,
-		AccountID: accountID,
-		Type:      sources[0].Type,
-		Status:    sources[0].Status,
-		Source:    domain.PoolSourceManual,
+		if err := checkUnchangedLeaves(pools, rec.PoolID, ids, cidrs); err != nil {
+			return err
+		}
+		if err := rejectDuplicateCIDR(pools, rec.SuggestedCIDR); err != nil {
+			return err
+		}
+		widened, found, err := ps.UpdatePoolCIDR(work, ids[0], rec.SuggestedCIDR)
+		if err != nil {
+			return fmt.Errorf("widen pool %d to %s: %w", ids[0], rec.SuggestedCIDR, err)
+		}
+		if !found {
+			return fmt.Errorf("pool %d: %w", ids[0], storage.ErrNotFound)
+		}
+		deleted, err := ps.DeletePool(work, ids[1])
+		if err != nil || !deleted {
+			// Stores without a placement transaction keep the widened range unless it is put back.
+			_, _, _ = ps.UpdatePoolCIDR(work, ids[0], cidrs[0])
+			if err == nil {
+				err = storage.ErrNotFound
+			}
+			return fmt.Errorf("delete pool %d: %w", ids[1], err)
+		}
+		kept = widened
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("place merged pool %s after deleting its sources: %w", rec.SuggestedCIDR, err)
+		return nil, err
 	}
-	return &merged.ID, nil
+
+	if err := s.relinkResources(ctx, ids[1], kept.ID); err != nil {
+		return nil, err
+	}
+	if req.Name != "" || req.AccountID != nil {
+		name := kept.Name
+		if req.Name != "" {
+			name = req.Name
+		}
+		accountID := kept.AccountID
+		if req.AccountID != nil {
+			accountID = req.AccountID
+		}
+		if _, _, err := s.mainStore.UpdatePoolMeta(ctx, kept.ID, &name, accountID); err != nil {
+			return nil, fmt.Errorf("rename merged pool %d: %w", kept.ID, err)
+		}
+	}
+	return &kept.ID, nil
 }
 
-// consolidationSources loads the two source pools and checks they are still what the
-// recommendation saw: present, under the same parent, with the same CIDRs, and without children.
-func (s *RecommendationService) consolidationSources(ctx context.Context, rec *domain.Recommendation) ([]domain.Pool, error) {
-	ids := strings.Split(rec.Metadata["source_pool_ids"], ",")
-	cidrs := strings.Split(rec.Metadata["source_cidrs"], ",")
-	if len(ids) != 2 || len(cidrs) != 2 {
-		return nil, fmt.Errorf("consolidation recommendation %s has no source pools: %w", rec.ID, storage.ErrValidation)
+// consolidationSources reads the two source pool IDs and CIDRs the recommendation recorded.
+func consolidationSources(rec *domain.Recommendation) ([2]int64, [2]string, error) {
+	var ids [2]int64
+	var cidrs [2]string
+	rawIDs := strings.Split(rec.Metadata["source_pool_ids"], ",")
+	rawCIDRs := strings.Split(rec.Metadata["source_cidrs"], ",")
+	if len(rawIDs) != 2 || len(rawCIDRs) != 2 {
+		return ids, cidrs, fmt.Errorf("consolidation recommendation %s has no source pools: %w", rec.ID, storage.ErrValidation)
 	}
-	sources := make([]domain.Pool, 0, 2)
-	for i, raw := range ids {
-		id, err := strconv.ParseInt(raw, 10, 64)
+	for i := range ids {
+		id, err := strconv.ParseInt(rawIDs[i], 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("consolidation recommendation %s has source pool id %q: %w", rec.ID, raw, storage.ErrValidation)
+			return ids, cidrs, fmt.Errorf("consolidation recommendation %s has source pool id %q: %w", rec.ID, rawIDs[i], storage.ErrValidation)
 		}
-		pool, found, err := s.mainStore.GetPool(ctx, id)
-		if err != nil {
-			return nil, fmt.Errorf("get source pool %d: %w", id, err)
-		}
-		if !found || pool.ParentID == nil || *pool.ParentID != rec.PoolID || pool.CIDR != cidrs[i] {
-			return nil, fmt.Errorf("source pool %d changed since the recommendation was generated: %w", id, storage.ErrConflict)
-		}
-		children, err := s.mainStore.GetPoolChildren(ctx, id)
-		if err != nil {
-			return nil, fmt.Errorf("get children of source pool %d: %w", id, err)
-		}
-		if len(children) > 0 {
-			return nil, fmt.Errorf("source pool %d now has child pools: %w", id, storage.ErrConflict)
-		}
-		sources = append(sources, pool)
+		ids[i], cidrs[i] = id, rawCIDRs[i]
 	}
-	return sources, nil
+	return ids, cidrs, nil
 }
 
-// rejectDuplicateCIDR fails before any source is deleted when a live pool anywhere already
-// carries the merged CIDR, which PostgreSQL's unique index would reject after the deletes.
-func (s *RecommendationService) rejectDuplicateCIDR(ctx context.Context, cidr string) error {
-	pools, err := s.mainStore.ListPools(ctx)
-	if err != nil {
-		return fmt.Errorf("list pools: %w", err)
+// checkUnchangedLeaves confirms each source pool is still what the recommendation saw: live,
+// under the same parent, with the same CIDR, and without children.
+func checkUnchangedLeaves(pools []domain.Pool, parentID int64, ids [2]int64, cidrs [2]string) error {
+	tree := newPoolTree(pools)
+	byID := make(map[int64]domain.Pool, len(pools))
+	for _, p := range pools {
+		byID[p.ID] = p
 	}
+	for i, id := range ids {
+		p, ok := byID[id]
+		if !ok || p.ParentID == nil || *p.ParentID != parentID || p.CIDR != cidrs[i] {
+			return fmt.Errorf("source pool %d changed since the recommendation was generated: %w", id, storage.ErrConflict)
+		}
+		if !tree.isLeaf(id) {
+			return fmt.Errorf("source pool %d now has child pools: %w", id, storage.ErrConflict)
+		}
+	}
+	return nil
+}
+
+// rejectDuplicateCIDR fails when a live pool anywhere already carries cidr, which PostgreSQL's
+// organization-wide unique index would reject.
+func rejectDuplicateCIDR(pools []domain.Pool, cidr string) error {
 	for _, p := range pools {
 		if p.CIDR == cidr {
 			return fmt.Errorf("pool %d already uses %s: %w", p.ID, cidr, storage.ErrConflict)

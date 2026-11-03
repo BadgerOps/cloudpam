@@ -138,6 +138,10 @@ func (p lockedPlacer) PlacePool(ctx context.Context, in domain.CreatePool) (doma
 	return out, err
 }
 
+func (p lockedPlacer) WithPlacement(ctx context.Context, fn func(context.Context, storage.PlacementStore) error) error {
+	return p.s.WithPlacementLock(ctx, func(ps storage.PlacementStore) error { return fn(ctx, ps) })
+}
+
 func TestRecommendationServiceRoundTripsThroughPostgres(t *testing.T) {
 	resetDB(t)
 	ctx := context.Background()

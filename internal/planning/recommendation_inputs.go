@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+
 	"cloudpam/internal/domain"
 	"cloudpam/internal/storage"
 )
@@ -36,14 +38,14 @@ func (s *RecommendationService) loadPoolTree(ctx context.Context) (poolTree, err
 	return newPoolTree(pools), nil
 }
 
-// linkedPoolIDs returns the IDs of every pool that a discovered resource is linked to.
-func (s *RecommendationService) linkedPoolIDs(ctx context.Context) (map[int64]bool, error) {
+// linkedResources returns the discovered resources linked to each pool, keyed by pool ID.
+func (s *RecommendationService) linkedResources(ctx context.Context) (map[int64][]uuid.UUID, error) {
 	accounts, err := s.mainStore.ListAccounts(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts: %w", err)
 	}
 	linked := true
-	ids := make(map[int64]bool)
+	byPool := make(map[int64][]uuid.UUID)
 	for _, acct := range accounts {
 		for page := 1; ; page++ {
 			items, total, err := s.discovery.ListDiscoveredResources(ctx, acct.ID, domain.DiscoveryFilters{
@@ -56,7 +58,7 @@ func (s *RecommendationService) linkedPoolIDs(ctx context.Context) (map[int64]bo
 			}
 			for _, r := range items {
 				if r.PoolID != nil {
-					ids[*r.PoolID] = true
+					byPool[*r.PoolID] = append(byPool[*r.PoolID], r.ID)
 				}
 			}
 			if len(items) == 0 || page*storage.MaxPageSize >= total {
@@ -64,5 +66,19 @@ func (s *RecommendationService) linkedPoolIDs(ctx context.Context) (map[int64]bo
 			}
 		}
 	}
-	return ids, nil
+	return byPool, nil
+}
+
+// relinkResources moves every discovered resource linked to pool from onto pool to.
+func (s *RecommendationService) relinkResources(ctx context.Context, from, to int64) error {
+	linked, err := s.linkedResources(ctx)
+	if err != nil {
+		return err
+	}
+	for _, id := range linked[from] {
+		if err := s.discovery.LinkResourceToPool(ctx, id, to); err != nil {
+			return fmt.Errorf("move resource %s from deleted pool %d to pool %d: %w", id, from, to, err)
+		}
+	}
+	return nil
 }
