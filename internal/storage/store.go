@@ -23,6 +23,12 @@ type Store interface {
 	UpdatePool(ctx context.Context, id int64, update domain.UpdatePool) (domain.Pool, bool, error)
 	DeletePool(ctx context.Context, id int64) (bool, error)
 	DeletePoolCascade(ctx context.Context, id int64) (bool, error)
+	// ListDeletedPools returns soft-deleted pools, most recently deleted first.
+	ListDeletedPools(ctx context.Context) ([]domain.Pool, error)
+	// RestorePool clears deleted_at on a soft-deleted pool. It returns false when no
+	// soft-deleted pool has that id, and ErrConflict when its parent or account is
+	// deleted or a live pool now holds its CIDR.
+	RestorePool(ctx context.Context, id int64) (domain.Pool, bool, error)
 	// Enhanced pool methods for hierarchy and statistics
 	GetPoolWithStats(ctx context.Context, id int64) (*domain.PoolWithStats, error)
 	GetPoolHierarchy(ctx context.Context, rootID *int64) ([]domain.PoolWithStats, error)
@@ -34,6 +40,12 @@ type Store interface {
 	UpdateAccount(ctx context.Context, id int64, update domain.Account) (domain.Account, bool, error)
 	DeleteAccount(ctx context.Context, id int64) (bool, error)
 	DeleteAccountCascade(ctx context.Context, id int64) (bool, error)
+	// ListDeletedAccounts returns soft-deleted accounts, most recently deleted first.
+	ListDeletedAccounts(ctx context.Context) ([]domain.Account, error)
+	// RestoreAccount clears deleted_at on a soft-deleted account. It returns false when
+	// no soft-deleted account has that id, and ErrConflict when a live account now
+	// holds its key. Credentials removed by the delete stay removed.
+	RestoreAccount(ctx context.Context, id int64) (domain.Account, bool, error)
 	GetAccount(ctx context.Context, id int64) (domain.Account, bool, error)
 	// GetAccountByKey retrieves an account by its unique key (e.g., "aws:123456789012").
 	GetAccountByKey(ctx context.Context, key string) (*domain.Account, error)

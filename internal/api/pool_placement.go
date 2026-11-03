@@ -139,29 +139,64 @@ func (s *Server) PlacePool(ctx context.Context, in domain.CreatePool) (domain.Po
 }
 
 func (s *Server) placePools(ctx context.Context, policy overlapPolicy, batch []poolPlacement) ([]placedPool, error) {
-	work, cancel := context.WithTimeout(ctx, placementBudget)
-	defer cancel()
-
-	if err := s.placeGate.acquire(work); err != nil {
-		return nil, busyIfBudgetSpent(ctx, err)
-	}
-	defer s.placeGate.release()
-
-	locker, ok := s.store.(storage.PlacementLocker)
-	if !ok {
-		out, err := place(work, s.store, policy, batch)
-		return out, busyIfBudgetSpent(ctx, err)
-	}
 	var out []placedPool
-	err := locker.WithPlacementLock(work, func(ps storage.PlacementStore) error {
+	err := s.withPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		var err error
 		out, err = place(work, ps, policy, batch)
 		return err
 	})
 	if err != nil {
-		return nil, busyIfBudgetSpent(ctx, err)
+		return nil, err
 	}
 	return out, nil
+}
+
+// restorePool brings a soft-deleted pool back under the placement lock, checked against
+// its live parent and siblings the way POST /api/v1/pools checks a new pool. A deleted
+// parent or an overlapping sibling is ErrConflict.
+func (s *Server) restorePool(ctx context.Context, deleted domain.Pool) (domain.Pool, bool, error) {
+	var p domain.Pool
+	var ok bool
+	err := s.withPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		live, err := ps.ListPools(work)
+		if err != nil {
+			return err
+		}
+		in := domain.CreatePool{Name: deleted.Name, CIDR: deleted.CIDR, ParentID: deleted.ParentID}
+		var missing *missingParentError
+		var overlap *placementConflict
+		switch err := indexPools(live).admit(0, "", in); {
+		case errors.As(err, &missing):
+			return fmt.Errorf("parent pool %d is deleted; restore it first: %w", missing.ParentID, storage.ErrConflict)
+		case errors.As(err, &overlap):
+			return fmt.Errorf("pool %q (%s) overlaps with live pool #%d (%s): %w", deleted.Name, deleted.CIDR, overlap.With.ID, overlap.With.CIDR, storage.ErrConflict)
+		case err != nil:
+			return fmt.Errorf("%w: %w", storage.ErrConflict, err)
+		}
+		p, ok, err = ps.RestorePool(work, deleted.ID)
+		return err
+	})
+	return p, ok, err
+}
+
+// withPlacement runs fn holding placeGate and, on a store shared across processes, the
+// store's placement lock, all within placementBudget.
+func (s *Server) withPlacement(ctx context.Context, fn func(work context.Context, ps storage.PlacementStore) error) error {
+	work, cancel := context.WithTimeout(ctx, placementBudget)
+	defer cancel()
+
+	if err := s.placeGate.acquire(work); err != nil {
+		return busyIfBudgetSpent(ctx, err)
+	}
+	defer s.placeGate.release()
+
+	locker, ok := s.store.(storage.PlacementLocker)
+	if !ok {
+		return busyIfBudgetSpent(ctx, fn(work, s.store))
+	}
+	return busyIfBudgetSpent(ctx, locker.WithPlacementLock(work, func(ps storage.PlacementStore) error {
+		return fn(work, ps)
+	}))
 }
 
 // placementGate serializes placements inside one process. Unlike a mutex, a request

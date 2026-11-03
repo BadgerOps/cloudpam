@@ -482,6 +482,7 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"SetupRequest", reflect.TypeOf(openAPISetupRequest{})},
 		{"SetupResponse", reflect.TypeOf(openAPISetupResponse{})},
 		{"Pool", reflect.TypeOf(domain.Pool{})},
+		{"PoolList", reflect.TypeOf([]domain.Pool{})},
 		{"PoolStats", reflect.TypeOf(domain.PoolStats{})},
 		{"GrowthProjection", reflect.TypeOf(domain.GrowthProjection{})},
 		{"ProjectedUsage", reflect.TypeOf(domain.ProjectedUsage{})},
@@ -489,6 +490,7 @@ func openAPIComponentTypes() []openAPIComponentType {
 		{"CreatePool", reflect.TypeOf(domain.CreatePool{})},
 		{"UpdatePool", reflect.TypeOf(domain.UpdatePool{})},
 		{"Account", reflect.TypeOf(domain.Account{})},
+		{"AccountList", reflect.TypeOf([]domain.Account{})},
 		{"CreateAccount", reflect.TypeOf(domain.CreateAccount{})},
 		{"UpdateAccount", reflect.TypeOf(domain.CreateAccount{})},
 		{"ImportResponse", reflect.TypeOf(openAPIImportResponse{})},
@@ -749,6 +751,8 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 	case "/api/v1/pools/":
 		return routesForKnown([][2]string{
 			{http.MethodGet, "/api/v1/pools/hierarchy"},
+			{http.MethodGet, "/api/v1/pools/deleted"},
+			{http.MethodPost, "/api/v1/pools/{poolId}/restore"},
 			{http.MethodGet, "/api/v1/pools/{poolId}"},
 			{http.MethodPatch, "/api/v1/pools/{poolId}"},
 			{http.MethodDelete, "/api/v1/pools/{poolId}"},
@@ -759,6 +763,8 @@ func openAPIRoutesForPattern(pattern string) []openAPIRoute {
 		return routesForMethodsPath([]string{http.MethodGet, http.MethodPost}, "/api/v1/accounts")
 	case "/api/v1/accounts/":
 		return routesForKnown([][2]string{
+			{http.MethodGet, "/api/v1/accounts/deleted"},
+			{http.MethodPost, "/api/v1/accounts/{accountId}/restore"},
 			{http.MethodGet, "/api/v1/accounts/{accountId}"},
 			{http.MethodPatch, "/api/v1/accounts/{accountId}"},
 			{http.MethodDelete, "/api/v1/accounts/{accountId}"},
@@ -1047,6 +1053,8 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "GET", Path: "/api/v1/pools", Summary: "List pools", Tag: "Pools", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("include_stats", "Include utilization statistics", "boolean")}},
 		{Method: "POST", Path: "/api/v1/pools", Summary: "Create pool", Description: "Returns 400 when the CIDR overlaps a pool with the same parent, and 409 when a pool with the same CIDR already exists under that parent. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds.", Tag: "Pools", RequestSchema: "CreatePool", SuccessStatus: "201", ResponseSchema: "Pool", ResponseDescription: "Pool created"},
 		{Method: "GET", Path: "/api/v1/pools/hierarchy", Summary: "Get pool hierarchy", Tag: "Pools", ResponseSchema: "Object", Parameters: []openAPIParameter{queryParam("root_id", "Optional root pool ID", "integer")}},
+		{Method: "GET", Path: "/api/v1/pools/deleted", Summary: "List soft-deleted pools", Description: "Returns soft-deleted pools with deleted_at, most recently deleted first. Requires pools:delete.", Tag: "Pools", ResponseSchema: "PoolList"},
+		{Method: "POST", Path: "/api/v1/pools/{poolId}/restore", Summary: "Restore a soft-deleted pool", Description: "Clears deleted_at and returns the pool. Only this pool is restored; restore a cascade-deleted parent first, then its children. Returns 404 when no soft-deleted pool has this id, and 409 when its parent or account is still deleted, a live pool now holds its CIDR, or its CIDR overlaps a live pool with the same parent. On PostgreSQL, returns 503 with Retry-After when another replica holds the pool placement lock for more than 5 seconds. Requires pools:delete.", Tag: "Pools", ResponseSchema: "Pool", ResponseDescription: "Pool restored"},
 		{Method: "GET", Path: "/api/v1/pools/{poolId}", Summary: "Get pool", Tag: "Pools", ResponseSchema: "Pool"},
 		{Method: "PATCH", Path: "/api/v1/pools/{poolId}", Summary: "Update pool metadata", Tag: "Pools", RequestSchema: "UpdatePool", ResponseSchema: "Pool"},
 		{Method: "DELETE", Path: "/api/v1/pools/{poolId}", Summary: "Delete pool", Tag: "Pools", ResponseDescription: "Pool deleted", Parameters: []openAPIParameter{queryParam("force", "Force recursive delete where supported", "boolean")}},
@@ -1054,6 +1062,8 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "GET", Path: "/api/v1/pools/{poolId}/stats", Summary: "Get pool utilization statistics", Tag: "Pools", ResponseSchema: "PoolStats"},
 		{Method: "GET", Path: "/api/v1/accounts", Summary: "List accounts", Tag: "Accounts", ResponseSchema: "Object"},
 		{Method: "POST", Path: "/api/v1/accounts", Summary: "Create account", Tag: "Accounts", RequestSchema: "CreateAccount", SuccessStatus: "201", ResponseSchema: "Account", ResponseDescription: "Account created"},
+		{Method: "GET", Path: "/api/v1/accounts/deleted", Summary: "List soft-deleted accounts", Description: "Returns soft-deleted accounts with deleted_at, most recently deleted first. Requires accounts:delete.", Tag: "Accounts", ResponseSchema: "AccountList"},
+		{Method: "POST", Path: "/api/v1/accounts/{accountId}/restore", Summary: "Restore a soft-deleted account", Description: "Clears deleted_at and returns the account. Pools deleted with it stay deleted, and a stored discovery credential removed by the delete is not restored. Returns 404 when no soft-deleted account has this id, and 409 when a live account now holds its key. Requires accounts:delete.", Tag: "Accounts", ResponseSchema: "Account", ResponseDescription: "Account restored"},
 		{Method: "GET", Path: "/api/v1/accounts/{accountId}", Summary: "Get account", Tag: "Accounts", ResponseSchema: "Account"},
 		{Method: "PATCH", Path: "/api/v1/accounts/{accountId}", Summary: "Update account", Tag: "Accounts", RequestSchema: "UpdateAccount", ResponseSchema: "Account"},
 		{Method: "DELETE", Path: "/api/v1/accounts/{accountId}", Summary: "Delete account", Tag: "Accounts", ResponseDescription: "Account deleted", Parameters: []openAPIParameter{queryParam("force", "Also delete the pools assigned to the account and their descendants", "boolean")}},

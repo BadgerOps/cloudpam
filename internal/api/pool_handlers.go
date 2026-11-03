@@ -75,9 +75,19 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 			return
 		}
 
+		if parts[0] == "deleted" && len(parts) == 1 {
+			s.listDeletedPools(w, r)
+			return
+		}
+
 		id64, err := strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
 			s.writeErr(ctx, w, http.StatusBadRequest, "invalid pool id", "")
+			return
+		}
+
+		if len(parts) == 2 && parts[1] == "restore" {
+			s.restorePoolHandler(w, r, id64)
 			return
 		}
 

@@ -65,6 +65,7 @@ export interface Pool {
   tags?: Record<string, string>
   created_at: string
   updated_at: string
+  deleted_at?: string
 }
 
 export interface PoolStats {
@@ -135,6 +136,7 @@ export interface Account {
   environment?: string
   regions?: string[]
   created_at: string
+  deleted_at?: string
 }
 
 export interface CreateAccountRequest {
