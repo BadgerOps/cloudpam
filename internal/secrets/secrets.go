@@ -1,7 +1,5 @@
 // Package secrets holds the application's at-rest secret encryption: AES-256-GCM
-// with a 32-byte key, hex-encoded as nonce || ciphertext. It protects OIDC
-// client secrets, AI provider API keys, and account credentials with the key
-// from CLOUDPAM_OIDC_ENCRYPTION_KEY.
+// with a 32-byte key, hex-encoded as nonce || ciphertext.
 package secrets
 
 import (
@@ -42,8 +40,6 @@ func Encrypt(plaintext string, key []byte) (string, error) {
 	return EncryptWithAAD(plaintext, key, nil)
 }
 
-// EncryptWithAAD is Encrypt with associated data. Only DecryptWithAAD with the
-// same aad opens the result.
 func EncryptWithAAD(plaintext string, key, aad []byte) (string, error) {
 	gcm, err := newGCM(key)
 	if err != nil {
@@ -61,7 +57,6 @@ func Decrypt(ciphertextHex string, key []byte) (string, error) {
 	return DecryptWithAAD(ciphertextHex, key, nil)
 }
 
-// DecryptWithAAD opens ciphertext from EncryptWithAAD with the same aad.
 func DecryptWithAAD(ciphertextHex string, key, aad []byte) (string, error) {
 	gcm, err := newGCM(key)
 	if err != nil {

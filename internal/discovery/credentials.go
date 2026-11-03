@@ -273,8 +273,6 @@ func (c *AccountCredentials) unseal(rec domain.AccountCredentialRecord) (Credent
 	return p, nil
 }
 
-// credentialAAD binds a sealed payload to its account, so a payload copied into
-// another account's row does not open.
 func credentialAAD(accountID int64) []byte {
 	return []byte(fmt.Sprintf("cloudpam:account_credential:%d", accountID))
 }

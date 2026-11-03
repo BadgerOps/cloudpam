@@ -52,8 +52,8 @@ func (c *Collector) WithCredential(ctx context.Context, _ domain.Account, cred d
 	}, nil
 }
 
-// tokenTransport adds the binding context to the token request's own context and
-// keeps the transport error, which the oauth2 jwt source otherwise flattens into text.
+// tokenTransport keeps the transport error, which the oauth2 jwt source otherwise
+// flattens into text.
 type tokenTransport struct {
 	ctx     context.Context
 	base    http.RoundTripper
@@ -74,7 +74,6 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
-// releaseOnClose keeps the request context alive until the caller has read the body.
 type releaseOnClose struct {
 	io.ReadCloser
 	release func()
