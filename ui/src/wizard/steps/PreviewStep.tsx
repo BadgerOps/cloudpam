@@ -4,6 +4,7 @@ import { hostCount, formatHostCount, countLeafNodes } from '../utils/cidr'
 import type { SchemaConflict } from '../../api/types'
 import TreeNode from '../components/TreeNode'
 import { POOL_TYPES } from '../../utils/poolTypes'
+import { EXPORT_FORMATS, type ExportFormat } from '../utils/export'
 
 interface Props {
   schema: SchemaNode
@@ -11,7 +12,7 @@ interface Props {
   conflicts: SchemaConflict[]
   conflictsLoading: boolean
   conflictsError: string | null
-  onExport: (format: 'csv' | 'terraform') => void
+  onExport: (format: ExportFormat) => void
 }
 
 export default function PreviewStep({ schema, problems, conflicts, conflictsLoading, conflictsError, onExport }: Props) {
@@ -26,21 +27,17 @@ export default function PreviewStep({ schema, problems, conflicts, conflictsLoad
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Preview Your Schema</h2>
           <p className="text-gray-600 dark:text-gray-300">Review the generated IP address plan before applying.</p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => onExport('terraform')}
-            className="flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 text-sm dark:text-gray-100"
-          >
-            <Download className="w-4 h-4" />
-            Export Terraform
-          </button>
-          <button
-            onClick={() => onExport('csv')}
-            className="flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 text-sm dark:text-gray-100"
-          >
-            <Download className="w-4 h-4" />
-            Export CSV
-          </button>
+        <div className="flex flex-wrap justify-end gap-2 xl:shrink-0 xl:flex-nowrap">
+          {(Object.keys(EXPORT_FORMATS) as ExportFormat[]).map((format) => (
+            <button
+              key={format}
+              onClick={() => onExport(format)}
+              className="flex items-center gap-2 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 text-sm dark:text-gray-100"
+            >
+              <Download className="w-4 h-4" />
+              Export {EXPORT_FORMATS[format].label}
+            </button>
+          ))}
         </div>
       </div>
 

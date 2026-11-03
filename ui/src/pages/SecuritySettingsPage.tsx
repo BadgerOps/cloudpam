@@ -5,6 +5,7 @@ import { useSecuritySettings } from '../hooks/useSettings'
 import type { SecuritySettings } from '../hooks/useSettings'
 import { useToast } from '../hooks/useToast'
 import { useAuth } from '../hooks/useAuth'
+import { Field } from '../components/primitives'
 
 const API_KEY_SCOPE_OPTIONS = [
   'pools:read', 'pools:write',
@@ -28,6 +29,57 @@ const API_KEY_SCOPE_OPTIONS_BY_ROLE: Record<string, string[]> = {
   viewer: ['pools:read', 'accounts:read', 'discovery:read'],
   auditor: ['audit:read'],
 }
+
+type NumberKey = {
+  [K in keyof SecuritySettings]: SecuritySettings[K] extends number ? K : never
+}[keyof SecuritySettings]
+
+interface NumberSpec {
+  label: string
+  min: number
+  max: number
+  fallback: number
+  hint?: string
+}
+
+const NUMBER_FIELDS: Record<NumberKey, NumberSpec> = {
+  session_duration_hours: {
+    label: 'Session Duration (hours)', min: 1, max: 720, fallback: 1,
+    hint: 'How long a session cookie remains valid before requiring re-login',
+  },
+  max_sessions_per_user: {
+    label: 'Max Sessions per User', min: 1, max: 100, fallback: 1,
+    hint: 'Maximum concurrent sessions allowed per user account',
+  },
+  password_min_length: { label: 'Minimum Length', min: 8, max: 128, fallback: 8 },
+  password_max_length: { label: 'Maximum Length', min: 8, max: 72, fallback: 72 },
+  api_key_default_expiry_days: {
+    label: 'Default Expiry (days)', min: 0, max: 3650, fallback: 0,
+    hint: '0 keeps keys non-expiring by default',
+  },
+  api_key_max_lifetime_days: {
+    label: 'Max Lifetime (days)', min: 0, max: 3650, fallback: 0,
+    hint: '0 disables forced expiry',
+  },
+  api_key_rotation_reminder_days: {
+    label: 'Rotation Reminder (days)', min: 0, max: 365, fallback: 0,
+    hint: '0 disables reminder audit events',
+  },
+  login_rate_limit_per_minute: { label: 'Rate Limit (attempts/minute)', min: 1, max: 60, fallback: 5 },
+  account_lockout_attempts: {
+    label: 'Account Lockout Threshold', min: 0, max: 100, fallback: 0,
+    hint: 'Set to 0 to disable account lockout',
+  },
+  account_lockout_cooldown_minutes: { label: 'Lockout Cooldown (minutes)', min: 1, max: 1440, fallback: 15 },
+  audit_retention_days: {
+    label: 'Retention (days)', min: 0, max: 3650, fallback: 0,
+    hint: 'Events older than this are purged hourly. 0 keeps events forever. Export the log from the Audit page first if you need a copy.',
+  },
+}
+
+const INPUT_CLASS = 'w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500'
+const CARD_CLASS = 'bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700'
+const CARD_TITLE_CLASS = 'text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-4'
 
 export default function SecuritySettingsPage() {
   const { settings, loading, error, updateSettings } = useSecuritySettings()
@@ -80,6 +132,22 @@ export default function SecuritySettingsPage() {
     })
   }
 
+  function numberField(key: NumberKey) {
+    const spec = NUMBER_FIELDS[key]
+    return (
+      <Field label={spec.label} hint={spec.hint}>
+        <input
+          type="number"
+          min={spec.min}
+          max={spec.max}
+          value={form?.[key] ?? spec.fallback}
+          onChange={e => updateField(key, Math.min(spec.max, parseInt(e.target.value) || spec.fallback))}
+          className={INPUT_CLASS}
+        />
+      </Field>
+    )
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -128,7 +196,7 @@ export default function SecuritySettingsPage() {
         )}
       </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
+      <div className={CARD_CLASS}>
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
@@ -149,130 +217,37 @@ export default function SecuritySettingsPage() {
       </div>
 
       <div className="space-y-6">
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-4">
+        <div className={CARD_CLASS}>
+          <h2 className={CARD_TITLE_CLASS}>
             <Lock className="w-5 h-5 text-blue-500" />
             Session Management
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Session Duration (hours)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={720}
-                value={form.session_duration_hours}
-                onChange={e => updateField('session_duration_hours', parseInt(e.target.value) || 1)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                How long a session cookie remains valid before requiring re-login
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Max Sessions per User
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                value={form.max_sessions_per_user}
-                onChange={e => updateField('max_sessions_per_user', parseInt(e.target.value) || 1)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Maximum concurrent sessions allowed per user account
-              </p>
-            </div>
+            {numberField('session_duration_hours')}
+            {numberField('max_sessions_per_user')}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-4">
+        <div className={CARD_CLASS}>
+          <h2 className={CARD_TITLE_CLASS}>
             <Key className="w-5 h-5 text-amber-500" />
             Password Policy
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Minimum Length
-              </label>
-              <input
-                type="number"
-                min={8}
-                max={128}
-                value={form.password_min_length}
-                onChange={e => updateField('password_min_length', parseInt(e.target.value) || 8)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Maximum Length
-              </label>
-              <input
-                type="number"
-                min={8}
-                max={72}
-                value={form.password_max_length}
-                onChange={e => updateField('password_max_length', Math.min(72, parseInt(e.target.value) || 72))}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            {numberField('password_min_length')}
+            {numberField('password_max_length')}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-4">
+        <div className={CARD_CLASS}>
+          <h2 className={CARD_TITLE_CLASS}>
             <Key className="w-5 h-5 text-cyan-500" />
             API Key Policy
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Default Expiry (days)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={3650}
-                value={form.api_key_default_expiry_days}
-                onChange={e => updateField('api_key_default_expiry_days', parseInt(e.target.value) || 0)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">0 keeps keys non-expiring by default</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Max Lifetime (days)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={3650}
-                value={form.api_key_max_lifetime_days}
-                onChange={e => updateField('api_key_max_lifetime_days', parseInt(e.target.value) || 0)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">0 disables forced expiry</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Rotation Reminder (days)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={365}
-                value={form.api_key_rotation_reminder_days}
-                onChange={e => updateField('api_key_rotation_reminder_days', parseInt(e.target.value) || 0)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">0 disables reminder audit events</p>
-            </div>
+            {numberField('api_key_default_expiry_days')}
+            {numberField('api_key_max_lifetime_days')}
+            {numberField('api_key_rotation_reminder_days')}
           </div>
 
           <div className="space-y-4">
@@ -303,102 +278,45 @@ export default function SecuritySettingsPage() {
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-4">
+        <div className={CARD_CLASS}>
+          <h2 className={CARD_TITLE_CLASS}>
             <ScrollText className="w-5 h-5 text-amber-500" />
             Audit Log
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Retention (days)
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={3650}
-                value={form.audit_retention_days ?? 0}
-                onChange={e => updateField('audit_retention_days', parseInt(e.target.value) || 0)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Events older than this are purged hourly. 0 keeps events forever. Export the log from the Audit page first if you need a copy.
-              </p>
-            </div>
+            {numberField('audit_retention_days')}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-4">
+        <div className={CARD_CLASS}>
+          <h2 className={CARD_TITLE_CLASS}>
             <Fingerprint className="w-5 h-5 text-red-500" />
             Login Protection
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Rate Limit (attempts/minute)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={60}
-                value={form.login_rate_limit_per_minute}
-                onChange={e => updateField('login_rate_limit_per_minute', parseInt(e.target.value) || 5)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Account Lockout Threshold
-              </label>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                value={form.account_lockout_attempts}
-                onChange={e => updateField('account_lockout_attempts', parseInt(e.target.value) || 0)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Set to 0 to disable account lockout
-              </p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Lockout Cooldown (minutes)
-              </label>
-              <input
-                type="number"
-                min={1}
-                max={1440}
-                value={form.account_lockout_cooldown_minutes}
-                onChange={e => updateField('account_lockout_cooldown_minutes', parseInt(e.target.value) || 15)}
-                className="w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+            {numberField('login_rate_limit_per_minute')}
+            {numberField('account_lockout_attempts')}
+            {numberField('account_lockout_cooldown_minutes')}
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border dark:border-gray-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2 mb-4">
+        <div className={CARD_CLASS}>
+          <h2 className={CARD_TITLE_CLASS}>
             <Globe className="w-5 h-5 text-green-500" />
             Network
           </h2>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Trusted Proxy CIDRs
-            </label>
+          <Field
+            label="Trusted Proxy CIDRs"
+            hint="One CIDR per line. These proxies are trusted for X-Forwarded-For header parsing."
+          >
             <textarea
               rows={4}
               value={trustedProxiesText}
               onChange={e => setTrustedProxiesText(e.target.value)}
               placeholder="10.0.0.0/8&#10;172.16.0.0/12&#10;192.168.0.0/16"
-              className="w-full px-3 py-2 border rounded-lg text-sm font-mono dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500"
+              className={`${INPUT_CLASS} font-mono`}
             />
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              One CIDR per line. These proxies are trusted for X-Forwarded-For header parsing.
-            </p>
-          </div>
+          </Field>
         </div>
       </div>
     </div>

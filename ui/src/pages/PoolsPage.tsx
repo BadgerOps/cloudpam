@@ -7,10 +7,11 @@ import { useToast } from '../hooks/useToast'
 import PoolDetailPanel from '../components/PoolDetailPanel'
 import StatusBadge from '../components/StatusBadge'
 import FormError from '../components/FormError'
-import type { Pool, PoolWithStats, CreatePoolRequest, UpdatePoolRequest, PoolType, PoolStatus } from '../api/types'
+import type { Pool, PoolStats, PoolWithStats, CreatePoolRequest, UpdatePoolRequest, PoolType, PoolStatus } from '../api/types'
 import { formatHostCount, getHostCount, formatTimeAgo } from '../utils/format'
 import { POOL_TYPES } from '../utils/poolTypes'
 import { get } from '../api/client'
+import { deleteWithCascade, plural, subtreeIds } from '../utils/cascadeDelete'
 
 type PoolFormErrors = {
   name?: string
@@ -195,10 +196,17 @@ export default function PoolsPage() {
   async function handleDelete(pool: Pool) {
     if (!confirm(`Delete pool "${pool.name}" (${pool.cidr})?`)) return
     try {
-      await deletePool(pool.id)
+      const deleted = await deleteWithCascade(
+        force => deletePool(pool.id, force),
+        async () => {
+          const { child_count } = await get<PoolStats>(`/api/v1/pools/${pool.id}/stats`)
+          return `Pool "${pool.name}" has ${plural(child_count, 'child pool')}. Delete with ${plural(child_count, 'child', 'children')}?`
+        },
+      )
+      if (!deleted) return
       showToast('Pool deleted', 'success')
       fetchHierarchy()
-      if (selectedId === pool.id) closePanel()
+      if (selectedId !== null && subtreeIds(pools, [pool.id]).has(selectedId)) closePanel()
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Failed to delete pool', 'error')
     }

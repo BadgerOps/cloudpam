@@ -31,6 +31,7 @@ var covAgentEnvKeys = []string{
 	"CLOUDPAM_AWS_ORG_EXTERNAL_ID",
 	"CLOUDPAM_AWS_ORG_REGIONS",
 	"CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS",
+	"CLOUDPAM_DISCOVERY_AWS_RPS",
 }
 
 func covIsolateAgentEnv(t *testing.T) {
@@ -182,6 +183,7 @@ account_id: 1
 agent_id_file: /yaml/agent-id
 aws_regions:
   - yaml-region
+discovery_aws_rps: 2
 aws_org:
   role_name: YamlRole
   external_id: yaml-ext
@@ -205,6 +207,7 @@ aws_org:
 	t.Setenv("CLOUDPAM_AWS_ORG_EXTERNAL_ID", "env-ext")
 	t.Setenv("CLOUDPAM_AWS_ORG_REGIONS", "env-org-a,env-org-b")
 	t.Setenv("CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS", "222222222222,333333333333")
+	t.Setenv("CLOUDPAM_DISCOVERY_AWS_RPS", "7.5")
 
 	cfg, err := LoadConfig(path)
 	if err != nil {
@@ -230,6 +233,7 @@ aws_org:
 		{"AWSOrg.ExternalID", cfg.AWSOrg.ExternalID, "env-ext"},
 		{"AWSOrg.Regions", cfg.AWSOrg.Regions, []string{"env-org-a", "env-org-b"}},
 		{"AWSOrg.ExcludeAccounts", cfg.AWSOrg.ExcludeAccounts, []string{"222222222222", "333333333333"}},
+		{"DiscoveryAWSRPS", cfg.DiscoveryAWSRPS, 7.5},
 	}
 	for _, c := range checks {
 		if !reflect.DeepEqual(c.got, c.want) {
@@ -324,6 +328,32 @@ func TestCovLoadConfigRejectsNonNumericAccountID(t *testing.T) {
 	if cfg != nil {
 		t.Fatalf("config = %+v, want nil on error", cfg)
 	}
+}
+
+func TestCovLoadConfigRejectsABadDiscoveryRPS(t *testing.T) {
+	covIsolateAgentEnv(t)
+	t.Setenv("CLOUDPAM_SERVER_URL", "https://pam.example.com")
+	t.Setenv("CLOUDPAM_API_KEY", "cpk")
+	t.Setenv("CLOUDPAM_AGENT_NAME", "agent")
+	t.Setenv("CLOUDPAM_ACCOUNT_ID", "1")
+
+	t.Run("env", func(t *testing.T) {
+		t.Setenv("CLOUDPAM_DISCOVERY_AWS_RPS", "fast")
+		cfg, err := LoadConfig("")
+		if err == nil || !strings.Contains(err.Error(), "invalid CLOUDPAM_DISCOVERY_AWS_RPS") {
+			t.Fatalf("error = %v, want invalid CLOUDPAM_DISCOVERY_AWS_RPS", err)
+		}
+		if cfg != nil {
+			t.Fatalf("config = %+v, want nil on error", cfg)
+		}
+	})
+
+	t.Run("yaml", func(t *testing.T) {
+		path := covWriteAgentConfig(t, "discovery_aws_rps: -1\n")
+		if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "discovery_aws_rps") {
+			t.Fatalf("error = %v, want discovery_aws_rps rejected", err)
+		}
+	})
 }
 
 func TestCovLoadConfigPropagatesValidationFailure(t *testing.T) {

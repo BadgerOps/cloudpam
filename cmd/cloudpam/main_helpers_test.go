@@ -71,12 +71,15 @@ func TestConfigureAuditSyslogForwardingDeliversCEF(t *testing.T) {
 
 	base := audit.NewMemoryAuditLogger()
 	var logs bytes.Buffer
-	forwarding := configureAuditSyslogForwarding(bufferedLogger(&logs), base, "v9.9.9")
+	forwarding, destinations := configureAuditSyslogForwarding(bufferedLogger(&logs), base, "v9.9.9")
 	if forwarding == base {
 		t.Fatal("expected a forwarding audit logger when a syslog address is configured")
 	}
 	if !strings.Contains(logs.String(), "audit syslog forwarding enabled") {
 		t.Fatalf("expected enable log line, got %s", logs.String())
+	}
+	if before := destinations(); len(before) != 1 || before[0].State != "idle" || before[0].Address != pc.LocalAddr().String() || before[0].AppName != "cloudpam-test" {
+		t.Fatalf("destinations before the first event = %+v", before)
 	}
 
 	event := &audit.AuditEvent{
@@ -119,6 +122,9 @@ func TestConfigureAuditSyslogForwardingDeliversCEF(t *testing.T) {
 	if strings.Contains(msg, "|v9.9.9|") {
 		t.Errorf("device version was not cleaned of its v prefix: %s", msg)
 	}
+	if after := destinations(); len(after) != 1 || after[0].State != "ok" || after[0].Delivered != 1 || after[0].LastSuccessAt == nil {
+		t.Fatalf("destinations after a delivered event = %+v", after)
+	}
 }
 
 // TestConfigureAuditSyslogForwardingReportsSendFailure drives the onError
@@ -139,7 +145,7 @@ func TestConfigureAuditSyslogForwardingReportsSendFailure(t *testing.T) {
 
 	var logs bytes.Buffer
 	base := audit.NewMemoryAuditLogger()
-	forwarding := configureAuditSyslogForwarding(bufferedLogger(&logs), base, "0.1.0")
+	forwarding, destinations := configureAuditSyslogForwarding(bufferedLogger(&logs), base, "0.1.0")
 	if forwarding == base {
 		t.Fatal("expected a forwarding audit logger")
 	}
@@ -160,6 +166,13 @@ func TestConfigureAuditSyslogForwardingReportsSendFailure(t *testing.T) {
 	}
 	if !strings.Contains(out, "evt-2") || !strings.Contains(out, "delete") {
 		t.Errorf("failure log should carry event context, got %s", out)
+	}
+	reported := destinations()
+	if len(reported) != 1 {
+		t.Fatalf("expected one destination, got %+v", reported)
+	}
+	if d := reported[0]; d.State != "failing" || d.Failed != 1 || d.Delivered != 0 || d.LastError == "" || d.LastFailureAt == nil {
+		t.Fatalf("destination after a refused send = %+v", d)
 	}
 }
 

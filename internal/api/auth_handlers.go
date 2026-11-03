@@ -166,9 +166,10 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	var input struct {
-		Name          string   `json:"name"`
-		Scopes        []string `json:"scopes"`
-		ExpiresInDays *int     `json:"expires_in_days"`
+		Name          string          `json:"name"`
+		Scopes        []string        `json:"scopes"`
+		ExpiresInDays *int            `json:"expires_in_days"`
+		RateLimit     *auth.RateLimit `json:"rate_limit"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -229,11 +230,25 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A key's own limit replaces the server-wide one, so handing it out is a
+	// settings change, not a key change.
+	if input.RateLimit != nil {
+		if !input.RateLimit.Enabled() {
+			as.writeErr(ctx, w, http.StatusBadRequest, "invalid rate_limit", "requests_per_second and burst must both be positive")
+			return
+		}
+		if callerRole != auth.RoleNone && auth.RequirePermission(ctx, auth.ResourceSettings, auth.ActionWrite) != nil {
+			as.writeErr(ctx, w, http.StatusForbidden, "rate limit denied", "setting a key's own rate limit requires settings:write")
+			return
+		}
+	}
+
 	// Generate the API key
 	plaintext, apiKey, err := auth.GenerateAPIKey(auth.GenerateAPIKeyOptions{
 		Name:      input.Name,
 		Scopes:    input.Scopes,
 		ExpiresAt: expiresAt,
+		RateLimit: input.RateLimit,
 	})
 	if err != nil {
 		as.writeErr(ctx, w, http.StatusInternalServerError, "failed to generate key", err.Error())
@@ -260,18 +275,22 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	if apiKey.OwnerID != nil {
 		fields = append(fields, "owner_id", *apiKey.OwnerID)
 	}
+	if apiKey.RateLimit != nil {
+		fields = append(fields, "rate_limit_rps", apiKey.RateLimit.RequestsPerSecond, "rate_limit_burst", apiKey.RateLimit.Burst)
+	}
 	as.logger.InfoContext(ctx, "api key created", fields...)
 
 	// Return the key with the plaintext (only time it's shown)
 	response := struct {
-		ID        string     `json:"id"`
-		Key       string     `json:"key"`
-		Prefix    string     `json:"prefix"`
-		Name      string     `json:"name"`
-		Scopes    []string   `json:"scopes"`
-		OwnerID   *string    `json:"owner_id,omitempty"`
-		CreatedAt time.Time  `json:"created_at"`
-		ExpiresAt *time.Time `json:"expires_at,omitempty"`
+		ID        string          `json:"id"`
+		Key       string          `json:"key"`
+		Prefix    string          `json:"prefix"`
+		Name      string          `json:"name"`
+		Scopes    []string        `json:"scopes"`
+		OwnerID   *string         `json:"owner_id,omitempty"`
+		CreatedAt time.Time       `json:"created_at"`
+		ExpiresAt *time.Time      `json:"expires_at,omitempty"`
+		RateLimit *auth.RateLimit `json:"rate_limit,omitempty"`
 	}{
 		ID:        apiKey.ID,
 		Key:       plaintext,
@@ -281,6 +300,7 @@ func (as *AuthServer) createAPIKey(w http.ResponseWriter, r *http.Request) {
 		OwnerID:   apiKey.OwnerID,
 		CreatedAt: apiKey.CreatedAt,
 		ExpiresAt: apiKey.ExpiresAt,
+		RateLimit: apiKey.RateLimit,
 	}
 
 	writeJSON(w, http.StatusCreated, response)
@@ -314,19 +334,20 @@ func (as *AuthServer) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 
 	// Transform to response format (never include hash)
 	type keyResponse struct {
-		ID            string     `json:"id"`
-		Prefix        string     `json:"prefix"`
-		Name          string     `json:"name"`
-		Scopes        []string   `json:"scopes"`
-		OwnerID       *string    `json:"owner_id,omitempty"`
-		CreatedAt     time.Time  `json:"created_at"`
-		ExpiresAt     *time.Time `json:"expires_at,omitempty"`
-		LastUsedAt    *time.Time `json:"last_used_at,omitempty"`
-		Revoked       bool       `json:"revoked"`
-		AgeDays       int        `json:"age_days"`
-		ExpiresInDays *int       `json:"expires_in_days,omitempty"`
-		ExpiryStatus  string     `json:"expiry_status"`
-		RotationDue   bool       `json:"rotation_due"`
+		ID            string          `json:"id"`
+		Prefix        string          `json:"prefix"`
+		Name          string          `json:"name"`
+		Scopes        []string        `json:"scopes"`
+		OwnerID       *string         `json:"owner_id,omitempty"`
+		CreatedAt     time.Time       `json:"created_at"`
+		ExpiresAt     *time.Time      `json:"expires_at,omitempty"`
+		LastUsedAt    *time.Time      `json:"last_used_at,omitempty"`
+		Revoked       bool            `json:"revoked"`
+		RateLimit     *auth.RateLimit `json:"rate_limit,omitempty"`
+		AgeDays       int             `json:"age_days"`
+		ExpiresInDays *int            `json:"expires_in_days,omitempty"`
+		ExpiryStatus  string          `json:"expiry_status"`
+		RotationDue   bool            `json:"rotation_due"`
 	}
 
 	response := struct {
@@ -350,6 +371,7 @@ func (as *AuthServer) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 			ExpiresAt:     k.ExpiresAt,
 			LastUsedAt:    k.LastUsedAt,
 			Revoked:       k.Revoked,
+			RateLimit:     k.RateLimit,
 			AgeDays:       daysSince(k.CreatedAt, now),
 			ExpiresInDays: expiresInDays,
 			ExpiryStatus:  status,

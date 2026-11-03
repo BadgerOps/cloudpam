@@ -592,3 +592,58 @@ func TestAudit_MethodNotAllowed(t *testing.T) {
 		t.Errorf("Expected 405, got %d", rr.Code)
 	}
 }
+
+func TestAPIKeys_Create_RateLimit(t *testing.T) {
+	as, keyStore, _ := setupAuthTestServer()
+
+	body := `{"name": "Bulk agent", "scopes": ["pools:read"], "rate_limit": {"requests_per_second": 5, "burst": 10}}`
+	rr := doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleAdmin, stdhttp.StatusCreated)
+
+	var created struct {
+		ID        string          `json:"id"`
+		RateLimit *auth.RateLimit `json:"rate_limit"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	want := auth.RateLimit{RequestsPerSecond: 5, Burst: 10}
+	if created.RateLimit == nil || *created.RateLimit != want {
+		t.Fatalf("created rate_limit = %v, want %v", created.RateLimit, want)
+	}
+	stored, err := keyStore.GetByID(t.Context(), created.ID)
+	if err != nil || stored == nil || stored.RateLimit == nil || *stored.RateLimit != want {
+		t.Fatalf("stored key rate limit = %v (err %v), want %v", stored, err, want)
+	}
+
+	rr = doAuthJSON(t, as.mux, stdhttp.MethodGet, "/api/v1/auth/keys", "", stdhttp.StatusOK)
+	var listed struct {
+		Keys []struct {
+			ID        string          `json:"id"`
+			RateLimit *auth.RateLimit `json:"rate_limit"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal list: %v", err)
+	}
+	if len(listed.Keys) != 1 || listed.Keys[0].RateLimit == nil || *listed.Keys[0].RateLimit != want {
+		t.Fatalf("listed rate_limit = %+v, want %v", listed.Keys, want)
+	}
+}
+
+func TestAPIKeys_Create_RateLimitRejected(t *testing.T) {
+	as, _, _ := setupAuthTestServer()
+
+	for _, body := range []string{
+		`{"name": "k", "scopes": ["pools:read"], "rate_limit": {"requests_per_second": 0, "burst": 10}}`,
+		`{"name": "k", "scopes": ["pools:read"], "rate_limit": {"requests_per_second": 5}}`,
+		`{"name": "k", "scopes": ["pools:read"], "rate_limit": {"requests_per_second": -1, "burst": -1}}`,
+	} {
+		doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleAdmin, stdhttp.StatusBadRequest)
+	}
+
+	// A viewer may create a key but may not hand it a limit of its own.
+	body := `{"name": "k", "scopes": ["pools:read"], "rate_limit": {"requests_per_second": 5, "burst": 10}}`
+	doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleViewer, stdhttp.StatusForbidden)
+	body = `{"name": "k", "scopes": ["pools:read"]}`
+	doAuthJSONWithRole(t, as.mux, stdhttp.MethodPost, "/api/v1/auth/keys", body, auth.RoleViewer, stdhttp.StatusCreated)
+}

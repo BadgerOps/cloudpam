@@ -88,6 +88,19 @@ type APIKey struct {
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"` // nil = no expiration
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	Revoked    bool       `json:"revoked"`
+	RateLimit  *RateLimit `json:"rate_limit,omitempty"` // nil = the server default
+}
+
+// RateLimit is a token bucket: Burst requests at once, refilled at
+// RequestsPerSecond.
+type RateLimit struct {
+	RequestsPerSecond float64 `json:"requests_per_second"`
+	Burst             int     `json:"burst"`
+}
+
+// Enabled reports whether the limit has a positive rate and burst.
+func (l RateLimit) Enabled() bool {
+	return l.RequestsPerSecond > 0 && l.Burst > 0
 }
 
 // IsExpired returns true if the API key has expired.
@@ -135,6 +148,7 @@ type GenerateAPIKeyOptions struct {
 	Name      string
 	Scopes    []string
 	ExpiresAt *time.Time
+	RateLimit *RateLimit
 }
 
 // GenerateAPIKey creates a new API key with the given options.
@@ -179,6 +193,7 @@ func GenerateAPIKey(opts GenerateAPIKeyOptions) (plaintext string, apiKey *APIKe
 		CreatedAt: time.Now().UTC(),
 		ExpiresAt: opts.ExpiresAt,
 		Revoked:   false,
+		RateLimit: copyRateLimit(opts.RateLimit),
 	}
 
 	return plaintext, apiKey, nil

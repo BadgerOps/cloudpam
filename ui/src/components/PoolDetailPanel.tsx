@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import type { PoolWithStats } from '../api/types'
 import { formatHostCount, getUtilizationColor } from '../utils/format'
 import PoolAddressAnalysis from './PoolAddressAnalysis'
+import PoolRunway from './PoolRunway'
 import StatusBadge from './StatusBadge'
 
 interface PoolDetailPanelProps {
@@ -84,6 +85,8 @@ export default function PoolDetailPanel({ pool, onClose, onEdit }: PoolDetailPan
             </div>
           </div>
         )}
+
+        <PoolRunway poolId={pool.id} />
 
         <PoolAddressAnalysis poolId={pool.id} />
 

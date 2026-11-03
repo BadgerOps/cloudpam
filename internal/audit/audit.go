@@ -75,11 +75,12 @@ type AuditLogger interface {
 
 // Valid actions for audit events.
 const (
-	ActionCreate = "create"
-	ActionUpdate = "update"
-	ActionDelete = "delete"
-	ActionRead   = "read" // Used only for sensitive operations like key listing
-	ActionTest   = "test" // A connectivity check, such as the AI provider test
+	ActionCreate  = "create"
+	ActionUpdate  = "update"
+	ActionDelete  = "delete"
+	ActionRestore = "restore" // A soft-deleted pool or account brought back
+	ActionRead    = "read"    // Used only for sensitive operations like key listing
+	ActionTest    = "test"    // A connectivity check, such as the AI provider test
 )
 
 // Valid resource types for audit events.

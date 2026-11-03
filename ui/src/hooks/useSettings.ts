@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, patch } from '../api/client'
+import type { NetworkSchemaPolicy } from '../api/types'
 import { useAuth } from './useAuth'
 
 export interface SecuritySettings {
@@ -62,4 +63,51 @@ export function useSecuritySettings() {
   useEffect(() => { fetchSettings() }, [fetchSettings])
 
   return { settings, loading, error, canRead, canEdit, updateSettings, refetch: fetchSettings }
+}
+
+const NETWORK_SCHEMA_POLICY_PATH = '/api/v1/settings/network-schema-policy'
+
+// useNetworkSchemaPolicy loads and edits the stored network schema policy,
+// the one the Discovery network views apply when a request names none.
+// GET requires settings:read and PATCH requires settings:write.
+export function useNetworkSchemaPolicy() {
+  const [policy, setPolicy] = useState<NetworkSchemaPolicy | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const { hasPermission } = useAuth()
+  const canRead = hasPermission('settings:read')
+  const canEdit = hasPermission('settings:write')
+
+  const fetchPolicy = useCallback(async () => {
+    if (!canRead) {
+      setPolicy(null)
+      setError(null)
+      setLoading(false)
+      return
+    }
+    try {
+      setLoading(true)
+      const data = await get<NetworkSchemaPolicy>(NETWORK_SCHEMA_POLICY_PATH)
+      setPolicy(data)
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load network schema policy')
+    } finally {
+      setLoading(false)
+    }
+  }, [canRead])
+
+  const updatePolicy = useCallback(async (update: Partial<NetworkSchemaPolicy>) => {
+    if (!canEdit) {
+      throw new Error('settings:write permission required to change the network schema policy')
+    }
+    const data = await patch<NetworkSchemaPolicy>(NETWORK_SCHEMA_POLICY_PATH, update)
+    setPolicy(data)
+    return data
+  }, [canEdit])
+
+  useEffect(() => { fetchPolicy() }, [fetchPolicy])
+
+  return { policy, loading, error, canRead, canEdit, updatePolicy, refetch: fetchPolicy }
 }

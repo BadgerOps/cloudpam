@@ -1174,7 +1174,7 @@ helm install cloudpam deploy/helm/cloudpam-server -f values-prod.yaml
 Three things to know behind an ingress:
 
 - `CLOUDPAM_TRUSTED_PROXIES` must list every proxy hop between the client and CloudPAM, load balancer and ingress ranges included, or the first unlisted hop is recorded as the client and every user shares one login rate limit. Keep the list tight, because a client inside a trusted range can choose its own address.
-- The global rate limiter keys on the client address, which is the ingress behind a proxy. Set `RATE_LIMIT_RPS: 0` and limit at the ingress instead.
+- The global rate limiter keys unauthenticated requests on the client address, which is the ingress behind a proxy. Set `RATE_LIMIT_RPS: 0` and limit at the ingress instead. An API key's own `rate_limit` still applies.
 - The ingress must send `X-Forwarded-Proto`, or session cookies lose the `Secure` flag.
 
 Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Without it the server generates a key on every start, and saved provider secrets stop decrypting after a restart. The same key protects AI provider API keys saved from Configuration → AI Provider; without it that page cannot store an API key (use `CLOUDPAM_LLM_API_KEY` instead). The chart never generates this key, because a key generated at render time would rotate on every `helm template` run under tools such as Argo CD.
@@ -1238,18 +1238,12 @@ The release-instance label is stable when `nameOverride` or `fullnameOverride` c
 Reset a local user's password from inside a running CloudPAM pod so the command uses the same database environment as the server:
 
 ```bash
-kubectl exec -n <namespace> deploy/<cloudpam-deployment> -- \
-  env CLOUDPAM_RESET_PASSWORD='<new-password>' \
-  cloudpam -reset-password <username>
-```
-
-To avoid shell history, pass the new password on stdin:
-
-```bash
 printf '%s\n' '<new-password>' | \
   kubectl exec -i -n <namespace> deploy/<cloudpam-deployment> -- \
   cloudpam -reset-password <username>
 ```
+
+The release image is built on `cgr.dev/chainguard/static` and contains no shell and no `env`, so the password has to arrive on stdin; `kubectl exec ... -- env CLOUDPAM_RESET_PASSWORD=... cloudpam` fails with `executable file not found`.
 
 The command exits non-zero if the user does not exist, the password fails policy validation, or the pod cannot reach the configured backing store.
 
@@ -1368,6 +1362,7 @@ ingress:
 - PostgreSQL: Daily automated backups, point-in-time recovery enabled
 - Retain backups for 7 days (dev) / 30 days (prod)
 - Test restore procedures quarterly
+- Procedures for SQLite (WAL-aware) and PostgreSQL backups, restores, upgrades, rollback, key rotation, and admin lockout recovery are in [RUNBOOKS.md](RUNBOOKS.md)
 
 ### Multi-Region (Future)
 - Active-passive with read replicas
