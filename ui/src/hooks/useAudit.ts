@@ -37,7 +37,7 @@ export function useAudit() {
       if (!isCurrent(token)) return
       setError(e instanceof Error ? e.message : 'Failed to fetch audit events')
     } finally {
-      setLoading(false)
+      if (isCurrent(token)) setLoading(false)
     }
   }, [begin, isCurrent])
 

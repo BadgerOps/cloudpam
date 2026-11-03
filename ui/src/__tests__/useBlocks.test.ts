@@ -67,4 +67,31 @@ describe('useBlocks', () => {
 
     expect(result.current.blocks[0].name).toBe('block-page-3')
   })
+  it('stays loading until the newest request settles', async () => {
+    const first = deferred<BlocksListResponse>()
+    const second = deferred<BlocksListResponse>()
+    mockGet
+      .mockReturnValueOnce(first.promise as Promise<never>)
+      .mockReturnValueOnce(second.promise as Promise<never>)
+
+    const { result } = renderHook(() => useBlocks())
+
+    act(() => {
+      void result.current.fetchBlocks({ accounts: [1] })
+      void result.current.fetchBlocks({ accounts: [2] })
+    })
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      first.resolve(response(2))
+      await first.promise
+    })
+    expect(result.current.loading).toBe(true)
+
+    await act(async () => {
+      second.resolve(response(1))
+      await second.promise
+    })
+    expect(result.current.loading).toBe(false)
+  })
 })

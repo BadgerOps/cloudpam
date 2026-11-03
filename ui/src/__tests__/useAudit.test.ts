@@ -69,4 +69,31 @@ describe('useAudit', () => {
 
     expect(result.current.events[0].id).toBe('event-at-50')
   })
+  it('stays loading until the newest request settles', async () => {
+    const first = deferred<AuditListResponse>()
+    const second = deferred<AuditListResponse>()
+    mockGet
+      .mockReturnValueOnce(first.promise as Promise<never>)
+      .mockReturnValueOnce(second.promise as Promise<never>)
+
+    const { result } = renderHook(() => useAudit())
+
+    act(() => {
+      void result.current.fetchEvents(0, 25, 'create')
+      void result.current.fetchEvents(0, 25, 'delete')
+    })
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      first.resolve(response(0))
+      await first.promise
+    })
+    expect(result.current.loading).toBe(true)
+
+    await act(async () => {
+      second.resolve(response(0))
+      await second.promise
+    })
+    expect(result.current.loading).toBe(false)
+  })
 })

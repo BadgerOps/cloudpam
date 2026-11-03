@@ -40,7 +40,7 @@ export function useBlocks() {
       if (!isCurrent(token)) return
       setError(e instanceof Error ? e.message : 'Failed to fetch blocks')
     } finally {
-      setLoading(false)
+      if (isCurrent(token)) setLoading(false)
     }
   }, [begin, isCurrent])
 
