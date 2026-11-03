@@ -92,6 +92,9 @@ export default function RecommendationsPage() {
           <option value="">All Types</option>
           <option value="allocation">Allocation</option>
           <option value="compliance">Compliance</option>
+          <option value="consolidation">Consolidation</option>
+          <option value="resize">Resize</option>
+          <option value="reclaim">Reclaim</option>
         </select>
         <select
           value={statusFilter}
@@ -430,6 +433,7 @@ function ApplyModal({
     rec.type === 'allocation' ? `Allocation ${rec.suggested_cidr}` : '',
   )
   const [submitting, setSubmitting] = useState(false)
+  const namesPool = rec.type === 'allocation' || rec.type === 'consolidation'
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -440,19 +444,48 @@ function ApplyModal({
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
           {rec.title}
         </p>
-        {rec.type === 'allocation' && rec.suggested_cidr && (
+        {rec.type === 'resize' && (
+          <div className="bg-blue-50 dark:bg-blue-900/30 rounded p-3 text-sm mb-4">
+            Shrinks the pool from {rec.metadata?.current_cidr} to {rec.suggested_cidr}. Its child pools keep their addresses.
+          </div>
+        )}
+        {rec.type === 'reclaim' && (
+          <div className="bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded p-3 text-sm mb-4">
+            Deletes the pool {rec.suggested_cidr}. Dismiss instead if the space is still reserved.
+          </div>
+        )}
+        {namesPool && rec.suggested_cidr && (
           <div className="space-y-3 mb-4">
             <div className="bg-blue-50 dark:bg-blue-900/30 rounded p-3 text-sm">
-              <span className="font-medium">CIDR:</span> {rec.suggested_cidr}
+              {rec.type === 'consolidation' && (
+                <div>
+                  <span className="font-medium">Merges:</span>{' '}
+                  {rec.metadata?.source_cidrs?.split(',').join(' and ')}. The first pool
+                  grows to the merged block and the second is deleted.
+                </div>
+              )}
+              <span className="font-medium">
+                {rec.type === 'consolidation' ? 'Merged CIDR:' : 'CIDR:'}
+              </span>{' '}
+              {rec.suggested_cidr}
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label
+                htmlFor="apply-pool-name"
+                className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+              >
                 Pool Name
               </label>
               <input
+                id="apply-pool-name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                placeholder={
+                  rec.type === 'consolidation'
+                    ? `Keep the name of the pool at ${rec.metadata?.source_cidrs?.split(',')[0]}`
+                    : undefined
+                }
                 className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
               />
             </div>

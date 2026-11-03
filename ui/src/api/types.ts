@@ -755,7 +755,12 @@ export interface NetworkConflictActionResponse {
 
 // --- Recommendation types ---
 
-export type RecommendationType = 'allocation' | 'compliance'
+export type RecommendationType =
+  | 'allocation'
+  | 'compliance'
+  | 'consolidation'
+  | 'resize'
+  | 'reclaim'
 export type RecommendationStatus = 'pending' | 'applied' | 'dismissed'
 export type RecommendationPriority = 'high' | 'medium' | 'low'
 
