@@ -22,9 +22,10 @@ vi.mock('../hooks/useToast', () => ({
 }))
 
 vi.mock('../api/client', () => ({
-  get: (...args: unknown[]) => mockGet(...args),
-  // The detail panel requests gap and fragmentation analysis; leave those
-  // pending so these tests only see the pool data they control.
+  // The detail panel requests the growth projection and the gap and
+  // fragmentation analysis; leave those pending so these tests only see the
+  // pool data they control.
+  get: (url: string, ...args: unknown[]) => url.endsWith('/stats') ? new Promise(() => {}) : mockGet(url, ...args),
   post: () => new Promise(() => {}),
 }))
 

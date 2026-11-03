@@ -74,6 +74,27 @@ export interface PoolStats {
   utilization: number
   child_count: number
   direct_children: number
+  /** Present only on GET /api/v1/pools/{id}/stats. */
+  projection?: GrowthProjection
+}
+
+export type ProjectionStatus = 'ok' | 'no_growth' | 'insufficient_history'
+
+export interface ProjectedUsage {
+  months: number
+  used_ips: number
+  utilization: number
+}
+
+export interface GrowthProjection {
+  status: ProjectionStatus
+  window_days: number
+  window_start: string
+  sample_count: number
+  growth_ips_per_day: number
+  runway_days?: number
+  exhaustion_date?: string
+  forecast: ProjectedUsage[]
 }
 
 export interface PoolWithStats extends Pool {
