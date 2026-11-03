@@ -30,16 +30,22 @@ type CredentialAware interface {
 	WithCredential(ctx context.Context, account domain.Account, cred CredentialPayload) (CredentialedCollector, error)
 }
 
+// IdentityProber makes the provider's cheapest authenticated read and names the identity it ran as.
+type IdentityProber interface {
+	Identity(ctx context.Context, account domain.Account) (string, error)
+}
+
 // CredentialedCollector is a collector bound to one stored credential.
 type CredentialedCollector interface {
 	Collector
-	Identity(ctx context.Context, account domain.Account) (string, error)
+	IdentityProber
 }
 
 // ProbeStep names the provider call that failed.
 type ProbeStep string
 
 const (
+	ProbeStepCredentials       ProbeStep = "credentials"
 	ProbeStepAssumeRole        ProbeStep = "assume_role"
 	ProbeStepGetCallerIdentity ProbeStep = "get_caller_identity"
 	ProbeStepToken             ProbeStep = "token"
@@ -111,16 +117,25 @@ func (s *SyncService) SetCredentials(c *AccountCredentials) {
 	s.credentials = c
 }
 
-func (s *SyncService) collectorFor(ctx context.Context, account domain.Account, host Collector) (Collector, error) {
+// storedCredential reports false when the account has none, so callers use the host identity.
+func (s *SyncService) storedCredential(ctx context.Context, accountID int64) (domain.AccountCredentialRecord, bool, error) {
 	if s.credentials == nil {
-		return host, nil
+		return domain.AccountCredentialRecord{}, false, nil
 	}
-	rec, err := s.credentials.load(ctx, account.ID)
+	rec, err := s.credentials.load(ctx, accountID)
 	if errors.Is(err, storage.ErrNotFound) {
-		return host, nil
+		return domain.AccountCredentialRecord{}, false, nil
 	}
+	return rec, err == nil, err
+}
+
+func (s *SyncService) collectorFor(ctx context.Context, account domain.Account, host Collector) (Collector, error) {
+	rec, stored, err := s.storedCredential(ctx, account.ID)
 	if err != nil {
 		return nil, err
+	}
+	if !stored {
+		return host, nil
 	}
 	p, err := s.credentials.unseal(rec)
 	if err != nil {
@@ -156,26 +171,80 @@ func (s *SyncService) TestCredential(ctx context.Context, account domain.Account
 	defer cancel()
 	identity, probeErr := s.probe(probeCtx, account, rec)
 
-	result := domain.CredentialTestResult{
-		CredentialTest: domain.CredentialTest{TestedAt: time.Now().UTC(), Status: domain.CredentialTestOK},
-		Identity:       identity,
+	result := domain.CredentialTestResult{CredentialTest: testOutcome(probeErr)}
+	if probeErr == nil {
+		result.Identity = identity
 	}
-	if probeErr != nil {
-		result.Status = domain.CredentialTestFailed
-		result.Error = diagnoseProbe(probeErr)
-		result.Identity = ""
+	if err := s.recordTest(ctx, account, rec, result.CredentialTest); err != nil {
+		return domain.CredentialTestResult{}, err
+	}
+	return result, nil
+}
+
+// ErrConnectivityUnsupported means no registered collector can probe the account's provider.
+var ErrConnectivityUnsupported = errors.New("no connectivity test for this account provider")
+
+// TestConnectivity makes the provider's cheapest authenticated read as the identity a sync
+// would use: the stored credential when one exists, otherwise the host identity. A failed
+// probe is a result with Status failed, not an error. A stored credential's last test is
+// updated as TestCredential would.
+func (s *SyncService) TestConnectivity(ctx context.Context, account domain.Account) (domain.ConnectivityTestResult, error) {
+	host, ok := s.collectors[account.Provider].(IdentityProber)
+	if !ok {
+		return domain.ConnectivityTestResult{}, fmt.Errorf("%w: %q", ErrConnectivityUnsupported, account.Provider)
+	}
+	rec, stored, err := s.storedCredential(ctx, account.ID)
+	if err != nil {
+		return domain.ConnectivityTestResult{}, err
 	}
 
-	if ctx.Err() != nil {
-		return result, nil
+	probeCtx, cancel := context.WithTimeout(ctx, credentialTestTimeout)
+	defer cancel()
+	result := domain.ConnectivityTestResult{Source: domain.ConnectivitySourceHost}
+	start := time.Now()
+	var identity string
+	var probeErr error
+	if stored {
+		result.Source = domain.ConnectivitySourceStoredCredential
+		identity, probeErr = s.probe(probeCtx, account, rec)
+	} else {
+		identity, probeErr = host.Identity(probeCtx, account)
 	}
-	switch err := s.credentials.recordTest(ctx, rec, result.CredentialTest); {
+	result.LatencyMS = time.Since(start).Milliseconds()
+	result.CredentialTest = testOutcome(probeErr)
+	if probeErr == nil {
+		result.Identity = identity
+	}
+
+	if stored {
+		if err := s.recordTest(ctx, account, rec, result.CredentialTest); err != nil {
+			return domain.ConnectivityTestResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func testOutcome(probeErr error) domain.CredentialTest {
+	test := domain.CredentialTest{TestedAt: time.Now().UTC(), Status: domain.CredentialTestOK}
+	if probeErr != nil {
+		test.Status = domain.CredentialTestFailed
+		test.Error = diagnoseProbe(probeErr)
+	}
+	return test
+}
+
+// recordTest skips a test whose client went away and drops one for a credential replaced mid-test.
+func (s *SyncService) recordTest(ctx context.Context, account domain.Account, rec domain.AccountCredentialRecord, test domain.CredentialTest) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	switch err := s.credentials.recordTest(ctx, rec, test); {
 	case errors.Is(err, storage.ErrConflict):
 		slog.Default().Info("credential test result dropped: credential replaced during test", "account_id", account.ID)
 	case err != nil:
-		return domain.CredentialTestResult{}, fmt.Errorf("record credential test: %w", err)
+		return fmt.Errorf("record credential test: %w", err)
 	}
-	return result, nil
+	return nil
 }
 
 func (s *SyncService) probe(ctx context.Context, account domain.Account, rec domain.AccountCredentialRecord) (string, error) {

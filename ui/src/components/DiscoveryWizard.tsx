@@ -3,6 +3,7 @@ import { X, Check, Copy, Download, ChevronLeft, ChevronRight, AlertTriangle, Loa
 import { useAgentProvisioning, useDiscoveryAgents } from '../hooks/useDiscovery'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
+import ConnectivityBadge from './ConnectivityBadge'
 import {
   hclHeredocShellQuote,
   hclIdent,
@@ -493,6 +494,13 @@ resource "aws_iam_policy" "cloudpam_org" {
                           </option>
                         ))}
                       </select>
+                      {selectedAccount?.provider && (
+                        <div className="flex flex-col gap-1 text-xs text-gray-500 dark:text-gray-400">
+                          <span className="font-medium text-gray-700 dark:text-gray-300">Server connectivity</span>
+                          <ConnectivityBadge accountId={selectedAccount.id} accountName={selectedAccount.name} showDetail />
+                          <span>Tests from this server as the identity a server-side sync uses. The agent you provision next runs with its own credentials.</span>
+                        </div>
+                      )}
                       <button
                         onClick={() => setShowNewAccount(true)}
                         className="text-sm text-blue-600 dark:text-blue-400 hover:underline"

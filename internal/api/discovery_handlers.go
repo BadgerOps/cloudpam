@@ -53,6 +53,7 @@ func (d *DiscoveryServer) RegisterDiscoveryRoutes() {
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/ingest/org", d.handleOrgIngest)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/agents", d.handleListAgents)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/agents/", d.handleAgentsSubroutes)
+	d.srv.handleOpenAPIRouteFunc(accountConnectivityTestPath, d.handleAccountConnectivityTest)
 }
 
 // RegisterProtectedDiscoveryRoutes registers discovery routes with RBAC.
@@ -72,6 +73,7 @@ func (d *DiscoveryServer) RegisterProtectedDiscoveryRoutes(dualMW Middleware, lo
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/ingest/org", dualMW(createMW(http.HandlerFunc(d.handleOrgIngest))))
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/agents", dualMW(readMW(http.HandlerFunc(d.handleListAgents))))
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/agents/", dualMW(d.protectedAgentsSubroutes(logger)))
+	d.registerAccountConnectivityRoute(dualMW, logger)
 }
 
 // protectedAgentsSubroutes returns a handler for /api/v1/discovery/agents/ with RBAC.

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -297,5 +298,80 @@ func TestInjectedClientStillWinsWithoutATokenSource(t *testing.T) {
 	}
 	if client != collector.httpClient {
 		t.Fatal("getHTTPClient() replaced the injected client although no token source is set")
+	}
+}
+
+func TestHostIdentityGetsTheProjectWithoutAServiceAccount(t *testing.T) {
+	g, collector := newGoogleStub(t)
+	account := domain.Account{Key: "gcp:proj-1"}
+
+	identity, err := collector.Identity(context.Background(), account)
+	if err != nil {
+		t.Fatalf("Identity() error = %v", err)
+	}
+	if identity != hostIdentity {
+		t.Fatalf("Identity() = %q, want %q", identity, hostIdentity)
+	}
+	if len(g.tokenGrants) != 0 || len(g.projectPaths) != 1 || g.projectPaths[0] != "/compute/v1/projects/proj-1" {
+		t.Fatalf("token grants = %v, project paths = %v; want only the project get", g.tokenGrants, g.projectPaths)
+	}
+
+	g.projectStatus = http.StatusForbidden
+	for _, tc := range []struct {
+		name     string
+		account  domain.Account
+		wantCode string
+		wantHTTP int
+	}{
+		{"project forbidden", account, "", http.StatusForbidden},
+		{"no project on the account", domain.Account{}, "no_project_id", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := collector.Identity(context.Background(), tc.account)
+			var pe *discovery.ProbeError
+			if !errors.As(err, &pe) || pe.Step != discovery.ProbeStepGetProject || pe.Code != tc.wantCode || pe.Status != tc.wantHTTP {
+				t.Fatalf("Identity() error = %v, want get_project code %q http %d", err, tc.wantCode, tc.wantHTTP)
+			}
+		})
+	}
+}
+
+func TestHostIdentityDeadlineBoundsTheADCTokenFetch(t *testing.T) {
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(func() { close(release); stalled.Close() })
+
+	sa := testServiceAccount(t)
+	key, err := json.Marshal(map[string]string{
+		"type":           "service_account",
+		"project_id":     "proj-1",
+		"private_key_id": sa.PrivateKeyID(),
+		"private_key":    string(sa.PrivateKey()),
+		"client_email":   sa.ClientEmail(),
+		"token_uri":      stalled.URL + "/token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := t.TempDir() + "/adc.json"
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", path)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := New().Identity(ctx, domain.Account{Key: "gcp:proj-1"})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Identity() error = %v, want context.DeadlineExceeded from the stalled token endpoint", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Identity() kept waiting on the stalled ADC token endpoint past the probe deadline")
 	}
 }

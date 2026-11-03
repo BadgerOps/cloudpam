@@ -18,6 +18,7 @@ import (
 
 var (
 	_ discovery.CredentialAware       = (*Collector)(nil)
+	_ discovery.IdentityProber        = (*Collector)(nil)
 	_ discovery.CredentialedCollector = (*serviceAccountCollector)(nil)
 )
 
@@ -71,9 +72,16 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	stop := context.AfterFunc(t.ctx, cancel)
 	release := func() { stop(); cancel() }
 	resp, err := t.base.RoundTrip(req.WithContext(ctx))
-	t.lastErr = err
 	if err != nil {
 		release()
+		// The cancel above reports context.Canceled even when the binding context
+		// hit its deadline, which would read as "canceled" instead of a timeout.
+		if bindErr := t.ctx.Err(); bindErr != nil {
+			err = bindErr
+		}
+	}
+	t.lastErr = err
+	if err != nil {
 		return nil, err
 	}
 	resp.Body = releaseOnClose{ReadCloser: resp.Body, release: release}
@@ -97,30 +105,66 @@ type serviceAccountCollector struct {
 }
 
 func (c *serviceAccountCollector) Identity(ctx context.Context, account domain.Account) (string, error) {
-	project := ProjectID(account)
-	if project == "" {
-		return "", &discovery.ProbeError{Step: discovery.ProbeStepGetProject, Code: "no_project_id"}
+	project, err := probeProject(account)
+	if err != nil {
+		return "", err
 	}
 	if _, err := c.tokenSource.Token(); err != nil {
 		return "", c.tokenProbeError(err)
 	}
-	client, err := c.getHTTPClient(ctx)
+	if err := c.getProject(ctx, project); err != nil {
+		return "", err
+	}
+	return c.email, nil
+}
+
+// hostIdentity names Application Default Credentials, which do not say which
+// principal they resolved to without a further call.
+const hostIdentity = "application default credentials"
+
+// Identity gets the account's project as Application Default Credentials.
+func (c *Collector) Identity(ctx context.Context, account domain.Account) (string, error) {
+	project, err := probeProject(account)
 	if err != nil {
 		return "", err
+	}
+	if err := c.getProject(ctx, project); err != nil {
+		return "", err
+	}
+	return hostIdentity, nil
+}
+
+func probeProject(account domain.Account) (string, error) {
+	project := ProjectID(account)
+	if project == "" {
+		return "", &discovery.ProbeError{Step: discovery.ProbeStepGetProject, Code: "no_project_id"}
+	}
+	return project, nil
+}
+
+func (c *Collector) getProject(ctx context.Context, project string) error {
+	client, err := c.getHTTPClient(ctx)
+	if err != nil {
+		return &discovery.ProbeError{Step: discovery.ProbeStepToken, Code: "no_default_credentials"}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/projects/%s", computeBaseURL, project), nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("get_project: %w", err)
+		// An ADC token failure arrives flattened to text, so a spent deadline is
+		// only recoverable from the context.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("get_project: %w", ctxErr)
+		}
+		return fmt.Errorf("get_project: %w", err)
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", &discovery.ProbeError{Step: discovery.ProbeStepGetProject, Status: resp.StatusCode}
+		return &discovery.ProbeError{Step: discovery.ProbeStepGetProject, Status: resp.StatusCode}
 	}
-	return c.email, nil
+	return nil
 }
 
 // Discover reduces a rejected token request to a ProbeError, because the

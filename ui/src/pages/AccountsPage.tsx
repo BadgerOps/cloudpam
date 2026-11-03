@@ -5,6 +5,7 @@ import { useAccounts } from '../hooks/useAccounts'
 import { useAuth } from '../hooks/useAuth'
 import { useToast } from '../hooks/useToast'
 import StatusBadge from '../components/StatusBadge'
+import ConnectivityBadge from '../components/ConnectivityBadge'
 import FormError from '../components/FormError'
 import AccountCredentialModal, { credentialProvider } from '../components/AccountCredentialModal'
 import type { CredentialProvider } from '../components/AccountCredentialModal'
@@ -412,6 +413,7 @@ export default function AccountsPage() {
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Name</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Key</th>
                 <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Provider</th>
+                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Connectivity</th>
                 <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Tier</th>
                 <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Regions</th>
                 <th className="hidden md:table-cell px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Created</th>
@@ -426,6 +428,7 @@ export default function AccountsPage() {
                   <td className="px-4 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{a.name}</td>
                   <td className="px-4 py-2 text-sm font-mono text-gray-600 dark:text-gray-300">{a.key}</td>
                   <td className="px-4 py-2"><StatusBadge label={a.provider || 'other'} variant="provider" /></td>
+                  <td className="px-4 py-2">{a.provider && <ConnectivityBadge accountId={a.id} accountName={a.name} />}</td>
                   <td className="hidden md:table-cell px-4 py-2">{a.tier && <StatusBadge label={a.tier} variant="tier" />}</td>
                   <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-500 dark:text-gray-400">{(a.regions || []).join(', ') || '-'}</td>
                   <td className="hidden md:table-cell px-4 py-2 text-sm text-gray-400 dark:text-gray-500">{formatTimeAgo(a.created_at)}</td>

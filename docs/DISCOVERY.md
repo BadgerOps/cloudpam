@@ -1096,6 +1096,39 @@ Returns the completed (or failed) `SyncJob`:
 }
 ```
 
+### Test Account Connectivity
+
+Before a sync, check that the server can reach an account. The test makes the
+provider's cheapest authenticated read (AWS `sts:GetCallerIdentity`, GCP
+`compute.projects.get`) as the identity a server-side sync of that account
+would use: the account's stored credential when one exists, otherwise the
+server's own identity (AWS default credential chain, GCP Application Default
+Credentials). It needs `discovery:create`, takes at most 15 seconds, and writes
+an audit event with action `test` on the account.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/accounts/1/test
+```
+
+A failing account still returns 200, with `status: "failed"` and a sanitized
+`error` that names the provider call:
+
+```json
+{
+  "tested_at": "2025-01-15T10:29:58Z",
+  "status": "ok",
+  "latency_ms": 184,
+  "identity": "arn:aws:sts::123456789012:assumed-role/CloudPAMDiscovery/i-0abc",
+  "source": "host"
+}
+```
+
+`source` is `host` or `stored_credential`. The endpoint returns 404 for an
+unknown account and 422 for a provider no collector can test. The test checks
+authentication and reachability, not the EC2 or Compute read permissions a sync
+also needs. The test runs from the server, so it says nothing about a
+standalone agent, which uses its own credentials.
+
 ### List Discovered Resources
 
 ```bash
