@@ -4,19 +4,21 @@ import { NetworkTab } from '../pages/DiscoveryPage'
 import type { NetworkViewResponse } from '../api/types'
 
 const fetchHierarchy = vi.fn()
+const fetchFlat = vi.fn()
 let hierarchy: NetworkViewResponse | null = null
+let flat: NetworkViewResponse | null = null
 
 vi.mock('../hooks/useNetwork', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../hooks/useNetwork')>()),
   useNetworkView: () => ({
-    flat: null,
+    flat,
     hierarchy,
     conflicts: null,
     objects: null,
     relationships: null,
     loading: false,
     error: null,
-    fetchFlat: vi.fn(),
+    fetchFlat,
     fetchHierarchy,
     fetchConflicts: vi.fn(),
     fetchObjects: vi.fn(),
@@ -53,7 +55,9 @@ const policySelect = () => screen.getByLabelText('Schema policy') as HTMLSelectE
 
 beforeEach(() => {
   fetchHierarchy.mockReset().mockResolvedValue(undefined)
+  fetchFlat.mockReset().mockResolvedValue(undefined)
   hierarchy = null
+  flat = null
 })
 
 afterEach(() => {
@@ -76,6 +80,18 @@ describe('NetworkTab schema policy', () => {
 
     expect(policySelect().value).toBe('account_level')
     expect(screen.getByText('account policy, stored default')).toBeTruthy()
+  })
+
+  it('shows the policy behind the active view, not the first view loaded', () => {
+    hierarchy = storedPolicyView('region_level')
+    flat = storedPolicyView('global')
+    render(<NetworkTab selectedAccountId={null} accounts={[]} pools={[]} />)
+
+    expect(policySelect().value).toBe('region_level')
+    fireEvent.click(screen.getByRole('button', { name: 'Flat' }))
+
+    expect(policySelect().value).toBe('global')
+    expect(screen.getByText('global policy, stored default')).toBeTruthy()
   })
 
   it('sends a request-scoped policy once the user picks one', async () => {

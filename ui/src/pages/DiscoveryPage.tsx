@@ -866,9 +866,12 @@ export function NetworkTab({
   const { showToast } = useToast()
   const { hasPermission } = useAuth()
   const canDeleteObjects = hasPermission('discovery:update')
-  // Every network view response names the policy the server applied, so with
-  // no override the dropdown shows the stored policy without a settings call.
-  const schemaPolicy = schemaPolicyOverride ?? networkSchemaPolicyName((hierarchy ?? flat ?? conflicts)?.schema_policy?.name)
+  // The hierarchy, flat, and conflicts responses name the policy the server
+  // applied to them, so with no override the dropdown shows the policy behind
+  // the rows on screen. The objects and relationships rows are not evaluated
+  // under a policy, so those modes show the policy of whichever view is loaded.
+  const activePolicyView = mode === 'hierarchy' ? hierarchy : mode === 'flat' ? flat : mode === 'conflicts' ? conflicts : null
+  const schemaPolicy = schemaPolicyOverride ?? networkSchemaPolicyName((activePolicyView ?? hierarchy ?? flat ?? conflicts)?.schema_policy?.name)
 
   const filters = useMemo(() => ({
     account_id: selectedAccountId ?? undefined,
