@@ -5,6 +5,7 @@ import { useRoles } from '../hooks/useRoles'
 import { usePendingAction } from '../hooks/usePendingAction'
 import { useAuth } from '../hooks/useAuth'
 import type { CreateUserRequest, UserInfo } from '../api/types'
+import StatusBadge from './StatusBadge'
 
 interface UsersAdminPanelProps {
   embedded?: boolean
@@ -307,17 +308,11 @@ export default function UsersAdminPanel({ embedded = false }: UsersAdminPanelPro
                   </td>
                   <td className="px-4 py-3">
                     {isLocked(u) ? (
-                      <span className="px-2 py-0.5 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded text-xs font-medium">
-                        Locked
-                      </span>
+                      <StatusBadge status="locked" label="Locked" />
                     ) : u.is_active ? (
-                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 rounded text-xs font-medium">
-                        Active
-                      </span>
+                      <StatusBadge status="active" label="Active" />
                     ) : (
-                      <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded text-xs font-medium">
-                        Disabled
-                      </span>
+                      <StatusBadge status="disabled" label="Disabled" />
                     )}
                   </td>
                   <td className="hidden md:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{u.failed_login_attempts ?? 0}</td>
