@@ -205,9 +205,9 @@ A batched HTTPS POST of `Content-Type: application/json` carrying the §2.4 enve
 
 **This contradicts issue #93's recommendation of "webhook + S3/GCS shipping for v1", and deliberately so.**
 
-Direct object-store shipping is not one feature; it is batching, buffering, multipart upload, retry, key/partition layout, compaction, and lifecycle policy — plus the AWS and GCP SDKs and their credential chains pulled into the server process. `docs/OBSERVABILITY.md:129-131` already made the opposite call in writing: use a collector "when a deployment needs vendor APIs... That keeps credentials, buffering, and backpressure handling outside the CloudPAM process." Object stores are the same class of problem. Adding S3/GCS in-process would silently reverse a decision the project already documented, and would duplicate machinery Vector already has and that `deploy/vector/` already exists to configure.
+Direct object-store shipping is not one feature; it is batching, buffering, multipart upload, retry, key/partition layout, compaction, and lifecycle policy — plus the AWS and GCP SDKs and their credential chains pulled into the server process. `docs/OBSERVABILITY.md:129-131` already made the opposite call in writing: use a collector "when a deployment needs vendor APIs... That keeps credentials, buffering, and backpressure handling outside the CloudPAM process." Object stores are the same class of problem. Adding S3/GCS in-process would silently reverse a decision the project already documented, and would duplicate machinery Vector already has and that the server chart's Vector sidecar (`vector.enabled`) already runs.
 
-A file sink writing newline-delimited JSON to a configured path satisfies the same requirement at a fraction of the cost. Vector or Fluent Bit tails the file and performs the object upload with its own buffering, compression, and partitioning — the sidecar pattern `OBSERVABILITY.md` §2.2 already specifies. The file also gives operators a local durable spool for free, which is what makes gap-replay (§6.4) practical.
+A file sink writing newline-delimited JSON to a configured path satisfies the same requirement at a fraction of the cost. Vector or Fluent Bit tails the file and performs the object upload with its own buffering, compression, and partitioning — the sidecar pattern `OBSERVABILITY.md` §2.1 ships for the syslog stream. The file also gives operators a local durable spool for free, which is what makes gap-replay (§6.4) practical.
 
 If a future deployment genuinely cannot run a sidecar (a constraint no current requirement states), revisit S3 direct as a distinct phase with its own design.
 
@@ -499,7 +499,7 @@ Behaviour-preserving for existing syslog users, so it ships independently of any
 
 - Webhook sink: TLS config, auth header, batching, retry (§5.3) — 2 d
 - File sink: JSON Lines, rotation, permissions (§5.4) — 1.5 d
-- `docs/OBSERVABILITY.md` cross-reference, `docs/DEPLOYMENT.md` operator guidance, Vector example config in `deploy/vector/` for the file → S3/GCS path — 1 d
+- `docs/OBSERVABILITY.md` cross-reference, `docs/DEPLOYMENT.md` operator guidance, Vector example `vector.config` for the file → S3/GCS path — 1 d
 
 Delivers the issue's actual v1 requirement.
 
