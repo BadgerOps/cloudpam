@@ -516,7 +516,7 @@ func TestImportDiscoveredSchema_SameShapeInTwoRegionsLinksToOnePool(t *testing.T
 	}
 }
 
-func TestPoolsAreCreatedOnlyByPlacement(t *testing.T) {
+func TestPoolsAreCreatedAndDeletedOnlyUnderThePlacementLock(t *testing.T) {
 	root := filepath.Join("..", "..")
 	allowed := filepath.Join("internal", "api", "pool_placement.go")
 	fset := token.NewFileSet()
@@ -541,8 +541,15 @@ func TestPoolsAreCreatedOnlyByPlacement(t *testing.T) {
 				if !ok {
 					return true
 				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "CreatePool" {
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				switch sel.Sel.Name {
+				case "CreatePool":
 					t.Errorf("%s calls CreatePool directly; create pools through placePools or Server.PlacePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()))
+				case "DeletePool", "DeletePoolCascade", "DeleteAccountCascade":
+					t.Errorf("%s calls %s directly; delete through Server.deletePool or Server.deleteAccountCascade so a concurrent placement cannot put a child under the deleted pool", fset.Position(call.Pos()), sel.Sel.Name)
 				}
 				return true
 			})

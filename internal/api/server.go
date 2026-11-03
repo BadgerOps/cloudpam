@@ -130,6 +130,15 @@ func (s *Server) writeStoreErr(ctx context.Context, w http.ResponseWriter, err e
 	}
 }
 
+// writeDeleteErr answers a failed delete: 503 when it ran out of placement budget, 409 otherwise.
+func (s *Server) writeDeleteErr(ctx context.Context, w http.ResponseWriter, err error) {
+	if errors.Is(err, storage.ErrBusy) {
+		s.writeStoreErr(ctx, w, err)
+		return
+	}
+	s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
+}
+
 // logAudit logs an audit event for CRUD operations.
 func (s *Server) logAudit(ctx context.Context, action, resourceType, resourceID, resourceName string, statusCode int) {
 	s.logAuditWithChanges(ctx, action, resourceType, resourceID, resourceName, nil, statusCode)

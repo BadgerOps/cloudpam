@@ -540,7 +540,7 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 	removed := make(map[int64]bool, len(cleanup))
 	for i := len(cleanup) - 1; i >= 0; i-- {
 		entry := cleanup[i]
-		if ok, cleanupErr := d.srv.store.DeletePool(ctx, entry.poolID); cleanupErr != nil {
+		if ok, cleanupErr := d.srv.deletePool(ctx, entry.poolID, false); cleanupErr != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: %v", entry.resource, entry.poolID, cleanupErr))
 		} else if !ok {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: not found", entry.resource, entry.poolID))

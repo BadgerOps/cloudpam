@@ -139,15 +139,10 @@ func (s *Server) protectedPoolsSubroutesHandler(logger *slog.Logger) http.Handle
 				writeJSON(w, http.StatusForbidden, apiError{Error: "forbidden"})
 				return
 			}
-			var ok bool
 			force := strings.ToLower(r.URL.Query().Get("force"))
-			if force == "1" || force == "true" || force == "yes" {
-				ok, err = s.store.DeletePoolCascade(ctx, id64)
-			} else {
-				ok, err = s.store.DeletePool(ctx, id64)
-			}
+			ok, err := s.deletePool(ctx, id64, force == "1" || force == "true" || force == "yes")
 			if err != nil {
-				s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
+				s.writeDeleteErr(ctx, w, err)
 				return
 			}
 			if !ok {
@@ -235,15 +230,10 @@ func (s *Server) handlePoolsSubroutes(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		// Get pool info before delete for audit logging
 		pool, poolFound, _ := s.store.GetPool(r.Context(), id64)
-		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
-		if force == "1" || force == "true" || force == "yes" {
-			ok, err = s.store.DeletePoolCascade(r.Context(), id64)
-		} else {
-			ok, err = s.store.DeletePool(r.Context(), id64)
-		}
+		ok, err := s.deletePool(r.Context(), id64, force == "1" || force == "true" || force == "yes")
 		if err != nil {
-			s.writeErr(r.Context(), w, http.StatusConflict, err.Error(), "")
+			s.writeDeleteErr(r.Context(), w, err)
 			return
 		}
 		if !ok {
