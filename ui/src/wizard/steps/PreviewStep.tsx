@@ -27,7 +27,7 @@ export default function PreviewStep({ schema, problems, conflicts, conflictsLoad
           <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Preview Your Schema</h2>
           <p className="text-gray-600 dark:text-gray-300">Review the generated IP address plan before applying.</p>
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2 xl:shrink-0 xl:flex-nowrap">
           {(Object.keys(EXPORT_FORMATS) as ExportFormat[]).map((format) => (
             <button
               key={format}
