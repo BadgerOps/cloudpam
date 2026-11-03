@@ -416,8 +416,7 @@ func doGet(ctx context.Context, client *http.Client, url string, dest any) error
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("http %d from %s: %s", resp.StatusCode, url, body)
+		return fmt.Errorf("http %d from %s: %s", resp.StatusCode, url, errorBodySnippet(resp.Body))
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
@@ -455,4 +454,14 @@ func LastPathComponent(url string) string {
 		return url[idx+1:]
 	}
 	return url
+}
+
+const maxErrorBodySnippet = 512
+
+func errorBodySnippet(r io.Reader) string {
+	buf, _ := io.ReadAll(io.LimitReader(r, maxErrorBodySnippet+1))
+	if len(buf) <= maxErrorBodySnippet {
+		return string(buf)
+	}
+	return string(buf[:maxErrorBodySnippet]) + "... (truncated)"
 }
