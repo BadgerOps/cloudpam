@@ -12,6 +12,7 @@ Create a pool lets a user add an IPv4 CIDR block, optionally under a parent pool
 - `pool-reject-outside-parent` refuses a child CIDR not contained by its parent.
 - `pool-create-api` creates the same pool shape from the API.
 - `pool-audit` records a `create` audit event for the pool.
+- `pool-delete-cascade` offers, after the API refuses with `409`, to delete a parent pool together with every pool under it.
 
 ## How to get to it (user POV)
 
@@ -36,6 +37,7 @@ Preconditions:
 - **Reject duplicate.** Run `cloudpam-verify api POST /api/v1/pools '{"name":"verify-dup","cidr":"10.20.0.0/16","parent_id":<Corp Supernet id>}'`. Status `409` with `conflict: constraint failed: UNIQUE constraint failed: index 'uniq_pools_parent_cidr' (2067)` on SQLite. The helper exits 1 for any non-2xx; that is the expected result here.
 - **Reject outside parent.** Run `cloudpam-verify api POST /api/v1/pools '{"name":"verify-outside","cidr":"192.168.0.0/24","parent_id":<Corp Supernet id>}'`. Status `400` with `invalid sub-pool cidr` and detail `child not within parent`.
 - **API entry.** Run `cloudpam-verify api --save pool-create POST /api/v1/pools '{"name":"verify-api-<ts>","cidr":"10.31.0.0/16","parent_id":<Corp Supernet id>}'`. Status `201`; body has the new `id`.
+- **Cascade delete.** In the `Corp Supernet` row, click `getByRole('button', { name: 'Delete' })`. After the first `confirm()` (`Delete pool "Corp Supernet" (10.0.0.0/8)?`), the delete returns `409` and a second `confirm()` reads `Pool "Corp Supernet" has N child pools. Delete with N children?`, where `N` is `child_count` from `GET /api/v1/pools/<id>/stats` (every descendant, not only direct children). Cancel keeps the row; OK sends `DELETE /api/v1/pools/<id>?force=true`, shows `Pool deleted`, and `GET /api/v1/pools` lists neither the pool nor its descendants. A pool with no children deletes after the first `confirm()` alone. The proven journey is `journeys/cascade-delete.cjs`.
 - **Proof.** `shot('03-pool-row-visible')` and `aria('03-pool-row-visible')` with the new row in view, plus the saved API responses. The proven journey is `journeys/create-pool.cjs` (run: `cloudpam-verify browser .claude/skills/verify-cloudpam/journeys/create-pool.cjs`).
 
 ## Gotchas
