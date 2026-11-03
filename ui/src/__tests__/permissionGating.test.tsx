@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReactElement } from 'react'
@@ -39,7 +39,7 @@ const USERS = [
 // Minimal stub API surface: every screen under test loads via api/client's
 // fetch wrapper, so route the handful of GETs they issue.
 function stubFetch() {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     const body = (data: unknown) =>
       new Response(JSON.stringify(data), {
@@ -135,6 +135,24 @@ describe('UsersAdminPanel action gating', () => {
     expect(await screen.findByTitle('Deactivate user')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /create user/i })).toBeNull()
   })
+
+  // The revoke endpoint accepts the admin role or the account owner, not a
+  // users:* permission, so a custom role holding every users permission still
+  // gets 403 and must not see the control.
+  it('exposes sign out everywhere only to the admin role', async () => {
+    stubFetch()
+    renderWith(['users:list', 'users:update', 'users:delete'], <UsersAdminPanel />)
+
+    expect(await screen.findByText('alice')).toBeTruthy()
+    expect(screen.queryByTitle('Sign out everywhere')).toBeNull()
+  })
+
+  it('exposes sign out everywhere to an admin', async () => {
+    stubFetch()
+    renderWith([], <UsersAdminPanel />, 'admin')
+
+    expect(await screen.findByTitle('Sign out everywhere')).toBeTruthy()
+  })
 })
 
 describe('ApiKeysPage feature gating', () => {
@@ -171,6 +189,51 @@ describe('ApiKeysPage feature gating', () => {
     renderWith(['settings:read', 'apikeys:list', 'apikeys:create'], <ApiKeysPage />)
 
     expect(await screen.findByRole('button', { name: /create key/i })).toBeTruthy()
+  })
+
+  it('offers a per-key rate limit only to a caller holding settings:write', async () => {
+    stubFetch()
+    renderWith(['apikeys:list', 'apikeys:create'], <ApiKeysPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /create key/i }))
+    expect(await screen.findByPlaceholderText(/e\.g\. CI Pipeline/i)).toBeTruthy()
+    expect(screen.queryByLabelText('Requests per second')).toBeNull()
+  })
+
+  it('sends rate_limit with the key when both values are set', async () => {
+    const fetchMock = stubFetch()
+    renderWith(['apikeys:list', 'apikeys:create', 'settings:write'], <ApiKeysPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /create key/i }))
+    fireEvent.change(await screen.findByPlaceholderText(/e\.g\. CI Pipeline/i), { target: { value: 'bulk agent' } })
+    fireEvent.change(screen.getByLabelText('Requests per second'), { target: { value: '2.5' } })
+    fireEvent.change(screen.getByLabelText('Burst'), { target: { value: '7' } })
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
+
+    await waitFor(() => {
+      const posted = fetchMock.mock.calls.find(([input, init]) =>
+        String(input).startsWith('/api/v1/auth/keys') && init?.method === 'POST'
+      )
+      expect(posted).toBeTruthy()
+      const body = JSON.parse(String(posted?.[1]?.body))
+      expect(body.rate_limit).toEqual({ requests_per_second: 2.5, burst: 7 })
+    })
+  })
+
+  it('refuses a half-set rate limit before calling the server', async () => {
+    const fetchMock = stubFetch()
+    renderWith(['apikeys:list', 'apikeys:create', 'settings:write'], <ApiKeysPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /create key/i }))
+    fireEvent.change(await screen.findByPlaceholderText(/e\.g\. CI Pipeline/i), { target: { value: 'bulk agent' } })
+    fireEvent.change(screen.getByLabelText('Requests per second'), { target: { value: '2.5' } })
+    fireEvent.click(screen.getByRole('button', { name: /^create$/i }))
+
+    expect(await screen.findByText(/needs both requests per second and burst/i)).toBeTruthy()
+    const posted = fetchMock.mock.calls.filter(([input, init]) =>
+      String(input).startsWith('/api/v1/auth/keys') && init?.method === 'POST'
+    )
+    expect(posted).toHaveLength(0)
   })
 })
 

@@ -45,6 +45,9 @@ function stubAnalysis(gaps: () => Response, frag: () => Response) {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === '/api/v1/analysis/gaps') return gaps()
     if (url === '/api/v1/analysis/fragmentation') return frag()
+    // The growth section fetches the stats on its own; answer it without a
+    // projection so only the analysis section is under test here.
+    if (url === '/api/v1/pools/7/stats') return jsonResponse(pool.stats)
     throw new Error(`unexpected fetch ${url}`)
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -53,6 +56,10 @@ function stubAnalysis(gaps: () => Response, frag: () => Response) {
 
 function gapCalls(fetchMock: ReturnType<typeof vi.fn>) {
   return fetchMock.mock.calls.filter(([url]) => url === '/api/v1/analysis/gaps')
+}
+
+function analysisCalls(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/v1/analysis/'))
 }
 
 function renderPanel() {
@@ -188,6 +195,6 @@ describe('PoolDetailPanel address analysis', () => {
     fireEvent.click(toggle)
     expect(screen.getAllByTestId('available-range')).toHaveLength(2)
     expect(screen.getByText('10 / 100')).toBeTruthy()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(analysisCalls(fetchMock)).toHaveLength(2)
   })
 })

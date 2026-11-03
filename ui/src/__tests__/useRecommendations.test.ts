@@ -55,4 +55,31 @@ describe('useRecommendations', () => {
 
     expect(result.current.data?.total).toBe(3)
   })
+  it('stays loading until the newest request settles', async () => {
+    const first = deferred<RecommendationsListResponse>()
+    const second = deferred<RecommendationsListResponse>()
+    mockGet
+      .mockReturnValueOnce(first.promise as Promise<never>)
+      .mockReturnValueOnce(second.promise as Promise<never>)
+
+    const { result } = renderHook(() => useRecommendations())
+
+    act(() => {
+      void result.current.fetch({ status: 'pending' })
+      void result.current.fetch({ status: 'applied' })
+    })
+    await waitFor(() => expect(mockGet).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      first.resolve(response(77))
+      await first.promise
+    })
+    expect(result.current.loading).toBe(true)
+
+    await act(async () => {
+      second.resolve(response(3))
+      await second.promise
+    })
+    expect(result.current.loading).toBe(false)
+  })
 })

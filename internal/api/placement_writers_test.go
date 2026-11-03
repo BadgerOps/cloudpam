@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -357,7 +358,7 @@ func setupRecommendationApplyServer(t *testing.T) (*Server, *storage.MemoryStore
 	t.Helper()
 	srv, st := setupTestServer()
 	recStore := storage.NewMemoryRecommendationStore(st)
-	recSvc := planning.NewRecommendationService(planning.NewAnalysisService(st), recStore, st, srv)
+	recSvc := planning.NewRecommendationService(planning.NewAnalysisService(st), recStore, srv)
 	NewRecommendationServer(srv, recSvc, recStore).RegisterRecommendationRoutes()
 	return srv, st, recStore
 }
@@ -419,6 +420,112 @@ func TestRecommendationApply_StaleSuggestionOverlappingSiblingIs409(t *testing.T
 		t.Fatal("a stale suggestion overlapping a sibling was stored")
 	}
 	requirePending(t, recStore, id)
+}
+
+// Issue #374: the field checks POST /api/v1/pools runs (name, CIDR format and
+// bounds, IPv4 only, type, status, source) must hold on every path that
+// creates a pool, not only on POST /pools and CSV import.
+
+func TestPlacePool_InvalidFieldIsValidationError(t *testing.T) {
+	srv, st := setupTestServer()
+	root := createRootPool(t, srv, "10.0.0.0/24")
+	for _, in := range []domain.CreatePool{
+		{Name: "tiny", CIDR: "10.0.0.0/31", ParentID: &root.ID},
+		{Name: "padded", CIDR: " 10.0.0.0/26 ", ParentID: &root.ID},
+		{Name: "v6", CIDR: "2001:db8::/32"},
+		{Name: "bad\ttype", CIDR: "10.0.0.0/26", ParentID: &root.ID},
+		{Name: "typed", CIDR: "10.0.0.0/26", ParentID: &root.ID, Type: "wormhole"},
+	} {
+		_, err := srv.PlacePool(t.Context(), in)
+		if !errors.Is(err, storage.ErrValidation) {
+			t.Errorf("PlacePool(%+v) = %v, want ErrValidation", in, err)
+		}
+	}
+	if n := len(storedCIDRs(t, st)); n != 1 {
+		t.Fatalf("invalid pools were stored: %d pools, want only the root", n)
+	}
+}
+
+func TestRecommendationApply_InvalidFieldIs400(t *testing.T) {
+	cases := []struct {
+		name string
+		cidr string
+		body string
+	}{
+		{"prefix past the bound", "10.0.0.0/31", `{}`},
+		{"control character in name", "10.0.0.0/26", `{"name":"bad\tname"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, st, recStore := setupRecommendationApplyServer(t)
+			root := createRootPool(t, srv, "10.0.0.0/24")
+			id := pendingAllocation(t, recStore, root.ID, tc.cidr)
+
+			doJSON(t, srv.mux, stdhttp.MethodPost, "/api/v1/recommendations/"+id+"/apply", tc.body, stdhttp.StatusBadRequest)
+			if storedCIDRs(t, st)[tc.cidr] {
+				t.Fatalf("a pool with an invalid field was stored")
+			}
+			requirePending(t, recStore, id)
+		})
+	}
+}
+
+func TestDiscoveryImportApply_InvalidPrefixesAreItemErrors(t *testing.T) {
+	d, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vpcID := "vpc-1"
+	vpc := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, vpcID, "10.1.0.0/16", nil)
+	tiny := discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-tiny", "10.1.0.0/31", &vpcID)
+	v6 := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, "vpc-v6", "2001:db8::/32", nil)
+	for _, res := range []domain.DiscoveredResource{vpc, tiny, v6} {
+		upsertDiscoveredForImportTest(t, ds, res)
+	}
+
+	resp := applyDiscoveryImportForTest(t, d, account.ID, vpc.ID, tiny.ID, v6.ID)
+
+	if resp.PoolsCreated != 1 || !hasErrorContaining(resp.Errors, "subnet-tiny: ") || !hasErrorContaining(resp.Errors, "vpc-v6: ") {
+		t.Fatalf("want only the vpc created and an error per invalid resource, got %+v", resp)
+	}
+	stored := storedCIDRs(t, st)
+	if stored["10.1.0.0/31"] || stored["2001:db8::/32"] {
+		t.Fatalf("a /31 or ipv6 discovered prefix was stored as a pool: %v", stored)
+	}
+}
+
+func TestImportDiscoveredSchema_InvalidPrefixesAreErrors(t *testing.T) {
+	d, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:1", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vpcID := "vpc-1"
+	upsertDiscoveredForImportTest(t, ds, discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, vpcID, "10.1.0.0/16", nil))
+	upsertDiscoveredForImportTest(t, ds, discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-tiny", "10.1.0.0/31", &vpcID))
+	upsertDiscoveredForImportTest(t, ds, discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, "vpc-v6", "2001:db8::/32", nil))
+
+	resp := importDiscoveredSchemaForTest(t, d, account.ID)
+
+	if resp.PoolsCreated != 1 || !hasErrorContaining(resp.Errors, "subnet-tiny: ") || !hasErrorContaining(resp.Errors, "vpc-v6: ") {
+		t.Fatalf("want only the vpc created and an error per invalid resource, got %+v", resp)
+	}
+	stored := storedCIDRs(t, st)
+	if stored["10.1.0.0/31"] || stored["2001:db8::/32"] {
+		t.Fatalf("a /31 or ipv6 discovered prefix was stored as a pool: %v", stored)
+	}
+}
+
+func TestApplyPlan_InvalidPrefixesAreRefused(t *testing.T) {
+	ai, st, _ := setupAITestServerCov(t, &stubLLMProviderCov{available: true})
+	for _, cidr := range []string{"2001:db8::/32", "10.0.0.0/31", "10.0.0.1/24"} {
+		body := fmt.Sprintf(`{"plan":{"pools":[{"ref":"r","name":"R","cidr":%q,"type":"subnet"}]}}`, cidr)
+		assertStatusCov(t, doReqCov(t, ai.srv.mux, stdhttp.MethodPost, "/api/v1/ai/sessions/s/apply-plan", body), stdhttp.StatusBadRequest)
+	}
+	if n := len(storedCIDRs(t, st)); n != 0 {
+		t.Fatalf("a refused plan stored %d pools", n)
+	}
 }
 
 func TestConcurrentPoolsAndCSVImportStoreOne(t *testing.T) {
@@ -555,7 +662,7 @@ func TestImportDiscoveredSchema_SameShapeInTwoRegionsLinksToOnePool(t *testing.T
 	}
 }
 
-func TestPoolsAreCreatedOnlyByPlacement(t *testing.T) {
+func TestPoolsAreCreatedAndDeletedOnlyUnderThePlacementLock(t *testing.T) {
 	root := filepath.Join("..", "..")
 	allowed := filepath.Join("internal", "api", "pool_placement.go")
 	fset := token.NewFileSet()
@@ -580,8 +687,15 @@ func TestPoolsAreCreatedOnlyByPlacement(t *testing.T) {
 				if !ok {
 					return true
 				}
-				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "CreatePool" {
-					t.Errorf("%s calls CreatePool directly; create pools through placePools or Server.PlacePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()))
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				switch sel.Sel.Name {
+				case "CreatePool", "RestorePool":
+					t.Errorf("%s calls %s directly; create or restore pools through placePools, Server.PlacePool or Server.restorePool so they get the containment, overlap and lock checks", fset.Position(call.Pos()), sel.Sel.Name)
+				case "DeletePool", "DeletePoolCascade", "DeleteAccountCascade":
+					t.Errorf("%s calls %s directly; delete through Server.deletePool or Server.deleteAccountCascade so a concurrent placement cannot put a child under the deleted pool", fset.Position(call.Pos()), sel.Sel.Name)
 				}
 				return true
 			})

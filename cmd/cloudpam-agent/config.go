@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
 
 	"gopkg.in/yaml.v3"
@@ -39,6 +40,7 @@ type Config struct {
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 	AWSRegions        []string      `yaml:"aws_regions"`
+	DiscoveryAWSRPS   float64       `yaml:"discovery_aws_rps"`
 	MaxRetries        int           `yaml:"max_retries"`
 	RetryBackoff      time.Duration `yaml:"retry_backoff"`
 	RequestTimeout    time.Duration `yaml:"request_timeout"`
@@ -110,6 +112,13 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLOUDPAM_BOOTSTRAP_TOKEN"); v != "" {
 		cfg.BootstrapToken = v
+	}
+	if v := os.Getenv("CLOUDPAM_DISCOVERY_AWS_RPS"); v != "" {
+		rps, err := discovery.ParseRPS(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CLOUDPAM_DISCOVERY_AWS_RPS: %w", err)
+		}
+		cfg.DiscoveryAWSRPS = rps
 	}
 
 	// AWS Organization env vars
@@ -230,6 +239,9 @@ func (c *Config) Validate() error {
 	}
 	if c.HeartbeatInterval < 10*time.Second {
 		return errors.New("heartbeat_interval must be at least 10 seconds")
+	}
+	if err := discovery.CheckRPS(c.DiscoveryAWSRPS); err != nil {
+		return fmt.Errorf("discovery_aws_rps: %w", err)
 	}
 	return nil
 }

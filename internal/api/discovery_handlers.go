@@ -540,7 +540,7 @@ func (d *DiscoveryServer) applyDiscoveryImport(ctx context.Context, req domain.D
 	removed := make(map[int64]bool, len(cleanup))
 	for i := len(cleanup) - 1; i >= 0; i-- {
 		entry := cleanup[i]
-		if ok, cleanupErr := d.srv.store.DeletePool(ctx, entry.poolID); cleanupErr != nil {
+		if ok, cleanupErr := d.srv.deletePool(ctx, entry.poolID, false); cleanupErr != nil {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: %v", entry.resource, entry.poolID, cleanupErr))
 		} else if !ok {
 			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: cleanup created pool %d: not found", entry.resource, entry.poolID))
@@ -740,7 +740,9 @@ func (d *DiscoveryServer) previewWithInventory(ctx context.Context, inv *discove
 		return domain.DiscoveryImportPreviewResponse{}, err
 	}
 
-	resp := domain.DiscoveryImportPreviewResponse{Items: []domain.DiscoveryImportPreviewItem{}, SelectedPoolID: req.PoolID}
+	items := make([]domain.DiscoveryImportPreviewItem, 0, len(req.ResourceIDs))
+	indexByProviderID := make(map[string]int, len(req.ResourceIDs))
+	var candidates []importCandidate
 	for _, id := range req.ResourceIDs {
 		item := domain.DiscoveryImportPreviewItem{
 			ResourceID:      id,
@@ -756,7 +758,7 @@ func (d *DiscoveryServer) previewWithInventory(ctx context.Context, inv *discove
 			if errors.Is(err, storage.ErrNotFound) {
 				item.Status = "not_found"
 				item.Issues = append(item.Issues, "not_found")
-				addDiscoveryPreviewItem(&resp, item)
+				items = append(items, item)
 				continue
 			}
 			return domain.DiscoveryImportPreviewResponse{}, err
@@ -773,20 +775,21 @@ func (d *DiscoveryServer) previewWithInventory(ctx context.Context, inv *discove
 		if res.AccountID != req.AccountID {
 			item.Issues = append(item.Issues, "account_mismatch")
 			item.Evidence = append(item.Evidence, fmt.Sprintf("resource belongs to account %d", res.AccountID))
-			addDiscoveryPreviewItem(&resp, item)
+			items = append(items, item)
 			continue
 		}
+		indexByProviderID[res.ResourceID] = len(items)
 		if res.PoolID != nil {
 			item.Status = "already_linked"
 			item.ProposedAction = "none"
 			item.Issues = append(item.Issues, "already_linked")
-			addDiscoveryPreviewItem(&resp, item)
+			items = append(items, item)
 			continue
 		}
 		if res.Status != domain.DiscoveryStatusActive {
 			item.Issues = append(item.Issues, "stale_resource")
 			item.Evidence = append(item.Evidence, staleDiscoveryEvidence(*res)...)
-			addDiscoveryPreviewItem(&resp, item)
+			items = append(items, item)
 			continue
 		}
 		if res.ResourceType != domain.ResourceTypeVPC && res.ResourceType != domain.ResourceTypeSubnet {
@@ -794,7 +797,7 @@ func (d *DiscoveryServer) previewWithInventory(ctx context.Context, inv *discove
 			item.ProposedAction = "link_only"
 			item.ProposedManagedType = "network_object"
 			item.Issues = append(item.Issues, "network_object_only")
-			addDiscoveryPreviewItem(&resp, item)
+			items = append(items, item)
 			continue
 		}
 
@@ -810,6 +813,7 @@ func (d *DiscoveryServer) previewWithInventory(ctx context.Context, inv *discove
 			}
 		}
 
+		parentRef := ""
 		if res.ResourceType == domain.ResourceTypeSubnet {
 			if res.ParentResourceID != nil {
 				parent, ok := resourceByProviderID[*res.ParentResourceID]
@@ -821,53 +825,74 @@ func (d *DiscoveryServer) previewWithInventory(ctx context.Context, inv *discove
 					item.ProposedParentPoolID = parent.PoolID
 				case selectedProviderIDs[parent.ResourceID]:
 					item.Evidence = append(item.Evidence, "parent "+parent.ResourceID+" is selected for import")
-					if _, err := netip.ParsePrefix(res.CIDR); err == nil && parent.CIDR != "" {
-						// Apply places the subnet under the pool created for this parent in the
-						// same run, so preview must apply the same containment rule.
-						if err := validateChildCIDR(parent.CIDR, res.CIDR); err != nil {
-							item.Issues = append(item.Issues, "outside_pool")
-							item.Evidence = append(item.Evidence, fmt.Sprintf("%s is not inside parent %s (%s): %v", res.CIDR, parent.ResourceID, parent.CIDR, err))
-						}
-					}
+					parentRef = parent.ResourceID
 				default:
 					item.Issues = append(item.Issues, "missing_parent")
 					item.Evidence = append(item.Evidence, "provider parent "+parent.ResourceID+" is discovered but not linked or selected")
 				}
 			}
-			if item.ProposedParentPoolID == nil && selectedPool != nil && cidrContains(selectedPool.CIDR, res.CIDR) {
+			if item.ProposedParentPoolID == nil && parentRef == "" && selectedPool != nil && cidrContains(selectedPool.CIDR, res.CIDR) {
 				item.ProposedParentPoolID = &selectedPool.ID
 			}
 		}
 
-		d.classifyPoolRelationships(&item, res, pools)
-		flagPreviewParentPool(&item, res, poolsByID, req.AccountID)
+		d.classifyPoolRelationships(&item, res, pools, item.ProposedParentPoolID != nil || parentRef != "")
 		if ids := duplicates[res.CIDR]; len(ids) > 0 {
 			item.Issues = append(item.Issues, "duplicate_cidr")
 			item.DuplicateResourceIDs = ids
 			item.Evidence = append(item.Evidence, fmt.Sprintf("%s is also discovered in another account", res.CIDR))
 		}
-
-		if len(item.Issues) > 0 || len(item.ConflictPoolIDs) > 0 {
-			if hasAnyIssue(item.Issues, "duplicate_cidr") || len(item.ConflictPoolIDs) > 0 {
-				item.Status = "conflict"
-			} else {
-				item.Status = "blocked"
-			}
-			addDiscoveryPreviewItem(&resp, item)
-			continue
-		}
-
-		item.Status = "importable"
-		item.ProposedManagedType = "discovered_pool"
-		if item.ProposedPoolID != nil {
-			item.ProposedAction = "link_pool"
-		} else {
-			item.ProposedAction = "create_pool"
-		}
-		addDiscoveryPreviewItem(&resp, item)
+		candidates = append(candidates, importCandidate{index: len(items), res: *res, parentRef: parentRef})
+		items = append(items, item)
 	}
 
+	// A subnet's parent is final only once the parent's own item is, so items placed under
+	// an in-run parent resolve after the rest.
+	for _, underInRunParent := range []bool{false, true} {
+		for _, c := range candidates {
+			if (c.parentRef != "") != underInRunParent {
+				continue
+			}
+			var parent *domain.DiscoveryImportPreviewItem
+			if c.parentRef != "" {
+				parent = &items[indexByProviderID[c.parentRef]]
+			}
+			flagImportParent(&items[c.index], c.res, parent, pools, poolsByID, req.AccountID)
+			finalizeDiscoveryPreviewItem(&items[c.index])
+		}
+	}
+
+	resp := domain.DiscoveryImportPreviewResponse{Items: []domain.DiscoveryImportPreviewItem{}, SelectedPoolID: req.PoolID}
+	for _, item := range items {
+		addDiscoveryPreviewItem(&resp, item)
+	}
 	return resp, nil
+}
+
+// importCandidate is a VPC or subnet that passed the per-resource gates. parentRef names the
+// selected provider parent whose outcome in the same run decides where this one is placed.
+type importCandidate struct {
+	index     int
+	res       domain.DiscoveredResource
+	parentRef string
+}
+
+func finalizeDiscoveryPreviewItem(item *domain.DiscoveryImportPreviewItem) {
+	if len(item.Issues) > 0 || len(item.ConflictPoolIDs) > 0 {
+		if hasAnyIssue(item.Issues, "duplicate_cidr") || len(item.ConflictPoolIDs) > 0 {
+			item.Status = "conflict"
+		} else {
+			item.Status = "blocked"
+		}
+		return
+	}
+	item.Status = "importable"
+	item.ProposedManagedType = "discovered_pool"
+	if item.ProposedPoolID != nil {
+		item.ProposedAction = "link_pool"
+	} else {
+		item.ProposedAction = "create_pool"
+	}
 }
 
 func addDiscoveryPreviewItem(resp *domain.DiscoveryImportPreviewResponse, item domain.DiscoveryImportPreviewItem) {
@@ -887,9 +912,8 @@ func addDiscoveryPreviewItem(resp *domain.DiscoveryImportPreviewResponse, item d
 	}
 }
 
-func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImportPreviewItem, res *domain.DiscoveredResource, pools []domain.Pool) {
+func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImportPreviewItem, res *domain.DiscoveredResource, pools []domain.Pool, parentChosen bool) {
 	bestParentBits := -1
-	parentChosen := item.ProposedParentPoolID != nil
 	var foreignParents []domain.Pool
 	for _, pool := range pools {
 		if pool.CIDR == "" || res.CIDR == "" {
@@ -922,57 +946,83 @@ func (d *DiscoveryServer) classifyPoolRelationships(item *domain.DiscoveryImport
 			item.Evidence = append(item.Evidence, fmt.Sprintf("%s overlaps existing pool %d (%s)", res.CIDR, pool.ID, pool.CIDR))
 		}
 	}
-	if item.ProposedPoolID != nil {
+	// With no parent the new pool is top level, so a pool of another account
+	// containing the CIDR is a sibling it would overlap and apply refuses it.
+	// flagImportParent checks the children of a chosen parent the same way.
+	if item.ProposedPoolID != nil || item.ProposedParentPoolID != nil || parentChosen {
 		return
 	}
-	// A pool of another account that contains the CIDR and sits below the
-	// chosen parent (or at the top level when there is none) is a sibling the
-	// new pool would overlap, so apply refuses it.
-	parentCIDR := ""
-	if item.ProposedParentPoolID != nil {
-		for _, pool := range pools {
-			if pool.ID == *item.ProposedParentPoolID {
-				parentCIDR = pool.CIDR
-			}
-		}
-	}
 	for _, pool := range foreignParents {
-		if parentCIDR == "" || (cidrContains(parentCIDR, pool.CIDR) && !cidrEqual(parentCIDR, pool.CIDR)) {
-			item.ConflictPoolIDs = append(item.ConflictPoolIDs, pool.ID)
-			item.Evidence = append(item.Evidence, fmt.Sprintf("%s is inside pool %d (%s) assigned to another account", res.CIDR, pool.ID, pool.CIDR))
+		if pool.ParentID != nil {
+			continue
 		}
+		item.ConflictPoolIDs = append(item.ConflictPoolIDs, pool.ID)
+		item.Evidence = append(item.Evidence, fmt.Sprintf("%s is inside pool %d (%s) assigned to another account", res.CIDR, pool.ID, pool.CIDR))
 	}
 }
 
-// flagPreviewParentPool checks a pre-chosen parent pool (the pool a discovered parent is
-// linked to, or the selected pool) with the same rules apply enforces: the pool must exist,
-// belong to the import account, and contain the resource CIDR as a strict child. Without
-// this a disjoint CIDR is neither contained nor overlapping, so the item would be reported
-// importable and then refused by apply. Items that link an exact pool match do not use the
-// parent, and items whose CIDR is already flagged invalid are left to that issue.
-func flagPreviewParentPool(item *domain.DiscoveryImportPreviewItem, res *domain.DiscoveredResource, poolsByID map[int64]domain.Pool, accountID int64) {
-	if item.ProposedParentPoolID == nil || item.ProposedPoolID != nil {
+// flagImportParent resolves the parent apply will place the resource under and checks it
+// the way placement will. The parent is the pool created or linked for the selected
+// provider parent in the same run, else the proposed pool; an existing parent must
+// contain the CIDR as a strict child and have no child overlapping it. Items that link
+// an exact pool match use no parent, and an invalid CIDR is left to its own issue.
+func flagImportParent(item *domain.DiscoveryImportPreviewItem, res domain.DiscoveredResource, parent *domain.DiscoveryImportPreviewItem, pools []domain.Pool, poolsByID map[int64]domain.Pool, accountID int64) {
+	if item.ProposedPoolID != nil {
 		return
 	}
 	if _, err := netip.ParsePrefix(res.CIDR); err != nil {
 		return
 	}
-	parentID := *item.ProposedParentPoolID
-	parent, ok := poolsByID[parentID]
-	if !ok {
-		item.Issues = append(item.Issues, "missing_parent")
-		item.Evidence = append(item.Evidence, fmt.Sprintf("parent pool %d not found", parentID))
+	if parent != nil {
+		switch {
+		case parent.Status != "importable":
+			item.Issues = append(item.Issues, "missing_parent")
+			item.Evidence = append(item.Evidence, fmt.Sprintf("parent %s is selected but not importable (%s)", parent.ProviderResourceID, parent.Status))
+			return
+		case parent.ProposedPoolID != nil:
+			item.ProposedParentPoolID = parent.ProposedPoolID
+		default:
+			if err := validateChildCIDR(parent.CIDR, res.CIDR); err != nil {
+				item.Issues = append(item.Issues, "outside_pool")
+				item.Evidence = append(item.Evidence, fmt.Sprintf("%s is not inside parent %s (%s): %v", res.CIDR, parent.ProviderResourceID, parent.CIDR, err))
+			}
+			return
+		}
+	}
+	if item.ProposedParentPoolID == nil {
 		return
+	}
+	parentID := *item.ProposedParentPoolID
+	pool, found := poolsByID[parentID]
+	if issue, detail := checkImportParentPool(pool, found, parentID, accountID); issue != "" {
+		item.Issues = append(item.Issues, issue)
+		item.Evidence = append(item.Evidence, detail)
+		return
+	}
+	if err := validateChildCIDR(pool.CIDR, res.CIDR); err != nil {
+		item.Issues = append(item.Issues, "outside_pool")
+		item.Evidence = append(item.Evidence, fmt.Sprintf("%s is not inside parent pool %d (%s): %v", res.CIDR, parentID, pool.CIDR, err))
+		return
+	}
+	for _, sibling := range pools {
+		if sibling.ParentID == nil || *sibling.ParentID != parentID || cidrEqual(sibling.CIDR, res.CIDR) || !cidrOverlaps(sibling.CIDR, res.CIDR) {
+			continue
+		}
+		item.ConflictPoolIDs = append(item.ConflictPoolIDs, sibling.ID)
+		item.Evidence = append(item.Evidence, fmt.Sprintf("%s overlaps pool %d (%s) under parent pool %d", res.CIDR, sibling.ID, sibling.CIDR, parentID))
+	}
+}
+
+// checkImportParentPool applies the parent pool rules preview and apply share. It returns
+// the preview issue code and the detail apply reports, or "" when the pool is usable.
+func checkImportParentPool(parent domain.Pool, found bool, parentID, accountID int64) (issue, detail string) {
+	if !found {
+		return "missing_parent", fmt.Sprintf("parent pool %d not found", parentID)
 	}
 	if parent.AccountID != nil && *parent.AccountID != accountID {
-		item.Issues = append(item.Issues, "account_mismatch")
-		item.Evidence = append(item.Evidence, fmt.Sprintf("parent pool %d belongs to account %d", parentID, *parent.AccountID))
-		return
+		return "account_mismatch", fmt.Sprintf("parent pool %d belongs to account %d, not import account %d", parentID, *parent.AccountID, accountID)
 	}
-	if err := validateChildCIDR(parent.CIDR, res.CIDR); err != nil {
-		item.Issues = append(item.Issues, "outside_pool")
-		item.Evidence = append(item.Evidence, fmt.Sprintf("%s is not inside parent pool %d (%s): %v", res.CIDR, parentID, parent.CIDR, err))
-	}
+	return "", ""
 }
 
 func (d *DiscoveryServer) validateImportParentPool(ctx context.Context, accountID int64, parentID int64) error {
@@ -980,11 +1030,8 @@ func (d *DiscoveryServer) validateImportParentPool(ctx context.Context, accountI
 	if err != nil {
 		return err
 	}
-	if !found {
-		return fmt.Errorf("parent pool %d not found", parentID)
-	}
-	if parent.AccountID != nil && *parent.AccountID != accountID {
-		return fmt.Errorf("parent pool account does not match import account")
+	if _, detail := checkImportParentPool(parent, found, parentID, accountID); detail != "" {
+		return errors.New(detail)
 	}
 	return nil
 }
@@ -1183,12 +1230,6 @@ func (d *DiscoveryServer) importDiscoveredPools(ctx context.Context, accountID i
 			resp.Skipped++
 			continue
 		}
-		if _, err := netip.ParsePrefix(res.CIDR); err != nil {
-			resp.Errors = append(resp.Errors, fmt.Sprintf("%s: invalid CIDR %q", res.ResourceID, res.CIDR))
-			resp.Skipped++
-			continue
-		}
-
 		poolType := domain.PoolTypeSubnet
 		if res.ResourceType == domain.ResourceTypeVPC {
 			poolType = domain.PoolTypeVPC
@@ -1512,7 +1553,8 @@ func (d *DiscoveryServer) listSyncJobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, domain.SyncJobsResponse{Items: jobs})
 }
 
-// handleSyncSubroutes handles GET /api/v1/discovery/sync/{id}
+// handleSyncSubroutes handles GET /api/v1/discovery/sync/latest and
+// GET /api/v1/discovery/sync/{id}
 func (d *DiscoveryServer) handleSyncSubroutes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
@@ -1521,6 +1563,10 @@ func (d *DiscoveryServer) handleSyncSubroutes(w http.ResponseWriter, r *http.Req
 	}
 
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/v1/discovery/sync/")
+	if idStr == "latest" {
+		d.listLatestSyncJobs(w, r)
+		return
+	}
 	id, err := uuid.Parse(idStr)
 	if err != nil {
 		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "invalid sync job id", "")
@@ -1537,6 +1583,27 @@ func (d *DiscoveryServer) handleSyncSubroutes(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, job)
+}
+
+// listLatestSyncJobs returns each account's most recent sync job in one
+// response, so a fleet-wide view costs one request instead of one per account
+// against the global rate limiter. Accounts that never synced are omitted.
+func (d *DiscoveryServer) listLatestSyncJobs(w http.ResponseWriter, r *http.Request) {
+	accounts, err := d.srv.store.ListAccounts(r.Context())
+	if err != nil {
+		d.srv.writeStoreErr(r.Context(), w, err)
+		return
+	}
+	jobs := []domain.SyncJob{}
+	for _, account := range accounts {
+		latest, err := d.store.ListSyncJobs(r.Context(), account.ID, 1)
+		if err != nil {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "list sync jobs failed", err.Error())
+			return
+		}
+		jobs = append(jobs, latest...)
+	}
+	writeJSON(w, http.StatusOK, domain.SyncJobsResponse{Items: jobs})
 }
 
 // protectedResourcesSubroutes returns a handler for /api/v1/discovery/resources/ with RBAC.

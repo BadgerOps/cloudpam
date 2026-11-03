@@ -266,3 +266,13 @@ func TestDriftHandlers_SummaryCoversAllPages(t *testing.T) {
 		t.Fatalf("expected by_type to tally %d items, got %d", itemCount, tallied)
 	}
 }
+
+func TestDriftHandlers_ListEmptyFilterReturnsEmptyArray(t *testing.T) {
+	mux, _, _, _ := setupDriftTestServer()
+
+	rr := doDriftJSON(t, mux, stdhttp.MethodGet, "/api/v1/drift?status=resolved", "", stdhttp.StatusOK)
+
+	if body := rr.Body.String(); !strings.Contains(body, `"items":[]`) {
+		t.Fatalf("expected items to serialize as an empty array, got %s", body)
+	}
+}

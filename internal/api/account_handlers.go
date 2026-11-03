@@ -50,14 +50,27 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 		role := auth.GetEffectiveRole(ctx)
 
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/accounts/")
-		idStr := strings.Trim(path, "/")
+		idStr, sub, _ := strings.Cut(strings.Trim(path, "/"), "/")
 		if idStr == "" {
 			s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
+			return
+		}
+		if idStr == "deleted" && sub == "" {
+			s.listDeletedAccounts(w, r)
 			return
 		}
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
 			s.writeErr(ctx, w, http.StatusBadRequest, "invalid id", "")
+			return
+		}
+		switch sub {
+		case "":
+		case "restore":
+			s.restoreAccountHandler(w, r, id)
+			return
+		default:
+			s.writeErr(ctx, w, http.StatusNotFound, "not found", "")
 			return
 		}
 
@@ -120,12 +133,12 @@ func (s *Server) protectedAccountsSubroutesHandler(logger *slog.Logger) http.Han
 			var ok bool
 			force := strings.ToLower(r.URL.Query().Get("force"))
 			if force == "1" || force == "true" || force == "yes" {
-				ok, err = s.store.DeleteAccountCascade(ctx, id)
+				ok, err = s.deleteAccountCascade(ctx, id)
 			} else {
 				ok, err = s.store.DeleteAccount(ctx, id)
 			}
 			if err != nil {
-				s.writeErr(ctx, w, http.StatusConflict, err.Error(), "")
+				s.writeDeleteErr(ctx, w, err)
 				return
 			}
 			if !ok {
@@ -214,12 +227,12 @@ func (s *Server) handleAccountsSubroutes(w http.ResponseWriter, r *http.Request)
 		var ok bool
 		force := strings.ToLower(r.URL.Query().Get("force"))
 		if force == "1" || force == "true" || force == "yes" {
-			ok, err = s.store.DeleteAccountCascade(r.Context(), id)
+			ok, err = s.deleteAccountCascade(r.Context(), id)
 		} else {
 			ok, err = s.store.DeleteAccount(r.Context(), id)
 		}
 		if err != nil {
-			s.writeErr(r.Context(), w, http.StatusConflict, err.Error(), "")
+			s.writeDeleteErr(r.Context(), w, err)
 			return
 		}
 		if !ok {

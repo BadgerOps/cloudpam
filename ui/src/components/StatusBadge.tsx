@@ -2,25 +2,27 @@ import { getStatusBadgeClass, getProviderBadgeClass, getTierBadgeClass, getActio
 
 interface StatusBadgeProps {
   label: string
+  status?: string
   variant?: 'status' | 'provider' | 'tier' | 'action' | 'type'
 }
 
-export default function StatusBadge({ label, variant = 'status' }: StatusBadgeProps) {
+export default function StatusBadge({ label, status, variant = 'status' }: StatusBadgeProps) {
   if (!label) return null
+  const key = status ?? label
 
   let className: string
   switch (variant) {
     case 'provider':
-      className = getProviderBadgeClass(label)
+      className = getProviderBadgeClass(key)
       break
     case 'tier':
-      className = getTierBadgeClass(label)
+      className = getTierBadgeClass(key)
       break
     case 'action':
-      className = getActionBadgeClass(label)
+      className = getActionBadgeClass(key)
       break
     case 'type': {
-      const dot = getPoolTypeColor(label)
+      const dot = getPoolTypeColor(key)
       return (
         <span className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-300">
           <span className={`w-2 h-2 rounded-full ${dot}`} />
@@ -29,11 +31,11 @@ export default function StatusBadge({ label, variant = 'status' }: StatusBadgePr
       )
     }
     default:
-      className = getStatusBadgeClass(label)
+      className = getStatusBadgeClass(key)
   }
 
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${className}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap ${className}`}>
       {label}
     </span>
   )

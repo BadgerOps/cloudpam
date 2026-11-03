@@ -11,6 +11,8 @@ import {
   Wand2,
 } from 'lucide-react'
 import { useDrift } from '../hooks/useDrift'
+import { usePagedFilters } from '../hooks/usePagedFilters'
+import Pager from '../components/Pager'
 import { useToast } from '../hooks/useToast'
 import { formatTimeAgo } from '../utils/format'
 import type { DriftAction, DriftItem } from '../api/types'
@@ -33,9 +35,11 @@ function suggestionText(item: DriftItem): string {
 }
 
 export default function DriftPage() {
-  const [typeFilter, setTypeFilter] = useState('')
-  const [severityFilter, setSeverityFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('open')
+  const { query, filters, setFilters, setPage } = usePagedFilters({
+    type: '',
+    severity: '',
+    status: 'open',
+  })
   const [detecting, setDetecting] = useState(false)
   const [showIgnoreModal, setShowIgnoreModal] = useState<DriftItem | null>(null)
   const [applyingId, setApplyingId] = useState<string | null>(null)
@@ -45,11 +49,12 @@ export default function DriftPage() {
 
   const loadDrifts = useCallback(() => {
     fetch({
-      type: typeFilter || undefined,
-      severity: severityFilter || undefined,
-      status: statusFilter || undefined,
+      type: query.filters.type || undefined,
+      severity: query.filters.severity || undefined,
+      status: query.filters.status || undefined,
+      page: query.page,
     })
-  }, [fetch, typeFilter, severityFilter, statusFilter])
+  }, [fetch, query])
 
   useEffect(() => {
     loadDrifts()
@@ -158,8 +163,8 @@ export default function DriftPage() {
       {/* Filters */}
       <div className="flex gap-3 mb-4">
         <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
+          value={filters.type}
+          onChange={(e) => setFilters({ type: e.target.value })}
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Types</option>
@@ -170,8 +175,8 @@ export default function DriftPage() {
           <option value="account_drift">Account Drift</option>
         </select>
         <select
-          value={severityFilter}
-          onChange={(e) => setSeverityFilter(e.target.value)}
+          value={filters.severity}
+          onChange={(e) => setFilters({ severity: e.target.value })}
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Severities</option>
@@ -180,8 +185,8 @@ export default function DriftPage() {
           <option value="info">Info</option>
         </select>
         <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          value={filters.status}
+          onChange={(e) => setFilters({ status: e.target.value })}
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Statuses</option>
@@ -235,13 +240,15 @@ export default function DriftPage() {
       </div>
 
       {/* Pagination */}
-      {data && data.total > (data.page_size || 50) && (
-        <div className="flex items-center justify-between mt-4 text-sm text-gray-600 dark:text-gray-400">
-          <span>
-            Showing {((data.page - 1) * data.page_size) + 1}-
-            {Math.min(data.page * data.page_size, data.total)} of {data.total}
-          </span>
-        </div>
+      {data && (
+        <Pager
+          page={data.page}
+          pageSize={data.page_size}
+          total={data.total}
+          noun="drift items"
+          loading={loading}
+          onPageChange={setPage}
+        />
       )}
 
       {/* Ignore Modal */}

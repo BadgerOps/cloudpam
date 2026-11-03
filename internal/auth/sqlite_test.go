@@ -29,7 +29,9 @@ func setupTestDB(t *testing.T) *sql.DB {
 			created_at TIMESTAMP NOT NULL,
 			expires_at TIMESTAMP,
 			last_used_at TIMESTAMP,
-			revoked INTEGER NOT NULL DEFAULT 0
+			revoked INTEGER NOT NULL DEFAULT 0,
+			rate_limit_rps REAL,
+			rate_limit_burst INTEGER
 		);
 		CREATE INDEX idx_api_keys_prefix ON api_keys(prefix);
 	`)
@@ -264,4 +266,10 @@ func TestSQLiteKeyStore_MultipleKeys(t *testing.T) {
 	if len(keys) != 5 {
 		t.Errorf("List: got %d keys, want 5", len(keys))
 	}
+}
+
+func TestSQLiteKeyStoreRateLimit(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	testKeyStoreRateLimit(t, NewSQLiteKeyStoreFromDB(db))
 }

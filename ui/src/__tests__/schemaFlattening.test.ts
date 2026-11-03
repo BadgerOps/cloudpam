@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { flattenForApply } from '../wizard/hooks/useApplySchema'
+import { flattenForApply } from '../wizard/utils/applyRequest'
 import { flattenSchema } from '../wizard/hooks/useConflictChecker'
 import type { SchemaNode } from '../wizard/utils/cidr'
 

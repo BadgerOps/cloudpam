@@ -20,6 +20,8 @@ export function useApiKeys() {
   const canList = hasPermission('apikeys:list') || hasPermission('apikeys:read')
   const canCreate = hasPermission('apikeys:create')
   const canRevoke = hasPermission('apikeys:delete')
+  // createAPIKey refuses a rate_limit block without settings:write.
+  const canSetRateLimit = hasPermission('settings:write')
 
   const refresh = useCallback(async () => {
     if (!canList) {
@@ -56,5 +58,5 @@ export function useApiKeys() {
     await refresh()
   }, [canRevoke, refresh])
 
-  return { keys, loading, error, canList, canCreate, canRevoke, create, revoke, refresh }
+  return { keys, loading, error, canList, canCreate, canRevoke, canSetRateLimit, create, revoke, refresh }
 }

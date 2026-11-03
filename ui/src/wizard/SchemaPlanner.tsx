@@ -2,10 +2,8 @@ import { useState, useCallback, useMemo } from 'react'
 import { Network, ArrowLeft, ArrowRight, Save, CheckCircle } from 'lucide-react'
 import type { Blueprint } from './data/blueprints'
 import type { Dimensions } from './steps/DimensionsStep'
-import type { SchemaNode } from './utils/cidr'
 import { outsideParent } from './utils/cidr'
-import { toCsv } from '../utils/csv'
-import { schemaToTerraform } from './utils/terraform'
+import { EXPORT_FORMATS, type ExportFormat } from './utils/export'
 import TemplateStep from './steps/TemplateStep'
 import StrategyStep from './steps/StrategyStep'
 import DimensionsStep from './steps/DimensionsStep'
@@ -106,36 +104,15 @@ export default function SchemaPlanner() {
   }, [apply, generatedSchema])
 
   const handleExport = useCallback(
-    (format: 'csv' | 'terraform') => {
-      const flatten = (node: SchemaNode, parentName: string | null): string[][] => {
-        const row = [node.name, node.cidr, node.type, parentName ?? '']
-        const rows = [row]
-        for (const child of node.children) {
-          rows.push(...flatten(child, node.name))
-        }
-        return rows
-      }
-
-      if (format === 'csv') {
-        const rows = flatten(generatedSchema, null)
-        const csv = toCsv(['name', 'cidr', 'type', 'parent_name'], rows)
-        const blob = new Blob([csv], { type: 'text/csv' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = 'cloudpam-schema.csv'
-        a.click()
-        URL.revokeObjectURL(url)
-      } else {
-        const tf = schemaToTerraform(generatedSchema, new Date().toISOString())
-        const blob = new Blob([tf], { type: 'text/plain' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = 'cloudpam-schema.tf'
-        a.click()
-        URL.revokeObjectURL(url)
-      }
+    (format: ExportFormat) => {
+      const spec = EXPORT_FORMATS[format]
+      const blob = new Blob([spec.render(generatedSchema, new Date().toISOString())], { type: spec.mime })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = spec.filename
+      a.click()
+      URL.revokeObjectURL(url)
     },
     [generatedSchema],
   )

@@ -6,11 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 func TestLimitedBodyOverflowErrorIsSticky(t *testing.T) {
@@ -120,45 +128,67 @@ func TestOpenAIProviderRejectsOversizedResponses(t *testing.T) {
 	maxResponseBytes, maxStreamBytes = 1024, 1024
 	t.Cleanup(func() { maxResponseBytes, maxStreamBytes = prev, prevStream })
 
-	pad := strings.Repeat("x", 4096)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req openaiRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req.Stream {
-			w.Header().Set("Content-Type", "text/event-stream")
-			for i := 0; i < 8; i++ {
-				_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", pad[:512])
-			}
-			_, _ = io.WriteString(w, "data: [DONE]\n\n")
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q},"finish_reason":"stop"}]}`, pad)
-	}))
-	defer ts.Close()
+	ts := oversizedOpenAI(t)
 	provider := NewOpenAIProvider(Config{Model: "m", Endpoint: ts.URL + "/v1"})
 	msgs := []Message{{Role: "user", Content: "hi"}}
 
 	if _, err := provider.Complete(context.Background(), msgs, Options{}); !errors.Is(err, ErrInvalidResponse) {
 		t.Fatalf("Complete err = %v, want ErrInvalidResponse", err)
 	}
+	if err := streamErr(t, provider); !errors.Is(err, ErrInvalidResponse) {
+		t.Fatalf("stream err = %v, want ErrInvalidResponse", err)
+	}
+}
 
-	events, err := provider.StreamComplete(context.Background(), msgs, Options{})
-	if err != nil {
-		t.Fatalf("StreamComplete: %v", err)
-	}
-	var streamErr error
-	for evt := range events {
-		if evt.Err != nil {
-			streamErr = evt.Err
+// sseStub is an OpenAI-compatible streaming endpoint. It writes each entry of
+// data as one SSE event. With hold set it then keeps the connection open until
+// the client drops it, which closes disconnected, or the test ends; otherwise
+// it ends the response there. conns counts the connections the client opened.
+type sseStub struct {
+	URL          string
+	disconnected chan struct{}
+	dropOnce     sync.Once
+	conns        atomic.Int32
+}
+
+func newSSEStub(t *testing.T, hold bool, data ...string) *sseStub {
+	t.Helper()
+	s := &sseStub{disconnected: make(chan struct{})}
+	stop := make(chan struct{})
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, d := range data {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", d)
 		}
-		if evt.Done {
-			break
+		w.(http.Flusher).Flush()
+		if !hold {
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			s.dropOnce.Do(func() { close(s.disconnected) })
+		case <-stop:
+		}
+	}))
+	ts.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			s.conns.Add(1)
 		}
 	}
-	if !errors.Is(streamErr, ErrInvalidResponse) {
-		t.Fatalf("stream err = %v, want ErrInvalidResponse", streamErr)
+	ts.Start()
+	t.Cleanup(ts.Close)
+	t.Cleanup(func() { close(stop) })
+	s.URL = ts.URL + "/v1"
+	return s
+}
+
+// chunk is one content delta as the chat completions API streams it.
+func chunk(content, finishReason string) string {
+	fr := "null"
+	if finishReason != "" {
+		fr = strconv.Quote(finishReason)
 	}
+	return fmt.Sprintf(`{"choices":[{"delta":{"content":%q},"finish_reason":%s}]}`, content, fr)
 }
 
 func TestOpenAIProviderComplete(t *testing.T) {
@@ -289,25 +319,12 @@ func TestOpenAIProviderCompleteWithoutAPIKeyOmitsAuthorization(t *testing.T) {
 }
 
 func TestOpenAIProviderStreamComplete(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-
-		chunks := []string{"Hello", " from", " stream", "!"}
-		for _, chunk := range chunks {
-			data := fmt.Sprintf(`{"choices":[{"delta":{"content":"%s"},"finish_reason":null}]}`, chunk)
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
-			w.(http.Flusher).Flush()
-		}
-		_, _ = fmt.Fprintf(w, "data: [DONE]\n\n")
-		w.(http.Flusher).Flush()
-	}))
-	defer ts.Close()
+	stub := newSSEStub(t, false, chunk("Hello", ""), chunk(" from", ""), chunk(" stream", ""), chunk("!", ""), "[DONE]")
 
 	provider := NewOpenAIProvider(Config{
 		APIKey:      "test-key",
 		Model:       "gpt-4o",
-		Endpoint:    ts.URL + "/v1",
+		Endpoint:    stub.URL,
 		MaxTokens:   1024,
 		Temperature: 0.5,
 	})
@@ -465,27 +482,15 @@ func TestOpenAIProviderTemperatureOverride(t *testing.T) {
 func TestOpenAIProviderStreamStopsAfterFirstDone(t *testing.T) {
 	const trailing = 200 // well beyond the 64-slot channel buffer
 
-	stop := make(chan struct{})
-	disconnected := make(chan struct{})
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}`+"\n\n")
-		for i := 0; i < trailing; i++ {
-			_, _ = fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"late"},"finish_reason":null}]}`+"\n\n")
-		}
-		w.(http.Flusher).Flush()
-		// Never send [DONE]; hold the connection until the client closes the
-		// body (or the test gives up), so a closed body is observable.
-		select {
-		case <-r.Context().Done():
-			close(disconnected)
-		case <-stop:
-		}
-	}))
-	defer ts.Close()
-	defer close(stop)
+	data := []string{chunk("done", "stop")}
+	for i := 0; i < trailing; i++ {
+		data = append(data, chunk("late", ""))
+	}
+	// No [DONE]: the stub holds the connection until the client closes the
+	// body (or the test gives up), so a closed body is observable.
+	stub := newSSEStub(t, true, data...)
 
-	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: ts.URL + "/v1"})
+	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: stub.URL})
 	ch, err := provider.StreamComplete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
 	if err != nil {
 		t.Fatalf("StreamComplete: %v", err)
@@ -531,7 +536,7 @@ drain:
 	}
 
 	select {
-	case <-disconnected:
+	case <-stub.disconnected:
 	case <-time.After(3 * time.Second):
 		t.Fatal("response body was not closed after the first done event")
 	}
@@ -541,20 +546,9 @@ drain:
 // proxies send "finish_reason":"" on intermediate chunks instead of null. An
 // empty finish reason is not terminal and must not end the stream.
 func TestOpenAIProviderStreamIgnoresEmptyFinishReason(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		for _, data := range []string{
-			`{"choices":[{"delta":{"content":"Hel"},"finish_reason":""}]}`,
-			`{"choices":[{"delta":{"content":"lo"},"finish_reason":""}]}`,
-			`{"choices":[{"delta":{"content":"!"},"finish_reason":"stop"}]}`,
-			`[DONE]`,
-		} {
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
-		}
-	}))
-	defer ts.Close()
+	stub := newSSEStub(t, false, chunk("Hel", ""), chunk("lo", ""), chunk("!", "stop"), "[DONE]")
 
-	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: ts.URL + "/v1"})
+	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: stub.URL})
 	ch, err := provider.StreamComplete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
 	if err != nil {
 		t.Fatalf("StreamComplete: %v", err)
@@ -587,5 +581,167 @@ func TestOpenAIProviderStreamIgnoresEmptyFinishReason(t *testing.T) {
 	}
 	if doneSeen != 1 || finish != "stop" {
 		t.Fatalf("done events = %d (finish %q), want exactly 1 with finish %q", doneSeen, finish, "stop")
+	}
+}
+
+// recordedSpans installs one recording provider per test binary, because the
+// package tracer delegates to the first global provider and never to a later one.
+var recordedSpans = sync.OnceValue(func() *tracetest.InMemoryExporter {
+	exporter := tracetest.NewInMemoryExporter()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSyncer(exporter)))
+	return exporter
+})
+
+// streamSpanEnded reports whether the stream span for endpoint has been exported.
+func streamSpanEnded(exporter *tracetest.InMemoryExporter, endpoint string) bool {
+	for _, span := range exporter.GetSpans() {
+		if span.Name != "llm.chat.completions" {
+			continue
+		}
+		for _, kv := range span.Attributes {
+			if kv.Key == "server.address" && kv.Value.AsString() == endpoint {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestOpenAIProviderStreamEndsWhenContextIsCancelled covers #375: a consumer
+// that stops reading before the terminal event (a cancelled handler, a panic
+// swallowed by the recovery middleware) must not pin the producer on a channel
+// send. Once the context ends, the producer has to close the body, end the
+// stream span and close the channel on its own.
+func TestOpenAIProviderStreamEndsWhenContextIsCancelled(t *testing.T) {
+	exporter := recordedSpans()
+	exporter.Reset()
+
+	const pending = 500 // well beyond the 64-slot channel buffer
+	data := make([]string, 0, pending)
+	for i := 0; i < pending; i++ {
+		data = append(data, chunk("late", ""))
+	}
+	stub := newSSEStub(t, true, data...)
+
+	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: stub.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := provider.StreamComplete(ctx, []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+
+	// One event proves the producer is streaming; after that nobody reads.
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no event within 3s")
+	}
+	cancel()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for !streamSpanEnded(exporter, stub.URL) {
+		if time.Now().After(deadline) {
+			t.Fatal("stream span still open 3s after the context was cancelled: the producer is stuck")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case <-stub.disconnected:
+	case <-time.After(3 * time.Second):
+		t.Fatal("response body was not closed after the context was cancelled")
+	}
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+		case <-timeout:
+			t.Fatal("stream channel not closed after the context was cancelled")
+		}
+	}
+}
+
+// TestOpenAIProviderStreamReusesTheConnection covers #375: a stream that ends
+// normally must leave the connection in the transport's pool, which needs the
+// body read to EOF. Providers send a usage chunk and [DONE] after the
+// finish_reason chunk, and end the response right after [DONE].
+func TestOpenAIProviderStreamReusesTheConnection(t *testing.T) {
+	for name, data := range map[string][]string{
+		"finish_reason then usage and [DONE]": {
+			chunk("Hi", "stop"),
+			`{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1}}`,
+			"[DONE]",
+		},
+		"[DONE] only": {chunk("Hi", ""), "[DONE]"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newSSEStub(t, false, data...)
+			provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: stub.URL})
+			for i := 0; i < 2; i++ {
+				ch, err := provider.StreamComplete(context.Background(), []Message{{Role: "user", Content: "hi"}}, Options{})
+				if err != nil {
+					t.Fatalf("StreamComplete %d: %v", i, err)
+				}
+				var content string
+				for evt := range ch {
+					if evt.Err != nil {
+						t.Fatalf("stream %d: unexpected error %v", i, evt.Err)
+					}
+					content += evt.Delta
+				}
+				if content != "Hi" {
+					t.Fatalf("stream %d content = %q, want %q", i, content, "Hi")
+				}
+			}
+			if got := stub.conns.Load(); got != 1 {
+				t.Fatalf("two streams opened %d connections, want 1 (the first was not pooled)", got)
+			}
+		})
+	}
+}
+
+// TestOpenAIProviderStreamReportsCancellationToAReadingConsumer: giving up on
+// a send when ctx ends must not drop the terminal event for a consumer that is
+// still reading. The AI service treats a stream that closes without an error
+// event as a complete answer and stores it, so the cancellation has to arrive
+// as Done with Err set.
+func TestOpenAIProviderStreamReportsCancellationToAReadingConsumer(t *testing.T) {
+	stub := newSSEStub(t, true, chunk("Hel", ""), chunk("lo", ""))
+	provider := NewOpenAIProvider(Config{APIKey: "test-key", Model: "gpt-4o", Endpoint: stub.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := provider.StreamComplete(ctx, []Message{{Role: "user", Content: "hi"}}, Options{})
+	if err != nil {
+		t.Fatalf("StreamComplete: %v", err)
+	}
+
+	var content string
+	doneSeen := 0
+	var streamErr error
+	timeout := time.After(3 * time.Second)
+	for open := true; open; {
+		select {
+		case evt, ok := <-ch:
+			if !ok {
+				open = false
+				break
+			}
+			content += evt.Delta
+			if evt.Done {
+				doneSeen++
+				streamErr = evt.Err
+			}
+			if content == "Hello" {
+				cancel()
+			}
+		case <-timeout:
+			t.Fatal("stream channel not closed within 3s of cancelling the context")
+		}
+	}
+	if doneSeen != 1 || !errors.Is(streamErr, context.Canceled) {
+		t.Fatalf("done events = %d with err %v, want exactly 1 with context.Canceled", doneSeen, streamErr)
 	}
 }

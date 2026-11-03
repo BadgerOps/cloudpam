@@ -106,6 +106,9 @@ func (ds *DriftServer) handleList(w http.ResponseWriter, r *http.Request) {
 		ds.srv.writeStoreErr(r.Context(), w, err)
 		return
 	}
+	if items == nil {
+		items = []domain.DriftItem{}
+	}
 	if err := ds.suggestReconciliation(r.Context(), items); err != nil {
 		ds.srv.writeStoreErr(r.Context(), w, err)
 		return
@@ -128,6 +131,9 @@ func (ds *DriftServer) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	summary.TotalDrifts = allTotal
 
+	if items == nil {
+		items = []domain.DriftItem{}
+	}
 	writeJSON(w, http.StatusOK, domain.DriftListResponse{
 		Items:    items,
 		Total:    total,

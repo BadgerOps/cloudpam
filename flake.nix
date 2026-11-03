@@ -76,6 +76,8 @@
             git
             nodejs_22
             kubernetes-helm
+            kind
+            kubectl
             playwright-driver.browsers
           ];
 

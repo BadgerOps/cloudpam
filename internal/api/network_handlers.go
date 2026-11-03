@@ -1659,7 +1659,7 @@ func (ns *NetworkServer) rollbackNetworkConflictImport(ctx context.Context, resp
 		}
 	}
 	for i := len(resp.CreatedPoolIDs) - 1; i >= 0; i-- {
-		if ok, err := ns.store.DeletePool(ctx, resp.CreatedPoolIDs[i]); err != nil {
+		if ok, err := ns.srv.deletePool(ctx, resp.CreatedPoolIDs[i], false); err != nil {
 			errs = append(errs, fmt.Sprintf("delete pool %d: %v", resp.CreatedPoolIDs[i], err))
 		} else if !ok {
 			errs = append(errs, fmt.Sprintf("delete pool %d: not found", resp.CreatedPoolIDs[i]))

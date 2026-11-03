@@ -113,6 +113,17 @@ Apply creates pools with the same checks as `POST /api/v1/pools`, under the same
 
 `suggestion_reason` says why in one line. Each unmanaged resource is classified by the import preview above with only that resource selected, so a `create_pool` or `link_pool` suggestion is exactly what apply will do. The Drift page shows the suggestion under each open item. Its apply button calls the listed endpoint and then resolves the item. If import apply skips the resource, the item stays open and the page reports why.
 
+### Provider Rate Limits
+
+Each collector can pace its provider API calls with a token bucket. The cap is requests per second; the burst is one second's worth of calls. Every page of a listing (`DescribeVpcs`, `DescribeSubnets`, `DescribeAddresses`, Compute `networks`, `aggregated/subnetworks`, `aggregated/addresses`, and Organizations `ListAccounts` in org mode) takes one token first, and concurrent syncs of the same provider share one bucket. The default is unlimited, which leaves throttling to the SDK's own retry.
+
+| Where | Setting | Scope |
+|-------|---------|-------|
+| Server | `CLOUDPAM_DISCOVERY_AWS_RPS`, `CLOUDPAM_DISCOVERY_GCP_RPS` | All syncs of that provider, including stored per-account credentials |
+| Agent | `discovery_aws_rps` / `CLOUDPAM_DISCOVERY_AWS_RPS` | Single-account syncs and every member account of an org-mode pass |
+
+A sync whose context ends while it waits for a token fails with that context error, the same as a provider call that times out.
+
 ## Merged Network Views
 
 CloudPAM exposes merged network views that combine managed pools, linked discovered resources, durable managed network objects, discovered-only network objects, explicit relationships, and computed conflict evidence.
@@ -699,6 +710,7 @@ heartbeat_interval: 1m
 | `account_id` | `CLOUDPAM_ACCOUNT_ID` | (required) | CloudPAM account ID to discover for |
 | `bootstrap_token` | `CLOUDPAM_BOOTSTRAP_TOKEN` | | Base64 provisioning bundle (replaces server_url, api_key, agent_name) |
 | `aws_regions` | `CLOUDPAM_AWS_REGIONS` | SDK default | Comma-separated AWS regions |
+| `discovery_aws_rps` | `CLOUDPAM_DISCOVERY_AWS_RPS` | `0` (unlimited) | Cap on AWS API calls per second, shared across every account in an org-mode pass |
 | `sync_interval` | `CLOUDPAM_SYNC_INTERVAL` | `15m` | How often to run discovery |
 | `heartbeat_interval` | `CLOUDPAM_HEARTBEAT_INTERVAL` | `1m` | How often to send heartbeats |
 | `max_retries` | | `3` | Push retry attempts on server error |
@@ -969,6 +981,14 @@ curl -X DELETE http://localhost:8080/api/v1/discovery/resources/{resource-uuid}/
 
 ```bash
 curl 'http://localhost:8080/api/v1/discovery/sync?account_id=1&limit=10'
+```
+
+### List Each Account's Latest Sync Job
+
+Returns one job per account that has synced at least once, in a single response. The dashboard uses it to show sync health for every account without one request per account.
+
+```bash
+curl http://localhost:8080/api/v1/discovery/sync/latest
 ```
 
 ### Get Sync Job Details

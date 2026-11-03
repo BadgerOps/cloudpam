@@ -1,0 +1,30 @@
+# Default config for the Vector sidecar (vector.enabled=true).
+#
+# The chart points CLOUDPAM_AUDIT_SYSLOG_ADDR at 127.0.0.1:5514 over tcp, so
+# every audit event arrives here as one RFC 5424 syslog record carrying CEF.
+# This config parses the CEF extension into .cef and prints each event as JSON
+# on the sidecar's stdout (kubectl logs <pod> -c vector). To ship events to a
+# SIEM, set vector.config to your own config: keep this source unchanged and
+# add sinks. https://vector.dev/docs/reference/configuration/sinks/
+
+data_dir = "/var/lib/vector"
+
+[sources.cloudpam_audit]
+type = "syslog"
+mode = "tcp"
+address = "127.0.0.1:5514"
+
+[transforms.cloudpam_audit_cef]
+type = "remap"
+inputs = ["cloudpam_audit"]
+source = '''
+cef, err = parse_cef(.message)
+if err == null {
+  .cef = cef
+}
+'''
+
+[sinks.stdout]
+type = "console"
+inputs = ["cloudpam_audit_cef"]
+encoding.codec = "json"
