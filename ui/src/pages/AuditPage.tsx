@@ -1,22 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { useAudit } from '../hooks/useAudit'
+import { usePagedFilters } from '../hooks/usePagedFilters'
+import Pager from '../components/Pager'
 import { formatTimeAgo, getActionBadgeClass } from '../utils/format'
 import type { AuditEvent } from '../api/types'
 
 export default function AuditPage() {
-  const { events, total, offset, loading, error, fetchEvents, nextPage, prevPage, pageSize } = useAudit()
-  const [actionFilter, setActionFilter] = useState('')
-  const [resourceFilter, setResourceFilter] = useState('')
+  const { events, total, loading, error, fetchEvents, pageSize } = useAudit()
+  const { filters, page, setFilters, setPage } = usePagedFilters({ action: '', resource: '' })
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchEvents(0, pageSize, actionFilter || undefined, resourceFilter || undefined)
-  }, [fetchEvents, pageSize, actionFilter, resourceFilter])
+  const loadEvents = useCallback(() => {
+    fetchEvents((page - 1) * pageSize, pageSize, filters.action || undefined, filters.resource || undefined)
+  }, [fetchEvents, page, pageSize, filters])
 
-  function handleRefresh() {
-    fetchEvents(offset, pageSize, actionFilter || undefined, resourceFilter || undefined)
-  }
+  useEffect(() => {
+    loadEvents()
+  }, [loadEvents])
 
   return (
     <div className="flex-1 overflow-auto p-6">
@@ -24,7 +25,7 @@ export default function AuditPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Audit Log</h1>
         <button
-          onClick={handleRefresh}
+          onClick={loadEvents}
           className="inline-flex items-center gap-1.5 px-3 py-2 border dark:border-gray-700 text-sm rounded hover:bg-gray-50 dark:hover:bg-gray-700/50"
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -35,8 +36,8 @@ export default function AuditPage() {
       {/* Filters */}
       <div className="flex gap-3 mb-4">
         <select
-          value={actionFilter}
-          onChange={e => setActionFilter(e.target.value)}
+          value={filters.action}
+          onChange={e => setFilters({ action: e.target.value })}
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Actions</option>
@@ -45,8 +46,8 @@ export default function AuditPage() {
           <option value="delete">Deleted</option>
         </select>
         <select
-          value={resourceFilter}
-          onChange={e => setResourceFilter(e.target.value)}
+          value={filters.resource}
+          onChange={e => setFilters({ resource: e.target.value })}
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Resources</option>
@@ -80,26 +81,7 @@ export default function AuditPage() {
             ))}
           </div>
 
-          {/* Pagination */}
-          <div className="flex items-center justify-between mt-4 text-sm text-gray-500 dark:text-gray-400">
-            <span>Showing {offset + 1}-{Math.min(offset + pageSize, total)} of {total} events</span>
-            <div className="flex gap-2">
-              <button
-                onClick={prevPage}
-                disabled={offset === 0}
-                className="px-3 py-1 border dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-40"
-              >
-                Previous
-              </button>
-              <button
-                onClick={nextPage}
-                disabled={offset + pageSize >= total}
-                className="px-3 py-1 border dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
-          </div>
+          <Pager page={page} pageSize={pageSize} total={total} noun="events" onPageChange={setPage} />
         </>
       )}
     </div>
