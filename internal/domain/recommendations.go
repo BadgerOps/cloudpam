@@ -8,12 +8,11 @@ import (
 type RecommendationType string
 
 const (
-	RecommendationTypeAllocation RecommendationType = "allocation"
-	RecommendationTypeCompliance RecommendationType = "compliance"
-	// Future types (stubbed):
-	// RecommendationTypeConsolidation RecommendationType = "consolidation"
-	// RecommendationTypeResize        RecommendationType = "resize"
-	// RecommendationTypeReclaim       RecommendationType = "reclaim"
+	RecommendationTypeAllocation    RecommendationType = "allocation"
+	RecommendationTypeCompliance    RecommendationType = "compliance"
+	RecommendationTypeConsolidation RecommendationType = "consolidation"
+	RecommendationTypeResize        RecommendationType = "resize"
+	RecommendationTypeReclaim       RecommendationType = "reclaim"
 )
 
 // RecommendationStatus tracks the lifecycle of a recommendation.
