@@ -3,6 +3,7 @@
 package sqlite
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"io/fs"
@@ -100,19 +101,7 @@ func runMigrations(db *sql.DB) error {
 		if stmt == "" {
 			continue
 		}
-		tx, err := db.Begin()
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(stmt); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("migration %s failed: %w", f.name, err)
-		}
-		if _, err := tx.Exec(`INSERT INTO schema_migrations(version, name, applied_at) VALUES(?, ?, ?)`, f.version, f.name, time.Now().UTC().Format(time.RFC3339)); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-		if err := tx.Commit(); err != nil {
+		if err := applyMigration(db, f.version, f.name, stmt); err != nil {
 			return err
 		}
 		if f.version > latest {
@@ -169,4 +158,40 @@ func dirHasSQL(dir string) (bool, error) {
 		return nil
 	})
 	return found, err
+}
+
+// applyMigration runs one migration in a transaction with foreign keys off, the
+// way SQLite's table-rebuild procedure requires: with them on, DROP TABLE on a
+// parent table fails on RESTRICT children and fires ON DELETE CASCADE. The pragma
+// is a no-op inside a transaction and is per connection, so the migration runs on
+// one pinned connection and the prior setting is restored before it is released.
+func applyMigration(db *sql.DB, version int, name, stmt string) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	var fk int
+	if err := conn.QueryRowContext(ctx, `PRAGMA foreign_keys`).Scan(&fk); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, fmt.Sprintf(`PRAGMA foreign_keys=%d`, fk)) }()
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(stmt); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("migration %s failed: %w", name, err)
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_migrations(version, name, applied_at) VALUES(?, ?, ?)`, version, name, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }

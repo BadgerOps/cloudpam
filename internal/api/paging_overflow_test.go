@@ -156,7 +156,7 @@ func TestRecommendationsListHugePageReturnsEmptyPage(t *testing.T) {
 	mux := stdhttp.NewServeMux()
 	srv := NewServerWithSlog(mux, st, nil)
 	recStore := storage.NewMemoryRecommendationStore(st)
-	recSvc := planning.NewRecommendationService(planning.NewAnalysisService(st), recStore, st, srv)
+	recSvc := planning.NewRecommendationService(planning.NewAnalysisService(st), recStore, srv)
 	NewRecommendationServer(srv, recSvc, recStore).RegisterRecommendationRoutes()
 
 	ctx := context.Background()

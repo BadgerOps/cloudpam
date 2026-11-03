@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   formatHostCount,
+  formatRunway,
   formatTimeAgo,
   getHostCount,
   getPoolTypeColor,
@@ -134,6 +135,24 @@ describe('color helpers', () => {
     expect(getStatusBadgeClass('disabled')).toContain('red')
     expect(getStatusBadgeClass('revoked')).toContain('red')
     expect(getStatusBadgeClass('idle')).toContain('amber')
+  })
+
+  it('formatRunway picks the coarsest unit a planner reads at a glance', () => {
+    expect(formatRunway(0.4)).toBe('less than a day')
+    expect(formatRunway(1)).toBe('1 day')
+    expect(formatRunway(12.6)).toBe('13 days')
+    expect(formatRunway(45)).toBe('1 month')
+    expect(formatRunway(226)).toBe('7 months')
+    expect(formatRunway(365)).toBe('1 year')
+    expect(formatRunway(912)).toBe('2.5 years')
+    expect(formatRunway(-3)).toBe('unknown')
+    expect(formatRunway(Infinity)).toBe('unknown')
+  })
+
+  it('getStatusBadgeClass colours API key expiry states', () => {
+    expect(getStatusBadgeClass('expired')).toContain('red')
+    expect(getStatusBadgeClass('expiring')).toContain('amber')
+    expect(getStatusBadgeClass('expiring')).not.toBe(getStatusBadgeClass('no_expiry'))
   })
 
   it('getStatusBadgeClass no longer greys out known account states', () => {

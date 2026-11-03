@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1279,5 +1280,136 @@ func TestDiscoveryImportPreviewBlocksSubnetOutsideSelectedVPC(t *testing.T) {
 	}
 	if applied.PoolsCreated != 1 || applied.ResourcesLinked != 1 || applied.Skipped != 1 || len(applied.Errors) != 0 {
 		t.Fatalf("expected apply to import the VPC and skip the subnet without errors: %+v", applied)
+	}
+}
+
+func TestDiscoveryImportPreviewBlocksSubnetUnderUnimportableSelectedVPC(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	root, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "root", CIDR: "10.0.0.0/8", Type: domain.PoolTypeSupernet})
+	if err != nil {
+		t.Fatalf("create root pool: %v", err)
+	}
+	if _, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "half", CIDR: "10.40.0.0/17", Type: domain.PoolTypeSupernet, ParentID: &root.ID}); err != nil {
+		t.Fatalf("create overlapping pool: %v", err)
+	}
+	parent := "vpc-conflict"
+	vpc := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, parent, "10.40.0.0/16", nil)
+	subnet := discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-under-conflict", "10.40.1.0/24", &parent)
+	upsertDiscoveredForImportTest(t, ds, vpc)
+	upsertDiscoveredForImportTest(t, ds, subnet)
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s","%s"]}`, account.ID, vpc.ID, subnet.ID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	var preview domain.DiscoveryImportPreviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("unmarshal preview: %v", err)
+	}
+	if preview.Importable != 0 || preview.Blocked != 2 {
+		t.Fatalf("expected both items blocked: %+v", preview)
+	}
+	for _, item := range preview.Items {
+		switch item.ResourceID {
+		case vpc.ID:
+			if item.Status != "conflict" {
+				t.Fatalf("expected the VPC to conflict with the existing /17: %+v", item)
+			}
+		case subnet.ID:
+			if item.Status != "blocked" || !containsString(item.Issues, "missing_parent") || item.ProposedParentPoolID != nil {
+				t.Fatalf("expected the subnet blocked with missing_parent and no proposed parent: %+v", item)
+			}
+		}
+	}
+
+	applied := applyDiscoveryImportForTest(t, discSrv, account.ID, vpc.ID, subnet.ID)
+	if applied.PoolsCreated != 0 || applied.ResourcesLinked != 0 || applied.Skipped != 2 || len(applied.Errors) != 0 {
+		t.Fatalf("expected apply to skip both items without errors: %+v", applied)
+	}
+}
+
+func TestDiscoveryImportPreviewFlagsSiblingOverlapUnderSelectedPool(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	selected, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "selected", CIDR: "10.0.0.0/8", Type: domain.PoolTypeSupernet})
+	if err != nil {
+		t.Fatalf("create selected pool: %v", err)
+	}
+	child, err := st.CreatePool(t.Context(), domain.CreatePool{Name: "child", CIDR: "10.1.0.0/16", Type: domain.PoolTypeSupernet, ParentID: &selected.ID})
+	if err != nil {
+		t.Fatalf("create child pool: %v", err)
+	}
+	vpc := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, "vpc-inside-child", "10.1.2.0/24", nil)
+	upsertDiscoveredForImportTest(t, ds, vpc)
+
+	body := fmt.Sprintf(`{"account_id":%d,"pool_id":%d,"resource_ids":["%s"]}`, account.ID, selected.ID, vpc.ID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	item := singleDiscoveryPreviewItem(t, rr)
+	if item.Status != "conflict" || !slices.Contains(item.ConflictPoolIDs, child.ID) {
+		t.Fatalf("expected the VPC to conflict with sibling pool %d under the selected pool: %+v", child.ID, item)
+	}
+
+	rr = doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/apply", body, http.StatusOK)
+	var applied domain.DiscoveryImportApplyResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &applied); err != nil {
+		t.Fatalf("unmarshal apply: %v", err)
+	}
+	if applied.PoolsCreated != 0 || applied.ResourcesLinked != 0 || applied.Skipped != 1 || len(applied.Errors) != 0 {
+		t.Fatalf("expected apply to skip the conflicting VPC without errors: %+v", applied)
+	}
+}
+
+func TestDiscoveryImportPreviewKeepsInRunParentWhenOtherAccountSharesProviderID(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	account, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:123456789012", Name: "prod", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	other, err := st.CreateAccount(t.Context(), domain.CreateAccount{Key: "aws:210987654321", Name: "shared-with", Provider: "aws"})
+	if err != nil {
+		t.Fatalf("create other account: %v", err)
+	}
+	parent := "vpc-shared"
+	vpc := discoveredForPlacementTest(account.ID, domain.ResourceTypeVPC, parent, "10.40.0.0/16", nil)
+	sharedVPC := discoveredForPlacementTest(other.ID, domain.ResourceTypeVPC, parent, "10.50.0.0/16", nil)
+	subnet := discoveredForPlacementTest(account.ID, domain.ResourceTypeSubnet, "subnet-shared-a", "10.40.1.0/24", &parent)
+	upsertDiscoveredForImportTest(t, ds, vpc)
+	upsertDiscoveredForImportTest(t, ds, sharedVPC)
+	upsertDiscoveredForImportTest(t, ds, subnet)
+
+	body := fmt.Sprintf(`{"account_id":%d,"resource_ids":["%s","%s","%s"]}`, account.ID, vpc.ID, sharedVPC.ID, subnet.ID)
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/import/preview", body, http.StatusOK)
+	var preview domain.DiscoveryImportPreviewResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &preview); err != nil {
+		t.Fatalf("unmarshal preview: %v", err)
+	}
+	if preview.Importable != 2 || preview.Blocked != 1 {
+		t.Fatalf("expected the VPC and subnet importable and the other account's VPC blocked: %+v", preview)
+	}
+	for _, item := range preview.Items {
+		switch item.ResourceID {
+		case vpc.ID:
+			if item.Status != "importable" {
+				t.Fatalf("expected the account's VPC importable: %+v", item)
+			}
+		case sharedVPC.ID:
+			if item.Status != "blocked" || !containsString(item.Issues, "account_mismatch") {
+				t.Fatalf("expected the other account's VPC blocked with account_mismatch: %+v", item)
+			}
+		case subnet.ID:
+			if item.Status != "importable" || containsString(item.Issues, "missing_parent") {
+				t.Fatalf("expected the subnet importable under the account's VPC: %+v", item)
+			}
+		}
+	}
+
+	applied := applyDiscoveryImportForTest(t, discSrv, account.ID, vpc.ID, sharedVPC.ID, subnet.ID)
+	if applied.PoolsCreated != 2 || applied.Skipped != 1 || len(applied.Errors) != 0 {
+		t.Fatalf("expected apply to create the VPC and subnet pools and skip the other account's VPC: %+v", applied)
 	}
 }

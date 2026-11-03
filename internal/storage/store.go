@@ -53,15 +53,17 @@ type MemoryStore struct {
 	accounts    map[int64]domain.Account
 	nextAccount int64
 	credentials map[int64]domain.AccountCredentialRecord
+	*MemoryUtilizationStore
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		pools:       make(map[int64]domain.Pool),
-		next:        1,
-		accounts:    make(map[int64]domain.Account),
-		nextAccount: 1,
-		credentials: make(map[int64]domain.AccountCredentialRecord),
+		pools:                  make(map[int64]domain.Pool),
+		next:                   1,
+		accounts:               make(map[int64]domain.Account),
+		nextAccount:            1,
+		credentials:            make(map[int64]domain.AccountCredentialRecord),
+		MemoryUtilizationStore: NewMemoryUtilizationStore(),
 	}
 }
 
@@ -289,7 +291,7 @@ func (m *MemoryStore) CreateAccount(ctx context.Context, in domain.CreateAccount
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.accounts {
-		if existing.Key == in.Key {
+		if existing.Key == in.Key && existing.DeletedAt == nil {
 			return domain.Account{}, fmt.Errorf("account key %q already exists: %w", in.Key, ErrConflict)
 		}
 	}

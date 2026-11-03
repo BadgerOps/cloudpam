@@ -22,13 +22,13 @@ Product version and user-facing changes live in [CHANGELOG.md](CHANGELOG.md). [C
 | Network objects | Complete | Merged network view, conflicts, persisted objects and relationships. `DELETE` returns `409` while child objects name the object as their parent; relationships that reference it are removed with it |
 | Analysis engine | Complete as API | `POST /api/v1/analysis`, `/gaps`, `/fragmentation`, `/compliance`. `/fragmentation` and the full report score fragmentation for only the first pool. Gaps and fragmentation are shown in the pool detail panel (#281); compliance results and a dedicated Analysis page have **no UI** |
 | Recommendations | Partial | Allocation and compliance only. Consolidation / resize / reclaim are commented stubs. Stored in a table on SQLite and PostgreSQL (#315) |
-| Schema Planner | Complete, one gap | Templates, conflict check, apply. Terraform export writes `cloudpam_pool` resources (0.23.1). Apply does not check that a child CIDR sits inside its declared parent (#284) |
+| Schema Planner | Complete, one gap | Templates, conflict check, apply. Terraform export writes `cloudpam_pool` resources (0.23.1); JSON and YAML export write the `schema/apply` request body (#285). Apply does not check that a child CIDR sits inside its declared parent (#284) |
 | Terraform provider | Complete for v1 | `cloudpam_pool` and `cloudpam_account` resources plus matching data sources. Not discovery, drift, users, or AI. See [TERRAFORM_PROVIDER.md](TERRAFORM_PROVIDER.md) |
 | AI planning | Complete, optional | OpenAI-compatible backend via `CLOUDPAM_LLM_*`. SSE chat, sessions, plan extract/apply. Admin-managed provider settings (Configuration → AI Provider, `/api/v1/settings/ai`) with connection test and lifecycle state; env vars are the per-field fallback |
 | Auth | Complete | Local users, sessions, API keys (`Authorization: Bearer cpam_…`), custom-role RBAC, OIDC/SSO with JIT and group mapping. Auth is always on. **No MFA** |
 | Observability | Partial | slog, custom Prometheus `/metrics`, Sentry, opt-in OTLP/HTTP tracing (`CLOUDPAM_TRACING_ENABLED`). Vector sidecar configs exist but are not integrated. `deploy/docker-compose.observability.yml` starts Prometheus, Grafana (provisioned request dashboard), and Jaeger from a clean checkout, with no log pipeline; `deploy/vector/vector.toml` needs updating for Vector 0.34.1 |
 | SIEM | Partial | CEF-over-syslog via `CLOUDPAM_AUDIT_SYSLOG_*`. Log Destinations UI is documentation, not destination CRUD. No Splunk HEC / CloudWatch / Cloud Logging connectors |
-| Updates | Complete, host-managed | Release check and file-triggered upgrade when `CLOUDPAM_CONTROL_DIR` is set; otherwise trigger returns 501 |
+| Updates | Complete, host-managed | Release check and file-triggered upgrade through `CLOUDPAM_CONTROL_DIR` (default `/var/lib/cloudpam-control`); the trigger always writes the request file, and nothing happens unless a host watcher runs. See [RUNBOOKS.md](RUNBOOKS.md#22-host-managed-upgrade-through-the-control-directory) |
 | Multi-tenancy | Not enforced | Postgres stores pin `defaultOrgID`. SQLite `organizations` table is unused by pools/users. Single-tenant appliance |
 | Addressing | IPv4 only | `ErrIPv6NotSupported`. Dual-stack is a new workstream, not a flag. GCP discovery can ingest IPv6 addresses that cannot become managed pools |
 
@@ -47,13 +47,13 @@ Core pool/account/search `Store` is implemented on memory, SQLite, and PostgreSQ
 | `ConversationStore` | yes | yes | yes |
 | `SettingsStore` / OIDC | yes | yes | yes |
 | `RecommendationStore` | yes | yes (`0011_recommendations.sql`) | yes (`0023_recommendations.up.sql`, #315) |
-| **`UtilizationStore`** | yes | yes (`0015_utilization_snapshots.sql`) | **missing**. No API calls `RecordSnapshot` on any backend |
+| **`UtilizationStore`** | yes | yes (`0015_utilization_snapshots.sql`) | **missing**. `GET /pools/{id}/stats` reads snapshots for its growth projection, but no API or job calls `RecordSnapshot` on any backend |
 
 SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres uses a separate sequence (`001` through `0023_recommendations.up.sql`) and has no utilization-snapshot table.
 
 `pool_utilization_cache` exists in SQL and is never written from Go.
 
-`internal/storage/interfaces.go` (`ExtendedStore`, transactions, `FindOverlapping`, `FindGaps`, `MigrateDown`) and `internal/audit/store.go` (`AuditStore` retention APIs) have **no implementations**.
+Audit events are never purged on any backend. Retention enforcement is tracked in #292.
 
 ---
 

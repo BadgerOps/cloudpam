@@ -40,8 +40,9 @@ export function useAccounts() {
     return account
   }, [begin])
 
-  const deleteAccount = useCallback(async (id: number) => {
-    await del(`/api/v1/accounts/${id}`)
+  const deleteAccount = useCallback(async (id: number, force = false) => {
+    const qs = force ? '?force=true' : ''
+    await del(`/api/v1/accounts/${id}${qs}`)
     begin()
     setAccounts(prev => prev.filter(a => a.id !== id))
   }, [begin])

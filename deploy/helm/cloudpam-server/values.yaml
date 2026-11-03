@@ -93,6 +93,12 @@ config:
   RATE_LIMIT_RPS: ""                 # 100
   RATE_LIMIT_BURST: ""               # 200
 
+  # Cap on discovery API calls per second to each cloud provider, shared by
+  # every sync of that provider. Set it when a large estate hits EC2 or
+  # Compute API throttling. 0 is unlimited.
+  CLOUDPAM_DISCOVERY_AWS_RPS: ""     # 0
+  CLOUDPAM_DISCOVERY_GCP_RPS: ""     # 0
+
   # Sentry. The DSN lives under secrets.
   SENTRY_ENVIRONMENT: ""             # production
   SENTRY_FRONTEND_DSN: ""            # browser-public; unused by the 0.23.4 UI

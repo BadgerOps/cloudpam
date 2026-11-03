@@ -416,7 +416,7 @@ When adding endpoints:
 - Tailwind CSS for styling, `lucide-react` for icons
 - Static assets built to `web/dist/` and embedded at build time via `web/embed.go`
 - UI is served at `/` by `handleSPA()` with SPA fallback for client-side routes
-- API hooks in `ui/src/hooks/` — 26 hooks: useAIPlanner, useAISettings, useAccounts, useApiKeys, useAttention, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useLatestRequest, useNetwork, useOIDCAdmin, useOIDCProviders, usePendingAction, usePoolAnalysis, usePools, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
+- API hooks in `ui/src/hooks/` — 27 hooks: useAccounts, useAIPlanner, useAISettings, useApiKeys, useAttention, useAudit, useAuth, useBlocks, useDiscovery, useDrift, useNetwork, useOIDCAdmin, useOIDCProviders, usePagedFilters, usePendingAction, usePoolAnalysis, usePoolProjection, usePools, useRecommendations, useRoles, useSearch, useSessionRefresh, useSettings, useTheme, useToast, useUpdates, useUsers
 - Shared types in `ui/src/api/types.ts`, API client in `ui/src/api/client.ts`
 - Schema Planner wizard lives in `ui/src/wizard/` (existing from Sprint 8)
 - Run `cd ui && npm run dev` for hot-reload development (proxied to Go backend)

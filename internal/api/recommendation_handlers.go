@@ -116,6 +116,9 @@ func (rs *RecommendationServer) handleList(w http.ResponseWriter, r *http.Reques
 
 	page, pageSize := filters.Page, filters.PageSize
 
+	if items == nil {
+		items = []domain.Recommendation{}
+	}
 	writeJSON(w, http.StatusOK, domain.RecommendationsListResponse{
 		Items:    items,
 		Total:    total,
