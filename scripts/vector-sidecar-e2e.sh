@@ -3,7 +3,8 @@
 # cluster, signs in once, and checks that the login audit event comes out of
 # the Vector sidecar as parsed CEF. Needs docker, kind, kubectl and helm.
 #   IMAGE=ghcr.io/badgerops/cloudpam/server:<tag>  server image (default: chart appVersion)
-#   KEEP_CLUSTER=1                                 leave the cluster up afterwards
+#   KEEP_CLUSTER=1                                 leave a cluster this run created up (reach it with `kind export kubeconfig --name $CLUSTER`)
+#   CLUSTER=<name>                                 kind cluster name; an existing cluster is reused and never deleted
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,15 +21,28 @@ if [ -n "${IMAGE:-}" ]; then
 	image_args=(--set "image.repository=${IMAGE%:*}" --set "image.tag=${IMAGE##*:}")
 fi
 
+# A private kubeconfig keeps the caller's kubeconfig and current context untouched.
+KUBECONFIG="$(mktemp)"
+export KUBECONFIG
+
 pf_pid=""
+created=""
 cleanup() {
 	[ -n "$pf_pid" ] && kill "$pf_pid" 2>/dev/null || true
-	[ "${KEEP_CLUSTER:-}" = 1 ] || kind delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
+	if [ -n "$created" ] && [ "${KEEP_CLUSTER:-}" != 1 ]; then
+		kind delete cluster --name "$CLUSTER" --kubeconfig "$KUBECONFIG" >/dev/null 2>&1 || true
+	fi
+	rm -f "$KUBECONFIG"
 }
 trap cleanup EXIT
 
-kind get clusters 2>/dev/null | grep -qx "$CLUSTER" || kind create cluster --name "$CLUSTER" --wait 120s
-kubectl config use-context "kind-$CLUSTER" >/dev/null
+if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
+	echo "reusing existing kind cluster $CLUSTER; it will not be deleted" >&2
+	kind get kubeconfig --name "$CLUSTER" >"$KUBECONFIG"
+else
+	kind create cluster --name "$CLUSTER" --wait 120s --kubeconfig "$KUBECONFIG"
+	created=1
+fi
 
 helm upgrade --install "$RELEASE" "$CHART" --namespace "$NS" --create-namespace --wait --timeout 5m \
 	--set vector.enabled=true \

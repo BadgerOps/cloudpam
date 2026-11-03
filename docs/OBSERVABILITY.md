@@ -221,7 +221,9 @@ database first. When the sidecar is not listening, the server logs
 `audit syslog forwarding failed` and keeps going.
 
 **Tested end to end.** `just vector-e2e` (`scripts/vector-sidecar-e2e.sh`)
-creates a kind cluster, installs the chart with `vector.enabled=true` and the
+creates a kind cluster (or reuses the one named by `CLUSTER`, which it never
+deletes), keeps its kubeconfig private so your current context is untouched,
+installs the chart with `vector.enabled=true` and the
 release image, signs in once, and passes only when the login event comes out
 of the sidecar with its CEF parsed. CI validates the default config with the
 pinned Vector image on every chart change (`.github/workflows/helm.yml`).
