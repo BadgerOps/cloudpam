@@ -76,6 +76,7 @@ func main() {
 
 	// Create AWS collector
 	collector := aws.New()
+	collector.SetLimiter(discovery.NewLimiter(cfg.DiscoveryAWSRPS))
 
 	// Setup signal handling
 	ctx, cancel := context.WithCancel(context.Background())
@@ -149,8 +150,12 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
 	logger.Info("starting org discovery sync")
 
+	// One limiter for the whole pass, so every member account's EC2 calls
+	// draw from the same budget.
+	limiter := discovery.NewLimiter(cfg.DiscoveryAWSRPS)
+
 	// Enumerate all active accounts in the organization
-	orgAccounts, err := aws.ListOrgAccounts(ctx, nil)
+	orgAccounts, err := aws.ListOrgAccounts(ctx, limiter)
 	if err != nil {
 		logger.Error("failed to list org accounts", "error", err)
 		return
@@ -186,6 +191,7 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 
 		// Create collector with assumed credentials
 		collector := aws.NewWithCredentials(creds)
+		collector.SetLimiter(limiter)
 
 		// Build a temporary account for discovery
 		account := domain.Account{
