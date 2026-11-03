@@ -2145,3 +2145,33 @@ func TestPostgresAuditLoggerDeleteOlderThan(t *testing.T) {
 		}
 	}
 }
+
+func TestPostgresAuditListPagesTiedTimestampsWithoutGapsOrRepeats(t *testing.T) {
+	resetDB(t)
+	ctx := context.Background()
+	al := audit.NewPostgresAuditLoggerFromPool(testDB.pool)
+	ts := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	const n = 200
+	for i := 0; i < n; i++ {
+		err := al.Log(ctx, &audit.AuditEvent{Timestamp: ts, Actor: "tester", ActorType: audit.ActorTypeAPIKey, Action: audit.ActionCreate, ResourceType: audit.ResourcePool, ResourceID: "1", StatusCode: 201})
+		if err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+	seen := map[string]bool{}
+	for offset := 0; offset < n; offset += 7 {
+		events, _, err := al.List(ctx, audit.ListOptions{Limit: 7, Offset: offset})
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		for _, e := range events {
+			if seen[e.ID] {
+				t.Fatalf("event %s returned on two pages", e.ID)
+			}
+			seen[e.ID] = true
+		}
+	}
+	if len(seen) != n {
+		t.Fatalf("paged through %d distinct events, want %d", len(seen), n)
+	}
+}

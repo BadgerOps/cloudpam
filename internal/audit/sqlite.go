@@ -138,7 +138,7 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 		opts.Limit = 1000
 	}
 
-	query := "SELECT id, timestamp, actor, actor_type, action, resource_type, resource_id, resource_name, changes, request_id, ip_address, status_code FROM audit_logs WHERE " + where + " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+	query := "SELECT id, timestamp, actor, actor_type, action, resource_type, resource_id, resource_name, changes, request_id, ip_address, status_code FROM audit_logs WHERE " + where + " ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?"
 	args = append(args, opts.Limit, opts.Offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)

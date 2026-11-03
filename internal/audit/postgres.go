@@ -135,7 +135,7 @@ func (s *PostgresAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Au
 	}
 
 	query := "SELECT id, timestamp, actor_id, actor_type, action, resource_type, resource_id, resource_name, changes, request_id, actor_ip, status_code FROM audit_events WHERE " + where +
-		" ORDER BY timestamp DESC LIMIT $" + itoa(argIdx) + " OFFSET $" + itoa(argIdx+1)
+		" ORDER BY timestamp DESC, id DESC LIMIT $" + itoa(argIdx) + " OFFSET $" + itoa(argIdx+1)
 	args = append(args, opts.Limit, opts.Offset)
 
 	rows, err := s.pool.Query(ctx, query, args...)
