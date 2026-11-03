@@ -7,15 +7,19 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { useRecommendations } from '../hooks/useRecommendations'
+import { usePagedFilters } from '../hooks/usePagedFilters'
+import Pager from '../components/Pager'
 import { usePools } from '../hooks/usePools'
 import { useToast } from '../hooks/useToast'
 import { formatTimeAgo } from '../utils/format'
 import type { Recommendation, Pool } from '../api/types'
 
 export default function RecommendationsPage() {
-  const [typeFilter, setTypeFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [poolFilter, setPoolFilter] = useState<number | undefined>()
+  const { filters, page, setFilters, setPage } = usePagedFilters<{
+    type: string
+    status: string
+    pool_id?: number
+  }>({ type: '', status: '' })
   const [showGenerateModal, setShowGenerateModal] = useState(false)
   const [showApplyModal, setShowApplyModal] = useState<Recommendation | null>(null)
   const [showDismissModal, setShowDismissModal] = useState<Recommendation | null>(null)
@@ -30,11 +34,12 @@ export default function RecommendationsPage() {
 
   const loadRecs = useCallback(() => {
     fetch({
-      type: typeFilter || undefined,
-      status: statusFilter || undefined,
-      pool_id: poolFilter,
+      type: filters.type || undefined,
+      status: filters.status || undefined,
+      pool_id: filters.pool_id,
+      page,
     })
-  }, [fetch, typeFilter, statusFilter, poolFilter])
+  }, [fetch, filters, page])
 
   useEffect(() => {
     loadRecs()
@@ -71,9 +76,9 @@ export default function RecommendationsPage() {
       {/* Filters */}
       <div className="flex gap-3 mb-4">
         <select
-          value={poolFilter ?? ''}
+          value={filters.pool_id ?? ''}
           onChange={(e) =>
-            setPoolFilter(e.target.value ? Number(e.target.value) : undefined)
+            setFilters({ pool_id: e.target.value ? Number(e.target.value) : undefined })
           }
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
@@ -85,8 +90,8 @@ export default function RecommendationsPage() {
           ))}
         </select>
         <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
+          value={filters.type}
+          onChange={(e) => setFilters({ type: e.target.value })}
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Types</option>
@@ -94,8 +99,8 @@ export default function RecommendationsPage() {
           <option value="compliance">Compliance</option>
         </select>
         <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          value={filters.status}
+          onChange={(e) => setFilters({ status: e.target.value })}
           className="px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
         >
           <option value="">All Statuses</option>
@@ -148,13 +153,14 @@ export default function RecommendationsPage() {
       </div>
 
       {/* Pagination */}
-      {data && data.total > (data.page_size || 50) && (
-        <div className="flex items-center justify-between mt-4 text-sm text-gray-600 dark:text-gray-400">
-          <span>
-            Showing {((data.page - 1) * data.page_size) + 1}-
-            {Math.min(data.page * data.page_size, data.total)} of {data.total}
-          </span>
-        </div>
+      {data && (
+        <Pager
+          page={page}
+          pageSize={data.page_size}
+          total={data.total}
+          noun="recommendations"
+          onPageChange={setPage}
+        />
       )}
 
       {/* Generate Modal */}
