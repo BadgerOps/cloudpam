@@ -39,12 +39,38 @@ type StreamEvent struct {
 	Err error
 }
 
+// Send forwards evt on ch and reports whether it was delivered. It tries the
+// channel before looking at ctx, so a terminal event still reaches a consumer
+// that is reading after the context ended; only when the channel is full does
+// it give up on ctx.Done, which frees a producer from a consumer that stopped
+// reading before the terminal event.
+func Send(ctx context.Context, ch chan<- StreamEvent, evt StreamEvent) bool {
+	select {
+	case ch <- evt:
+		return true
+	default:
+	}
+	select {
+	case ch <- evt:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // Provider abstracts an LLM backend (OpenAI, Ollama, vLLM, etc.).
 type Provider interface {
 	// Complete sends messages and returns a full response.
 	Complete(ctx context.Context, messages []Message, opts Options) (*Response, error)
 
-	// StreamComplete sends messages and returns a channel of streaming events.
+	// StreamComplete sends messages and returns a channel of streaming events:
+	// one per content chunk, then exactly one terminal event (Done, with Err
+	// set when the stream failed), after which the channel is closed. The one
+	// exception is a consumer that stops reading before the terminal event:
+	// once ctx ends, the producer gives up on the full channel and closes it
+	// with no terminal event. A consumer that finds the channel closed without
+	// a Done event must treat the stream as ErrStreamInterrupted, not as
+	// complete.
 	StreamComplete(ctx context.Context, messages []Message, opts Options) (<-chan StreamEvent, error)
 
 	// Name returns the provider name (e.g. "openai").

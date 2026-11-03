@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import UsersAdminPanel from '../components/UsersAdminPanel'
 import type { UserInfo } from '../api/types'
+import { getStatusBadgeClass } from '../utils/format'
 
 const mockUseUsers = vi.fn()
 const mockUseRoles = vi.fn()
@@ -223,5 +224,35 @@ describe('UsersAdminPanel sign out everywhere', () => {
       await pending.promise
     })
     await waitFor(() => expect(button).toHaveProperty('disabled', false))
+  })
+})
+
+describe('UsersAdminPanel account state pills', () => {
+  const users = [
+    { id: 'u1', username: 'locked', role: 'viewer', is_active: true, locked_at: '2026-01-01T00:00:00Z' },
+    { id: 'u2', username: 'active', role: 'viewer', is_active: true },
+    { id: 'u3', username: 'disabled', role: 'viewer', is_active: false },
+  ] as UserInfo[]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockUseRoles.mockReturnValue({ roles: [] })
+    mockUseUsers.mockReturnValue({
+      users,
+      loading: false,
+      error: null,
+      create: vi.fn(),
+      update: vi.fn(),
+      deactivate: vi.fn(),
+      unlock: vi.fn(),
+    })
+  })
+
+  it('colours each state from the shared status vocabulary', () => {
+    render(<UsersAdminPanel />)
+
+    expect(screen.getByText('Locked').className).toContain(getStatusBadgeClass('locked'))
+    expect(screen.getByText('Active').className).toContain(getStatusBadgeClass('active'))
+    expect(screen.getByText('Disabled').className).toContain(getStatusBadgeClass('disabled'))
   })
 })

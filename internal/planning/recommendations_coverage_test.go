@@ -106,23 +106,17 @@ func TestCovComplianceRecommendationIDsAreUnique(t *testing.T) {
 }
 
 func TestCovScoreAllocationRejectsInvalidCIDR(t *testing.T) {
-	svc, _ := setupRecService(t)
-	pool := domain.Pool{ID: 1, CIDR: "10.0.0.0/16"}
-
 	for _, cidr := range []string{"", "not-a-cidr", "10.0.0.0", "10.0.0.0/33"} {
-		if got := svc.scoreAllocation(cidr, pool, 0); got != 0 {
+		if got := scoreAllocation(cidr, nil, 0); got != 0 {
 			t.Errorf("scoreAllocation(%q) = %d, want 0", cidr, got)
 		}
 	}
 }
 
 func TestCovScoreAllocationNearMissPrefixLen(t *testing.T) {
-	svc, _ := setupRecService(t)
-	pool := domain.Pool{ID: 1, CIDR: "10.0.0.0/16"}
-
-	exact := svc.scoreAllocation("10.0.0.0/24", pool, 24)
-	near := svc.scoreAllocation("10.0.0.0/26", pool, 24)
-	far := svc.scoreAllocation("10.0.0.0/30", pool, 24)
+	exact := scoreAllocation("10.0.0.0/24", nil, 24)
+	near := scoreAllocation("10.0.0.0/26", nil, 24)
+	far := scoreAllocation("10.0.0.0/30", nil, 24)
 
 	if exact <= near {
 		t.Errorf("exact match (%d) should score above a near miss (%d)", exact, near)
@@ -133,12 +127,9 @@ func TestCovScoreAllocationNearMissPrefixLen(t *testing.T) {
 }
 
 func TestCovScoreAllocationSizeFitWithoutDesiredPrefix(t *testing.T) {
-	svc, _ := setupRecService(t)
-	pool := domain.Pool{ID: 1, CIDR: "10.0.0.0/8"}
-
-	workload := svc.scoreAllocation("10.0.0.0/24", pool, 0)   // in the 24-28 sweet spot
-	acceptable := svc.scoreAllocation("10.0.0.0/22", pool, 0) // in the wider 20-30 band
-	tooLarge := svc.scoreAllocation("10.0.0.0/12", pool, 0)   // outside both bands
+	workload := scoreAllocation("10.0.0.0/24", nil, 0)   // in the 24-28 sweet spot
+	acceptable := scoreAllocation("10.0.0.0/22", nil, 0) // in the wider 20-30 band
+	tooLarge := scoreAllocation("10.0.0.0/12", nil, 0)   // outside both bands
 
 	if workload <= acceptable {
 		t.Errorf("a /24 (%d) should score above a /22 (%d)", workload, acceptable)
@@ -149,24 +140,10 @@ func TestCovScoreAllocationSizeFitWithoutDesiredPrefix(t *testing.T) {
 }
 
 func TestCovScoreAllocationContiguityBonus(t *testing.T) {
-	ctx := context.Background()
-	svc, st := setupRecService(t)
+	children := []AllocatedBlock{{CIDR: "10.0.1.0/24"}}
 
-	parent, err := st.CreatePool(ctx, domain.CreatePool{
-		Name: "Corp", CIDR: "10.0.0.0/16", Type: domain.PoolTypeSupernet, Description: "corp",
-	})
-	if err != nil {
-		t.Fatalf("CreatePool() error = %v", err)
-	}
-	parentID := parent.ID
-	if _, err := st.CreatePool(ctx, domain.CreatePool{
-		Name: "Existing", CIDR: "10.0.1.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet, Description: "x",
-	}); err != nil {
-		t.Fatalf("CreatePool() error = %v", err)
-	}
-
-	adjacent := svc.scoreAllocation("10.0.2.0/24", parent, 0)
-	distant := svc.scoreAllocation("10.0.50.0/24", parent, 0)
+	adjacent := scoreAllocation("10.0.2.0/24", children, 0)
+	distant := scoreAllocation("10.0.50.0/24", children, 0)
 
 	if adjacent != distant+20 {
 		t.Fatalf("adjacent block scored %d and distant %d, want a 20 point contiguity bonus", adjacent, distant)
@@ -174,35 +151,21 @@ func TestCovScoreAllocationContiguityBonus(t *testing.T) {
 }
 
 func TestCovScoreAllocationIsCappedAt100(t *testing.T) {
-	ctx := context.Background()
-	svc, st := setupRecService(t)
-
-	parent, err := st.CreatePool(ctx, domain.CreatePool{
-		Name: "Corp", CIDR: "10.0.0.0/16", Type: domain.PoolTypeSupernet, Description: "corp",
-	})
-	if err != nil {
-		t.Fatalf("CreatePool() error = %v", err)
-	}
-	parentID := parent.ID
-	if _, err := st.CreatePool(ctx, domain.CreatePool{
-		Name: "Existing", CIDR: "10.0.1.0/24", ParentID: &parentID, Type: domain.PoolTypeSubnet, Description: "x",
-	}); err != nil {
-		t.Fatalf("CreatePool() error = %v", err)
-	}
+	children := []AllocatedBlock{{CIDR: "10.0.1.0/24"}}
 
 	// Aligned + exact prefix len + adjacent + RFC1918 = 30+30+20+20 = 100.
-	if got := svc.scoreAllocation("10.0.2.0/24", parent, 24); got != 100 {
+	if got := scoreAllocation("10.0.2.0/24", children, 24); got != 100 {
 		t.Fatalf("scoreAllocation() = %d, want the maximum 100", got)
 	}
 }
 
 func TestCovScoreAllocationSkipsUnparsableChildCIDRs(t *testing.T) {
-	svc, _ := setupRecService(t)
-	// A pool ID with no children in the store exercises the no-bonus path
-	// without panicking on lookup failures.
-	pool := domain.Pool{ID: 99999, CIDR: "10.0.0.0/16"}
-	if got := svc.scoreAllocation("10.0.1.0/24", pool, 24); got < 0 || got > 100 {
-		t.Fatalf("scoreAllocation() = %d, want a value within 0-100", got)
+	children := []AllocatedBlock{{CIDR: "not-a-cidr"}, {CIDR: "10.0.1.0/24"}}
+
+	withBonus := scoreAllocation("10.0.2.0/24", children, 24)
+	without := scoreAllocation("10.0.2.0/24", nil, 24)
+	if withBonus != without+20 {
+		t.Fatalf("scored %d with an unparsable sibling and %d without, want the parsable child to still earn the 20 point bonus", withBonus, without)
 	}
 }
 
@@ -247,10 +210,11 @@ func TestCovGenerateHonoursDesiredPrefixLen(t *testing.T) {
 		t.Fatalf("CreatePool() error = %v", err)
 	}
 
-	// An empty /24 is offered as its two /25 halves, so ask for a /25.
+	// A /26 is not one of the halves an empty /24 falls back to, so the
+	// generator has to split down to it instead of scoring the halves.
 	resp, err := svc.Generate(ctx, domain.GenerateRecommendationsRequest{
 		PoolIDs:          []int64{pool.ID},
-		DesiredPrefixLen: 25,
+		DesiredPrefixLen: 26,
 	})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -266,8 +230,8 @@ func TestCovGenerateHonoursDesiredPrefixLen(t *testing.T) {
 	if alloc == nil {
 		t.Fatal("no allocation recommendation generated")
 	}
-	if alloc.SuggestedCIDR != "10.0.0.0/25" {
-		t.Errorf("SuggestedCIDR = %q, want the first /25 half of the empty /24", alloc.SuggestedCIDR)
+	if alloc.SuggestedCIDR != "10.0.0.0/26" {
+		t.Errorf("SuggestedCIDR = %q, want the first /26 of the empty /24", alloc.SuggestedCIDR)
 	}
 	if alloc.Priority != priorityFromScore(alloc.Score) {
 		t.Errorf("Priority %q does not match score %d", alloc.Priority, alloc.Score)
@@ -528,7 +492,7 @@ func TestCovApplyFailsWhenPoolCreationFails(t *testing.T) {
 	st := storage.NewMemoryStore()
 	recStore := storage.NewMemoryRecommendationStore(st)
 	failing := &covFailingPoolStore{MemoryStore: st, err: errors.New("disk full")}
-	svc := NewRecommendationService(NewAnalysisService(st), recStore, failing, storePlacer{failing})
+	svc := NewRecommendationService(NewAnalysisService(st), recStore, storePlacer{failing})
 
 	parent, err := st.CreatePool(ctx, domain.CreatePool{
 		Name: "Corp", CIDR: "10.0.0.0/24", Type: domain.PoolTypeSupernet, Description: "corp",

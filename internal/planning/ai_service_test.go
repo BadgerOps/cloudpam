@@ -3,9 +3,11 @@ package planning
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"cloudpam/internal/domain"
 	"cloudpam/internal/planning/llm"
@@ -510,6 +512,70 @@ func TestCovAIServiceChatForwardsMidStreamErrorAndDropsPartialAnswer(t *testing.
 	}
 	if len(stored.Messages) != 1 || stored.Messages[0].Role != "user" {
 		t.Fatalf("stored messages = %+v, want just the user message", stored.Messages)
+	}
+}
+
+// A stream that closes without a terminal event is one the provider gave up
+// on after ctx ended while nobody was reading (llm.Provider.StreamComplete).
+// The service must report it as a failure rather than store the cut-off text
+// as the assistant's answer.
+func TestCovAIServiceChatReportsInterruptedStreamAndDropsPartialAnswer(t *testing.T) {
+	ctx := context.Background()
+	provider := &covFakeProvider{
+		available: true,
+		events:    []llm.StreamEvent{{Delta: "half an "}},
+	}
+	svc, _, _ := covSetupAIService(t, provider)
+
+	conv, _ := svc.CreateConversation(ctx, "session")
+	ch, err := svc.Chat(ctx, conv.ID, "hi")
+	if err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	events := covDrain(t, ch)
+	if len(events) != 2 || events[0].Delta != "half an " {
+		t.Fatalf("events = %+v, want the delta then the error event", events)
+	}
+	if !events[1].Done || !errors.Is(events[1].Err, llm.ErrStreamInterrupted) {
+		t.Fatalf("final event = %+v, want Done with ErrStreamInterrupted", events[1])
+	}
+
+	stored, err := svc.GetConversation(ctx, conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation() error = %v", err)
+	}
+	if len(stored.Messages) != 1 || stored.Messages[0].Role != "user" {
+		t.Fatalf("stored messages = %+v, want just the user message", stored.Messages)
+	}
+}
+
+// The forwarder between the provider and the handler must not outlive a
+// handler that stopped reading (a panic swallowed by the recovery middleware)
+// once the request context ends, or it pins the provider's channel as well.
+func TestCovAIServiceChatFreesTheForwarderWhenNobodyReads(t *testing.T) {
+	const pending = 200 // well beyond the 64-slot channels on both sides
+	events := make([]llm.StreamEvent, 0, pending)
+	for i := 0; i < pending; i++ {
+		events = append(events, llm.StreamEvent{Delta: "late"})
+	}
+	provider := &covFakeProvider{available: true, events: events}
+	svc, _, _ := covSetupAIService(t, provider)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conv, _ := svc.CreateConversation(ctx, "session")
+	baseline := runtime.NumGoroutine()
+	if _, err := svc.Chat(ctx, conv.ID, "hi"); err != nil {
+		t.Fatalf("Chat() error = %v", err)
+	}
+	cancel()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for runtime.NumGoroutine() > baseline {
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines = %d, want %d: the forwarder is still blocked 3s after the context was cancelled", runtime.NumGoroutine(), baseline)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
