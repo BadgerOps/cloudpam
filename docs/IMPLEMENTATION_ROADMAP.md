@@ -202,7 +202,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 - [ ] Azure collector (VNets, subnets, NICs) — not yet implemented; `azure:` account keys are accepted and the UI offers Azure, but sync fails with `no collector registered for provider`
 - [x] Discovery resource storage
 - [x] Collector registry and heartbeat (standalone agent: bootstrap tokens, register/approve/reject, `/heartbeat`; AWS only)
-- [ ] Rate limiting per collector — not implemented
+- [x] Rate limiting per collector (`internal/discovery/ratelimit.go`; `CLOUDPAM_DISCOVERY_AWS_RPS`, `CLOUDPAM_DISCOVERY_GCP_RPS`, agent `discovery_aws_rps`)
 
 **Success Criteria**:
 - AWS collector discovers resources in test accounts
