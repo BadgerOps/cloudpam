@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"cloudpam/internal/domain"
@@ -29,6 +30,24 @@ type Resolved struct {
 	Sources          domain.AIProviderSettingSources
 	Stored           domain.AIProviderSettings
 	APIKeyConfigured bool
+	// Fallbacks are the stored fallback providers in order, each with the
+	// effective max tokens and temperature. They come from the store only.
+	Fallbacks []ResolvedFallback
+}
+
+// ResolvedFallback is one fallback provider ready to build. A stored key that
+// cannot be decrypted leaves APIKey empty and APIKeyConfigured false, so the
+// link is skipped by the chain and reported as unconfigured by the API.
+type ResolvedFallback struct {
+	ID               string
+	Config           Config
+	APIKeyConfigured bool
+}
+
+// Label names a configuration in notices and test results, as "<kind> <model>".
+// It never includes the endpoint or key.
+func (c Config) Label() string {
+	return strings.TrimSpace(c.Provider + " " + c.Model)
 }
 
 // Fingerprint identifies the configuration a test result applies to: a hex
@@ -119,13 +138,14 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 	}
 
 	var keyErr error
+	var unreadable []string
 	if stored.APIKeyEncrypted != "" {
 		key, err := r.decryptKey(stored.APIKeyEncrypted)
 		if err == nil && key != "" {
 			cfg.APIKey, src.APIKey = key, domain.AISettingSourceDatabase
 		} else {
 			keyErr = ErrStoredKeyUnreadable
-			r.warnUnreadable(stored.APIKeyEncrypted)
+			unreadable = append(unreadable, stored.APIKeyEncrypted)
 		}
 	}
 	if cfg.APIKey == "" {
@@ -136,21 +156,49 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 		}
 	}
 	out.APIKeyConfigured = cfg.APIKey != ""
+
+	for _, fb := range stored.Fallbacks {
+		link := ResolvedFallback{ID: fb.ID, Config: Config{
+			Provider:    fb.Provider,
+			Endpoint:    fb.Endpoint,
+			Model:       fb.Model,
+			MaxTokens:   cfg.MaxTokens,
+			Temperature: cfg.Temperature,
+		}}
+		if link.Config.Model == "" {
+			link.Config.Model = DefaultModel
+		}
+		if fb.APIKeyEncrypted != "" {
+			key, err := r.decryptKey(fb.APIKeyEncrypted)
+			if err == nil && key != "" {
+				link.Config.APIKey = key
+			} else {
+				unreadable = append(unreadable, fb.APIKeyEncrypted)
+			}
+		}
+		link.APIKeyConfigured = link.Config.APIKey != ""
+		out.Fallbacks = append(out.Fallbacks, link)
+	}
+	if len(unreadable) > 0 {
+		r.warnUnreadable(strings.Join(unreadable, "\n"))
+	}
 	return out, keyErr
 }
 
-// warnUnreadable logs an undecryptable stored key once per distinct ciphertext
-// rather than on every resolve. The ciphertext itself is never logged.
-func (r *Resolver) warnUnreadable(ciphertext string) {
+// warnUnreadable logs undecryptable stored keys once per distinct set of
+// ciphertexts rather than on every resolve. The ciphertexts themselves are
+// never logged.
+func (r *Resolver) warnUnreadable(ciphertexts string) {
 	r.mu.Lock()
-	seen := r.lastUnreadable == ciphertext
-	r.lastUnreadable = ciphertext
+	seen := r.lastUnreadable == ciphertexts
+	r.lastUnreadable = ciphertexts
 	r.mu.Unlock()
 	if seen {
 		return
 	}
 	slog.Default().Warn("stored ai provider api key cannot be decrypted",
-		"hint", "check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again; CLOUDPAM_LLM_API_KEY is used only when the endpoint is not stored in the database")
+		"keys", strings.Count(ciphertexts, "\n")+1,
+		"hint", "check CLOUDPAM_OIDC_ENCRYPTION_KEY or save the api key again; CLOUDPAM_LLM_API_KEY is used only when the endpoint and provider kind are not stored in the database")
 }
 
 func (r *Resolver) decryptKey(ciphertext string) (string, error) {

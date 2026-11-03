@@ -61,6 +61,7 @@ func TestMemoryAIProviderSettingsCloneIsolation(t *testing.T) {
 		APIKeyEncrypted: "cafe",
 		State:           domain.AIProviderStateVerified,
 		LastTestedAt:    &callerTested,
+		Fallbacks:       []domain.AIFallbackProvider{{ID: "fb1", Provider: "anthropic", Model: "claude"}},
 	}
 	if err := store.UpdateAIProviderSettings(ctx, in); err != nil {
 		t.Fatalf("UpdateAIProviderSettings: %v", err)
@@ -70,6 +71,7 @@ func TestMemoryAIProviderSettingsCloneIsolation(t *testing.T) {
 	temp = 1.9
 	*in.LastTestedAt = tested.Add(time.Hour)
 	in.Model = "changed"
+	in.Fallbacks[0].Model = "changed"
 
 	got, err := store.GetAIProviderSettings(ctx)
 	if err != nil {
@@ -77,6 +79,17 @@ func TestMemoryAIProviderSettingsCloneIsolation(t *testing.T) {
 	}
 	if got.Model != "gpt-4o-mini" || *got.Temperature != 0.3 || !got.LastTestedAt.Equal(tested) {
 		t.Fatalf("store changed through the write argument: %+v", got)
+	}
+	if len(got.Fallbacks) != 1 || got.Fallbacks[0].Model != "claude" {
+		t.Fatalf("fallbacks changed through the write argument: %+v", got.Fallbacks)
+	}
+	got.Fallbacks[0].Model = "changed-after-read"
+	reread, err := store.GetAIProviderSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetAIProviderSettings: %v", err)
+	}
+	if reread.Fallbacks[0].Model != "claude" {
+		t.Fatal("a read result shares the stored fallback slice")
 	}
 
 	// Mutating a read result must not reach the store either.

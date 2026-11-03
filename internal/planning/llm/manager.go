@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 )
 
@@ -14,13 +15,13 @@ type ProviderSource interface {
 }
 
 // Manager resolves the configuration from the settings store on every call
-// and caches the last provider, rebuilding it when the resolved configuration
-// differs. The store stays the source of truth.
+// and caches the last provider chain, rebuilding it when any resolved
+// configuration differs. The store stays the source of truth.
 type Manager struct {
 	resolver *Resolver
 
 	mu       sync.Mutex
-	cfg      Config
+	cfgs     []Config // primary first, then the fallbacks in order
 	provider Provider
 }
 
@@ -29,7 +30,8 @@ func NewManager(resolver *Resolver) *Manager {
 	return &Manager{resolver: resolver}
 }
 
-// Provider resolves the current configuration and returns a provider for it.
+// Provider resolves the current configuration and returns a provider for it:
+// the primary alone, or a Chain over the primary and the stored fallbacks.
 // When the stored key is unreadable it still returns a provider (built from
 // the fallback configuration) together with ErrStoredKeyUnreadable.
 func (m *Manager) Provider(ctx context.Context) (Provider, Resolved, error) {
@@ -37,11 +39,20 @@ func (m *Manager) Provider(ctx context.Context) (Provider, Resolved, error) {
 	if err != nil && !errors.Is(err, ErrStoredKeyUnreadable) {
 		return nil, resolved, err
 	}
+	cfgs := make([]Config, 0, 1+len(resolved.Fallbacks))
+	cfgs = append(cfgs, resolved.Config)
+	for _, fb := range resolved.Fallbacks {
+		cfgs = append(cfgs, fb.Config)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.provider == nil || m.cfg != resolved.Config {
-		m.provider = NewProvider(resolved.Config)
-		m.cfg = resolved.Config
+	if m.provider == nil || !slices.Equal(m.cfgs, cfgs) {
+		links := make([]Link, len(cfgs))
+		for i, cfg := range cfgs {
+			links[i] = Link{Provider: NewProvider(cfg), Label: cfg.Label()}
+		}
+		m.provider = NewChain(links)
+		m.cfgs = cfgs
 	}
 	return m.provider, resolved, err
 }
