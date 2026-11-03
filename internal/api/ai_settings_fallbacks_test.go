@@ -268,7 +268,7 @@ func TestAISettingsTestEndpointReportsEachFallback(t *testing.T) {
 	if fb := got.Fallbacks[1]; fb.OK || fb.Error != "endpoint unreachable" || fb.Model != "llama3" {
 		t.Fatalf("unreachable fallback = %+v", fb)
 	}
-	if fb := got.Fallbacks[2]; fb.OK || fb.Error != "no api key configured" {
+	if fb := got.Fallbacks[2]; fb.OK || fb.Error != "stored api key cannot be decrypted" {
 		t.Fatalf("unreadable-key fallback = %+v", fb)
 	}
 	if strings.Contains(raw, "sk-ant") {

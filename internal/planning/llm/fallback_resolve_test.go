@@ -15,7 +15,7 @@ func fallbackDoc() *domain.AIProviderSettings {
 		Fallbacks: []domain.AIFallbackProvider{
 			{ID: "a", Provider: ProviderAnthropic, Model: "claude-x", APIKeyEncrypted: "enc(k1)"},
 			{ID: "b", Provider: ProviderOpenAI, Endpoint: "http://ollama:11434/v1"},
-			{ID: "c", Provider: ProviderOpenAI, Model: "m3", APIKeyEncrypted: "garbage"},
+			{ID: "c", Provider: ProviderOpenAI, Endpoint: "http://gateway:8080/v1", Model: "m3", APIKeyEncrypted: "garbage"},
 		},
 	}
 }
@@ -32,7 +32,7 @@ func TestResolverResolvesFallbacksWithInheritedLimits(t *testing.T) {
 	want := []ResolvedFallback{
 		{ID: "a", Config: Config{Provider: ProviderAnthropic, Model: "claude-x", APIKey: "k1", MaxTokens: 100, Temperature: 0.3}, APIKeyConfigured: true},
 		{ID: "b", Config: Config{Provider: ProviderOpenAI, Endpoint: "http://ollama:11434/v1", Model: DefaultModel, MaxTokens: 100, Temperature: 0.3}},
-		{ID: "c", Config: Config{Provider: ProviderOpenAI, Model: "m3", MaxTokens: 100, Temperature: 0.3}},
+		{ID: "c", Config: Config{Provider: ProviderOpenAI, Endpoint: "http://gateway:8080/v1", Model: "m3", MaxTokens: 100, Temperature: 0.3}, KeyUnreadable: true},
 	}
 	if len(got.Fallbacks) != len(want) {
 		t.Fatalf("fallbacks = %+v, want %d entries", got.Fallbacks, len(want))

@@ -36,12 +36,14 @@ type Resolved struct {
 }
 
 // ResolvedFallback is one fallback provider ready to build. A stored key that
-// cannot be decrypted leaves APIKey empty and APIKeyConfigured false, so the
-// link is skipped by the chain and reported as unconfigured by the API.
+// cannot be decrypted leaves APIKey empty and sets KeyUnreadable, so the link
+// is skipped by the chain even when its endpoint would accept an
+// unauthenticated request, and is reported as unconfigured by the API.
 type ResolvedFallback struct {
 	ID               string
 	Config           Config
 	APIKeyConfigured bool
+	KeyUnreadable    bool
 }
 
 // Label names a configuration in notices and test results, as "<kind> <model>".
@@ -181,6 +183,7 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 			if err == nil && key != "" {
 				link.Config.APIKey = key
 			} else {
+				link.KeyUnreadable = true
 				unreadable = append(unreadable, fb.APIKeyEncrypted)
 			}
 		}

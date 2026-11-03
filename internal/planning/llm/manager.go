@@ -21,7 +21,7 @@ type Manager struct {
 	resolver *Resolver
 
 	mu       sync.Mutex
-	cfgs     []Config // primary first, then the fallbacks in order
+	cfgs     []linkConfig // primary first, then the fallbacks in order
 	provider Provider
 }
 
@@ -39,23 +39,39 @@ func (m *Manager) Provider(ctx context.Context) (Provider, Resolved, error) {
 	if err != nil && !errors.Is(err, ErrStoredKeyUnreadable) {
 		return nil, resolved, err
 	}
-	cfgs := make([]Config, 0, 1+len(resolved.Fallbacks))
-	cfgs = append(cfgs, resolved.Config)
+	cfgs := make([]linkConfig, 0, 1+len(resolved.Fallbacks))
+	cfgs = append(cfgs, linkConfig{cfg: resolved.Config})
 	for _, fb := range resolved.Fallbacks {
-		cfgs = append(cfgs, fb.Config)
+		cfgs = append(cfgs, linkConfig{cfg: fb.Config, keyUnreadable: fb.KeyUnreadable})
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.provider == nil || !slices.Equal(m.cfgs, cfgs) {
 		links := make([]Link, len(cfgs))
-		for i, cfg := range cfgs {
-			links[i] = Link{Provider: NewProvider(cfg), Label: cfg.Label()}
+		for i, lc := range cfgs {
+			p := NewProvider(lc.cfg)
+			if lc.keyUnreadable {
+				p = unavailableProvider{p}
+			}
+			links[i] = Link{Provider: p, Label: lc.cfg.Label()}
 		}
 		m.provider = NewChain(links)
 		m.cfgs = cfgs
 	}
 	return m.provider, resolved, err
 }
+
+type linkConfig struct {
+	cfg           Config
+	keyUnreadable bool
+}
+
+// unavailableProvider keeps a link whose stored key cannot be decrypted in its
+// place in the chain, so links still line up with Resolved.Fallbacks, while
+// the chain skips it.
+type unavailableProvider struct{ Provider }
+
+func (unavailableProvider) Available() bool { return false }
 
 type staticSource struct{ p Provider }
 

@@ -135,6 +135,10 @@ func runAIFallbackTest(ctx context.Context, p llm.Provider, fb llm.ResolvedFallb
 		Endpoint: llm.RedactEndpoint(fb.Config.Endpoint),
 		Model:    fb.Config.Model,
 	}
+	if fb.KeyUnreadable {
+		out.Error = "stored api key cannot be decrypted"
+		return out
+	}
 	if !p.Available() {
 		out.Error = "no api key configured"
 		return out
