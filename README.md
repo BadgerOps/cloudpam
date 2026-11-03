@@ -71,6 +71,7 @@ See the [Deployment Guide](docs/DEPLOYMENT.md) for production setup.
 | Document | Description |
 |----------|-------------|
 | [Deployment Guide](docs/DEPLOYMENT.md) | Production deployment options |
+| [Operations Runbooks](docs/RUNBOOKS.md) | Backup and restore, upgrade and rollback, key rotation, OIDC and audit troubleshooting, admin lockout recovery |
 | [API Examples](docs/API_EXAMPLES.md) | Common API usage patterns |
 | [Cloud Discovery](docs/DISCOVERY.md) | AWS discovery setup and API reference |
 

@@ -35,6 +35,10 @@ config:
   #   - us-east-1
   #   - us-west-2
 
+  # Cap on AWS API calls per second, shared by every account in an org-mode
+  # pass. Set it when a large organization hits EC2 throttling. 0 is unlimited.
+  discoveryAwsRps: 0
+
   # HTTP settings
   maxRetries: 3
   retryBackoff: "5s"

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // CGO-less SQLite driver
+	"cloudpam/internal/storage/sqlitedb"
 )
 
 type SQLiteRoleStore struct {
@@ -20,13 +20,9 @@ type SQLiteRoleStore struct {
 }
 
 func NewSQLiteRoleStore(dsn string, users UserStore) (*SQLiteRoleStore, error) {
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sqlitedb.Open(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;`); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("set pragmas: %w", err)
 	}
 	return &SQLiteRoleStore{db: db, users: users}, nil
 }

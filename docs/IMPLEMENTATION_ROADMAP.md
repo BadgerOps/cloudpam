@@ -202,7 +202,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 - [ ] Azure collector (VNets, subnets, NICs) — not yet implemented; `azure:` account keys are accepted and the UI offers Azure, but sync fails with `no collector registered for provider`
 - [x] Discovery resource storage
 - [x] Collector registry and heartbeat (standalone agent: bootstrap tokens, register/approve/reject, `/heartbeat`; AWS only)
-- [ ] Rate limiting per collector — not implemented
+- [x] Rate limiting per collector (`internal/discovery/ratelimit.go`; `CLOUDPAM_DISCOVERY_AWS_RPS`, `CLOUDPAM_DISCOVERY_GCP_RPS`, agent `discovery_aws_rps`)
 
 **Success Criteria**:
 - AWS collector discovers resources in test accounts
@@ -357,8 +357,7 @@ The 0.23.4 release, cut by #264, ships the fixes that landed after 0.23.3. [CHAN
 - [x] Schema generation from parameters
 - [x] Schema validation with detailed errors (conflict detection). Apply does not check that generated children sit inside their parents, because the wizard can emit children outside them today
 - [ ] ASCII art visualization of generated schema — not implemented (the wizard renders an interactive tree instead)
-- [x] Schema export — Terraform (`cloudpam_pool` resources for the CloudPAM provider, 0.23.1) and CSV from the Preview step
-- [ ] Schema export as JSON or YAML — not implemented
+- [x] Schema export — Terraform (`cloudpam_pool` resources for the CloudPAM provider, 0.23.1), CSV, JSON and YAML from the Preview step. JSON and YAML are the `POST /api/v1/schema/apply` request body (#285)
 
 **Success Criteria**:
 - 5+ built-in templates available
@@ -679,7 +678,7 @@ For CloudPAM AI, the roadmap should follow those patterns instead of keeping AI 
 - [ ] Cost tracking system — not yet implemented
 - [ ] Security audit report — not yet implemented
 - [x] Complete API documentation (OpenAPI 3.1 spec)
-- [ ] Operations runbooks — not yet implemented
+- [x] Operations runbooks ([RUNBOOKS.md](RUNBOOKS.md))
 
 **Success Criteria**:
 - Rate limits prevent abuse

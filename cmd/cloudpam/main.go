@@ -209,8 +209,12 @@ func main() {
 	discoveryStore := selectDiscoveryStore(logger, store)
 	networkStore := selectNetworkStore(logger, store)
 	syncService := discovery.NewSyncService(discoveryStore)
-	syncService.RegisterCollector(awscollector.New())
-	syncService.RegisterCollector(gcpcollector.New())
+	awsCollector := awscollector.New()
+	awsCollector.SetLimiter(discoveryLimiter(logger, "CLOUDPAM_DISCOVERY_AWS_RPS"))
+	syncService.RegisterCollector(awsCollector)
+	gcpCollector := gcpcollector.New()
+	gcpCollector.SetLimiter(discoveryLimiter(logger, "CLOUDPAM_DISCOVERY_GCP_RPS"))
+	syncService.RegisterCollector(gcpCollector)
 	discoverySrv := api.NewDiscoveryServer(srv, discoveryStore, syncService, keyStore)
 	discoverySrv.SetNetworkStore(networkStore)
 	logger.Info("discovery subsystem initialized", "collectors", "aws,gcp")
@@ -222,7 +226,7 @@ func main() {
 
 	// Initialize recommendation subsystem
 	recStore := selectRecommendationStore(logger, store)
-	recService := planning.NewRecommendationService(analysisService, recStore, store, srv)
+	recService := planning.NewRecommendationService(analysisService, recStore, srv)
 	recSrv := api.NewRecommendationServer(srv, recService, recStore)
 	logger.Info("recommendation subsystem initialized")
 
@@ -408,6 +412,22 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// discoveryLimiter reads one provider's cap on discovery API calls per second.
+// Like RATE_LIMIT_RPS, a value that does not parse logs a warning and leaves
+// the provider unlimited.
+func discoveryLimiter(logger observability.Logger, name string) *discovery.Limiter {
+	raw := os.Getenv(name)
+	rps, err := discovery.ParseRPS(raw)
+	if err != nil {
+		logger.Warn("invalid discovery rate limit; provider calls are unlimited", "env", name, "value", raw, "error", err)
+		return nil
+	}
+	if rps > 0 {
+		logger.Info("discovery rate limit configured", "env", name, "requests_per_second", rps)
+	}
+	return discovery.NewLimiter(rps)
 }
 
 func configureAuditSyslogForwarding(logger observability.Logger, auditLogger audit.AuditLogger, appVersion string) audit.AuditLogger {

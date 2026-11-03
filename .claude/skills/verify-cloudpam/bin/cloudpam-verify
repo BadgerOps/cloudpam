@@ -166,9 +166,9 @@ cmd_launch() {
   fi
 
   log "installing Playwright + chromium (repo-root package.json)"
-  # The dev shell points PLAYWRIGHT_BROWSERS_PATH at a read-only Nix store path that
-  # already holds the browsers, and `playwright install` fails trying to lock it.
-  nixrun 'cd "$REPO_ROOT" && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && { [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ] && [ -d "$PLAYWRIGHT_BROWSERS_PATH" ] && [ ! -w "$PLAYWRIGHT_BROWSERS_PATH" ] && echo "using browsers from $PLAYWRIGHT_BROWSERS_PATH" || npx playwright install chromium; }' >"$STATE/playwright-install.log" 2>&1 \
+  # The dev shell ships the browsers in the read-only Nix store and says so with
+  # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD; `playwright install` would try to write there.
+  nixrun 'cd "$REPO_ROOT" && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && if [ -n "${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-}" ] && [ -d "${PLAYWRIGHT_BROWSERS_PATH:-/nonexistent}" ]; then echo "using browsers from $PLAYWRIGHT_BROWSERS_PATH"; else npx playwright install chromium; fi' >"$STATE/playwright-install.log" 2>&1 \
     || { tail -n 40 "$STATE/playwright-install.log" >&2; die "playwright install failed"; }
 
   GIT_REV="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
 )
 
@@ -29,6 +30,7 @@ const (
 type Collector struct {
 	tokenSource oauth2.TokenSource
 	httpClient  *http.Client
+	limiter     *discovery.Limiter
 }
 
 // New creates a new GCP collector using Application Default Credentials.
@@ -51,6 +53,10 @@ func NewWithHTTPClient(client *http.Client) *Collector {
 // Provider returns "gcp".
 func (c *Collector) Provider() string { return "gcp" }
 
+// SetLimiter paces every Compute API call made by this collector and by the
+// collectors it binds through WithCredential. nil removes the pacing.
+func (c *Collector) SetLimiter(l *discovery.Limiter) { c.limiter = l }
+
 // Discover discovers VPC networks, subnetworks, and external addresses for the given account.
 // The account's ExternalID (or Key) is used as the GCP project ID.
 // If account.Regions is set, only subnetworks and addresses in those regions are returned.
@@ -60,10 +66,11 @@ func (c *Collector) Discover(ctx context.Context, account domain.Account) ([]dom
 		return nil, fmt.Errorf("account %d has no external_id or key for GCP project", account.ID)
 	}
 
-	client, err := c.getHTTPClient(ctx)
+	httpClient, err := c.getHTTPClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create http client: %w", err)
 	}
+	client := computeClient{http: httpClient, limiter: c.limiter}
 
 	regionSet := make(map[string]bool, len(account.Regions))
 	for _, r := range account.Regions {
@@ -189,7 +196,7 @@ type address struct {
 
 // --- Discovery functions ---
 
-func discoverNetworks(ctx context.Context, client *http.Client, account domain.Account, project string, now time.Time) ([]domain.DiscoveredResource, error) {
+func discoverNetworks(ctx context.Context, client computeClient, account domain.Account, project string, now time.Time) ([]domain.DiscoveredResource, error) {
 	var resources []domain.DiscoveredResource
 
 	pageToken := ""
@@ -200,7 +207,7 @@ func discoverNetworks(ctx context.Context, client *http.Client, account domain.A
 		}
 
 		var result networkList
-		if err := doGet(ctx, client, url, &result); err != nil {
+		if err := client.get(ctx, url, &result); err != nil {
 			return nil, err
 		}
 
@@ -239,7 +246,7 @@ func discoverNetworks(ctx context.Context, client *http.Client, account domain.A
 	return resources, nil
 }
 
-func discoverSubnetworks(ctx context.Context, client *http.Client, account domain.Account, project string, regionSet map[string]bool, now time.Time) ([]domain.DiscoveredResource, error) {
+func discoverSubnetworks(ctx context.Context, client computeClient, account domain.Account, project string, regionSet map[string]bool, now time.Time) ([]domain.DiscoveredResource, error) {
 	var resources []domain.DiscoveredResource
 
 	pageToken := ""
@@ -250,7 +257,7 @@ func discoverSubnetworks(ctx context.Context, client *http.Client, account domai
 		}
 
 		var result aggregatedSubnetworkList
-		if err := doGet(ctx, client, url, &result); err != nil {
+		if err := client.get(ctx, url, &result); err != nil {
 			return nil, err
 		}
 
@@ -303,7 +310,7 @@ func discoverSubnetworks(ctx context.Context, client *http.Client, account domai
 	return resources, nil
 }
 
-func discoverAddresses(ctx context.Context, client *http.Client, account domain.Account, project string, regionSet map[string]bool, now time.Time) ([]domain.DiscoveredResource, error) {
+func discoverAddresses(ctx context.Context, client computeClient, account domain.Account, project string, regionSet map[string]bool, now time.Time) ([]domain.DiscoveredResource, error) {
 	var resources []domain.DiscoveredResource
 
 	pageToken := ""
@@ -314,7 +321,7 @@ func discoverAddresses(ctx context.Context, client *http.Client, account domain.
 		}
 
 		var result aggregatedAddressList
-		if err := doGet(ctx, client, url, &result); err != nil {
+		if err := client.get(ctx, url, &result); err != nil {
 			return nil, err
 		}
 
@@ -400,14 +407,24 @@ func addressCIDR(addr address) string {
 	return netip.PrefixFrom(ip, bits).String()
 }
 
-// doGet performs a GET request and decodes the JSON response.
-func doGet(ctx context.Context, client *http.Client, url string, dest any) error {
+// computeClient issues the Compute API page requests of one Discover run,
+// each one after the limiter lets it through.
+type computeClient struct {
+	http    *http.Client
+	limiter *discovery.Limiter
+}
+
+// get performs a GET request and decodes the JSON response.
+func (c computeClient) get(ctx context.Context, url string, dest any) error {
+	if err := c.limiter.Wait(ctx); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("http get %s: %w", url, err)
 	}
