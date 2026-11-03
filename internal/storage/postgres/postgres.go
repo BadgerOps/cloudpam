@@ -5,12 +5,14 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"cloudpam/internal/cidr"
@@ -132,6 +134,11 @@ func (s *Store) scanPool(row pgx.Row) (domain.Pool, bool, error) {
 type querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+type execQuerier interface {
+	querier
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 func (s *Store) ListPools(ctx context.Context) ([]domain.Pool, error) {
@@ -417,12 +424,15 @@ func (s *Store) UpdatePool(ctx context.Context, id int64, update domain.UpdatePo
 }
 
 func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
-	// Check for children
+	return deletePool(ctx, s.pool, s.orgID, id)
+}
+
+func deletePool(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
 	var childCount int
-	err := s.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT COUNT(*) FROM pools
 		WHERE parent_id = (SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2)
-		  AND deleted_at IS NULL`, id, s.orgID).Scan(&childCount)
+		  AND deleted_at IS NULL`, id, orgID).Scan(&childCount)
 	if err != nil {
 		return false, err
 	}
@@ -430,9 +440,9 @@ func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
 		return false, fmt.Errorf("pool has child pools: %w", storage.ErrConflict)
 	}
 
-	tag, err := s.pool.Exec(ctx, `
+	tag, err := q.Exec(ctx, `
 		UPDATE pools SET deleted_at = NOW()
-		WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID)
+		WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, orgID)
 	if err != nil {
 		return false, err
 	}
@@ -440,14 +450,17 @@ func (s *Store) DeletePool(ctx context.Context, id int64) (bool, error) {
 }
 
 func (s *Store) DeletePoolCascade(ctx context.Context, id int64) (bool, error) {
-	// Use recursive CTE to find all descendants, then soft-delete all
-	tag, err := s.pool.Exec(ctx, `
+	return deletePoolCascade(ctx, s.pool, s.orgID, id)
+}
+
+func deletePoolCascade(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
+	tag, err := q.Exec(ctx, `
 		WITH RECURSIVE subtree AS (
 			SELECT id FROM pools WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL
 			UNION ALL
 			SELECT p.id FROM pools p JOIN subtree s ON p.parent_id = s.id WHERE p.deleted_at IS NULL
 		)
-		UPDATE pools SET deleted_at = NOW() WHERE id IN (SELECT id FROM subtree)`, id, s.orgID)
+		UPDATE pools SET deleted_at = NOW() WHERE id IN (SELECT id FROM subtree)`, id, orgID)
 	if err != nil {
 		return false, err
 	}
@@ -890,15 +903,21 @@ func (s *Store) DeleteAccount(ctx context.Context, id int64) (bool, error) {
 }
 
 func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error) {
-	// Get account UUID
+	return deleteAccountCascade(ctx, s.pool, s.orgID, id)
+}
+
+func deleteAccountCascade(ctx context.Context, q execQuerier, orgID string, id int64) (bool, error) {
 	var accountUUID string
-	err := s.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, s.orgID).Scan(&accountUUID)
+	err := q.QueryRow(ctx, `SELECT id FROM accounts WHERE seq_id = $1 AND organization_id = $2 AND deleted_at IS NULL`, id, orgID).Scan(&accountUUID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		return false, nil // not found
+		return false, err
 	}
 
 	// Soft-delete pools linked to this account and their descendants
-	_, err = s.pool.Exec(ctx, `
+	_, err = q.Exec(ctx, `
 		WITH RECURSIVE pool_tree AS (
 			SELECT id FROM pools WHERE account_id = $1 AND deleted_at IS NULL
 			UNION ALL
@@ -910,7 +929,7 @@ func (s *Store) DeleteAccountCascade(ctx context.Context, id int64) (bool, error
 	}
 
 	// Soft-delete the account; account_credentials_drop_on_account_soft_delete removes the stored credential.
-	tag, err := s.pool.Exec(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, accountUUID)
+	tag, err := q.Exec(ctx, `UPDATE accounts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, accountUUID)
 	if err != nil {
 		return false, err
 	}
