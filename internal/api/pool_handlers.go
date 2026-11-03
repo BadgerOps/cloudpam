@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"cloudpam/internal/audit"
 	"cloudpam/internal/auth"
 	"cloudpam/internal/domain"
+	"cloudpam/internal/planning"
 	"cloudpam/internal/storage"
 	"cloudpam/internal/validation"
 )
@@ -307,6 +309,13 @@ func (s *Server) handlePoolStats(w http.ResponseWriter, r *http.Request, id int6
 		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
 		return
 	}
+
+	projection, err := planning.NewAnalysisService(s.store).ProjectPoolGrowth(ctx, id, *stats, time.Now())
+	if err != nil {
+		s.writeErr(ctx, w, http.StatusInternalServerError, "internal error", err.Error())
+		return
+	}
+	stats.Projection = projection
 
 	writeJSON(w, http.StatusOK, stats)
 }
