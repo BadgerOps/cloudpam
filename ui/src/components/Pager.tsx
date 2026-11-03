@@ -5,6 +5,7 @@ interface PagerProps {
   pageSize: number
   total: number
   noun: string
+  loading?: boolean
   onPageChange: (page: number) => void
 }
 
@@ -13,7 +14,7 @@ export function lastPageOf(total: number, pageSize: number): number {
   return Math.max(1, Math.ceil(total / pageSize))
 }
 
-export default function Pager({ page, pageSize, total, noun, onPageChange }: PagerProps) {
+export default function Pager({ page, pageSize, total, noun, loading = false, onPageChange }: PagerProps) {
   const lastPage = lastPageOf(total, pageSize)
 
   // A delete on the last page can leave the requested page past the end;
@@ -29,16 +30,19 @@ export default function Pager({ page, pageSize, total, noun, onPageChange }: Pag
   const buttonClass =
     'px-3 py-1 border dark:border-gray-700 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-40'
 
+  // `page` is the page the rows came from. While a request is pending it can
+  // lag the active query (a filter change resets to page 1), so stepping from
+  // it would request the wrong page.
   return (
     <div className="flex items-center justify-between mt-4 text-sm text-gray-500 dark:text-gray-400">
       <span>
         Showing {Math.min(start, total)}-{end} of {total} {noun}
       </span>
       <div className="flex gap-2">
-        <button onClick={() => onPageChange(page - 1)} disabled={page <= 1} className={buttonClass}>
+        <button onClick={() => onPageChange(page - 1)} disabled={loading || page <= 1} className={buttonClass}>
           Previous
         </button>
-        <button onClick={() => onPageChange(page + 1)} disabled={page >= lastPage} className={buttonClass}>
+        <button onClick={() => onPageChange(page + 1)} disabled={loading || page >= lastPage} className={buttonClass}>
           Next
         </button>
       </div>

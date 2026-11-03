@@ -121,3 +121,47 @@ describe('BlocksPage pagination', () => {
     expect(lastBlocksRequest().searchParams.get('page')).toBe('1')
   })
 })
+
+describe('BlocksPage pagination while a filter change is loading', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('does not step from the stale page before the filtered page 1 arrives', async () => {
+    let releaseFiltered: (() => void) | undefined
+    mockGet.mockImplementation((path: string) => {
+      const url = new URL(path, 'http://localhost')
+      const page = Number(url.searchParams.get('page') ?? '1')
+      const start = (page - 1) * 50
+      const items = Array.from({ length: 50 }, (_, i) => block(start + i + 1))
+      const body = { items, total: 120, page, page_size: 50 }
+      if (url.searchParams.get('accounts') !== '7') return Promise.resolve(body)
+      return new Promise(resolve => {
+        releaseFiltered = () => resolve(body)
+      })
+    })
+
+    render(
+      <MemoryRouter>
+        <BlocksPage />
+      </MemoryRouter>,
+    )
+    await screen.findByText('Showing 1-50 of 120 blocks')
+    fireEvent.click(screen.getByText('Next'))
+    await screen.findByText('Showing 51-100 of 120 blocks')
+
+    fireEvent.change(screen.getByDisplayValue('All Accounts'), { target: { value: '7' } })
+    await waitFor(() => expect(lastBlocksRequest().searchParams.get('accounts')).toBe('7'))
+    expect(lastBlocksRequest().searchParams.get('page')).toBe('1')
+
+    const requestsBeforeClick = blocksRequests().length
+    expect((screen.getByText('Next') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByText('Next'))
+    expect(blocksRequests().length).toBe(requestsBeforeClick)
+
+    releaseFiltered!()
+    await screen.findByText('block-1')
+    expect(screen.getByText('Showing 1-50 of 120 blocks')).toBeTruthy()
+    expect((screen.getByText('Next') as HTMLButtonElement).disabled).toBe(false)
+  })
+})

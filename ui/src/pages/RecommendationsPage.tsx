@@ -159,6 +159,7 @@ export default function RecommendationsPage() {
           pageSize={data.page_size}
           total={data.total}
           noun="recommendations"
+          loading={loading}
           onPageChange={setPage}
         />
       )}

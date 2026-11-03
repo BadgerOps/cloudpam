@@ -209,6 +209,7 @@ export default function DriftPage() {
           pageSize={data.page_size}
           total={data.total}
           noun="drift items"
+          loading={loading}
           onPageChange={setPage}
         />
       )}

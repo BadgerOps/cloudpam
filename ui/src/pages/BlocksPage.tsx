@@ -286,7 +286,7 @@ export default function BlocksPage() {
         </div>
       )}
 
-      <Pager page={page} pageSize={pageSize} total={total} noun="blocks" onPageChange={setPage} />
+      <Pager page={page} pageSize={pageSize} total={total} noun="blocks" loading={loading} onPageChange={setPage} />
 
       {/* Edit Modal */}
       {editBlock && (

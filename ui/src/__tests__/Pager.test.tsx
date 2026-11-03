@@ -33,6 +33,17 @@ describe('Pager', () => {
     expect(onPageChange).toHaveBeenCalledWith(3)
   })
 
+  it('disables stepping while a request is pending', () => {
+    const onPageChange = vi.fn()
+    render(<Pager page={2} pageSize={50} total={120} noun="items" loading onPageChange={onPageChange} />)
+
+    expect(screen.getByText('Showing 51-100 of 120 items')).toBeTruthy()
+    expect((screen.getByText('Previous') as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByText('Next') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByText('Next'))
+    expect(onPageChange).not.toHaveBeenCalled()
+  })
+
   it('renders nothing when there are no items', () => {
     const { container } = render(
       <Pager page={1} pageSize={50} total={0} noun="items" onPageChange={() => {}} />,

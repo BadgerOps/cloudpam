@@ -86,7 +86,7 @@ export default function AuditPage() {
             ))}
           </div>
 
-          <Pager page={page} pageSize={pageSize} total={total} noun="events" onPageChange={setPage} />
+          <Pager page={page} pageSize={pageSize} total={total} noun="events" loading={loading} onPageChange={setPage} />
         </>
       )}
     </div>
