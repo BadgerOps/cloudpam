@@ -30,7 +30,8 @@ type UsagePoint struct {
 
 // ProjectGrowth fits a least-squares line through the usage points inside
 // the window ending at now and extrapolates it to a runway and a forecast.
-// The last point is taken as the current usage.
+// The last point is taken as the current usage; a pool already at capacity
+// is exhausted whatever its history.
 func ProjectGrowth(points []UsagePoint, totalIPs int64, now time.Time) domain.GrowthProjection {
 	windowStart := now.AddDate(0, 0, -ProjectionWindowDays)
 	proj := domain.GrowthProjection{
@@ -48,6 +49,13 @@ func ProjectGrowth(points []UsagePoint, totalIPs int64, now time.Time) domain.Gr
 	}
 	sort.Slice(window, func(i, j int) bool { return window[i].At.Before(window[j].At) })
 	proj.SampleCount = len(window)
+	if len(window) > 0 && window[len(window)-1].UsedIPs >= totalIPs {
+		var zero float64
+		proj.Status = domain.ProjectionExhausted
+		proj.RunwayDays = &zero
+		proj.Forecast = forecast(window[len(window)-1].UsedIPs, 0, totalIPs)
+		return proj
+	}
 	if len(window) < 2 {
 		return proj
 	}

@@ -123,6 +123,8 @@ const (
 	ProjectionNoGrowth ProjectionStatus = "no_growth"
 	// ProjectionInsufficientHistory means the window holds too little history to fit.
 	ProjectionInsufficientHistory ProjectionStatus = "insufficient_history"
+	// ProjectionExhausted means the pool is already at capacity; the runway is zero.
+	ProjectionExhausted ProjectionStatus = "exhausted"
 )
 
 // GrowthProjection extrapolates a pool's recent allocation rate to a runway
@@ -133,8 +135,9 @@ type GrowthProjection struct {
 	WindowStart time.Time        `json:"window_start"`
 	SampleCount int              `json:"sample_count"`
 	// GrowthPerDay is the fitted slope in IPs per day; negative means shrinking.
+	// It is zero when no fit ran.
 	GrowthPerDay float64 `json:"growth_ips_per_day"`
-	// RunwayDays is set only when Status is ok.
+	// RunwayDays is set when Status is ok, and is zero when Status is exhausted.
 	RunwayDays *float64 `json:"runway_days,omitempty"`
 	// ExhaustionDate is set when Status is ok and the runway is at most 100 years.
 	ExhaustionDate *time.Time       `json:"exhaustion_date,omitempty"`

@@ -48,6 +48,18 @@ function ProjectionBody({ projection }: { projection: GrowthProjection }) {
       </p>
     )
   }
+  if (projection.status === 'exhausted') {
+    return (
+      <div>
+        <div className="flex items-baseline justify-between">
+          <span className="text-xs text-gray-500 dark:text-gray-400">Runway</span>
+          <span data-testid="runway" className={`text-lg font-semibold ${runwayTone(0)}`}>None</span>
+        </div>
+        <p className="text-xs text-gray-500 dark:text-gray-400">The pool is fully allocated</p>
+        <Forecast projection={projection} />
+      </div>
+    )
+  }
   if (projection.status === 'no_growth' || projection.runway_days === undefined) {
     return (
       <div>

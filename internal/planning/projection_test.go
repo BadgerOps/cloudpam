@@ -133,17 +133,25 @@ func TestProjectGrowthIgnoresPointsOutsideWindow(t *testing.T) {
 	}
 }
 
-func TestProjectGrowthFullPool(t *testing.T) {
-	points := []UsagePoint{
-		{At: daysAgo(30), UsedIPs: 32768},
-		{At: daysAgo(0), UsedIPs: 65536},
+func TestProjectGrowthFullPoolIsExhausted(t *testing.T) {
+	cases := map[string][]UsagePoint{
+		"filled in the window":    {{At: daysAgo(30), UsedIPs: 32768}, {At: daysAgo(0), UsedIPs: 65536}},
+		"full the whole window":   {{At: daysAgo(60), UsedIPs: 65536}, {At: daysAgo(0), UsedIPs: 65536}},
+		"full with short history": {{At: daysAgo(0), UsedIPs: 65536}},
 	}
-	proj := ProjectGrowth(points, 65536, projNow)
-	if proj.Status != domain.ProjectionOK || proj.RunwayDays == nil || *proj.RunwayDays != 0 {
-		t.Fatalf("full pool must report zero runway: %+v", proj)
-	}
-	if !proj.ExhaustionDate.Equal(projNow) {
-		t.Errorf("exhaustion_date = %v, want now", proj.ExhaustionDate)
+	for name, points := range cases {
+		t.Run(name, func(t *testing.T) {
+			proj := ProjectGrowth(points, 65536, projNow)
+			if proj.Status != domain.ProjectionExhausted || proj.RunwayDays == nil || *proj.RunwayDays != 0 {
+				t.Fatalf("full pool must report exhausted with zero runway: %+v", proj)
+			}
+			if proj.ExhaustionDate != nil {
+				t.Errorf("exhaustion_date = %v, want omitted for a pool already full", proj.ExhaustionDate)
+			}
+			if len(proj.Forecast) != 3 || proj.Forecast[2].Utilization != 100 {
+				t.Errorf("forecast = %+v, want 100%% at every horizon", proj.Forecast)
+			}
+		})
 	}
 }
 

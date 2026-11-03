@@ -79,6 +79,26 @@ describe('PoolRunway', () => {
     expect(screen.getByTestId('growth-forecast')).toBeTruthy()
   })
 
+  it('shows no runway when the pool is already full', async () => {
+    stubStats(() => jsonResponse({
+      ...baseStats,
+      projection: projection({
+        status: 'exhausted',
+        growth_ips_per_day: 0,
+        runway_days: 0,
+        exhaustion_date: undefined,
+        forecast: [3, 6, 12].map(months => ({ months, used_ips: 65536, utilization: 100 })),
+      }),
+    }))
+    render(<PoolRunway poolId={7} />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('runway').textContent).toBe('None')
+    })
+    expect(screen.getByText('The pool is fully allocated')).toBeTruthy()
+    expect(screen.queryByText(/unbounded/)).toBeNull()
+  })
+
   it('explains when the pool has too little history', async () => {
     stubStats(() => jsonResponse({
       ...baseStats,

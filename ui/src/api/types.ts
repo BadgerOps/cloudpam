@@ -78,7 +78,7 @@ export interface PoolStats {
   projection?: GrowthProjection
 }
 
-export type ProjectionStatus = 'ok' | 'no_growth' | 'insufficient_history'
+export type ProjectionStatus = 'ok' | 'no_growth' | 'insufficient_history' | 'exhausted'
 
 export interface ProjectedUsage {
   months: number
