@@ -14,14 +14,14 @@ type ProviderSource interface {
 }
 
 // Manager resolves the configuration from the settings store on every call
-// and caches the last OpenAI provider, rebuilding it when the resolved
-// configuration differs. The store stays the source of truth.
+// and caches the last provider, rebuilding it when the resolved configuration
+// differs. The store stays the source of truth.
 type Manager struct {
 	resolver *Resolver
 
 	mu       sync.Mutex
 	cfg      Config
-	provider *OpenAIProvider
+	provider Provider
 }
 
 // NewManager creates a Manager over resolver.
@@ -40,7 +40,7 @@ func (m *Manager) Provider(ctx context.Context) (Provider, Resolved, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.provider == nil || m.cfg != resolved.Config {
-		m.provider = NewOpenAIProvider(resolved.Config)
+		m.provider = NewProvider(resolved.Config)
 		m.cfg = resolved.Config
 	}
 	return m.provider, resolved, err

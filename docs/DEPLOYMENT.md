@@ -1057,6 +1057,7 @@ config:
   CLOUDPAM_LOG_LEVEL: ""             # info
   CLOUDPAM_TRACING_ENABLED: ""       # false
   CLOUDPAM_TRACING_ENDPOINT: ""      # http://localhost:4318
+  CLOUDPAM_LLM_PROVIDER: ""          # openai (or anthropic)
   CLOUDPAM_LLM_ENDPOINT: ""          # OpenAI
   CLOUDPAM_LLM_MODEL: ""             # gpt-4o
   RATE_LIMIT_RPS: ""                 # 100
@@ -1179,9 +1180,11 @@ Three things to know behind an ingress:
 
 Set `CLOUDPAM_OIDC_ENCRYPTION_KEY` before you configure an OIDC provider. Without it the server generates a key on every start, and saved provider secrets stop decrypting after a restart. The same key protects AI provider API keys saved from Configuration → AI Provider; without it that page cannot store an API key (use `CLOUDPAM_LLM_API_KEY` instead). The chart never generates this key, because a key generated at render time would rotate on every `helm template` run under tools such as Argo CD.
 
-The `CLOUDPAM_LLM_*` variables are the fallback for AI planning: an endpoint, model, max tokens, or temperature saved on the Configuration → AI Provider page overrides the matching variable, field by field, and takes effect on every replica without a restart. The API key follows the endpoint instead, as described next.
+The `CLOUDPAM_LLM_*` variables are the fallback for AI planning: a provider kind, endpoint, model, max tokens, or temperature saved on the Configuration → AI Provider page overrides the matching variable, field by field, and takes effect on every replica without a restart. The API key follows the endpoint instead, as described next.
 
-The API key is bound to its endpoint. `CLOUDPAM_LLM_API_KEY` is sent only when the endpoint comes from `CLOUDPAM_LLM_ENDPOINT` or the built-in default; an endpoint saved on the page uses only a key saved on the page, and runs without a key otherwise. Changing or clearing a saved endpoint while a saved key exists requires re-entering the key or clearing it in the same save. These rules stop a key from following an endpoint change silently, but they are not a permission boundary: anyone with the `settings:write` permission decides which endpoint receives the configured key, so treat `settings:write` as equivalent to access to that key.
+`CLOUDPAM_LLM_PROVIDER` selects the protocol: `openai` (the default; any OpenAI-compatible API such as OpenAI, Azure, Ollama or vLLM, with the endpoint including `/v1`) or `anthropic` (the Messages API; the endpoint is the base URL, `https://api.anthropic.com` by default, and a key is always required). The temperature applies to OpenAI-compatible providers only; the Messages API version CloudPAM pins rejects sampling parameters, so Claude models sample with their default.
+
+The API key is bound to its endpoint and provider kind. `CLOUDPAM_LLM_API_KEY` is sent only when both come from the environment or the built-in defaults; an endpoint or kind saved on the page uses only a key saved on the page, and an OpenAI-compatible endpoint runs without a key otherwise. Changing or clearing a saved endpoint or kind while a saved key exists requires re-entering the key or clearing it in the same save. These rules stop a key from following an endpoint change silently, but they are not a permission boundary: anyone with the `settings:write` permission decides which endpoint receives the configured key, so treat `settings:write` as equivalent to access to that key.
 
 ### Install the agent
 

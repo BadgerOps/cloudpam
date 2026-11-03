@@ -46,6 +46,30 @@ func TestManagerReusesProviderWhenConfigUnchanged(t *testing.T) {
 	}
 }
 
+func TestManagerSwitchesProtocolWhenStoredKindChanges(t *testing.T) {
+	src := &mutableSource{doc: domain.AIProviderSettings{APIKeyEncrypted: "enc(k)"}}
+	mgr := NewManager(NewResolver(defaultEnv(), src, fakeDecrypt))
+
+	p1, _, err := mgr.Provider(context.Background())
+	if err != nil {
+		t.Fatalf("Provider: %v", err)
+	}
+	if p1.Name() != ProviderOpenAI {
+		t.Fatalf("default provider = %q, want %q", p1.Name(), ProviderOpenAI)
+	}
+	src.set(domain.AIProviderSettings{Provider: ProviderAnthropic, APIKeyEncrypted: "enc(k)"})
+	p2, r2, err := mgr.Provider(context.Background())
+	if err != nil {
+		t.Fatalf("Provider: %v", err)
+	}
+	if p2.Name() != ProviderAnthropic || !p2.Available() {
+		t.Fatalf("provider after kind change = %q available=%v, want an available %q", p2.Name(), p2.Available(), ProviderAnthropic)
+	}
+	if r2.Sources.Provider != domain.AISettingSourceDatabase {
+		t.Fatalf("provider source = %q, want database", r2.Sources.Provider)
+	}
+}
+
 func TestManagerRebuildsProviderWhenStoredConfigChanges(t *testing.T) {
 	src := &mutableSource{doc: domain.AIProviderSettings{Endpoint: "http://a/v1", Model: "m1"}}
 	mgr := NewManager(NewResolver(defaultEnv(), src, fakeDecrypt))

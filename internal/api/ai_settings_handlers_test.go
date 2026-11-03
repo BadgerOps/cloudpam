@@ -240,6 +240,7 @@ func TestAISettingsGetDefaultsWithEnvFallback(t *testing.T) {
 	}
 	got := decodeAISettings(t, rr)
 	want := domain.AIProviderSettingSources{
+		Provider: domain.AISettingSourceDefault,
 		Endpoint: domain.AISettingSourceDefault, Model: domain.AISettingSourceEnvironment,
 		APIKey: domain.AISettingSourceEnvironment, MaxTokens: domain.AISettingSourceDefault,
 		Temperature: domain.AISettingSourceDefault,

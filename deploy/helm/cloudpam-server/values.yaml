@@ -77,12 +77,15 @@ config:
   CLOUDPAM_TRACING_ENDPOINT: ""      # http://localhost:4318
   CLOUDPAM_TRACING_SAMPLE_RATE: ""   # 1.0, greater than 0 and at most 1
 
-  # AI planning over an OpenAI-compatible API. On when CLOUDPAM_LLM_ENDPOINT or
-  # secrets.CLOUDPAM_LLM_API_KEY is set. An endpoint with no key is authless
-  # mode (Ollama, vLLM). Admins can also configure the provider from the
-  # Configuration page; storing an API key there needs
+  # AI planning. CLOUDPAM_LLM_PROVIDER picks the protocol: openai (any
+  # OpenAI-compatible API) or anthropic (the Messages API). On when
+  # CLOUDPAM_LLM_ENDPOINT or secrets.CLOUDPAM_LLM_API_KEY is set. An OpenAI
+  # endpoint with no key is authless mode (Ollama, vLLM); anthropic always
+  # needs the key. Admins can also configure the provider and fallback
+  # providers from the Configuration page; storing an API key there needs
   # secrets.CLOUDPAM_OIDC_ENCRYPTION_KEY.
-  CLOUDPAM_LLM_ENDPOINT: ""          # OpenAI
+  CLOUDPAM_LLM_PROVIDER: ""          # openai
+  CLOUDPAM_LLM_ENDPOINT: ""          # https://api.openai.com/v1 or https://api.anthropic.com
   CLOUDPAM_LLM_MODEL: ""             # gpt-4o
   CLOUDPAM_LLM_MAX_TOKENS: ""        # 4096
   CLOUDPAM_LLM_TEMPERATURE: ""       # 0.7

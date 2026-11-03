@@ -158,9 +158,41 @@ func TestResolverPrecedence(t *testing.T) {
 			},
 			wantKey: true,
 		},
+		// The kind selects the default host, so it binds the env key like the endpoint.
+		{
+			name:    "key binding: env provider kind and env key use the env key",
+			env:     Config{Provider: ProviderAnthropic, APIKey: "env-key", Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
+			wantCfg: Config{Provider: ProviderAnthropic, APIKey: "env-key", Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
+			wantSources: domain.AIProviderSettingSources{
+				Provider: domain.AISettingSourceEnvironment, Endpoint: domain.AISettingSourceDefault, Model: domain.AISettingSourceDefault,
+				APIKey: domain.AISettingSourceEnvironment, MaxTokens: domain.AISettingSourceDefault,
+				Temperature: domain.AISettingSourceDefault,
+			},
+			wantKey: true,
+		},
+		{
+			name:    "key binding: database provider kind never receives the env key",
+			env:     Config{APIKey: "env-key", Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
+			doc:     &domain.AIProviderSettings{Provider: ProviderAnthropic},
+			wantCfg: Config{Provider: ProviderAnthropic, Model: DefaultModel, MaxTokens: DefaultMaxTokens, Temperature: DefaultTemperature},
+			wantSources: domain.AIProviderSettingSources{
+				Provider: domain.AISettingSourceDatabase, Endpoint: domain.AISettingSourceDefault, Model: domain.AISettingSourceDefault,
+				APIKey: domain.AISettingSourceNone, MaxTokens: domain.AISettingSourceDefault,
+				Temperature: domain.AISettingSourceDefault,
+			},
+			wantKey: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Rows written before the provider kind existed leave it unset,
+			// which resolves to the OpenAI-compatible default.
+			if tt.wantCfg.Provider == "" {
+				tt.wantCfg.Provider = DefaultProvider
+			}
+			if tt.wantSources.Provider == "" {
+				tt.wantSources.Provider = domain.AISettingSourceDefault
+			}
 			r := NewResolver(tt.env, &fakeSettingsSource{doc: tt.doc}, fakeDecrypt)
 			got, err := r.Resolve(context.Background())
 			if err != nil {
@@ -334,6 +366,7 @@ func TestResolvedFingerprint(t *testing.T) {
 		name string
 		res  Resolved
 	}{
+		{"provider kind", resolve(t, env, &domain.AIProviderSettings{Provider: ProviderAnthropic})},
 		{"endpoint", resolve(t, env, &domain.AIProviderSettings{Endpoint: "http://db:11434/v1"})},
 		{"model", resolve(t, env, &domain.AIProviderSettings{Model: "other"})},
 		{"key source", withDBKey},

@@ -33,6 +33,7 @@ const (
 // Zero values mean "not set", so the environment or built-in default applies.
 // It holds the API key ciphertext and is never returned by the API.
 type AIProviderSettings struct {
+	Provider        string     `json:"provider"` // llm.ProviderKinds value; "" = not set
 	Endpoint        string     `json:"endpoint"`
 	Model           string     `json:"model"`
 	MaxTokens       int64      `json:"max_tokens"`            // 0 = not set
@@ -56,7 +57,7 @@ func DefaultAIProviderSettings() AIProviderSettings {
 
 // HasStoredValues reports whether any provider field is set in the document.
 func (s *AIProviderSettings) HasStoredValues() bool {
-	return s.Endpoint != "" || s.Model != "" || s.MaxTokens != 0 || s.Temperature != nil || s.APIKeyEncrypted != ""
+	return s.Provider != "" || s.Endpoint != "" || s.Model != "" || s.MaxTokens != 0 || s.Temperature != nil || s.APIKeyEncrypted != ""
 }
 
 // NormalizeAIProviderSettings trims strings, clamps numeric fields into their
@@ -66,6 +67,7 @@ func NormalizeAIProviderSettings(s *AIProviderSettings) *AIProviderSettings {
 		d := DefaultAIProviderSettings()
 		return &d
 	}
+	s.Provider = strings.ToLower(strings.TrimSpace(s.Provider))
 	s.Endpoint = strings.TrimSpace(s.Endpoint)
 	s.Model = strings.TrimSpace(s.Model)
 	s.APIKeyEncrypted = strings.TrimSpace(s.APIKeyEncrypted)
@@ -105,6 +107,7 @@ func NormalizeAIProviderSettings(s *AIProviderSettings) *AIProviderSettings {
 
 // AIProviderSettingSources reports where each effective value came from.
 type AIProviderSettingSources struct {
+	Provider    string `json:"provider"`
 	Endpoint    string `json:"endpoint"`
 	Model       string `json:"model"`
 	APIKey      string `json:"api_key"`
@@ -115,6 +118,7 @@ type AIProviderSettingSources struct {
 // AIProviderSettingsResponse is the API representation of the effective AI
 // provider configuration. It never carries the API key.
 type AIProviderSettingsResponse struct {
+	Provider               string                   `json:"provider"`
 	Endpoint               string                   `json:"endpoint"`
 	Model                  string                   `json:"model"`
 	MaxTokens              int64                    `json:"max_tokens"`
@@ -130,6 +134,7 @@ type AIProviderSettingsResponse struct {
 
 // UpdateAIProviderSettingsRequest is the PATCH body. Omitted fields are kept.
 type UpdateAIProviderSettingsRequest struct {
+	Provider         *string  `json:"provider,omitempty"`    // "" clears
 	Endpoint         *string  `json:"endpoint,omitempty"`    // "" clears the stored value
 	Model            *string  `json:"model,omitempty"`       // "" clears
 	MaxTokens        *int64   `json:"max_tokens,omitempty"`  // 0 clears

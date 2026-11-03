@@ -32,14 +32,14 @@ type Resolved struct {
 }
 
 // Fingerprint identifies the configuration a test result applies to: a hex
-// SHA-256 over the effective endpoint, model and key source, plus the stored
-// key ciphertext when the key comes from the database, so re-saving the key
-// changes it. No key material, plaintext or hashed, goes in. A rotation of
+// SHA-256 over the effective provider kind, endpoint, model and key source,
+// plus the stored key ciphertext when the key comes from the database, so
+// re-saving the key changes it. No key material, plaintext or hashed, goes in. A rotation of
 // CLOUDPAM_LLM_API_KEY with the same endpoint and model is therefore not
 // detected and the earlier test result stays in effect; that is accepted.
 func (r Resolved) Fingerprint() string {
 	h := sha256.New()
-	parts := []string{r.Config.Endpoint, r.Config.Model, r.Sources.APIKey}
+	parts := []string{r.Config.Provider, r.Config.Endpoint, r.Config.Model, r.Sources.APIKey}
 	if r.Sources.APIKey == domain.AISettingSourceDatabase {
 		parts = append(parts, r.Stored.APIKeyEncrypted)
 	}
@@ -55,10 +55,11 @@ func (r Resolved) Fingerprint() string {
 // Precedence per field: non-empty stored value, then environment, then the
 // built-in default.
 //
-// The API key is bound to its endpoint: the environment key is used only when
-// the effective endpoint comes from the environment or the built-in default.
-// A database endpoint only ever receives a database key, so whoever can set
-// the endpoint cannot redirect CLOUDPAM_LLM_API_KEY to a host of their choice.
+// The API key is bound to its endpoint and provider kind: the environment key
+// is used only when both come from the environment or the built-in default.
+// A database endpoint or kind only ever receives a database key, so whoever
+// can set either cannot redirect CLOUDPAM_LLM_API_KEY to a host of their
+// choice (the kind selects the default host).
 type Resolver struct {
 	env     Config
 	source  SettingsSource
@@ -93,6 +94,7 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 	cfg := &out.Config
 	src := &out.Sources
 
+	cfg.Provider, src.Provider = pickString(stored.Provider, r.env.Provider, DefaultProvider)
 	cfg.Endpoint, src.Endpoint = pickString(stored.Endpoint, r.env.Endpoint, "")
 	cfg.Model, src.Model = pickString(stored.Model, r.env.Model, DefaultModel)
 
@@ -127,7 +129,7 @@ func (r *Resolver) Resolve(ctx context.Context) (Resolved, error) {
 		}
 	}
 	if cfg.APIKey == "" {
-		if r.env.APIKey != "" && src.Endpoint != domain.AISettingSourceDatabase {
+		if r.env.APIKey != "" && src.Endpoint != domain.AISettingSourceDatabase && src.Provider != domain.AISettingSourceDatabase {
 			cfg.APIKey, src.APIKey = r.env.APIKey, domain.AISettingSourceEnvironment
 		} else {
 			src.APIKey = domain.AISettingSourceNone

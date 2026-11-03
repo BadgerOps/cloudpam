@@ -31,7 +31,7 @@ func NewAnthropicProvider(cfg Config) *AnthropicProvider {
 	return &AnthropicProvider{cfg: cfg, client: newHTTPClient()}
 }
 
-func (p *AnthropicProvider) Name() string { return "anthropic" }
+func (p *AnthropicProvider) Name() string { return ProviderAnthropic }
 
 // Available reports whether a key is configured. The Messages API has no
 // authless mode.

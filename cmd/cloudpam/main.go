@@ -576,6 +576,7 @@ func logAIPlanningStatus(logger observability.Logger, providers llm.ProviderSour
 		return
 	}
 	logger.Info("ai planning enabled",
+		"provider", resolved.Config.Provider,
 		"model", resolved.Config.Model,
 		"endpoint", llm.RedactEndpoint(resolved.Config.Endpoint),
 		"source", aiConfigSource(resolved.Sources))
@@ -583,12 +584,12 @@ func logAIPlanningStatus(logger observability.Logger, providers llm.ProviderSour
 
 // aiConfigSource summarizes where the effective AI configuration came from.
 func aiConfigSource(s domain.AIProviderSettingSources) string {
-	for _, src := range []string{s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
+	for _, src := range []string{s.Provider, s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
 		if src == domain.AISettingSourceDatabase {
 			return domain.AISettingSourceDatabase
 		}
 	}
-	for _, src := range []string{s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
+	for _, src := range []string{s.Provider, s.Endpoint, s.Model, s.APIKey, s.MaxTokens, s.Temperature} {
 		if src == domain.AISettingSourceEnvironment {
 			return domain.AISettingSourceEnvironment
 		}

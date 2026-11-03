@@ -104,7 +104,7 @@ func NewOpenAIProvider(cfg Config) *OpenAIProvider {
 	}
 }
 
-func (p *OpenAIProvider) Name() string { return "openai" }
+func (p *OpenAIProvider) Name() string { return ProviderOpenAI }
 func (p *OpenAIProvider) Available() bool {
 	return strings.TrimSpace(p.cfg.APIKey) != "" || strings.TrimSpace(p.cfg.Endpoint) != ""
 }
