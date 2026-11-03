@@ -512,3 +512,38 @@ func TestDiscover_PropagatesEndpointFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscover_ClipsOversizedErrorBody(t *testing.T) {
+	body := strings.Repeat("x", 1<<20)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/compute/v1/projects/test-project/global/networks", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(body))
+	})
+	for _, path := range []string{
+		"/compute/v1/projects/test-project/aggregated/subnetworks",
+		"/compute/v1/projects/test-project/aggregated/addresses",
+	} {
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{}`))
+		})
+	}
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	collector := NewWithHTTPClient(&http.Client{
+		Transport: &rewriteTransport{base: server.Client().Transport, baseURL: server.URL},
+	})
+
+	_, err := collector.Discover(context.Background(), domain.Account{ID: 1, ExternalID: "test-project"})
+	if err == nil {
+		t.Fatal("expected discovery error, got nil")
+	}
+	msg := err.Error()
+	if len(msg) > 1024 {
+		t.Fatalf("error length = %d, want at most 1024", len(msg))
+	}
+	if !strings.Contains(msg, "http 403") || !strings.HasSuffix(msg, "... (truncated)") {
+		t.Fatalf("error %q lacks status or truncation marker", msg)
+	}
+}
