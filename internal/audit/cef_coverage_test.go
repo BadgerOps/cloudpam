@@ -488,6 +488,10 @@ type covStubLogger struct {
 	gotType  string
 	gotResID string
 	logErr   error
+
+	gotBefore time.Time
+	deleted   int64
+	deleteErr error
 }
 
 func (l *covStubLogger) Log(_ context.Context, event *AuditEvent) error {
@@ -507,6 +511,11 @@ func (l *covStubLogger) GetByResource(_ context.Context, resourceType, resourceI
 	l.gotType = resourceType
 	l.gotResID = resourceID
 	return l.byRes, l.resErr
+}
+
+func (l *covStubLogger) DeleteOlderThan(_ context.Context, before time.Time) (int64, error) {
+	l.gotBefore = before
+	return l.deleted, l.deleteErr
 }
 
 func TestCovForwardingAuditLoggerDelegatesList(t *testing.T) {

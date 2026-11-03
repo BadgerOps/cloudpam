@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Shield, Lock, Key, Globe, AlertCircle, Loader2, Fingerprint, UserCog } from 'lucide-react'
+import { Shield, Lock, Key, Globe, AlertCircle, Loader2, Fingerprint, UserCog, ScrollText } from 'lucide-react'
 import { useSecuritySettings } from '../hooks/useSettings'
 import type { SecuritySettings } from '../hooks/useSettings'
 import { useToast } from '../hooks/useToast'
@@ -71,6 +71,10 @@ const NUMBER_FIELDS: Record<NumberKey, NumberSpec> = {
     hint: 'Set to 0 to disable account lockout',
   },
   account_lockout_cooldown_minutes: { label: 'Lockout Cooldown (minutes)', min: 1, max: 1440, fallback: 15 },
+  audit_retention_days: {
+    label: 'Retention (days)', min: 0, max: 3650, fallback: 0,
+    hint: 'Events older than this are purged hourly. 0 keeps events forever. Export the log from the Audit page first if you need a copy.',
+  },
 }
 
 const INPUT_CLASS = 'w-full px-3 py-2 border rounded-lg text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white focus:ring-2 focus:ring-blue-500'
@@ -271,6 +275,16 @@ export default function SecuritySettingsPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className={CARD_CLASS}>
+          <h2 className={CARD_TITLE_CLASS}>
+            <ScrollText className="w-5 h-5 text-amber-500" />
+            Audit Log
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {numberField('audit_retention_days')}
           </div>
         </div>
 

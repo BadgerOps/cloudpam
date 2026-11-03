@@ -9,6 +9,9 @@ const (
 	MaxLoginRateLimitPerMin = 60
 )
 
+// MaxAuditRetentionDays bounds audit_retention_days.
+const MaxAuditRetentionDays = 3650
+
 // SecuritySettings holds runtime security configuration.
 type SecuritySettings struct {
 	SessionDurationHours          int                 `json:"session_duration_hours"`
@@ -24,6 +27,12 @@ type SecuritySettings struct {
 	APIKeyMaxLifetimeDays         int                 `json:"api_key_max_lifetime_days"`
 	APIKeyRotationReminderDays    int                 `json:"api_key_rotation_reminder_days"`
 	APIKeyAllowedScopesByRole     map[string][]string `json:"api_key_allowed_scopes_by_role"`
+	// AuditRetentionDays is the age after which the retention job purges
+	// audit events. 0 keeps events forever and is the default on every
+	// install, because a store with no saved settings document also reports
+	// the defaults and an upgrade must never purge history until an operator
+	// sets a value.
+	AuditRetentionDays int `json:"audit_retention_days"`
 }
 
 // DefaultSecuritySettings returns safe defaults.
@@ -42,6 +51,7 @@ func DefaultSecuritySettings() SecuritySettings {
 		APIKeyMaxLifetimeDays:         0,
 		APIKeyRotationReminderDays:    14,
 		APIKeyAllowedScopesByRole:     DefaultAPIKeyAllowedScopesByRole(),
+		AuditRetentionDays:            0,
 	}
 }
 
@@ -89,6 +99,9 @@ func NormalizeSecuritySettings(settings *SecuritySettings) *SecuritySettings {
 	}
 	if settings.APIKeyRotationReminderDays < 0 {
 		settings.APIKeyRotationReminderDays = DefaultSecuritySettings().APIKeyRotationReminderDays
+	}
+	if settings.AuditRetentionDays < 0 {
+		settings.AuditRetentionDays = 0
 	}
 	defaultScopes := DefaultAPIKeyAllowedScopesByRole()
 	if settings.APIKeyAllowedScopesByRole == nil {

@@ -119,11 +119,12 @@ func (s *PostgresAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Au
 		argIdx++
 	}
 
-	// Count total
 	var total int
-	countQuery := "SELECT COUNT(*) FROM audit_events WHERE " + where
-	if err := s.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, err
+	if !opts.SkipCount {
+		countQuery := "SELECT COUNT(*) FROM audit_events WHERE " + where
+		if err := s.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	// Apply pagination
@@ -134,8 +135,13 @@ func (s *PostgresAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Au
 		opts.Limit = 1000
 	}
 
+	if opts.After != nil {
+		where += " AND (timestamp, id) < ($" + itoa(argIdx) + ", $" + itoa(argIdx+1) + ")"
+		args = append(args, opts.After.Timestamp, opts.After.ID)
+		argIdx += 2
+	}
 	query := "SELECT id, timestamp, actor_id, actor_type, action, resource_type, resource_id, resource_name, changes, request_id, actor_ip, status_code FROM audit_events WHERE " + where +
-		" ORDER BY timestamp DESC LIMIT $" + itoa(argIdx) + " OFFSET $" + itoa(argIdx+1)
+		" ORDER BY timestamp DESC, id DESC LIMIT $" + itoa(argIdx) + " OFFSET $" + itoa(argIdx+1)
 	args = append(args, opts.Limit, opts.Offset)
 
 	rows, err := s.pool.Query(ctx, query, args...)
@@ -167,6 +173,15 @@ func (s *PostgresAuditLogger) GetByResource(ctx context.Context, resourceType, r
 	defer rows.Close()
 
 	return scanAuditEvents(rows)
+}
+
+// DeleteOlderThan removes every event with a timestamp before the cutoff.
+func (s *PostgresAuditLogger) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM audit_events WHERE organization_id = $1 AND timestamp < $2`, s.orgID, before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func scanAuditEvents(rows pgx.Rows) ([]*AuditEvent, error) {

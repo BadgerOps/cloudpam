@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Sink receives a copy of an audit event after it has been persisted.
@@ -71,4 +72,12 @@ func (f *ForwardingAuditLogger) GetByResource(ctx context.Context, resourceType,
 		return nil, fmt.Errorf("primary audit logger is nil")
 	}
 	return f.primary.GetByResource(ctx, resourceType, resourceID)
+}
+
+// DeleteOlderThan delegates retention purges to the primary logger.
+func (f *ForwardingAuditLogger) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
+	if f.primary == nil {
+		return 0, fmt.Errorf("primary audit logger is nil")
+	}
+	return f.primary.DeleteOlderThan(ctx, before)
 }

@@ -42,6 +42,19 @@ type ListOptions struct {
 	ResourceID string
 	Since      *time.Time
 	Until      *time.Time
+	// After resumes the newest-first listing just past this event. Unlike
+	// Offset, events logged or purged meanwhile cannot shift the page
+	// boundary. The total still counts every match.
+	After *Cursor
+	// SkipCount returns 0 as the total instead of counting every match, for
+	// a caller paging through a listing whose total it already has.
+	SkipCount bool
+}
+
+// Cursor names an event's place in the newest-first listing order.
+type Cursor struct {
+	Timestamp time.Time
+	ID        string
 }
 
 // AuditLogger defines the interface for audit logging operations.
@@ -54,6 +67,10 @@ type AuditLogger interface {
 
 	// GetByResource retrieves audit events for a specific resource.
 	GetByResource(ctx context.Context, resourceType, resourceID string) ([]*AuditEvent, error)
+
+	// DeleteOlderThan removes every event with a timestamp before the cutoff
+	// and returns how many it removed.
+	DeleteOlderThan(ctx context.Context, before time.Time) (int64, error)
 }
 
 // Valid actions for audit events.

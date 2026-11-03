@@ -53,7 +53,7 @@ SQLite migrations run through `0021_network_objects_relationships.sql`. Postgres
 
 `pool_utilization_cache` exists in SQL and is never written from Go.
 
-Audit events are never purged on any backend. Retention enforcement is tracked in #292.
+Audit retention is enforced by `internal/audit/retention.go` from the `audit_retention_days` security setting.
 
 ---
 

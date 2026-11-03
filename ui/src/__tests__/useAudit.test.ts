@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useAudit } from '../hooks/useAudit'
+import { useAudit, auditExportUrl } from '../hooks/useAudit'
 import { get } from '../api/client'
 import type { AuditListResponse } from '../api/types'
 
@@ -37,6 +37,17 @@ function response(offset: number): AuditListResponse {
     offset,
   }
 }
+
+describe('auditExportUrl', () => {
+  it('carries the active filters into the download', () => {
+    expect(auditExportUrl('csv', 'create', 'pool')).toBe('/api/v1/audit/export?format=csv&action=create&resource_type=pool')
+  })
+
+  it('omits unset filters', () => {
+    expect(auditExportUrl('json')).toBe('/api/v1/audit/export?format=json')
+    expect(auditExportUrl('csv', undefined, 'account')).toBe('/api/v1/audit/export?format=csv&resource_type=account')
+  })
+})
 
 describe('useAudit', () => {
   beforeEach(() => {

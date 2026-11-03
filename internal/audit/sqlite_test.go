@@ -169,3 +169,109 @@ func TestSQLiteListFiltersByResourceID(t *testing.T) {
 		}
 	}
 }
+
+func TestSQLiteAuditLoggerDeleteOlderThan(t *testing.T) {
+	ctx := context.Background()
+	logger := NewSQLiteAuditLoggerFromDB(newAuditTestDB(t))
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+
+	for _, ts := range []time.Time{cutoff.Add(-48 * time.Hour), cutoff.Add(-time.Second), cutoff, cutoff.Add(time.Hour)} {
+		if err := logger.Log(ctx, &AuditEvent{Timestamp: ts, Actor: "tester", Action: ActionCreate, ResourceType: ResourcePool, ResourceID: "1"}); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	deleted, err := logger.DeleteOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+
+	events, total, err := logger.List(ctx, ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if total != 2 || len(events) != 2 {
+		t.Fatalf("remaining = %d/%d, want 2", len(events), total)
+	}
+	for _, e := range events {
+		if e.Timestamp.Before(cutoff) {
+			t.Errorf("event at %s survived a purge with cutoff %s", e.Timestamp, cutoff)
+		}
+	}
+}
+
+func TestSQLiteAuditLoggerDeleteOlderThanComparesChronologically(t *testing.T) {
+	ctx := context.Background()
+	logger := NewSQLiteAuditLoggerFromDB(newAuditTestDB(t))
+	cutoff := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	east := time.FixedZone("UTC+5", 5*60*60)
+
+	keep := []time.Time{
+		cutoff.Add(500 * time.Millisecond),
+		cutoff.Add(time.Hour).In(east),
+	}
+	drop := []time.Time{
+		cutoff.Add(-time.Hour).In(time.FixedZone("UTC-5", -5*60*60)),
+		cutoff.Add(-500 * time.Millisecond),
+	}
+	for _, ts := range append(append([]time.Time{}, keep...), drop...) {
+		if err := logger.Log(ctx, &AuditEvent{Timestamp: ts, Actor: "tester", Action: ActionCreate, ResourceType: ResourcePool, ResourceID: "1"}); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	deleted, err := logger.DeleteOlderThan(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("DeleteOlderThan: %v", err)
+	}
+	if deleted != int64(len(drop)) {
+		t.Fatalf("deleted = %d, want %d", deleted, len(drop))
+	}
+	events, _, err := logger.List(ctx, ListOptions{Limit: 10})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(events) != len(keep) {
+		t.Fatalf("remaining = %d, want %d", len(events), len(keep))
+	}
+	for _, e := range events {
+		if e.Timestamp.Before(cutoff) {
+			t.Errorf("event at %s survived a purge with cutoff %s", e.Timestamp, cutoff)
+		}
+	}
+}
+
+func TestSQLiteListPagesTiedTimestampsWithoutGapsOrRepeats(t *testing.T) {
+	ctx := context.Background()
+	logger := NewSQLiteAuditLoggerFromDB(newAuditTestDB(t))
+	ts := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	const n = 40
+	for i := 0; i < n; i++ {
+		if err := logger.Log(ctx, &AuditEvent{Timestamp: ts, Actor: "tester", Action: ActionCreate, ResourceType: ResourcePool, ResourceID: "1"}); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+	seen := map[string]bool{}
+	for offset := 0; offset < n; offset += 7 {
+		events, _, err := logger.List(ctx, ListOptions{Limit: 7, Offset: offset})
+		if err != nil {
+			t.Fatalf("List: %v", err)
+		}
+		for _, e := range events {
+			if seen[e.ID] {
+				t.Fatalf("event %s returned on two pages", e.ID)
+			}
+			seen[e.ID] = true
+		}
+	}
+	if len(seen) != n {
+		t.Fatalf("paged through %d distinct events, want %d", len(seen), n)
+	}
+}
+
+func TestSQLiteListCursorPagesAcrossAMidListingInsert(t *testing.T) {
+	checkCursorPaging(t, NewSQLiteAuditLoggerFromDB(newAuditTestDB(t)))
+}

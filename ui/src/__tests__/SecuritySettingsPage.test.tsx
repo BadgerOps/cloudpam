@@ -26,6 +26,7 @@ const settings: SecuritySettings = {
   login_rate_limit_per_minute: 5,
   account_lockout_attempts: 10,
   account_lockout_cooldown_minutes: 15,
+  audit_retention_days: 0,
   trusted_proxies: ['10.0.0.0/8'],
   local_auth_enabled: true,
   api_key_default_expiry_days: 90,
