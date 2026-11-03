@@ -177,7 +177,9 @@ func (s *SQLiteAuditLogger) List(ctx context.Context, opts ListOptions) ([]*Audi
 
 // DeleteOlderThan removes every event with a timestamp before the cutoff.
 func (s *SQLiteAuditLogger) DeleteOlderThan(ctx context.Context, before time.Time) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM audit_logs WHERE timestamp < ?`, before.UTC().Format(time.RFC3339Nano))
+	// Stored timestamps keep their offset and variable fractional digits, so
+	// a text comparison is not chronological.
+	res, err := s.db.ExecContext(ctx, `DELETE FROM audit_logs WHERE julianday(timestamp) < julianday(?)`, before.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
 	}
