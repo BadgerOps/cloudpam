@@ -83,8 +83,14 @@ export function useDrift() {
   }, [])
 
   // applySuggestion runs the item's suggested action through the existing
-  // discovery or pool endpoint, then resolves the item.
-  const applySuggestion = useCallback(async (item: DriftItem) => {
+  // discovery or pool endpoint, then resolves the item. The server derives the
+  // suggestion on each read, so it is fetched again first: a pool linked or a
+  // resource changed since the page loaded must not be acted on.
+  const applySuggestion = useCallback(async (shown: DriftItem) => {
+    const item = await get<DriftItem>(`/api/v1/drift/${shown.id}`)
+    if (item.suggested_action !== shown.suggested_action || item.suggested_pool_id !== shown.suggested_pool_id) {
+      throw new Error(`The suggestion changed since the page loaded: ${item.suggestion_reason || 'review the item again'}`)
+    }
     const { suggested_action: action, suggested_pool_id: poolId, resource_id: resourceId } = item
     if (action === 'link_pool' && resourceId && poolId) {
       await post(`/api/v1/discovery/resources/${resourceId}/link`, { pool_id: poolId })

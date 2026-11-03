@@ -48,6 +48,11 @@ function importResponse(created: number, errors: string[] = []): DiscoveryImport
   }
 }
 
+function serve(item: DriftItem): DriftItem {
+  mockGet.mockResolvedValue(item as never)
+  return item
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>(res => {
@@ -110,7 +115,7 @@ describe('useDrift', () => {
     mockPost.mockResolvedValue({} as never)
     const { result } = renderHook(() => useDrift())
 
-    await result.current.applySuggestion(driftItem({ suggested_action: 'link_pool', suggested_pool_id: 3 }))
+    await result.current.applySuggestion(serve(driftItem({ suggested_action: 'link_pool', suggested_pool_id: 3 })))
 
     expect(mockPost.mock.calls).toEqual([
       ['/api/v1/discovery/resources/res-1/link', { pool_id: 3 }],
@@ -122,7 +127,7 @@ describe('useDrift', () => {
     mockPost.mockResolvedValueOnce(importResponse(1) as never).mockResolvedValueOnce({} as never)
     const { result } = renderHook(() => useDrift())
 
-    await result.current.applySuggestion(driftItem({ suggested_action: 'create_pool', suggested_pool_id: 2 }))
+    await result.current.applySuggestion(serve(driftItem({ suggested_action: 'create_pool', suggested_pool_id: 2 })))
 
     expect(mockPost.mock.calls).toEqual([
       ['/api/v1/discovery/import/apply', { account_id: 7, resource_ids: ['res-1'] }],
@@ -135,7 +140,7 @@ describe('useDrift', () => {
     const { result } = renderHook(() => useDrift())
 
     await expect(
-      result.current.applySuggestion(driftItem({ suggested_action: 'create_pool' })),
+      result.current.applySuggestion(serve(driftItem({ suggested_action: 'create_pool' }))),
     ).rejects.toThrow('overlaps')
     expect(mockPost).toHaveBeenCalledTimes(1)
   })
@@ -146,20 +151,33 @@ describe('useDrift', () => {
     const { result } = renderHook(() => useDrift())
 
     await result.current.applySuggestion(
-      driftItem({ type: 'orphaned_pool', resource_id: undefined, pool_id: 9, suggested_action: 'deprecate_pool', suggested_pool_id: 9 }),
+      serve(driftItem({ type: 'orphaned_pool', resource_id: undefined, pool_id: 9, suggested_action: 'deprecate_pool', suggested_pool_id: 9 })),
     )
+
+    expect(mockGet).toHaveBeenCalledWith('/api/v1/drift/drift-1')
 
     expect(mockPatch).toHaveBeenCalledWith('/api/v1/pools/9', { status: 'deprecated' })
     expect(mockPost).toHaveBeenCalledWith('/api/v1/drift/drift-1/resolve', {})
   })
 
-  it('refuses a review suggestion without calling the API', async () => {
+  it('does not deprecate a pool whose suggestion changed since the page loaded', async () => {
+    const shown = driftItem({ type: 'orphaned_pool', resource_id: undefined, pool_id: 9, suggested_action: 'deprecate_pool', suggested_pool_id: 9 })
+    mockGet.mockResolvedValue({ ...shown, suggested_action: 'review', suggested_pool_id: undefined, suggestion_reason: 'an active resource links to this pool again' } as never)
+    const { result } = renderHook(() => useDrift())
+
+    await expect(result.current.applySuggestion(shown)).rejects.toThrow('links to this pool again')
+    expect(mockPatch).not.toHaveBeenCalled()
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
+  it('refuses a review suggestion without changing anything', async () => {
     const { result } = renderHook(() => useDrift())
 
     await expect(
-      result.current.applySuggestion(driftItem({ suggested_action: 'review' })),
-    ).rejects.toThrow()
+      result.current.applySuggestion(serve(driftItem({ suggested_action: 'review' }))),
+    ).rejects.toThrow('no suggestion to apply')
     expect(mockPost).not.toHaveBeenCalled()
+    expect(mockPatch).not.toHaveBeenCalled()
   })
 
   it('stays loading until the newest request settles', async () => {

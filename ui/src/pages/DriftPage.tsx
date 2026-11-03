@@ -100,6 +100,7 @@ export default function DriftPage() {
         err instanceof Error ? err.message : 'Apply failed',
         'error',
       )
+      loadDrifts()
     } finally {
       setApplyingId(null)
     }
