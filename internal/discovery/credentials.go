@@ -235,7 +235,7 @@ func (c *AccountCredentials) Put(ctx context.Context, account domain.Account, re
 	if err != nil {
 		return domain.AccountCredential{}, err
 	}
-	sealed, err := secrets.Encrypt(string(plain), c.key)
+	sealed, err := secrets.EncryptWithAAD(string(plain), c.key, credentialAAD(account.ID))
 	if err != nil {
 		return domain.AccountCredential{}, fmt.Errorf("seal credential: %w", err)
 	}
@@ -258,7 +258,7 @@ func (c *AccountCredentials) load(ctx context.Context, accountID int64) (domain.
 }
 
 func (c *AccountCredentials) unseal(rec domain.AccountCredentialRecord) (CredentialPayload, error) {
-	plain, err := secrets.Decrypt(rec.PayloadEncrypted, c.key)
+	plain, err := secrets.DecryptWithAAD(rec.PayloadEncrypted, c.key, credentialAAD(rec.AccountID))
 	if err != nil {
 		return nil, ErrCredentialUnreadable
 	}
@@ -271,6 +271,12 @@ func (c *AccountCredentials) unseal(rec domain.AccountCredentialRecord) (Credent
 		return nil, ErrCredentialUnreadable
 	}
 	return p, nil
+}
+
+// credentialAAD binds a sealed payload to its account, so a payload copied into
+// another account's row does not open.
+func credentialAAD(accountID int64) []byte {
+	return []byte(fmt.Sprintf("cloudpam:account_credential:%d", accountID))
 }
 
 func (c *AccountCredentials) recordTest(ctx context.Context, rec domain.AccountCredentialRecord, test domain.CredentialTest) error {

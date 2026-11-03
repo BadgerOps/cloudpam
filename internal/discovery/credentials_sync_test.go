@@ -247,6 +247,38 @@ func TestSyncNamesACredentialRejectedDuringDiscover(t *testing.T) {
 	}
 }
 
+func TestACredentialCopiedToAnotherAccountDoesNotOpen(t *testing.T) {
+	f := newSyncFixture(t)
+	ctx := context.Background()
+	owner := createAccount(t, f.ms, "aws")
+	f.storeAWS(t, owner)
+	other, err := f.ms.CreateAccount(ctx, domain.CreateAccount{Key: "aws:other", Name: "other", Provider: "aws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := f.vault.load(ctx, owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.ms.PutAccountCredential(ctx, domain.SealedAccountCredential{
+		AccountID: other.ID, Type: rec.Type, Summary: rec.Summary, PayloadEncrypted: rec.PayloadEncrypted,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := f.svc.TestCredential(ctx, other)
+	if err != nil || res.Status != domain.CredentialTestFailed || res.Error != ErrCredentialUnreadable.Error() {
+		t.Fatalf("TestCredential() = %+v, %v, want failed with %q", res, err, ErrCredentialUnreadable.Error())
+	}
+	job, err := f.svc.Sync(ctx, other)
+	if !errors.Is(err, ErrCredentialUnreadable) || job == nil || job.ErrorMessage != "credential: "+ErrCredentialUnreadable.Error() {
+		t.Fatalf("Sync() = %+v, %v, want the job failed on the unreadable credential", job, err)
+	}
+	if _, err := f.svc.Sync(ctx, owner); err != nil {
+		t.Fatalf("Sync() for the owning account error = %v", err)
+	}
+}
+
 func TestTestCredentialRecordsTheResult(t *testing.T) {
 	f := newSyncFixture(t)
 	account := createAccount(t, f.ms, "aws")

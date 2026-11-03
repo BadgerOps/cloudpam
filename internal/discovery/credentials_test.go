@@ -307,7 +307,7 @@ func TestUnsealFailsClosed(t *testing.T) {
 		}
 	})
 	t.Run("plaintext that is not a request", func(t *testing.T) {
-		sealed, _ := secrets.Encrypt(`{"type":"aws_assume_role"}`, key)
+		sealed, _ := secrets.EncryptWithAAD(`{"type":"aws_assume_role"}`, key, credentialAAD(aws.ID))
 		bad := rec
 		bad.PayloadEncrypted = sealed
 		if _, err := vault.unseal(bad); !errors.Is(err, ErrCredentialUnreadable) {
