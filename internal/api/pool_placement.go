@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,6 +73,9 @@ func validatePoolFields(in domain.CreatePool) *poolFieldError {
 	}
 	if err := validation.ValidateCIDR(in.CIDR); err != nil {
 		return &poolFieldError{Field: "cidr", Value: in.CIDR, Msg: err.Error()}
+	}
+	if in.CIDR != strings.TrimSpace(in.CIDR) {
+		return &poolFieldError{Field: "cidr", Value: in.CIDR, Msg: "cidr has leading or trailing whitespace"}
 	}
 	if in.Type != "" && !domain.IsValidPoolType(in.Type) {
 		return &poolFieldError{Field: "type", Value: string(in.Type), Msg: "invalid pool type", Detail: fmt.Sprintf("valid types: %v", domain.ValidPoolTypes)}

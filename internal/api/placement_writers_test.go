@@ -392,6 +392,7 @@ func TestPlacePool_InvalidFieldIsValidationError(t *testing.T) {
 	root := createRootPool(t, srv, "10.0.0.0/24")
 	for _, in := range []domain.CreatePool{
 		{Name: "tiny", CIDR: "10.0.0.0/31", ParentID: &root.ID},
+		{Name: "padded", CIDR: " 10.0.0.0/26 ", ParentID: &root.ID},
 		{Name: "v6", CIDR: "2001:db8::/32"},
 		{Name: "bad\ttype", CIDR: "10.0.0.0/26", ParentID: &root.ID},
 		{Name: "typed", CIDR: "10.0.0.0/26", ParentID: &root.ID, Type: "wormhole"},

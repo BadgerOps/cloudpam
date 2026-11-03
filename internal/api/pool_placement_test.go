@@ -359,6 +359,7 @@ func TestPlace(t *testing.T) {
 		{"ipv6 top level", siblingsOnly, []poolPlacement{pool("n", "", "2001:db8::/32", nil)}, "", []string{"invalid cidr"}},
 		{"prefix past the bound", siblingsOnly, []poolPlacement{pool("n", "", "10.1.2.0/31", &aID)}, "", []string{"invalid cidr"}},
 		{"non-canonical", siblingsOnly, []poolPlacement{pool("n", "", "10.2.0.1/16", &rootID)}, "", []string{"invalid cidr"}},
+		{"whitespace around the cidr", siblingsOnly, []poolPlacement{pool("n", "", " 10.0.0.0/9 ", nil)}, "", []string{"invalid cidr"}},
 		{"bad type", siblingsOnly, []poolPlacement{{Ref: "n", In: domain.CreatePool{Name: "n", CIDR: "10.2.0.0/16", ParentID: &rootID, Type: "wormhole"}}}, "", []string{"invalid type"}},
 		{"blank name", siblingsOnly, []poolPlacement{{Ref: "n", In: domain.CreatePool{CIDR: "10.2.0.0/16", ParentID: &rootID}}}, "", []string{"invalid name"}},
 		{"a child of an invalid entry is not stored", siblingsOnly, []poolPlacement{
