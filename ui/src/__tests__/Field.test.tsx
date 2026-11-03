@@ -31,6 +31,18 @@ describe('Field', () => {
     expect(screen.queryByText('At least 8')).toBeNull()
   })
 
+  it('labels a control that brings its own id', () => {
+    render(
+      <Field label="Name" hint="Shown in the sidebar">
+        <input id="role-name" />
+      </Field>,
+    )
+
+    const input = screen.getByLabelText('Name')
+    expect(input.id).toBe('role-name')
+    expect(screen.getByText('Shown in the sidebar').id).toBe(input.getAttribute('aria-describedby'))
+  })
+
   it('respects a caller-supplied htmlFor and leaves the child untouched', () => {
     render(
       <Field label="Trusted Proxy CIDRs" htmlFor="proxies">

@@ -1,6 +1,19 @@
+import { useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Modal } from '../components/primitives'
+
+function ControlledForm() {
+  const [open, setOpen] = useState(true)
+  const [first, setFirst] = useState('')
+  const [second, setSecond] = useState('')
+  return (
+    <Modal open={open} title="Edit role" onClose={() => setOpen(false)}>
+      <input aria-label="First" value={first} onChange={e => setFirst(e.target.value)} />
+      <input aria-label="Second" value={second} onChange={e => setSecond(e.target.value)} />
+    </Modal>
+  )
+}
 
 function renderModal(open: boolean, onClose = vi.fn()) {
   const utils = render(
@@ -90,5 +103,20 @@ describe('Modal', () => {
     )
     expect(document.activeElement).toBe(outside)
     outside.remove()
+  })
+
+  it('keeps focus where the user is typing when the caller passes an inline onClose', () => {
+    render(<ControlledForm />)
+    const second = screen.getByLabelText('Second') as HTMLInputElement
+    second.focus()
+
+    fireEvent.change(second, { target: { value: 'a' } })
+    fireEvent.change(second, { target: { value: 'ab' } })
+
+    expect(second.value).toBe('ab')
+    expect(document.activeElement).toBe(second)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

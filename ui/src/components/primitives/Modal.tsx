@@ -38,7 +38,14 @@ export function Modal({ open, title, description, size = 'md', onClose, footer, 
   const bodyRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
   const descriptionId = useId()
+  const onCloseRef = useRef(onClose)
 
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
+
+  // Focus setup and restoration run once per open, so an inline onClose from
+  // the caller cannot re-trigger them on every parent render.
   useEffect(() => {
     if (!open) return
     const panel = panelRef.current
@@ -53,7 +60,7 @@ export function Modal({ open, title, description, size = 'md', onClose, footer, 
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault()
-        onClose()
+        onCloseRef.current()
         return
       }
       if (e.key !== 'Tab' || !panel) return
@@ -81,7 +88,7 @@ export function Modal({ open, title, description, size = 'md', onClose, footer, 
       document.body.style.overflow = previousOverflow
       previouslyFocused?.focus?.()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
 

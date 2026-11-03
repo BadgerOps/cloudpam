@@ -18,18 +18,22 @@ type ControlProps = {
 
 export function Field({ label, hint, error, required, htmlFor, children }: FieldProps) {
   const generatedId = useId()
-  const controlId = htmlFor ?? generatedId
+  // With no htmlFor the single child is the control, so the field wires its
+  // ARIA attributes and reuses the child's own id when it has one. With
+  // htmlFor the caller placed the id and keeps ownership.
+  const child = htmlFor === undefined && isValidElement<ControlProps>(children)
+    ? (children as ReactElement<ControlProps>)
+    : null
+  const controlId = htmlFor ?? child?.props.id ?? generatedId
   const hintId = `${controlId}-hint`
   const errorId = `${controlId}-error`
   const describedBy = error ? errorId : hint ? hintId : undefined
 
-  // With no htmlFor the single child is the control, so the field owns its id
-  // and ARIA wiring. With htmlFor the caller placed the id and keeps ownership.
-  const control = htmlFor === undefined && isValidElement<ControlProps>(children)
-    ? cloneElement(children as ReactElement<ControlProps>, {
-        id: children.props.id ?? controlId,
-        'aria-invalid': error ? true : children.props['aria-invalid'],
-        'aria-describedby': describedBy ?? children.props['aria-describedby'],
+  const control = child
+    ? cloneElement(child, {
+        id: controlId,
+        'aria-invalid': error ? true : child.props['aria-invalid'],
+        'aria-describedby': describedBy ?? child.props['aria-describedby'],
       })
     : children
 
