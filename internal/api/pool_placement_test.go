@@ -287,9 +287,12 @@ func placementOutcome(err error) string {
 	var overlap *placementConflict
 	var missing *missingParentError
 	var outside *containmentError
+	var invalid *poolFieldError
 	switch {
 	case err == nil:
 		return "stored"
+	case errors.As(err, &invalid):
+		return "invalid " + invalid.Field
 	case errors.As(err, &overlap):
 		return "overlaps " + overlap.With.Name
 	case errors.As(err, &missing):
@@ -353,6 +356,26 @@ func TestPlace(t *testing.T) {
 			pool("x", "r", "10.200.0.0/24", nil),
 		}, "outside", nil},
 		{"skip_conflicts stores an overlap", overlapAllowed, []poolPlacement{pool("n", "", "10.0.0.0/9", nil)}, "", []string{"stored"}},
+		{"ipv6 top level", siblingsOnly, []poolPlacement{pool("n", "", "2001:db8::/32", nil)}, "", []string{"invalid cidr"}},
+		{"prefix past the bound", siblingsOnly, []poolPlacement{pool("n", "", "10.1.2.0/31", &aID)}, "", []string{"invalid cidr"}},
+		{"non-canonical", siblingsOnly, []poolPlacement{pool("n", "", "10.2.0.1/16", &rootID)}, "", []string{"invalid cidr"}},
+		{"bad type", siblingsOnly, []poolPlacement{{Ref: "n", In: domain.CreatePool{Name: "n", CIDR: "10.2.0.0/16", ParentID: &rootID, Type: "wormhole"}}}, "", []string{"invalid type"}},
+		{"blank name", siblingsOnly, []poolPlacement{{Ref: "n", In: domain.CreatePool{CIDR: "10.2.0.0/16", ParentID: &rootID}}}, "", []string{"invalid name"}},
+		{"a child of an invalid entry is not stored", siblingsOnly, []poolPlacement{
+			pool("p", "", "172.16.0.1/16", nil),
+			pool("c", "p", "172.16.1.0/24", nil),
+		}, "", []string{"invalid cidr", `parent_ref "p" not yet created`}},
+		{"plan entry with an invalid cidr is that entry's error", anyLivePool, []poolPlacement{
+			pool("r", "", "192.168.0.0/16", nil),
+			pool("x", "r", "2001:db8::/64", nil),
+			pool("y", "r", "192.168.1.0/24", nil),
+		}, "", []string{"stored", "invalid cidr", "stored"}},
+		{"plan overlap is still checked around an invalid entry", anyLivePool, []poolPlacement{
+			pool("r", "", "192.168.0.0/16", nil),
+			pool("x", "r", "192.168.0.1/24", nil),
+			pool("y", "r", "192.168.1.0/24", nil),
+			pool("z", "r", "192.168.1.0/25", nil),
+		}, "overlaps y", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
