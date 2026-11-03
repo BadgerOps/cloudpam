@@ -12,7 +12,7 @@ npm run build        # writes ../web/dist, embedded by the Go binary
 
 ## Configuration primitives
 
-Every configuration or administration screen builds on the six primitives in
+Every configuration or administration screen builds on the primitives in
 `src/components/primitives/`. Use them. Do not hand-roll an overlay, a label/input
 pair, a switch, a table, or an empty message again.
 
@@ -24,7 +24,11 @@ pair, a switch, a table, or an empty message again.
 | `Toggle` | booleans that apply immediately | a checkbox, or a button that reads as a badge |
 | `DataTable` | any list of records | a bare `<table>` |
 | `EmptyState` | zero results, zero records, filtered-out | centered grey "No results" text |
+| `MetricCard` | a headline number with its tone and a link to act on it | a bespoke stat tile |
 
-The prop contracts and the rules behind them live in `docs/design/primitives.md` and
-`docs/design/primitives-contracts.md`. `src/pages/SecuritySettingsPage.tsx` is the
-reference migration. Status text still goes through `StatusBadge`.
+The prop contracts for the first six and the rules behind them live in
+`docs/design/primitives.md` and `docs/design/primitives-contracts.md`. `MetricCard`
+came later with the dashboard redesign, and its `MetricCardProps` type is its contract.
+`src/pages/SecuritySettingsPage.tsx` is the reference migration, and
+`src/pages/DashboardPage.tsx` is the reference for `MetricCard`. Status text still goes
+through `StatusBadge`.
