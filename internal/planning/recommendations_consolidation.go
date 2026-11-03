@@ -130,16 +130,30 @@ func (s *RecommendationService) consolidationRecommendations(ctx context.Context
 // under the placement guard so no placement runs between the checks and the writes. Widening
 // before deleting means the merged range is never free for another pool to take. The kept pool
 // keeps its ID, name and tags; discovered resources linked to the deleted pool move to it.
+//
+// The resource moves and the rename run after the merge commits, so a failure there leaves the
+// recommendation pending. Applying it again finds the merge already done and finishes the rest.
 func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *domain.Recommendation, req domain.ApplyRecommendationRequest) (*int64, error) {
 	ids, cidrs, err := consolidationSources(rec)
 	if err != nil {
 		return nil, err
+	}
+	if req.AccountID != nil {
+		if _, found, err := s.mainStore.GetAccount(ctx, *req.AccountID); err != nil {
+			return nil, fmt.Errorf("get account %d: %w", *req.AccountID, err)
+		} else if !found {
+			return nil, fmt.Errorf("account %d does not exist: %w", *req.AccountID, storage.ErrValidation)
+		}
 	}
 	var kept domain.Pool
 	err = s.placer.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
 		pools, err := ps.ListPools(work)
 		if err != nil {
 			return fmt.Errorf("list pools: %w", err)
+		}
+		if merged, ok := alreadyMerged(pools, rec, ids); ok {
+			kept = merged
+			return nil
 		}
 		if err := checkUnchangedLeaves(pools, rec.PoolID, ids, cidrs); err != nil {
 			return err
@@ -189,6 +203,25 @@ func (s *RecommendationService) applyConsolidation(ctx context.Context, rec *dom
 	return &kept.ID, nil
 }
 
+// alreadyMerged reports the kept pool when an earlier apply of rec already committed the merge:
+// the first source holds the merged block under the same parent and the second source is gone.
+func alreadyMerged(pools []domain.Pool, rec *domain.Recommendation, ids [2]int64) (domain.Pool, bool) {
+	var first domain.Pool
+	var haveFirst bool
+	for _, p := range pools {
+		switch p.ID {
+		case ids[0]:
+			first, haveFirst = p, true
+		case ids[1]:
+			return domain.Pool{}, false
+		}
+	}
+	if !haveFirst || first.ParentID == nil || *first.ParentID != rec.PoolID || first.CIDR != rec.SuggestedCIDR {
+		return domain.Pool{}, false
+	}
+	return first, true
+}
+
 // consolidationSources reads the two source pool IDs and CIDRs the recommendation recorded.
 func consolidationSources(rec *domain.Recommendation) ([2]int64, [2]string, error) {
 	var ids [2]int64
@@ -209,7 +242,7 @@ func consolidationSources(rec *domain.Recommendation) ([2]int64, [2]string, erro
 }
 
 // checkUnchangedLeaves confirms each source pool is still what the recommendation saw: live,
-// under the same parent, with the same CIDR, and without children.
+// under the same parent, with the same CIDR, without children, and on the same account.
 func checkUnchangedLeaves(pools []domain.Pool, parentID int64, ids [2]int64, cidrs [2]string) error {
 	tree := newPoolTree(pools)
 	byID := make(map[int64]domain.Pool, len(pools))
@@ -224,6 +257,9 @@ func checkUnchangedLeaves(pools []domain.Pool, parentID int64, ids [2]int64, cid
 		if !tree.isLeaf(id) {
 			return fmt.Errorf("source pool %d now has child pools: %w", id, storage.ErrConflict)
 		}
+	}
+	if !sameAccount(byID[ids[0]], byID[ids[1]]) {
+		return fmt.Errorf("source pools %d and %d are now on different accounts: %w", ids[0], ids[1], storage.ErrConflict)
 	}
 	return nil
 }

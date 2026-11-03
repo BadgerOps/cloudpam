@@ -65,15 +65,16 @@ func (s *RecommendationService) reclaimRecommendation(pool domain.Pool, tree poo
 		Score:         score,
 		Metadata: map[string]string{
 			"idle_days":    strconv.Itoa(idleDays),
-			"last_updated": pool.UpdatedAt.UTC().Format(time.RFC3339),
+			"last_updated": pool.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 }
 
-// applyReclaim deletes the pool once it is still unlinked. DeletePool itself refuses a pool that
-// gained children.
+// applyReclaim deletes the pool once it is still the idle, unlinked leaf the recommendation saw.
+// The checks and the delete run under the placement guard, so no placement can add a child
+// between them.
 func (s *RecommendationService) applyReclaim(ctx context.Context, rec *domain.Recommendation) error {
 	linked, err := s.linkedResources(ctx)
 	if err != nil {
@@ -82,12 +83,42 @@ func (s *RecommendationService) applyReclaim(ctx context.Context, rec *domain.Re
 	if len(linked[rec.PoolID]) > 0 {
 		return fmt.Errorf("pool %d now has linked discovered resources: %w", rec.PoolID, storage.ErrConflict)
 	}
-	deleted, err := s.mainStore.DeletePool(ctx, rec.PoolID)
-	if err != nil {
-		return fmt.Errorf("delete pool %d: %w", rec.PoolID, err)
+	return s.placer.WithPlacement(ctx, func(work context.Context, ps storage.PlacementStore) error {
+		pools, err := ps.ListPools(work)
+		if err != nil {
+			return fmt.Errorf("list pools: %w", err)
+		}
+		if err := checkReclaimable(pools, rec); err != nil {
+			return err
+		}
+		deleted, err := ps.DeletePool(work, rec.PoolID)
+		if err != nil {
+			return fmt.Errorf("delete pool %d: %w", rec.PoolID, err)
+		}
+		if !deleted {
+			return fmt.Errorf("pool %d: %w", rec.PoolID, storage.ErrNotFound)
+		}
+		return nil
+	})
+}
+
+// checkReclaimable confirms the pool is live, still has the CIDR the recommendation recorded,
+// has not been updated since, and has no children.
+func checkReclaimable(pools []domain.Pool, rec *domain.Recommendation) error {
+	var pool *domain.Pool
+	for i := range pools {
+		if pools[i].ID == rec.PoolID {
+			pool = &pools[i]
+		}
 	}
-	if !deleted {
+	if pool == nil {
 		return fmt.Errorf("pool %d: %w", rec.PoolID, storage.ErrNotFound)
+	}
+	if pool.CIDR != rec.SuggestedCIDR || pool.UpdatedAt.UTC().Format(time.RFC3339Nano) != rec.Metadata["last_updated"] {
+		return fmt.Errorf("pool %d changed since the recommendation was generated: %w", rec.PoolID, storage.ErrConflict)
+	}
+	if !newPoolTree(pools).isLeaf(rec.PoolID) {
+		return fmt.Errorf("pool %d now has child pools: %w", rec.PoolID, storage.ErrConflict)
 	}
 	return nil
 }
