@@ -10,14 +10,16 @@ vi.mock('../hooks/useAuth', () => ({
 
 function settings(overrides: Partial<AIProviderSettings> = {}): AIProviderSettings {
   return {
+    provider: 'openai',
     endpoint: 'https://api.openai.com/v1',
     model: 'gpt-4o',
     max_tokens: 4096,
     temperature: 0.7,
     api_key_configured: false,
     api_key_storage_available: true,
-    sources: { endpoint: 'default', model: 'default', api_key: 'none', max_tokens: 'default', temperature: 'default' },
+    sources: { provider: 'default', endpoint: 'default', model: 'default', api_key: 'none', max_tokens: 'default', temperature: 'default' },
     state: 'not_configured',
+    fallbacks: [],
     ...overrides,
   }
 }
@@ -69,7 +71,7 @@ function input(label: string) {
 
 const patches = () => calls.filter(c => c.method === 'PATCH')
 
-const KEY_PROMPT_TEXT = 'Enter the API key again for the new endpoint, or clear the stored key'
+const KEY_PROMPT_TEXT = 'Enter the API key again for the new endpoint or provider, or clear the stored key'
 
 describe('AIProviderSettingsCard', () => {
   beforeEach(() => {
@@ -127,7 +129,7 @@ describe('AIProviderSettingsCard', () => {
   })
 
   it('shows the source of each field', async () => {
-    serve(settings({ sources: { endpoint: 'database', model: 'environment', api_key: 'none', max_tokens: 'default', temperature: 'database' } }))
+    serve(settings({ sources: { provider: 'environment', endpoint: 'database', model: 'environment', api_key: 'none', max_tokens: 'default', temperature: 'database' } }))
     await renderCard()
     expect(screen.getByTestId('ai-source-endpoint').textContent).toBe('database')
     expect(screen.getByTestId('ai-source-model').textContent).toBe('environment')
@@ -276,7 +278,7 @@ describe('AIProviderSettingsCard', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     })
-    expect(screen.getByText('Enter the API key again for the new endpoint, or clear the stored key')).toBeTruthy()
+    expect(screen.getByText('Enter the API key again for the new endpoint or provider, or clear the stored key')).toBeTruthy()
     expect(patches()).toHaveLength(0)
 
     fireEvent.click(screen.getByLabelText('Clear the stored key with this save'))
@@ -427,7 +429,7 @@ describe('AIProviderSettingsCard', () => {
 
   describe('environment key warning', () => {
     const ENV_WARNING =
-      'Changing the endpoint stops CLOUDPAM_LLM_API_KEY from applying; enter a key here or leave it empty for an authless endpoint.'
+      'Changing the endpoint or provider stops CLOUDPAM_LLM_API_KEY from applying; enter a key here or leave it empty for an authless endpoint.'
 
     it('appears when the key comes from the environment and the endpoint changes', async () => {
       serve(settings({ api_key_configured: true, sources: { ...settings().sources, api_key: 'environment' } }))
@@ -455,6 +457,123 @@ describe('AIProviderSettingsCard', () => {
   it('explains that a stored endpoint never uses the environment key', async () => {
     serve(settings({ endpoint: 'http://ollama:11434/v1', sources: { ...settings().sources, endpoint: 'database', api_key: 'none' } }))
     await renderCard()
-    expect(screen.getByText('A stored endpoint never uses CLOUDPAM_LLM_API_KEY; enter a key here or leave empty for an authless endpoint')).toBeTruthy()
+    expect(screen.getByText('A stored endpoint or provider never uses CLOUDPAM_LLM_API_KEY; enter a key here or leave empty for an authless endpoint')).toBeTruthy()
+  })
+
+  it('saves a provider change and explains the Anthropic key and temperature rules', async () => {
+    serve(settings(), { patch: () => json(200, settings({ provider: 'anthropic', sources: { ...settings().sources, provider: 'database' } })) })
+    await renderCard()
+    const select = screen.getByLabelText('Provider') as HTMLSelectElement
+    expect(select.value).toBe('openai')
+    expect(screen.getByTestId('ai-source-provider').textContent).toBe('default')
+    fireEvent.change(select, { target: { value: 'anthropic' } })
+    expect(screen.getByText(/The Anthropic Messages API needs an API key/)).toBeTruthy()
+    expect(input('Endpoint').placeholder).toBe('https://api.anthropic.com')
+    fireEvent.change(input('API key'), { target: { value: 'sk-ant-secret' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    expect(patches()[0].body).toEqual({ provider: 'anthropic', api_key: 'sk-ant-secret' })
+    await waitFor(() => expect(input('API key').value).toBe(''))
+  })
+
+  it('requires the key or an explicit clear when changing the provider with a stored key', async () => {
+    serve(settings({ api_key_configured: true, sources: { ...settings().sources, api_key: 'database' } }))
+    await renderCard()
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'anthropic' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect(patches()).toHaveLength(0)
+    expect(screen.getByText(KEY_PROMPT_TEXT)).toBeTruthy()
+  })
+
+  it('lists stored fallbacks, keeps their keys by id and sends the whole list on save', async () => {
+    const stored = settings({
+      fallbacks: [
+        { id: 'fb-1', provider: 'anthropic', endpoint: '', model: 'claude-haiku-5-5', api_key_configured: true },
+        { id: 'fb-2', provider: 'openai', endpoint: 'http://ollama:11434/v1', model: 'llama3', api_key_configured: false },
+      ],
+    })
+    serve(stored, { patch: () => json(200, stored) })
+    await renderCard()
+    expect((screen.getByLabelText('Fallback 1 provider') as HTMLSelectElement).value).toBe('anthropic')
+    expect(input('Fallback 1 model').value).toBe('claude-haiku-5-5')
+    expect(input('Fallback 1 API key').placeholder).toBe('Key stored; enter a new key to replace it')
+    expect(input('Fallback 2 endpoint').value).toBe('http://ollama:11434/v1')
+    // The primary's own inputs are untouched by the fallback rows.
+    expect(input('Model').value).toBe('gpt-4o')
+
+    fireEvent.change(input('Fallback 1 model'), { target: { value: 'claude-sonnet-5-5' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    expect(patches()[0].body).toEqual({
+      fallbacks: [
+        { id: 'fb-1', provider: 'anthropic', endpoint: '', model: 'claude-sonnet-5-5' },
+        { id: 'fb-2', provider: 'openai', endpoint: 'http://ollama:11434/v1', model: 'llama3' },
+      ],
+    })
+  })
+
+  it('adds a new fallback with its key, removes one, and sends an empty list to clear', async () => {
+    const stored = settings({
+      fallbacks: [{ id: 'fb-1', provider: 'openai', endpoint: 'http://ollama:11434/v1', model: 'llama3', api_key_configured: false }],
+    })
+    serve(stored, { patch: () => json(200, stored) })
+    await renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'Add fallback' }))
+    fireEvent.change(screen.getByLabelText('Fallback 2 provider'), { target: { value: 'anthropic' } })
+    fireEvent.change(input('Fallback 2 model'), { target: { value: 'claude-haiku-5-5' } })
+    fireEvent.change(input('Fallback 2 API key'), { target: { value: 'sk-ant-fb' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    expect(patches()[0].body).toEqual({
+      fallbacks: [
+        { id: 'fb-1', provider: 'openai', endpoint: 'http://ollama:11434/v1', model: 'llama3' },
+        { provider: 'anthropic', endpoint: '', model: 'claude-haiku-5-5', api_key: 'sk-ant-fb' },
+      ],
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove fallback 1' }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    await waitFor(() => expect(patches()).toHaveLength(2))
+    expect(patches()[1].body).toEqual({ fallbacks: [] })
+  })
+
+  it('refuses to save an Anthropic fallback without a key before calling the server', async () => {
+    serve(settings())
+    await renderCard()
+    fireEvent.click(screen.getByRole('button', { name: 'Add fallback' }))
+    fireEvent.change(screen.getByLabelText('Fallback 1 provider'), { target: { value: 'anthropic' } })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    })
+    expect(patches()).toHaveLength(0)
+    expect(screen.getByText('Fallback 1: Anthropic needs an API key')).toBeTruthy()
+  })
+
+  it('shows each fallback test result under the primary summary', async () => {
+    const result: AIProviderTestResult = {
+      ok: true, state: 'verified', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o',
+      latency_ms: 120, streaming_supported: true, tested_at: '2026-10-30T12:00:00Z',
+      fallbacks: [
+        { id: 'fb-1', provider: 'anthropic', endpoint: '', model: 'claude-haiku-5-5', ok: true, latency_ms: 80 },
+        { id: 'fb-2', provider: 'openai', endpoint: 'http://ollama:11434/v1', model: 'llama3', ok: false, latency_ms: 5, error: 'endpoint unreachable' },
+      ],
+    }
+    serve(settings(), { post: () => json(200, result) })
+    await renderCard()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    })
+    expect(await screen.findByText('Fallback 1 · anthropic claude-haiku-5-5 · reachable · 80 ms')).toBeTruthy()
+    expect(screen.getByText('Fallback 2 · openai llama3 · endpoint unreachable')).toBeTruthy()
   })
 })

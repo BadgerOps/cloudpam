@@ -17,6 +17,9 @@ export function useAIPlanner() {
   const [loading, setLoading] = useState(false)
   const [applying, setApplying] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Set when a fallback provider answered the latest message; the primary
+  // was unreachable or failed. Cleared when the next message is sent.
+  const [fallbackNotice, setFallbackNotice] = useState<string | null>(null)
   const streamingTextRef = useRef('')
   const applyingRef = useRef(false)
   // Guards the active session against out-of-order session loads
@@ -114,11 +117,17 @@ export function useAIPlanner() {
     setStreamingText('')
     streamingTextRef.current = ''
     setError(null)
+    setFallbackNotice(null)
 
     await streamPost('/api/v1/ai/chat', {
       session_id: sessionId,
       message,
     }, {
+      onFallback: (notice) => {
+        if (!isStreamSessionActive()) return
+        const failed = notice.failed.map(f => `${f.provider} (${f.error})`).join(', ')
+        setFallbackNotice(`${failed} failed; answered by ${notice.provider}`)
+      },
       onDelta: (text) => {
         if (!isStreamSessionActive()) return
         streamingTextRef.current += text
@@ -199,6 +208,8 @@ export function useAIPlanner() {
     loading,
     applying,
     error,
+    fallbackNotice,
+    setFallbackNotice,
     fetchSessions,
     createSession,
     selectSession,
