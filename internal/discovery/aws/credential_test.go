@@ -16,6 +16,7 @@ import (
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	ststypes "github.com/aws/aws-sdk-go-v2/service/sts/types"
@@ -246,6 +247,43 @@ func TestIdentityPassesNetworkFailuresThroughForDiagnosis(t *testing.T) {
 	}
 	if !strings.HasPrefix(err.Error(), "assume_role: ") {
 		t.Fatalf("Identity() error = %q, want the step prefix", err.Error())
+	}
+}
+
+func TestDiscoverReducesAFailedAssumeRoleToAProbeError(t *testing.T) {
+	realEC2 := func(cfg awssdk.Config) ec2API { return ec2.NewFromConfig(cfg) }
+	cases := []struct {
+		name string
+		ec2  func(awssdk.Config) ec2API
+	}{
+		{"in every region", realEC2},
+		{"after another region failed in EC2", func(cfg awssdk.Config) ec2API {
+			if cfg.Region == "us-east-1" {
+				return &fakeEC2{vpcErr: &smithy.OperationError{ServiceID: "EC2", OperationName: "DescribeVpcs", Err: &smithy.GenericAPIError{Code: "AuthFailure"}}}
+			}
+			return realEC2(cfg)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCredentialHarness(t, "us-east-1")
+			h.sts.assumeErr = stsAPIError(403, "AccessDenied")
+			h.collector.newEC2Client = tc.ec2
+			account := domain.Account{ID: 1, Provider: "aws", Regions: []string{"us-east-1", "eu-west-1"}}
+			bound, err := h.collector.WithCredential(context.Background(), account, testRole(t, "ext-1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = bound.Discover(context.Background(), account)
+			var pe *discovery.ProbeError
+			if !errors.As(err, &pe) || pe.Step != discovery.ProbeStepAssumeRole || pe.Code != "AccessDenied" || pe.Status != 403 {
+				t.Fatalf("Discover() error = %v, want an assume_role ProbeError", err)
+			}
+			if !strings.HasPrefix(err.Error(), "assume_role: ") || strings.Contains(err.Error(), "ext-1") || strings.Contains(err.Error(), "not authorized") {
+				t.Fatalf("Discover() error = %q, want the step without the STS message", err.Error())
+			}
+		})
 	}
 }
 

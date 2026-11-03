@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 
 	"golang.org/x/oauth2"
@@ -51,8 +52,8 @@ func (c *Collector) WithCredential(ctx context.Context, _ domain.Account, cred d
 	}, nil
 }
 
-// tokenTransport carries the binding context into the token request and keeps the
-// transport error, which the oauth2 jwt source otherwise flattens into text.
+// tokenTransport keeps the transport error, which the oauth2 jwt source otherwise
+// flattens into text.
 type tokenTransport struct {
 	ctx     context.Context
 	base    http.RoundTripper
@@ -60,9 +61,27 @@ type tokenTransport struct {
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := t.base.RoundTrip(req.WithContext(t.ctx))
+	ctx, cancel := context.WithCancel(req.Context())
+	stop := context.AfterFunc(t.ctx, cancel)
+	release := func() { stop(); cancel() }
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
 	t.lastErr = err
-	return resp, err
+	if err != nil {
+		release()
+		return nil, err
+	}
+	resp.Body = releaseOnClose{ReadCloser: resp.Body, release: release}
+	return resp, nil
+}
+
+type releaseOnClose struct {
+	io.ReadCloser
+	release func()
+}
+
+func (b releaseOnClose) Close() error {
+	defer b.release()
+	return b.ReadCloser.Close()
 }
 
 type serviceAccountCollector struct {
@@ -96,6 +115,17 @@ func (c *serviceAccountCollector) Identity(ctx context.Context, account domain.A
 		return "", &discovery.ProbeError{Step: discovery.ProbeStepGetProject, Status: resp.StatusCode}
 	}
 	return c.email, nil
+}
+
+// Discover reduces a rejected token request to a ProbeError, because the
+// RetrieveError text carries the token endpoint's response body.
+func (c *serviceAccountCollector) Discover(ctx context.Context, account domain.Account) ([]domain.DiscoveredResource, error) {
+	resources, err := c.Collector.Discover(ctx, account)
+	var re *oauth2.RetrieveError
+	if errors.As(err, &re) {
+		return resources, c.tokenProbeError(err)
+	}
+	return resources, err
 }
 
 func (c *serviceAccountCollector) tokenProbeError(err error) error {

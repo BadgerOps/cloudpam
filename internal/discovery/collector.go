@@ -253,6 +253,10 @@ func (s *SyncService) Sync(ctx context.Context, account domain.Account) (*domain
 		job.Status = domain.SyncJobStatusFailed
 		job.CompletedAt = &completedAt
 		job.ErrorMessage = discoverErr.Error()
+		var pe *ProbeError
+		if errors.As(discoverErr, &pe) {
+			job.ErrorMessage = "credential: " + job.ErrorMessage
+		}
 		_ = s.store.UpdateSyncJob(ctx, job)
 		return &job, fmt.Errorf("discovery failed: %w", discoverErr)
 	}
