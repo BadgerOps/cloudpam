@@ -116,6 +116,16 @@ export interface Account {
   created_at: string
 }
 
+// ConnectivityTestResult is the response of POST /api/v1/accounts/{id}/test.
+export interface ConnectivityTestResult {
+  tested_at: string
+  status: 'ok' | 'failed'
+  error?: string
+  latency_ms: number
+  identity?: string
+  source: 'host' | 'stored_credential'
+}
+
 export interface CreateAccountRequest {
   key: string
   name: string
