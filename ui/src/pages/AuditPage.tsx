@@ -7,13 +7,18 @@ import { formatTimeAgo, getActionBadgeClass } from '../utils/format'
 import type { AuditEvent } from '../api/types'
 
 export default function AuditPage() {
-  const { events, total, loading, error, fetchEvents, pageSize } = useAudit()
-  const { filters, page, setFilters, setPage } = usePagedFilters({ action: '', resource: '' })
+  const { events, total, page, loading, error, fetchEvents, pageSize } = useAudit()
+  const { query, filters, setFilters, setPage } = usePagedFilters({ action: '', resource: '' })
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const loadEvents = useCallback(() => {
-    fetchEvents((page - 1) * pageSize, pageSize, filters.action || undefined, filters.resource || undefined)
-  }, [fetchEvents, page, pageSize, filters])
+    fetchEvents(
+      (query.page - 1) * pageSize,
+      pageSize,
+      query.filters.action || undefined,
+      query.filters.resource || undefined,
+    )
+  }, [fetchEvents, pageSize, query])
 
   useEffect(() => {
     loadEvents()

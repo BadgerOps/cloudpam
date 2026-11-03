@@ -13,6 +13,7 @@ interface BlockFilters {
 export function useBlocks() {
   const [blocks, setBlocks] = useState<Block[]>([])
   const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -33,6 +34,7 @@ export function useBlocks() {
       if (!isCurrent(token)) return
       setBlocks(data.items ?? [])
       setTotal(data.total ?? 0)
+      setPage(data.page || 1)
       if (data.page_size > 0) setPageSize(data.page_size)
     } catch (e) {
       if (!isCurrent(token)) return
@@ -42,5 +44,5 @@ export function useBlocks() {
     }
   }, [begin, isCurrent])
 
-  return { blocks, total, pageSize, loading, error, fetchBlocks }
+  return { blocks, total, page, pageSize, loading, error, fetchBlocks }
 }

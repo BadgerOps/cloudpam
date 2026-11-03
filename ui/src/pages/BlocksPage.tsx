@@ -14,11 +14,11 @@ import type { Block, Pool, PoolType, PoolStatus, UpdatePoolRequest } from '../ap
 
 export default function BlocksPage() {
   const navigate = useNavigate()
-  const { blocks, total, pageSize, loading, error, fetchBlocks } = useBlocks()
+  const { blocks, total, page, pageSize, loading, error, fetchBlocks } = useBlocks()
   const { accounts, fetchAccounts } = useAccounts()
   const { showToast } = useToast()
   const [search, setSearch] = useState('')
-  const { filters, page, setFilters, setPage } = usePagedFilters({ account: '' })
+  const { query, filters, setFilters, setPage } = usePagedFilters({ account: '' })
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [editBlock, setEditBlock] = useState<Block | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Block | null>(null)
@@ -27,10 +27,10 @@ export default function BlocksPage() {
 
   const loadBlocks = useCallback(() => {
     fetchBlocks({
-      accounts: filters.account ? [Number(filters.account)] : undefined,
-      page,
+      accounts: query.filters.account ? [Number(query.filters.account)] : undefined,
+      page: query.page,
     })
-  }, [fetchBlocks, filters.account, page])
+  }, [fetchBlocks, query])
 
   useEffect(() => {
     loadBlocks()
@@ -43,7 +43,7 @@ export default function BlocksPage() {
   // Clear selection when the visible rows change
   useEffect(() => {
     setSelectedIds(new Set())
-  }, [search, filters.account, page])
+  }, [search, query])
 
   const filtered = useMemo(() => {
     return blocks.filter(b => {

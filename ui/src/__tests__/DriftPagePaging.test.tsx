@@ -56,4 +56,19 @@ describe('DriftPage pagination', () => {
     expect(lastUrl().searchParams.get('status')).toBe('resolved')
     expect(lastUrl().searchParams.get('severity')).toBe('critical')
   })
+
+  it('keeps the loaded page when the next page fails and retries it from Next', async () => {
+    render(<DriftPage />)
+    await screen.findByText('Showing 1-50 of 120 drift items')
+
+    mockGet.mockRejectedValueOnce(new Error('drift backend down'))
+    fireEvent.click(screen.getByText('Next'))
+    await screen.findByText('drift backend down')
+    expect(screen.getByText('Showing 1-50 of 120 drift items')).toBeTruthy()
+    expect(lastUrl().searchParams.get('page')).toBe('2')
+
+    fireEvent.click(screen.getByText('Next'))
+    await screen.findByText('Showing 51-100 of 120 drift items')
+    expect(lastUrl().searchParams.get('page')).toBe('2')
+  })
 })

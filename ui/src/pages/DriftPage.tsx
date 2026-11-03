@@ -17,7 +17,7 @@ import { formatTimeAgo } from '../utils/format'
 import type { DriftItem } from '../api/types'
 
 export default function DriftPage() {
-  const { filters, page, setFilters, setPage } = usePagedFilters({
+  const { query, filters, setFilters, setPage } = usePagedFilters({
     type: '',
     severity: '',
     status: 'open',
@@ -30,12 +30,12 @@ export default function DriftPage() {
 
   const loadDrifts = useCallback(() => {
     fetch({
-      type: filters.type || undefined,
-      severity: filters.severity || undefined,
-      status: filters.status || undefined,
-      page,
+      type: query.filters.type || undefined,
+      severity: query.filters.severity || undefined,
+      status: query.filters.status || undefined,
+      page: query.page,
     })
-  }, [fetch, filters, page])
+  }, [fetch, query])
 
   useEffect(() => {
     loadDrifts()
@@ -205,7 +205,7 @@ export default function DriftPage() {
       {/* Pagination */}
       {data && (
         <Pager
-          page={page}
+          page={data.page}
           pageSize={data.page_size}
           total={data.total}
           noun="drift items"

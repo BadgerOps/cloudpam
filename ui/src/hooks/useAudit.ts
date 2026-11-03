@@ -8,6 +8,7 @@ const PAGE_SIZE = 25
 export function useAudit() {
   const [events, setEvents] = useState<AuditEvent[]>([])
   const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { begin, isCurrent } = useLatestRequest()
@@ -31,6 +32,7 @@ export function useAudit() {
       if (!isCurrent(token)) return
       setEvents(data.events ?? [])
       setTotal(data.total)
+      setPage(Math.floor(offset / limit) + 1)
     } catch (e) {
       if (!isCurrent(token)) return
       setError(e instanceof Error ? e.message : 'Failed to fetch audit events')
@@ -39,5 +41,5 @@ export function useAudit() {
     }
   }, [begin, isCurrent])
 
-  return { events, total, loading, error, fetchEvents, pageSize: PAGE_SIZE }
+  return { events, total, page, loading, error, fetchEvents, pageSize: PAGE_SIZE }
 }

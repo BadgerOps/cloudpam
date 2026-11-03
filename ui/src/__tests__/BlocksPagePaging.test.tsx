@@ -87,6 +87,22 @@ describe('BlocksPage pagination', () => {
     expect(lastBlocksRequest().searchParams.get('accounts')).toBeNull()
   })
 
+  it('keeps the loaded page when the next page fails and retries it from Next', async () => {
+    renderPage()
+    await screen.findByText('Showing 1-50 of 120 blocks')
+
+    mockGet.mockRejectedValueOnce(new Error('blocks backend down'))
+    fireEvent.click(screen.getByText('Next'))
+    await screen.findByText('blocks backend down')
+    expect(screen.getByText('Showing 1-50 of 120 blocks')).toBeTruthy()
+    expect(screen.getByText('block-1')).toBeTruthy()
+    expect(lastBlocksRequest().searchParams.get('page')).toBe('2')
+
+    fireEvent.click(screen.getByText('Next'))
+    await screen.findByText('Showing 51-100 of 120 blocks')
+    expect(screen.getByText('block-51')).toBeTruthy()
+  })
+
   it('refetches the current page after a delete and steps back when the page empties', async () => {
     total = 51
     mockDel.mockResolvedValue({})

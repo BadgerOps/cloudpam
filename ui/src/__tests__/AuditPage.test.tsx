@@ -66,6 +66,21 @@ describe('AuditPage pagination', () => {
     expect(lastUrl().searchParams.get('resource_type')).toBe('pool')
   })
 
+  it('keeps the loaded page when the next page fails and retries it from Next', async () => {
+    render(<AuditPage />)
+    await screen.findByText('Showing 1-25 of 100 events')
+
+    mockGet.mockRejectedValueOnce(new Error('audit backend down'))
+    fireEvent.click(screen.getByText('Next'))
+    await screen.findByText('audit backend down')
+    expect(screen.getByText('Showing 1-25 of 100 events')).toBeTruthy()
+    expect(lastUrl().searchParams.get('offset')).toBe('25')
+
+    fireEvent.click(screen.getByText('Next'))
+    await screen.findByText('Showing 26-50 of 100 events')
+    expect(lastUrl().searchParams.get('offset')).toBe('25')
+  })
+
   it('does not page past the end', async () => {
     mockGet.mockResolvedValue(auditResponse(20))
     render(<AuditPage />)

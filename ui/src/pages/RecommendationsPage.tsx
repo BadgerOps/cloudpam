@@ -15,7 +15,7 @@ import { formatTimeAgo } from '../utils/format'
 import type { Recommendation, Pool } from '../api/types'
 
 export default function RecommendationsPage() {
-  const { filters, page, setFilters, setPage } = usePagedFilters<{
+  const { query, filters, setFilters, setPage } = usePagedFilters<{
     type: string
     status: string
     pool_id?: number
@@ -34,12 +34,12 @@ export default function RecommendationsPage() {
 
   const loadRecs = useCallback(() => {
     fetch({
-      type: filters.type || undefined,
-      status: filters.status || undefined,
-      pool_id: filters.pool_id,
-      page,
+      type: query.filters.type || undefined,
+      status: query.filters.status || undefined,
+      pool_id: query.filters.pool_id,
+      page: query.page,
     })
-  }, [fetch, filters, page])
+  }, [fetch, query])
 
   useEffect(() => {
     loadRecs()
@@ -155,7 +155,7 @@ export default function RecommendationsPage() {
       {/* Pagination */}
       {data && (
         <Pager
-          page={page}
+          page={data.page}
           pageSize={data.page_size}
           total={data.total}
           noun="recommendations"
