@@ -35,6 +35,25 @@ const (
 	DriftStatusIgnored  DriftStatus = "ignored"
 )
 
+// DriftAction is the reconciliation step suggested for an open drift item.
+type DriftAction string
+
+const (
+	// DriftActionLinkPool links the discovered resource to SuggestedPoolID,
+	// a managed pool with exactly the resource's CIDR.
+	DriftActionLinkPool DriftAction = "link_pool"
+	// DriftActionCreatePool imports the discovered resource as a new pool under
+	// SuggestedPoolID, its most specific containing pool, or at the top level
+	// when SuggestedPoolID is nil.
+	DriftActionCreatePool DriftAction = "create_pool"
+	// DriftActionDeprecatePool marks pool PoolID deprecated because the
+	// discovered resource it was created from is no longer active.
+	DriftActionDeprecatePool DriftAction = "deprecate_pool"
+	// DriftActionReview means no automatic action is safe; SuggestionReason
+	// says why.
+	DriftActionReview DriftAction = "review"
+)
+
 // DriftItem represents a single detected drift between cloud state and IPAM state.
 type DriftItem struct {
 	ID           string            `json:"id"`
@@ -50,9 +69,14 @@ type DriftItem struct {
 	PoolCIDR     string            `json:"pool_cidr,omitempty"`
 	Details      map[string]string `json:"details,omitempty"`
 	IgnoreReason string            `json:"ignore_reason,omitempty"`
-	ResolvedAt   *time.Time        `json:"resolved_at,omitempty"`
-	DetectedAt   time.Time         `json:"detected_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	// The suggestion fields are derived from current pools and resources each
+	// time an open item is read, so they are never persisted.
+	SuggestedAction  DriftAction `json:"suggested_action,omitempty"`
+	SuggestedPoolID  *int64      `json:"suggested_pool_id,omitempty"`
+	SuggestionReason string      `json:"suggestion_reason,omitempty"`
+	ResolvedAt       *time.Time  `json:"resolved_at,omitempty"`
+	DetectedAt       time.Time   `json:"detected_at"`
+	UpdatedAt        time.Time   `json:"updated_at"`
 }
 
 // DriftSummary provides aggregate counts for a drift detection run.

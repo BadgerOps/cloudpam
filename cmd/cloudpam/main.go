@@ -246,7 +246,7 @@ func main() {
 	// Initialize drift detection subsystem
 	driftStore := selectDriftStore(logger, store)
 	driftDetector := discovery.NewDriftDetector(store, discoveryStore, driftStore)
-	driftSrv := api.NewDriftServer(srv, driftDetector, driftStore)
+	driftSrv := api.NewDriftServer(srv, driftDetector, driftStore, discoverySrv)
 	logger.Info("drift detection subsystem initialized")
 
 	// Initialize settings subsystem

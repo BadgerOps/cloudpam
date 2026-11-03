@@ -19,11 +19,13 @@ type DriftServer struct {
 	srv        *Server
 	detector   *discovery.DriftDetector
 	driftStore storage.DriftStore
+	discovery  *DiscoveryServer
 }
 
-// NewDriftServer creates a new DriftServer.
-func NewDriftServer(srv *Server, detector *discovery.DriftDetector, driftStore storage.DriftStore) *DriftServer {
-	return &DriftServer{srv: srv, detector: detector, driftStore: driftStore}
+// NewDriftServer creates a new DriftServer. The discovery server classifies
+// unmanaged resources for reconciliation suggestions.
+func NewDriftServer(srv *Server, detector *discovery.DriftDetector, driftStore storage.DriftStore, discoverySrv *DiscoveryServer) *DriftServer {
+	return &DriftServer{srv: srv, detector: detector, driftStore: driftStore, discovery: discoverySrv}
 }
 
 // RegisterProtectedDriftRoutes registers drift routes with RBAC.
@@ -53,6 +55,10 @@ func (ds *DriftServer) handleDetect(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := ds.detector.Detect(r.Context(), req)
 	if err != nil {
+		ds.srv.writeStoreErr(r.Context(), w, err)
+		return
+	}
+	if err := ds.suggestReconciliation(r.Context(), resp.Items); err != nil {
 		ds.srv.writeStoreErr(r.Context(), w, err)
 		return
 	}
@@ -97,6 +103,10 @@ func (ds *DriftServer) handleList(w http.ResponseWriter, r *http.Request) {
 	filters.Page, filters.PageSize = storage.RequestPage(filters.Page, filters.PageSize)
 	items, total, err := ds.driftStore.ListDriftItems(r.Context(), filters)
 	if err != nil {
+		ds.srv.writeStoreErr(r.Context(), w, err)
+		return
+	}
+	if err := ds.suggestReconciliation(r.Context(), items); err != nil {
 		ds.srv.writeStoreErr(r.Context(), w, err)
 		return
 	}
@@ -198,7 +208,12 @@ func (ds *DriftServer) handleGet(w http.ResponseWriter, r *http.Request, id stri
 		ds.srv.writeStoreErr(r.Context(), w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, item)
+	items := []domain.DriftItem{*item}
+	if err := ds.suggestReconciliation(r.Context(), items); err != nil {
+		ds.srv.writeStoreErr(r.Context(), w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items[0])
 }
 
 // handleResolve marks a drift item as resolved.

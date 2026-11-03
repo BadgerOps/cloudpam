@@ -31,10 +31,14 @@ func setupDriftTestServer() (*stdhttp.ServeMux, *storage.MemoryStore, *storage.M
 	})
 	srv := NewServer(mux, ms, logger, nil, nil)
 
+	discSrv := NewDiscoveryServer(srv, ds, discovery.NewSyncService(ds), nil)
 	detector := discovery.NewDriftDetector(ms, ds, driftStore)
-	driftSrv := NewDriftServer(srv, detector, driftStore)
+	driftSrv := NewDriftServer(srv, detector, driftStore, discSrv)
 
-	// Register without RBAC for tests.
+	// Register without RBAC for tests. The discovery routes are the link and
+	// import actions a reconciliation suggestion is applied through.
+	mux.HandleFunc("/api/v1/discovery/resources/", discSrv.handleResourcesSubroutes)
+	mux.HandleFunc("/api/v1/discovery/import/", discSrv.handleImportSubroutes)
 	mux.HandleFunc("/api/v1/drift/detect", driftSrv.handleDetect)
 	mux.HandleFunc("/api/v1/drift", driftSrv.handleList)
 	mux.HandleFunc("/api/v1/drift/", driftSrv.handleByID)
