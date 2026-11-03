@@ -165,8 +165,10 @@ cmd_launch() {
     log "skipping UI build (CLOUDPAM_VERIFY_SKIP_UI=1); embedded assets may be stale"
   fi
 
-  log "installing Playwright + chromium (repo-root package.json)"
-  nixrun 'cd "$REPO_ROOT" && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && npx playwright install chromium' >"$STATE/playwright-install.log" 2>&1 \
+  # The dev shell ships the browsers from the Nix store (PLAYWRIGHT_BROWSERS_PATH, read-only) and sets
+  # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1; `playwright install` would still try to lock that directory and fail.
+  log "installing Playwright (repo-root package.json); chromium from the dev shell when it provides one"
+  nixrun 'cd "$REPO_ROOT" && ([ -d node_modules/playwright ] || npm ci --no-audit --no-fund) && { [ "${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD:-0}" = "1" ] || npx playwright install chromium; }' >"$STATE/playwright-install.log" 2>&1 \
     || { tail -n 40 "$STATE/playwright-install.log" >&2; die "playwright install failed"; }
 
   GIT_REV="$(git -C "$REPO_ROOT" rev-parse --short HEAD)"
