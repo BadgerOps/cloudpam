@@ -714,13 +714,9 @@ func (d *DiscoveryServer) previewWithInventory(ctx context.Context, inv *discove
 		selectedPool = &pool
 	}
 
-	accountResources, err := inv.accountResources(ctx, req.AccountID)
+	resourceByProviderID, err := inv.providerIndex(ctx, req.AccountID)
 	if err != nil {
 		return domain.DiscoveryImportPreviewResponse{}, err
-	}
-	resourceByProviderID := make(map[string]domain.DiscoveredResource, len(accountResources))
-	for _, res := range accountResources {
-		resourceByProviderID[res.ResourceID] = res
 	}
 
 	selectedProviderIDs := make(map[string]bool, len(req.ResourceIDs))

@@ -18,7 +18,7 @@ type discoveryInventory struct {
 	poolsByID    map[int64]domain.Pool
 	accountIDs   []int64
 	accounts     map[int64]bool
-	resources    map[int64][]domain.DiscoveredResource
+	byProviderID map[int64]map[string]domain.DiscoveredResource
 	activeByCIDR map[string][]domain.DiscoveredResource
 }
 
@@ -32,11 +32,11 @@ func (d *DiscoveryServer) loadDiscoveryInventory(ctx context.Context) (*discover
 		return nil, err
 	}
 	inv := &discoveryInventory{
-		d:         d,
-		pools:     pools,
-		poolsByID: make(map[int64]domain.Pool, len(pools)),
-		accounts:  make(map[int64]bool, len(accounts)),
-		resources: map[int64][]domain.DiscoveredResource{},
+		d:            d,
+		pools:        pools,
+		poolsByID:    make(map[int64]domain.Pool, len(pools)),
+		accounts:     make(map[int64]bool, len(accounts)),
+		byProviderID: map[int64]map[string]domain.DiscoveredResource{},
 	}
 	for _, pool := range pools {
 		inv.poolsByID[pool.ID] = pool
@@ -48,18 +48,22 @@ func (d *DiscoveryServer) loadDiscoveryInventory(ctx context.Context) (*discover
 	return inv, nil
 }
 
-// accountResources returns every discovered resource of the account, in any
-// status.
-func (inv *discoveryInventory) accountResources(ctx context.Context, accountID int64) ([]domain.DiscoveredResource, error) {
-	if res, ok := inv.resources[accountID]; ok {
-		return res, nil
+// providerIndex maps each provider resource ID of the account to its
+// discovered resource, in any status. It is built once per account.
+func (inv *discoveryInventory) providerIndex(ctx context.Context, accountID int64) (map[string]domain.DiscoveredResource, error) {
+	if index, ok := inv.byProviderID[accountID]; ok {
+		return index, nil
 	}
-	res, err := inv.d.listAllDiscoveredResources(ctx, accountID, domain.DiscoveryFilters{})
+	resources, err := inv.d.listAllDiscoveredResources(ctx, accountID, domain.DiscoveryFilters{})
 	if err != nil {
 		return nil, err
 	}
-	inv.resources[accountID] = res
-	return res, nil
+	index := make(map[string]domain.DiscoveredResource, len(resources))
+	for _, res := range resources {
+		index[res.ResourceID] = res
+	}
+	inv.byProviderID[accountID] = index
+	return index, nil
 }
 
 // duplicateCIDRs maps each CIDR of the selected resources to the active
