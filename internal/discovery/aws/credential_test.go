@@ -426,3 +426,18 @@ func TestHostIdentityRunsCallerIdentityAsTheHostChain(t *testing.T) {
 		t.Fatalf("Identity() error = %v, want a get_caller_identity ProbeError", err)
 	}
 }
+
+func TestHostIdentityNamesAnEmptyCredentialChain(t *testing.T) {
+	h := newCredentialHarness(t, "us-east-1")
+	h.collector.loadConfig = func(context.Context, string, awssdk.CredentialsProvider) (awssdk.Config, error) {
+		return awssdk.Config{Region: "us-east-1", Credentials: awssdk.CredentialsProviderFunc(func(context.Context) (awssdk.Credentials, error) {
+			return awssdk.Credentials{}, errors.New("no EC2 IMDS role found")
+		})}, nil
+	}
+
+	_, err := h.collector.Identity(context.Background(), domain.Account{ID: 1})
+	var pe *discovery.ProbeError
+	if !errors.As(err, &pe) || pe.Error() != "credentials: unavailable" {
+		t.Fatalf("Identity() error = %v, want credentials: unavailable", err)
+	}
+}

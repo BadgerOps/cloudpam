@@ -85,6 +85,13 @@ func (c *Collector) Identity(ctx context.Context, account domain.Account) (strin
 	if err != nil {
 		return "", err
 	}
+	// The SDK names no sentinel for an empty credential chain, so resolve it first
+	// to report that case apart from a rejected call.
+	if cfg.Credentials != nil {
+		if _, err := cfg.Credentials.Retrieve(ctx); err != nil && ctx.Err() == nil {
+			return "", &discovery.ProbeError{Step: discovery.ProbeStepCredentials, Code: "unavailable"}
+		}
+	}
 	out, err := c.stsClient(cfg).GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
 		return "", probeError(discovery.ProbeStepGetCallerIdentity, err)

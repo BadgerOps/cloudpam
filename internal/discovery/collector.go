@@ -45,6 +45,7 @@ type CredentialedCollector interface {
 type ProbeStep string
 
 const (
+	ProbeStepCredentials       ProbeStep = "credentials"
 	ProbeStepAssumeRole        ProbeStep = "assume_role"
 	ProbeStepGetCallerIdentity ProbeStep = "get_caller_identity"
 	ProbeStepToken             ProbeStep = "token"
