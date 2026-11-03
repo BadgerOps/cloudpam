@@ -113,9 +113,10 @@ type openAPIStatusResponse struct {
 }
 
 type openAPIKeyCreateRequest struct {
-	Name      string     `json:"name"`
-	Scopes    []string   `json:"scopes,omitempty"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Name          string          `json:"name"`
+	Scopes        []string        `json:"scopes,omitempty"`
+	ExpiresInDays *int            `json:"expires_in_days,omitempty"`
+	RateLimit     *auth.RateLimit `json:"rate_limit,omitempty"`
 }
 
 type openAPIKeyCreateResponse struct {
@@ -1130,7 +1131,7 @@ func openAPIOperationCatalog() map[string]openAPIRoute {
 		{Method: "POST", Path: "/api/v1/auth/users/{userId}/revoke-sessions", Summary: "Revoke user sessions", Tag: "Auth", ResponseSchema: "StatusResponse"},
 		{Method: "POST", Path: "/api/v1/auth/users/{userId}/unlock", Summary: "Unlock user", Tag: "Auth", ResponseSchema: "User"},
 		{Method: "GET", Path: "/api/v1/auth/keys", Summary: "List API keys", Tag: "Auth", ResponseSchema: "APIKeysResponse"},
-		{Method: "POST", Path: "/api/v1/auth/keys", Summary: "Create API key", Tag: "Auth", RequestSchema: "APIKeyCreateRequest", SuccessStatus: "201", ResponseSchema: "APIKeyCreateResponse"},
+		{Method: "POST", Path: "/api/v1/auth/keys", Summary: "Create API key", Description: "rate_limit gives the key its own token bucket (requests_per_second and burst, both positive) in place of RATE_LIMIT_RPS and RATE_LIMIT_BURST, and applies even when the server-wide limiter is off. Setting it requires settings:write; returns 403 otherwise and 400 when either value is not positive. Requests are rate limited per API key, per user, or per client address when unauthenticated, and a 429 carries Retry-After.", Tag: "Auth", RequestSchema: "APIKeyCreateRequest", SuccessStatus: "201", ResponseSchema: "APIKeyCreateResponse"},
 		{Method: "DELETE", Path: "/api/v1/auth/keys/{keyId}", Summary: "Revoke API key", Tag: "Auth", ResponseDescription: "API key revoked"},
 		{Method: "GET", Path: "/api/v1/auth/permissions", Summary: "List RBAC permissions", Tag: "Auth", ResponseSchema: "PermissionsResponse"},
 		{Method: "GET", Path: "/api/v1/auth/roles", Summary: "List RBAC roles", Tag: "Auth", ResponseSchema: "RoleListResponse"},
