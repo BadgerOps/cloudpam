@@ -6,7 +6,7 @@
 {{- if and $awsOrg (ne $provider "aws") }}{{ fail (printf "config.awsOrg.enabled requires config.provider aws (provider is %q)" $provider) }}{{ end -}}
 {{- if and $gcpOrg (ne $provider "gcp") }}{{ fail (printf "config.gcpOrg.enabled requires config.provider gcp (provider is %q)" $provider) }}{{ end -}}
 {{- if and (eq $provider "gcp") (not $gcpOrg) (not (.Values.config.gcpProject | trim)) }}{{ fail "config.gcpProject is required when config.provider is gcp and config.gcpOrg.enabled is false" }}{{ end -}}
-{{- if and $gcpOrg (not (regexMatch "^(organizations|folders)/[0-9]+$" (.Values.config.gcpOrg.parent | toString))) }}{{ fail (printf "config.gcpOrg.parent must be organizations/<id> or folders/<id> when config.gcpOrg.enabled, got %q" (.Values.config.gcpOrg.parent | toString)) }}{{ end -}}
+{{- if and $gcpOrg (not (regexMatch "^(organizations|folders)/[0-9]+$" (.Values.config.gcpOrg.parent | default "" | toString))) }}{{ fail (printf "config.gcpOrg.parent must be organizations/<id> or folders/<id> when config.gcpOrg.enabled, got %q" (.Values.config.gcpOrg.parent | default "" | toString)) }}{{ end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

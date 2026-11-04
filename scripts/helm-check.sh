@@ -100,6 +100,8 @@ agent_want_fail agent-gcp-no-project 'config.gcpProject is required when config.
 	--set config.provider=gcp
 agent_want_fail agent-gcp-org-no-parent 'config.gcpOrg.parent must be organizations/<id> or folders/<id>' \
 	--set config.provider=gcp --set config.gcpOrg.enabled=true
+agent_want_fail agent-gcp-org-null-parent 'config.gcpOrg.parent must be organizations/<id> or folders/<id> when config.gcpOrg.enabled, got ""' \
+	--set config.provider=gcp --set config.gcpOrg.enabled=true --set config.gcpOrg.parent=null
 agent_want_fail agent-gcp-org-bad-parent 'config.gcpOrg.parent must be organizations/<id> or folders/<id>' \
 	--set config.provider=gcp --set config.gcpOrg.enabled=true --set config.gcpOrg.parent=projects/123
 agent_want_fail agent-aws-org-on-gcp 'config.awsOrg.enabled requires config.provider aws' \

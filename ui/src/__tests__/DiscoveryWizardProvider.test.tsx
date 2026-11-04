@@ -112,6 +112,7 @@ describe('DiscoveryWizard state hygiene', () => {
     fireEvent.click(screen.getByRole('button', { name: '+ Create new account' }))
     expect(screen.queryAllByRole('combobox')).toHaveLength(0)
     expect(screen.getByText('GCP', { selector: '[data-testid="new-account-provider"]' })).toBeTruthy()
+    expect((screen.getByLabelText('Regions (comma-separated)') as HTMLInputElement).placeholder).toBe('us-central1, europe-west1')
 
     fireEvent.change(screen.getByLabelText('Key'), { target: { value: 'gcp:new' } })
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'GCP New' } })
@@ -146,9 +147,14 @@ describe('DiscoveryWizard state hygiene', () => {
     fireEvent.change(screen.getByLabelText('Organization or folder'), { target: { value: 'folders/12' } })
     const impersonate = screen.getByLabelText('Impersonate service account (optional)')
 
-    fireEvent.change(impersonate, { target: { value: 'disc-{project}@hub.iam.gserviceaccount.com' } })
+    fireEvent.change(impersonate, { target: { value: 'Disc@hub.iam.gserviceaccount.com' } })
     expect(screen.getByText(/6 to 30 lowercase letters/)).toBeTruthy()
     expect(nextButton().disabled).toBe(true)
+
+    fireEvent.change(impersonate, { target: { value: 'disc-{project}@hub.iam.gserviceaccount.com' } })
+    expect(screen.queryByText(/6 to 30 lowercase letters/)).toBeNull()
+    expect(screen.getByText(/longer than 30 characters/)).toBeTruthy()
+    expect(nextButton().disabled).toBe(false)
 
     fireEvent.change(impersonate, { target: { value: 'cloudpam-discovery@{project}.iam.gserviceaccount.com' } })
     expect(screen.queryByText(/6 to 30 lowercase letters/)).toBeNull()

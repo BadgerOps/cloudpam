@@ -5,7 +5,7 @@ import {
   buildAgentConfigs,
   gcpProjectFor,
   splitList,
-  validImpersonationTemplate,
+  checkImpersonationTemplate,
   type AgentConfigInput,
 } from '../components/discoveryWizardConfig'
 
@@ -76,6 +76,7 @@ describe('buildAgentConfigs for aws', () => {
       const lines = buildAgentConfigs(awsInput({ mode })).docker!.split('\n')
       const run = lines.findIndex(l => l.startsWith('docker run'))
       expect(lines.slice(0, run)).toContain('sudo install -d -o 65532 -g 65532 /var/lib/cloudpam-agent')
+      expect(lines[0]).toMatch(/^# .*Linux host.*rootful Docker.*sudo.*rootless Docker.*userns-remap/)
       expect(lines.slice(run)).toContain('  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\')
       expect(lines.slice(run).some(l => l.trimStart().startsWith('#'))).toBe(false)
       expect(lines.slice(run, -1).every(l => l.endsWith(' \\'))).toBe(true)
@@ -106,26 +107,30 @@ describe('gcp helpers', () => {
     expect(GCP_PARENT_PATTERN.test('folders/x')).toBe(false)
   })
 
-  it('validates impersonation templates against a 30-character project id', () => {
+  it('rejects only impersonation templates the agent rejects, and warns on long project ids', () => {
     for (const ok of [
       '',
       'cloudpam-discovery@{project}.iam.gserviceaccount.com',
       'discovery@hub.iam.gserviceaccount.com',
       '{project}@hub.iam.gserviceaccount.com',
       'abcdef@x.co',
-    ]) expect(validImpersonationTemplate(ok), ok).toBe(true)
+    ]) expect(checkImpersonationTemplate(ok), ok).toBe('ok')
+    for (const long of [
+      'disc-{project}@hub.iam.gserviceaccount.com',
+      'cloudpam-{project}@hub.iam.gserviceaccount.com',
+    ]) expect(checkImpersonationTemplate(long), long).toBe('long')
     for (const bad of [
       'cloudpam-discovery',
       'Disc@hub.iam.gserviceaccount.com',
       '1disc@hub.iam.gserviceaccount.com',
       'abcde@hub.iam.gserviceaccount.com',
       'a234567890123456789012345678901@hub.iam.gserviceaccount.com',
-      'disc-{project}@hub.iam.gserviceaccount.com',
+      'cloudpam-discovery-sa-{project}@hub.iam.gserviceaccount.com',
       'disc_sa@hub.iam.gserviceaccount.com',
       'disc@hub',
-      'disc@{project}',
-      'disc@hub .iam.gserviceaccount.com',
-    ]) expect(validImpersonationTemplate(bad), bad).toBe(false)
+      'discovery@{project}',
+      'discovery@hub .iam.gserviceaccount.com',
+    ]) expect(checkImpersonationTemplate(bad), bad).toBe('invalid')
   })
 
   it('derives the project from external_id, then key', () => {
@@ -171,7 +176,9 @@ describe('buildAgentConfigs for gcp', () => {
     const lines = buildAgentConfigs(gcpInput()).docker!.split('\n')
     const run = lines.findIndex(l => l.startsWith('docker run'))
     expect(lines.slice(0, run)).toContain('sudo install -d -o 65532 -g 65532 /var/lib/cloudpam-agent')
-    expect(lines.slice(0, run)).toContain('sudo install -D -o 65532 -g 65532 -m 0400 key.json /etc/cloudpam-agent/gcp-key.json')
+    expect(lines.slice(0, run)).toContain('sudo install -d -o 65532 -g 65532 -m 0700 /etc/cloudpam-agent')
+    expect(lines.slice(0, run)).toContain('sudo install -o 65532 -g 65532 -m 0400 key.json /etc/cloudpam-agent/gcp-key.json')
+    expect(lines.some(l => /install .*-D/.test(l))).toBe(false)
     expect(lines.slice(run)).toContain('  -v /etc/cloudpam-agent/gcp-key.json:/var/run/secrets/cloudpam/gcp/key.json:ro \\')
     expect(lines.join('\n')).not.toContain('$PWD/key.json')
   })
@@ -229,8 +236,11 @@ describe('buildAgentConfigs for gcp', () => {
       mode: 'organization',
       gcpOrg: { parent: 'folders/9', regions: [], exclude: [], impersonateServiceAccount: 'disc@hub.iam.gserviceaccount.com' },
     })).iam!
-    const enable = iam.indexOf("gcloud services enable 'iamcredentials.googleapis.com' --project='hub'")
+    expect(iam).toContain('AGENT_PROJECT=${AGENT_SA_EMAIL#*@}\nAGENT_PROJECT=${AGENT_PROJECT%%.iam.gserviceaccount.com}\n')
+    const enable = iam.indexOf(`gcloud services enable 'iamcredentials.googleapis.com' --project="\${AGENT_PROJECT}"`)
     expect(enable).toBeGreaterThan(0)
+    expect(iam).toMatch(/caller's project/)
+    expect(iam.match(/gcloud services enable/g)).toHaveLength(1)
     expect(enable).toBeLessThan(iam.indexOf('gcloud iam service-accounts add-iam-policy-binding'))
     expect(enable).toBeLessThan(iam.indexOf('gcloud projects add-iam-policy-binding'))
 

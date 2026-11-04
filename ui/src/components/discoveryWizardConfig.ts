@@ -37,24 +37,37 @@ const AGENT_ID_FILE = `${AGENT_STATE_DIR}/agent-id`
 const AGENT_UID = 65532
 const AGENT_IMAGE = 'ghcr.io/badgerops/cloudpam/agent:latest'
 const GCP_KEY_FILE = '/var/run/secrets/cloudpam/gcp/key.json'
-const HOST_GCP_KEY_FILE = '/etc/cloudpam-agent/gcp-key.json'
+const HOST_GCP_KEY_DIR = '/etc/cloudpam-agent'
+const HOST_GCP_KEY_FILE = `${HOST_GCP_KEY_DIR}/gcp-key.json`
 
 export const GCP_PARENT_PATTERN = /^(organizations|folders)\/[0-9]+$/
 
 const SERVICE_ACCOUNT_ID = /^[a-z][a-z0-9-]{5,29}$/
 const SERVICE_ACCOUNT_EMAIL = /^[^@\s{}]+@[^@\s{}]+\.[^@\s{}]+$/
-// The longest project ID GCP allows, so a template valid here is valid for every project.
+// The sample CheckServiceAccountTemplate substitutes in the agent.
+const SAMPLE_PROJECT_ID = 'project-id'
 const LONGEST_PROJECT_ID = 'p'.repeat(30)
 
-/**
- * Whether the agent can impersonate the account a template names in every
- * project. Empty means no impersonation and is valid.
- */
-export function validImpersonationTemplate(template: string): boolean {
-  if (!template) return true
-  const email = template.split('{project}').join(LONGEST_PROJECT_ID)
+export type ImpersonationTemplateCheck = 'ok' | 'long' | 'invalid'
+
+function serviceAccountFor(template: string, project: string): string {
+  return template.split('{project}').join(project)
+}
+
+function validServiceAccount(email: string): boolean {
   const at = email.indexOf('@')
   return at > 0 && SERVICE_ACCOUNT_ID.test(email.slice(0, at)) && SERVICE_ACCOUNT_EMAIL.test(email)
+}
+
+/**
+ * 'invalid' when the agent would reject the template, 'long' when some
+ * project IDs (up to 30 characters) would push the account ID past 30
+ * characters. Empty means no impersonation and is 'ok'.
+ */
+export function checkImpersonationTemplate(template: string): ImpersonationTemplateCheck {
+  if (!template) return 'ok'
+  if (!validServiceAccount(serviceAccountFor(template, SAMPLE_PROJECT_ID))) return 'invalid'
+  return validServiceAccount(serviceAccountFor(template, LONGEST_PROJECT_ID)) ? 'ok' : 'long'
 }
 
 /** The GCP project an account maps to: external ID, else key without "gcp:". */
@@ -150,13 +163,15 @@ function dockerConfig(input: AgentConfigInput, vars: EnvVar[]): string {
   // backslash-continued command would end the command. The image runs as
   // nonroot, and Docker creates a missing bind-mount source owned by root.
   const prepare = [
+    `# Assumes a Linux host with rootful Docker, run as root or with sudo. With rootless Docker or userns-remap, use the host UID that container UID ${AGENT_UID} maps to.`,
     `# The agent runs as UID ${AGENT_UID} and writes its ID under this directory.`,
     `sudo install -d -o ${AGENT_UID} -g ${AGENT_UID} ${AGENT_STATE_DIR}`,
     ...(isGcp
       ? [
-          '# Copy the service account key so only the agent user can read it. Omit this line, the key mount and',
+          '# Copy the service account key so only the agent user can read it. Omit these two lines, the key mount and',
           '# GOOGLE_APPLICATION_CREDENTIALS when the host has Application Default Credentials (GCE metadata, Workload Identity).',
-          `sudo install -D -o ${AGENT_UID} -g ${AGENT_UID} -m 0400 key.json ${HOST_GCP_KEY_FILE}`,
+          `sudo install -d -o ${AGENT_UID} -g ${AGENT_UID} -m 0700 ${HOST_GCP_KEY_DIR}`,
+          `sudo install -o ${AGENT_UID} -g ${AGENT_UID} -m 0400 key.json ${HOST_GCP_KEY_FILE}`,
         ]
       : []),
   ]
@@ -373,11 +388,15 @@ ${bind} \\
   return `${header}
 ${listing}
 
+# generateAccessToken is checked against the caller's project, so enable the IAM Credentials API in the
+# agent's own project. Enabling it in the discovery service accounts' home project is not required.
+AGENT_PROJECT=\${AGENT_SA_EMAIL#*@}
+AGENT_PROJECT=\${AGENT_PROJECT%%.iam.gserviceaccount.com}
+gcloud services enable ${shellQuote('iamcredentials.googleapis.com')} --project="\${AGENT_PROJECT}"
+
 # Per project: create the discovery service account, let it read networks, and
 # let the agent impersonate it. Run once per project ID.${shared}
 PROJECT_ID='my-project'
-# The agent mints tokens through the IAM Credentials API (also enable it in the agent's own project if that differs):
-gcloud services enable ${shellQuote('iamcredentials.googleapis.com')} --project=${homeProject}
 gcloud iam service-accounts create ${shellTemplate(name)} --project=${homeProject} \\
   --display-name='CloudPAM discovery'
 gcloud projects add-iam-policy-binding "\${PROJECT_ID}" \\

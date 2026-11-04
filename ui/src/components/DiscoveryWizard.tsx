@@ -13,7 +13,7 @@ import {
   gcpProjectFor,
   resolveConfigTab,
   splitList,
-  validImpersonationTemplate,
+  checkImpersonationTemplate,
   type ConfigTab,
   type DiscoveryMode,
   type WizardProvider,
@@ -208,10 +208,10 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
 
   const derivedGcpProject = gcpProjectFor(selectedAccount)
   const gcpProject = gcpProjectInput.trim() || derivedGcpProject
-  const impersonateValid = validImpersonationTemplate(gcpOrgImpersonate)
+  const impersonateCheck = checkImpersonationTemplate(gcpOrgImpersonate)
   const step1Valid = selectedAccount?.provider === provider && (
     provider !== 'gcp' ||
-    (isOrg ? GCP_PARENT_PATTERN.test(gcpOrgParent) && impersonateValid : gcpProject !== '')
+    (isOrg ? GCP_PARENT_PATTERN.test(gcpOrgParent) && impersonateCheck !== 'invalid' : gcpProject !== '')
   )
 
   const generated = buildAgentConfigs({
@@ -440,11 +440,12 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                           </span>
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Regions (comma-separated)</label>
+                          <label htmlFor="new-account-regions" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Regions (comma-separated)</label>
                           <input
+                            id="new-account-regions"
                             value={regionsInput}
                             onChange={e => setRegionsInput(e.target.value)}
-                            placeholder="us-east-1, us-west-2"
+                            placeholder={provider === 'gcp' ? 'us-central1, europe-west1' : 'us-east-1, us-west-2'}
                             className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                           />
                         </div>
@@ -567,10 +568,15 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                         placeholder="cloudpam-discovery@{project}.iam.gserviceaccount.com"
                         className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                       />
-                      {!impersonateValid && (
+                      {impersonateCheck === 'invalid' && (
                         <p className="mt-1 text-xs text-red-600 dark:text-red-400">
                           Use a service account email. The part before @ must be 6 to 30 lowercase letters, digits or hyphens,
-                          starting with a letter, even when <code>{'{project}'}</code> is a 30-character project ID.
+                          starting with a letter.
+                        </p>
+                      )}
+                      {impersonateCheck === 'long' && (
+                        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                          A long project ID can make the part before @ longer than 30 characters, which GCP rejects for those projects.
                         </p>
                       )}
                       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
