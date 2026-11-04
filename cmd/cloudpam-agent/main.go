@@ -126,34 +126,43 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 		}
 	}
 
-	// Initial sync and heartbeat. Org-mode agents still need to appear as live
-	// agents in the server UI even though discovery itself is pushed in bulk.
-	syncFn(nil)
-	if cfg.AccountID > 0 {
-		_, _ = pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
+	worker := newSyncWorker()
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		worker.run(ctx, syncFn)
+	}()
+
+	// Org-mode agents still heartbeat so they appear as live agents in the
+	// server UI even though discovery itself is pushed in bulk.
+	heartbeat := func() {
+		if cfg.AccountID <= 0 {
+			return
+		}
+		resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
+		if err != nil {
+			logger.Error("heartbeat failed", "error", err)
+			return
+		}
+		if resp != nil && resp.SyncJobID != nil {
+			logger.Info("received server-requested sync", "sync_job_id", resp.SyncJobID, "account_id", resp.AccountID)
+			worker.request(*resp.SyncJobID)
+		}
 	}
+
+	worker.schedule()
+	heartbeat()
 
 	for {
 		select {
 		case <-ctx.Done():
 			logger.Info("context cancelled, stopping scheduler")
+			<-workerDone
 			return nil
-
 		case <-syncTicker.C:
-			syncFn(nil)
-
+			worker.schedule()
 		case <-heartbeatTicker.C:
-			if cfg.AccountID > 0 {
-				resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
-				if err != nil {
-					logger.Error("heartbeat failed", "error", err)
-					continue
-				}
-				if resp != nil && resp.SyncJobID != nil {
-					logger.Info("received server-requested sync", "sync_job_id", resp.SyncJobID, "account_id", resp.AccountID)
-					syncFn(resp.SyncJobID)
-				}
-			}
+			heartbeat()
 		}
 	}
 }

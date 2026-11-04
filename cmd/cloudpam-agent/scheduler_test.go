@@ -444,3 +444,179 @@ func TestCovRunSchedulerContinuesAfterHeartbeatFailure(t *testing.T) {
 		t.Fatalf("heartbeats = %d, want at least 2", heartbeats)
 	}
 }
+
+// blockingCollector blocks its first Discover call until release is closed
+// or ctx is cancelled; later calls return immediately.
+type blockingCollector struct {
+	started  chan struct{}
+	release  chan struct{}
+	returned chan struct{}
+	once     sync.Once
+}
+
+func newBlockingCollector() *blockingCollector {
+	return &blockingCollector{
+		started:  make(chan struct{}, 16),
+		release:  make(chan struct{}),
+		returned: make(chan struct{}),
+	}
+}
+
+func (c *blockingCollector) Provider() string { return "aws" }
+
+func (c *blockingCollector) Discover(ctx context.Context, _ domain.Account) ([]domain.DiscoveredResource, error) {
+	first := false
+	c.once.Do(func() { first = true })
+	c.started <- struct{}{}
+	if !first {
+		return nil, nil
+	}
+	defer close(c.returned)
+	select {
+	case <-c.release:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func startScheduler(t *testing.T, cfg *Config, collector *blockingCollector, url string) (context.CancelFunc, <-chan error) {
+	t.Helper()
+	agentID := uuid.New()
+	pusher := NewPusher(url, "cpk", agentID, 5*time.Second, covQuietLogger())
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() {
+		done <- runScheduler(ctx, cfg, collector, pusher, agentID, "host", covQuietLogger())
+	}()
+	return cancel, done
+}
+
+func waitSchedulerReturn(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("runScheduler() error = %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runScheduler did not return after context cancellation")
+	}
+}
+
+func TestRunSchedulerSendsFirstHeartbeatBeforeFirstPassCompletes(t *testing.T) {
+	rec, url := covNewIngestServer(t)
+	collector := newBlockingCollector()
+	cfg := &Config{Provider: "aws", AgentName: "a", AccountID: 1, SyncInterval: time.Hour, HeartbeatInterval: time.Hour, RetryBackoff: time.Millisecond}
+	cancel, done := startScheduler(t, cfg, collector, url)
+	defer close(collector.release)
+
+	covWaitFor(t, collector.started, "first pass to start")
+	covWaitFor(t, rec.beat, "first heartbeat while the first pass is blocked")
+	if got := rec.ingestCount(); got != 0 {
+		t.Fatalf("ingests = %d before release, want 0", got)
+	}
+	cancel()
+	waitSchedulerReturn(t, done)
+}
+
+func TestRunSchedulerHeartbeatsWhileDiscoveryBlocked(t *testing.T) {
+	rec, url := covNewIngestServer(t)
+	collector := newBlockingCollector()
+	cfg := &Config{Provider: "aws", AgentName: "a", AccountID: 1, SyncInterval: time.Hour, HeartbeatInterval: 10 * time.Millisecond, RetryBackoff: time.Millisecond}
+	cancel, done := startScheduler(t, cfg, collector, url)
+	defer close(collector.release)
+
+	covWaitFor(t, collector.started, "first pass to start")
+	for i := 1; i <= 3; i++ {
+		covWaitFor(t, rec.beat, "heartbeat while the pass is blocked")
+	}
+	if got := rec.ingestCount(); got != 0 {
+		t.Fatalf("ingests = %d while the pass is blocked, want 0", got)
+	}
+	cancel()
+	waitSchedulerReturn(t, done)
+}
+
+func TestRunSchedulerRunsEachRequestedJobOnceInOrder(t *testing.T) {
+	jobA, jobB := uuid.New(), uuid.New()
+	var mu sync.Mutex
+	var beats int
+	var ingests []domain.IngestRequest
+	beat := make(chan struct{}, 64)
+	ingested := make(chan struct{}, 16)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/discovery/agents/heartbeat":
+			mu.Lock()
+			beats++
+			var job *uuid.UUID
+			switch beats {
+			case 1, 2:
+				job = &jobA
+			case 3, 4:
+				job = &jobB
+			}
+			mu.Unlock()
+			select {
+			case beat <- struct{}{}:
+			default:
+			}
+			_ = json.NewEncoder(w).Encode(domain.AgentHeartbeatResponse{Status: "ok", SyncJobID: job})
+		case "/api/v1/discovery/ingest":
+			var req domain.IngestRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			mu.Lock()
+			ingests = append(ingests, req)
+			mu.Unlock()
+			select {
+			case ingested <- struct{}{}:
+			default:
+			}
+			_ = json.NewEncoder(w).Encode(domain.IngestResponse{})
+		}
+	}))
+	defer srv.Close()
+
+	collector := newBlockingCollector()
+	cfg := &Config{Provider: "aws", AgentName: "a", AccountID: 1, SyncInterval: time.Hour, HeartbeatInterval: 10 * time.Millisecond, RetryBackoff: time.Millisecond}
+	cancel, done := startScheduler(t, cfg, collector, srv.URL)
+
+	covWaitFor(t, collector.started, "first pass to start")
+	for i := 1; i <= 4; i++ {
+		covWaitFor(t, beat, "heartbeat while the pass is blocked")
+	}
+	close(collector.release)
+	for i := 1; i <= 3; i++ {
+		covWaitFor(t, ingested, "ingest after release")
+	}
+	cancel()
+	waitSchedulerReturn(t, done)
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []*uuid.UUID{nil, &jobA, &jobB}
+	for i, w := range want {
+		got := ingests[i].SyncJobID
+		if (got == nil) != (w == nil) || (got != nil && *got != *w) {
+			t.Fatalf("ingest[%d].sync_job_id = %v, want %v (ingests: %d)", i, got, w, len(ingests))
+		}
+	}
+}
+
+func TestRunSchedulerReturnsAfterPassObservesCancel(t *testing.T) {
+	_, url := covNewIngestServer(t)
+	collector := newBlockingCollector()
+	cfg := &Config{Provider: "aws", AgentName: "a", AccountID: 1, SyncInterval: time.Hour, HeartbeatInterval: 10 * time.Millisecond, RetryBackoff: time.Millisecond}
+	cancel, done := startScheduler(t, cfg, collector, url)
+
+	covWaitFor(t, collector.started, "first pass to start")
+	cancel()
+	waitSchedulerReturn(t, done)
+	select {
+	case <-collector.returned:
+	default:
+		t.Fatal("runScheduler returned while the pass was still running")
+	}
+}
