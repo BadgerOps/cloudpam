@@ -1098,7 +1098,7 @@ The Discovery wizard (Plan Discovery button) supports org mode for AWS and GCP:
 
 With `CLOUDPAM_PROVIDER=gcp`, the agent discovers GCP networks, subnetworks, and external addresses. It authenticates with Application Default Credentials (ADC): GKE Workload Identity, a service-account key at `GOOGLE_APPLICATION_CREDENTIALS`, or the metadata server on a GCE VM. It has no credential settings of its own.
 
-Upgrade the CloudPAM server to 0.25.0 or later before you deploy or upgrade GCP agents. An older server skips GCP entries in a bulk ingest and ignores reported failures. The agent detects both cases and logs an error that says to upgrade the server.
+Upgrade the CloudPAM server to 0.25.0 or later before you deploy or upgrade GCP agents. An older server skips GCP entries in a bulk ingest and ignores reported failures. The agent detects both cases and logs an error that says to upgrade the server. An older server also rejects the empty ingest a 0.25.0 agent sends to complete a server-requested sync that found no accounts, with `server rejected request (status 400): accounts list is required`.
 
 The [base agent settings](#configuration-reference) still apply. `CLOUDPAM_ACCOUNT_ID` is required in every mode. In org mode it is the account the agent heartbeats as.
 
@@ -1215,16 +1215,20 @@ Set `config.provider: gcp` and one of these:
 - `config.gcpProject` for one project.
 - `config.gcpOrg.enabled: true` with `config.gcpOrg.parent`, plus the optional `config.gcpOrg.regions`, `config.gcpOrg.excludeProjects`, and `config.gcpOrg.impersonateServiceAccount`.
 
-`config.gcpRegions` and `config.discoveryGcpRps` apply in both modes. The chart fails to render when `config.provider` is `gcp` with neither `config.gcpProject` nor `config.gcpOrg.enabled`, when `config.gcpOrg.parent` is not `organizations/<id>` or `folders/<id>`, and when `config.awsOrg.enabled` is set with provider `gcp`.
+`config.gcpRegions` and `config.discoveryGcpRps` apply in both modes. The chart fails to render when `config.provider` is `gcp` with neither `config.gcpProject` nor `config.gcpOrg.enabled`, when `config.gcpOrg.parent` is not `organizations/<id>` or `folders/<id>`, and when `config.awsOrg.enabled` is set with provider `gcp` or `config.gcpOrg.enabled` with provider `aws`.
 
 On GKE, annotate the Kubernetes service account for Workload Identity:
 
 ```yaml
 config:
+  serverUrl: https://cloudpam.example.com
+  accountId: 1
+  agentName: prod-gke-org
   provider: gcp
   gcpOrg:
     enabled: true
     parent: organizations/123456789
+apiKey: cpk_abc123...
 serviceAccount:
   annotations:
     iam.gke.io/gcp-service-account: cloudpam-agent@ops-project.iam.gserviceaccount.com
@@ -1244,10 +1248,11 @@ The agent logs JSON. The table quotes the `msg` field and the start of the `erro
 | `failed to list gcp projects`, `list projects: list projects under organizations/<id>: cloud request failed: http 403` | The agent lacks `resourcemanager.projects.list` on that node. The same error with `list folders under` means it lacks `resourcemanager.folders.list`. | Grant `roles/browser` on the organization or folder. |
 | `discovery failed for project`, error containing `impersonate <email>: cloud request failed: http 403` | The agent lacks `roles/iam.serviceAccountTokenCreator` on that project's service account, the account does not exist, or `iamcredentials.googleapis.com` is disabled in the agent's own project. | Create the account, grant token creator, and enable the IAM Credentials API. |
 | `discovery failed for project`, `discover networks for project <id>: cloud request failed: http 403` | The identity lacks `roles/compute.networkViewer`, or the Compute Engine API is disabled in that project. | Grant the role, enable `compute.googleapis.com`, or exclude the project. |
-| `discovery failed for project`, error ending in `context deadline exceeded` | The project ran past its 10-minute limit or a request ran past `request_timeout`. | Check the network path to `compute.googleapis.com`, or exclude the project. |
+| `discovery failed for project`, error containing `context deadline exceeded` | The project ran past its 10-minute limit or a request ran past `request_timeout`. | Check the network path to `compute.googleapis.com`, or exclude the project. |
 | `gcp credentials failed for project`, `credentials: gcp default credentials: ...` | The agent found no ADC to impersonate from. | Configure Workload Identity, a key at `GOOGLE_APPLICATION_CREDENTIALS`, or a VM service account. |
 | `push org resources failed`, `server accepted none of the <n> accounts: ...` ending in `(upgrade the CloudPAM server to 0.25.0 or later before GCP agents)` | The server is older than 0.25.0 and rejects GCP entries. | Upgrade the server. |
 | `push org resources failed`, `server did not acknowledge <n> account failure(s); upgrade the CloudPAM server to 0.25.0 or later before upgrading agents` | The server is older than 0.25.0 and ignores `failures`. | Upgrade the server. |
+| `push org resources failed`, `server rejected request (status 400): accounts list is required` | A server-requested pass found no accounts to ingest, and the server is older than 0.25.0, which rejects the empty ingest that completes the job. | Upgrade the server. |
 | `org sync finished with failures` | Some projects failed and were reported to the server. A server-requested sync job ends `failed`. | Read the per-project `discovery failed for project` lines. For a server-requested sync, the job's error message in Sync History lists them too. |
 
 ### Known limitations
