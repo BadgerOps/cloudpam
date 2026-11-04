@@ -18,7 +18,6 @@ type syncWorker struct {
 	scheduled bool
 	requested []uuid.UUID
 	running   *uuid.UUID
-	active    bool
 }
 
 func newSyncWorker() *syncWorker {
@@ -60,12 +59,10 @@ func (w *syncWorker) next() (*uuid.UUID, bool) {
 		w.requested = w.requested[1:]
 		w.running = &job
 		w.scheduled = false
-		w.active = true
 		return &job, true
 	}
 	if w.scheduled {
 		w.scheduled = false
-		w.active = true
 		return nil, true
 	}
 	return nil, false
@@ -74,16 +71,16 @@ func (w *syncWorker) next() (*uuid.UUID, bool) {
 func (w *syncWorker) finish() {
 	w.mu.Lock()
 	w.running = nil
-	w.active = false
 	w.mu.Unlock()
 }
 
-// busy reports whether a pass is running or a requested job is waiting. A job
-// claimed now would wait in memory only, and be lost if the agent stopped.
-func (w *syncWorker) busy() bool {
+// holdingRequest reports whether a requested job is waiting to start. Agents
+// claim a new job only when none is, so at most one claimed job lives only in
+// memory, and it runs right after the current pass.
+func (w *syncWorker) holdingRequest() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.active || len(w.requested) > 0
+	return len(w.requested) > 0
 }
 
 // run executes passes one at a time until ctx is cancelled. pass must itself

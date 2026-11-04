@@ -179,8 +179,9 @@ func (c *serviceAccountCollector) Discover(ctx context.Context, account domain.A
 }
 
 func (c *serviceAccountCollector) tokenProbeError(err error) error {
-	if reduced := ReduceTokenError(err); reduced != err {
-		return reduced
+	var re *oauth2.RetrieveError
+	if errors.As(err, &re) {
+		return retrieveProbeError(re)
 	}
 	if c.token.lastErr != nil {
 		return fmt.Errorf("token: %w", c.token.lastErr)
@@ -194,9 +195,13 @@ func (c *serviceAccountCollector) tokenProbeError(err error) error {
 // error is returned as is.
 func ReduceTokenError(err error) error {
 	var re *oauth2.RetrieveError
-	if !errors.As(err, &re) {
-		return err
+	if errors.As(err, &re) {
+		return retrieveProbeError(re)
 	}
+	return err
+}
+
+func retrieveProbeError(re *oauth2.RetrieveError) *discovery.ProbeError {
 	pe := &discovery.ProbeError{Step: discovery.ProbeStepToken, Code: re.ErrorCode}
 	if re.Response != nil {
 		pe.Status = re.Response.StatusCode

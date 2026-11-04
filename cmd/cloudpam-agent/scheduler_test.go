@@ -621,37 +621,80 @@ func TestRunSchedulerReturnsAfterPassObservesCancel(t *testing.T) {
 	}
 }
 
-func TestRunSchedulerDeclinesJobsWhileAPassRuns(t *testing.T) {
-	rec, url := covNewIngestServer(t)
+// TestRunSchedulerHoldsAtMostOneRequestedJob relies on heartbeats being
+// sequential: beat k+1 is built only after beat k's response is handled, so a
+// beat recorded after an observed event, other than the one in flight, was
+// built after that event.
+func TestRunSchedulerHoldsAtMostOneRequestedJob(t *testing.T) {
+	job := uuid.New()
+	var mu sync.Mutex
+	var claims []*bool
+	handedOut := false
+	armAt := -1
+	beat := make(chan struct{}, 64)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/discovery/agents/heartbeat":
+			var req domain.AgentHeartbeatRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			resp := domain.AgentHeartbeatResponse{Status: "ok"}
+			mu.Lock()
+			claims = append(claims, req.ClaimSync)
+			if !handedOut && armAt >= 0 && len(claims)-1 >= armAt && req.ClaimSync != nil && *req.ClaimSync {
+				handedOut = true
+				resp.SyncJobID = &job
+			}
+			mu.Unlock()
+			beat <- struct{}{}
+			_ = json.NewEncoder(w).Encode(resp)
+		case "/api/v1/discovery/ingest":
+			_ = json.NewEncoder(w).Encode(domain.IngestResponse{})
+		}
+	}))
+	defer srv.Close()
+	beatCount := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(claims)
+	}
+	waitBeats := func(n int) {
+		t.Helper()
+		for beatCount() < n {
+			covWaitFor(t, beat, "heartbeat")
+		}
+	}
+
 	collector := newBlockingCollector()
 	cfg := &Config{Provider: "aws", AgentName: "a", AccountID: 1, SyncInterval: time.Hour, HeartbeatInterval: 10 * time.Millisecond, RetryBackoff: time.Millisecond}
-	cancel, done := startScheduler(t, cfg, collector, url)
+	cancel, done := startScheduler(t, cfg, collector, srv.URL)
 
-	covWaitFor(t, collector.started, "first pass to start")
-	covWaitFor(t, rec.beat, "heartbeat")
-	busyFrom := rec.heartbeatCount()
-	for i := 1; i <= 2; i++ {
-		covWaitFor(t, rec.beat, "heartbeat while the pass is blocked")
-	}
-	busyTo := rec.heartbeatCount()
+	covWaitFor(t, collector.started, "scheduled pass to start")
+	mu.Lock()
+	active := len(claims) + 1
+	armAt = active
+	mu.Unlock()
+	waitBeats(active + 3)
 	close(collector.release)
-	covWaitFor(t, rec.ingested, "ingest after release")
-	idleFrom := rec.heartbeatCount()
-	for i := 1; i <= 2; i++ {
-		covWaitFor(t, rec.beat, "heartbeat after the pass")
-	}
+	covWaitFor(t, collector.started, "requested job's pass to start")
+	jobStarted := beatCount()
+	waitBeats(jobStarted + 3)
 	cancel()
 	waitSchedulerReturn(t, done)
 
-	beats := rec.allHeartbeats()
-	for i := busyFrom; i < busyTo; i++ {
-		if c := beats[i].ClaimSync; c == nil || *c {
-			t.Fatalf("heartbeat %d during the pass claim_sync = %v, want false", i, c)
+	mu.Lock()
+	defer mu.Unlock()
+	claimed := func(i int) bool { return claims[i] != nil && *claims[i] }
+	if !claimed(active) {
+		t.Fatalf("heartbeat %d claim_sync = %v, want true while only a scheduled pass runs", active, claims[active])
+	}
+	for i := active + 1; i < active+3; i++ {
+		if claimed(i) {
+			t.Fatalf("heartbeat %d claim_sync = true, want false while the claimed job waits", i)
 		}
 	}
-	for i := idleFrom + 1; i < len(beats); i++ {
-		if c := beats[i].ClaimSync; c == nil || !*c {
-			t.Fatalf("heartbeat %d after the pass claim_sync = %v, want true", i, c)
+	for i := jobStarted + 1; i < len(claims); i++ {
+		if !claimed(i) {
+			t.Fatalf("heartbeat %d claim_sync = %v, want true once the job has started", i, claims[i])
 		}
 	}
 }

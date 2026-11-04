@@ -139,7 +139,7 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 		if cfg.AccountID <= 0 {
 			return
 		}
-		resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname, !worker.busy())
+		resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname, !worker.holdingRequest())
 		if err != nil {
 			logger.Error("heartbeat failed", "error", err)
 			return
