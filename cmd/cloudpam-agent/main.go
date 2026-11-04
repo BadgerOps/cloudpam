@@ -115,9 +115,15 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 
 	// Choose sync function based on mode
 	syncFn := func(syncJobID *uuid.UUID) { runSync(ctx, cfg, collector, pusher, syncJobID, logger) }
-	if cfg.AWSOrg.Enabled {
-		logger.Info("org mode enabled", "role_name", cfg.AWSOrg.RoleName, "regions", cfg.AWSOrg.Regions)
+	switch {
+	case cfg.AWSOrg.Enabled:
+		logger.Info("aws org mode enabled", "role_name", cfg.AWSOrg.RoleName, "regions", cfg.AWSOrg.Regions)
 		syncFn = func(syncJobID *uuid.UUID) { runAWSOrgSync(ctx, cfg, pusher, syncJobID, logger) }
+	case cfg.GCPOrg.Enabled:
+		logger.Info("gcp org mode enabled", "parent", cfg.GCPOrg.Parent, "regions", cfg.GCPOrg.Regions)
+		syncFn = func(syncJobID *uuid.UUID) {
+			runGCPOrgSync(ctx, cfg, pusher, syncJobID, logger, defaultGCPOrgDeps(cfg))
+		}
 	}
 
 	// Initial sync and heartbeat. Org-mode agents still need to appear as live

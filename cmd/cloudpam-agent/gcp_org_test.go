@@ -1,0 +1,205 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"cloudpam/internal/discovery"
+	"cloudpam/internal/discovery/gcp"
+	"cloudpam/internal/domain"
+)
+
+type projectCollector struct {
+	project string
+	fail    bool
+	partial bool
+	seen    *[]domain.Account
+	mu      *sync.Mutex
+}
+
+func (c projectCollector) Provider() string { return "gcp" }
+
+func (c projectCollector) Discover(_ context.Context, account domain.Account) ([]domain.DiscoveredResource, error) {
+	c.mu.Lock()
+	*c.seen = append(*c.seen, account)
+	c.mu.Unlock()
+	res := []domain.DiscoveredResource{{Provider: "gcp", ResourceType: domain.ResourceTypeVPC, ResourceID: c.project + "-net", CIDR: "10.0.0.0/16"}}
+	switch {
+	case c.fail:
+		return nil, errors.New("compute api disabled")
+	case c.partial:
+		return res, errors.New("discover addresses: 403")
+	}
+	return res, nil
+}
+
+type orgIngestRecorder struct {
+	mu   sync.Mutex
+	reqs []domain.BulkIngestRequest
+}
+
+func newOrgIngestServer(t *testing.T) (*orgIngestRecorder, string) {
+	t.Helper()
+	rec := &orgIngestRecorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/discovery/ingest/org" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		var req domain.BulkIngestRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		rec.mu.Lock()
+		rec.reqs = append(rec.reqs, req)
+		rec.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(domain.BulkIngestResponse{AccountsProcessed: len(req.Accounts)})
+	}))
+	t.Cleanup(srv.Close)
+	return rec, srv.URL
+}
+
+func gcpOrgConfig() *Config {
+	return &Config{
+		Provider: "gcp", AccountID: 1, MaxRetries: 0, RetryBackoff: time.Millisecond,
+		GCPRegions: []string{"us-central1"},
+		GCPOrg:     GCPOrg{Enabled: true, Parent: "organizations/1", ExcludeProjects: []string{"sandbox"}},
+	}
+}
+
+func TestRunGCPOrgSyncPushesEveryHealthyProject(t *testing.T) {
+	rec, url := newOrgIngestServer(t)
+	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
+	var mu sync.Mutex
+	var seen []domain.Account
+	var gotParent string
+	deps := gcpOrgDeps{
+		listProjects: func(_ context.Context, parent string, _ *discovery.Limiter) ([]gcp.Project, error) {
+			gotParent = parent
+			return []gcp.Project{
+				{ID: "prod", Name: "Production"},
+				{ID: "sandbox", Name: "Sandbox"},
+				{ID: "broken", Name: "Broken"},
+				{ID: "half", Name: "Half"},
+				{ID: "noauth", Name: "No Auth"},
+				{ID: "dev"},
+			}, nil
+		},
+		collectorFor: func(_ context.Context, project string, _ *discovery.Limiter) (discovery.Collector, error) {
+			if project == "noauth" {
+				return nil, errors.New("impersonate: 403")
+			}
+			return projectCollector{project: project, fail: project == "broken", partial: project == "half", seen: &seen, mu: &mu}, nil
+		},
+	}
+	jobID := uuid.New()
+
+	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, &jobID, covQuietLogger(), deps)
+
+	if gotParent != "organizations/1" {
+		t.Fatalf("parent = %q", gotParent)
+	}
+	if len(rec.reqs) != 1 {
+		t.Fatalf("org pushes = %d, want 1", len(rec.reqs))
+	}
+	req := rec.reqs[0]
+	if req.SyncJobID == nil || *req.SyncJobID != jobID {
+		t.Fatalf("sync_job_id = %v, want %s", req.SyncJobID, jobID)
+	}
+	var ids []string
+	for _, a := range req.Accounts {
+		ids = append(ids, a.ExternalID)
+		if a.Provider != "gcp" || a.AWSAccountID != "" || !reflect.DeepEqual(a.Regions, []string{"us-central1"}) {
+			t.Fatalf("entry = %+v", a)
+		}
+	}
+	if !reflect.DeepEqual(ids, []string{"prod", "dev"}) {
+		t.Fatalf("pushed projects = %v, want [prod dev] (sandbox excluded, broken/half/noauth skipped)", ids)
+	}
+	if req.Accounts[0].AccountName != "Production" || req.Accounts[1].AccountName != "dev" {
+		t.Fatalf("names = %q, %q", req.Accounts[0].AccountName, req.Accounts[1].AccountName)
+	}
+	for _, a := range seen {
+		if a.Provider != "gcp" || a.ExternalID == "" {
+			t.Fatalf("collector saw account %+v", a)
+		}
+	}
+}
+
+func TestRunGCPOrgSyncPrefersOrgRegions(t *testing.T) {
+	rec, url := newOrgIngestServer(t)
+	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
+	var mu sync.Mutex
+	var seen []domain.Account
+	cfg := gcpOrgConfig()
+	cfg.GCPOrg.Regions = []string{"europe-west1"}
+	deps := gcpOrgDeps{
+		listProjects: func(context.Context, string, *discovery.Limiter) ([]gcp.Project, error) {
+			return []gcp.Project{{ID: "p"}}, nil
+		},
+		collectorFor: func(_ context.Context, project string, _ *discovery.Limiter) (discovery.Collector, error) {
+			return projectCollector{project: project, seen: &seen, mu: &mu}, nil
+		},
+	}
+	runGCPOrgSync(context.Background(), cfg, pusher, nil, covQuietLogger(), deps)
+	if len(seen) != 1 || !reflect.DeepEqual(seen[0].Regions, []string{"europe-west1"}) {
+		t.Fatalf("collector regions = %+v", seen)
+	}
+	if len(rec.reqs) != 1 || !reflect.DeepEqual(rec.reqs[0].Accounts[0].Regions, []string{"europe-west1"}) {
+		t.Fatalf("pushed regions = %+v", rec.reqs)
+	}
+}
+
+func TestRunGCPOrgSyncPushesNothingWhenListingFails(t *testing.T) {
+	rec, url := newOrgIngestServer(t)
+	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
+	deps := gcpOrgDeps{
+		listProjects: func(context.Context, string, *discovery.Limiter) ([]gcp.Project, error) {
+			return nil, errors.New("list folders under organizations/1: 403")
+		},
+		collectorFor: func(context.Context, string, *discovery.Limiter) (discovery.Collector, error) {
+			t.Fatal("collectorFor must not be called when listing fails")
+			return nil, nil
+		},
+	}
+	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, nil, covQuietLogger(), deps)
+	if len(rec.reqs) != 0 {
+		t.Fatalf("org pushes = %d, want 0", len(rec.reqs))
+	}
+}
+
+func TestRunGCPOrgSyncPushesNothingWhenNoProjectSucceeds(t *testing.T) {
+	rec, url := newOrgIngestServer(t)
+	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
+	deps := gcpOrgDeps{
+		listProjects: func(context.Context, string, *discovery.Limiter) ([]gcp.Project, error) {
+			return []gcp.Project{{ID: "sandbox"}}, nil
+		},
+		collectorFor: func(context.Context, string, *discovery.Limiter) (discovery.Collector, error) {
+			t.Fatal("excluded project must not be discovered")
+			return nil, nil
+		},
+	}
+	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, nil, covQuietLogger(), deps)
+	if len(rec.reqs) != 0 {
+		t.Fatalf("org pushes = %d, want 0", len(rec.reqs))
+	}
+}
+
+func TestDefaultGCPOrgDepsDirectModeUsesADCCollector(t *testing.T) {
+	deps := defaultGCPOrgDeps(gcpOrgConfig())
+	c, err := deps.collectorFor(context.Background(), "p", nil)
+	if err != nil {
+		t.Fatalf("collectorFor() error = %v", err)
+	}
+	if _, ok := c.(*gcp.Collector); !ok || c.Provider() != "gcp" {
+		t.Fatalf("collector = %T", c)
+	}
+}
