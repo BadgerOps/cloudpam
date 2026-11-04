@@ -280,6 +280,7 @@ func newSingleAccountCollector(cfg *Config) (discovery.Collector, error) {
 	case providerGCP:
 		c := gcp.New()
 		c.SetLimiter(discovery.NewLimiter(cfg.DiscoveryGCPRPS))
+		c.SetRequestTimeout(cfg.RequestTimeout)
 		return c, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider %q", cfg.Provider)

@@ -567,3 +567,57 @@ func TestCovHeartbeatFailsWhenServerUnreachable(t *testing.T) {
 		t.Fatalf("Heartbeat() error = %v, want http request failure", err)
 	}
 }
+
+func twoGCPAccounts() domain.BulkIngestRequest {
+	return domain.BulkIngestRequest{Accounts: []domain.OrgAccountIngest{
+		{Provider: "gcp", ExternalID: "p-1"}, {Provider: "gcp", ExternalID: "p-2"},
+	}}
+}
+
+func TestPushOrgResourcesFailsWhenTheServerAcceptsNoAccount(t *testing.T) {
+	pusher, _, rec := covNewPusherFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"accounts_processed":0,"errors":["skipped account with empty aws_account_id","skipped account with empty aws_account_id"]}`))
+	})
+
+	err := pusher.PushOrgResources(context.Background(), twoGCPAccounts(), 2, time.Millisecond)
+	if err == nil {
+		t.Fatal("PushOrgResources() = nil, want an error when no account was accepted")
+	}
+	for _, want := range []string{"none of the 2 accounts", "skipped account with empty aws_account_id", "upgrade the CloudPAM server to 0.25.0 or later before GCP agents"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+	if rec.count() != 1 {
+		t.Fatalf("requests = %d, want 1 (a rejection is not retried)", rec.count())
+	}
+}
+
+func TestPushOrgResourcesQuotesAtMostThreeServerErrors(t *testing.T) {
+	pusher, _, _ := covNewPusherFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"accounts_processed":0,"errors":["e1","e2","e3","e4"]}`))
+	})
+
+	err := pusher.PushOrgResources(context.Background(), twoGCPAccounts(), 0, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "e3") || strings.Contains(err.Error(), "e4") {
+		t.Fatalf("error = %v, want the first three server errors only", err)
+	}
+	if strings.Contains(err.Error(), "upgrade") {
+		t.Fatalf("error = %v, want no upgrade hint without an aws_account_id error", err)
+	}
+}
+
+func TestPushOrgResourcesLogsPartialFailuresAsErrors(t *testing.T) {
+	pusher, _, _ := covNewPusherFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"accounts_processed":1,"errors":["project p-2: invalid cidr"]}`))
+	})
+	var logs strings.Builder
+	pusher.logger = slog.New(slog.NewTextHandler(&logs, nil))
+
+	if err := pusher.PushOrgResources(context.Background(), twoGCPAccounts(), 0, time.Millisecond); err != nil {
+		t.Fatalf("PushOrgResources() = %v, want nil when some accounts were processed", err)
+	}
+	if !strings.Contains(logs.String(), `level=ERROR msg="org ingest had errors"`) {
+		t.Fatalf("logs = %s, want the server errors at error level", logs.String())
+	}
+}

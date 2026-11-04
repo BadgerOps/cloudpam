@@ -5,14 +5,20 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/discovery/gcp"
 	"cloudpam/internal/domain"
 )
+
+// gcpProjectTimeout bounds one project's credentials and discovery, so a
+// stalled project cannot hold up the rest of the pass.
+var gcpProjectTimeout = 10 * time.Minute
 
 // gcpOrgDeps are the cloud calls a GCP org pass makes, injectable for tests.
 type gcpOrgDeps struct {
@@ -25,12 +31,13 @@ type gcpOrgDeps struct {
 // through the service account the template names instead.
 func defaultGCPOrgDeps(cfg *Config) gcpOrgDeps {
 	template := cfg.GCPOrg.ImpersonateServiceAccount
+	timeout := cfg.RequestTimeout
 	var iamClient *http.Client
 	return gcpOrgDeps{
 		listProjects: func(ctx context.Context, parent string, limiter *discovery.Limiter) ([]gcp.Project, error) {
-			client, err := google.DefaultClient(ctx, gcp.ResourceManagerScope)
+			client, err := gcpDefaultClient(ctx, gcp.ResourceManagerScope, timeout)
 			if err != nil {
-				return nil, fmt.Errorf("gcp default credentials: %w", err)
+				return nil, err
 			}
 			return gcp.ListProjects(ctx, client, parent, limiter)
 		},
@@ -38,21 +45,37 @@ func defaultGCPOrgDeps(cfg *Config) gcpOrgDeps {
 			if template == "" {
 				c := gcp.New()
 				c.SetLimiter(limiter)
+				c.SetRequestTimeout(timeout)
 				return c, nil
 			}
 			if iamClient == nil {
-				client, err := google.DefaultClient(ctx, gcp.IAMCredentialsScope)
+				// The client outlives this project, so its token refreshes must
+				// not inherit the project's deadline; the client timeout bounds them.
+				client, err := gcpDefaultClient(context.WithoutCancel(ctx), gcp.IAMCredentialsScope, timeout)
 				if err != nil {
-					return nil, fmt.Errorf("gcp default credentials: %w", err)
+					return nil, err
 				}
 				iamClient = client
 			}
 			ts := gcp.ImpersonatedTokenSource(ctx, iamClient, gcp.ServiceAccountFor(template, project), limiter)
 			c := gcp.NewWithTokenSource(ts)
 			c.SetLimiter(limiter)
+			c.SetRequestTimeout(timeout)
 			return c, nil
 		},
 	}
+}
+
+// gcpDefaultClient is an Application Default Credentials client whose requests
+// and token refreshes each give up after timeout.
+func gcpDefaultClient(ctx context.Context, scope string, timeout time.Duration) (*http.Client, error) {
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Timeout: timeout})
+	client, err := google.DefaultClient(ctx, scope)
+	if err != nil {
+		return nil, fmt.Errorf("gcp default credentials: %w", err)
+	}
+	client.Timeout = timeout
+	return client, nil
 }
 
 // runGCPOrgSync discovers every active project under the configured parent and
@@ -88,13 +111,16 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 			logger.Info("excluding project", "project", project.ID)
 			continue
 		}
-		collector, err := deps.collectorFor(ctx, project.ID, limiter)
+		projectCtx, cancel := context.WithTimeout(ctx, gcpProjectTimeout)
+		collector, err := deps.collectorFor(projectCtx, project.ID, limiter)
 		if err != nil {
+			cancel()
 			logger.Error("gcp credentials failed for project", "project", project.ID, "error", err)
 			continue
 		}
 		account := domain.Account{Provider: providerGCP, ExternalID: project.ID, Regions: regions}
-		resources, err := collector.Discover(ctx, account)
+		resources, err := collector.Discover(projectCtx, account)
+		cancel()
 		if err != nil {
 			// Partial results are dropped: pushing them would mark the missing
 			// resources stale.

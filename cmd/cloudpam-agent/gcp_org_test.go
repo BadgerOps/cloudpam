@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -201,5 +203,79 @@ func TestDefaultGCPOrgDepsDirectModeUsesADCCollector(t *testing.T) {
 	}
 	if _, ok := c.(*gcp.Collector); !ok || c.Provider() != "gcp" {
 		t.Fatalf("collector = %T", c)
+	}
+}
+
+type stalledCollector struct{}
+
+func (stalledCollector) Provider() string { return "gcp" }
+
+func (stalledCollector) Discover(ctx context.Context, _ domain.Account) ([]domain.DiscoveredResource, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestRunGCPOrgSyncSkipsAProjectThatOutlivesItsDeadline(t *testing.T) {
+	old := gcpProjectTimeout
+	gcpProjectTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { gcpProjectTimeout = old })
+
+	rec, url := newOrgIngestServer(t)
+	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
+	var mu sync.Mutex
+	var seen []domain.Account
+	deps := gcpOrgDeps{
+		listProjects: func(context.Context, string, *discovery.Limiter) ([]gcp.Project, error) {
+			return []gcp.Project{{ID: "stuck"}, {ID: "prod"}}, nil
+		},
+		collectorFor: func(_ context.Context, project string, _ *discovery.Limiter) (discovery.Collector, error) {
+			if project == "stuck" {
+				return stalledCollector{}, nil
+			}
+			return projectCollector{project: project, seen: &seen, mu: &mu}, nil
+		},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, nil, covQuietLogger(), deps)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runGCPOrgSync did not return; the stalled project has no deadline")
+	}
+	if len(rec.reqs) != 1 || len(rec.reqs[0].Accounts) != 1 || rec.reqs[0].Accounts[0].ExternalID != "prod" {
+		t.Fatalf("pushes = %+v, want only prod", rec.reqs)
+	}
+}
+
+func TestRunGCPOrgSyncDoesNotReportSuccessWhenTheServerAcceptsNothing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"accounts_processed":0,"errors":["skipped account with empty aws_account_id"]}`))
+	}))
+	t.Cleanup(srv.Close)
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	pusher := NewPusher(srv.URL, "cpk", uuid.New(), 5*time.Second, logger)
+	var mu sync.Mutex
+	var seen []domain.Account
+	deps := gcpOrgDeps{
+		listProjects: func(context.Context, string, *discovery.Limiter) ([]gcp.Project, error) {
+			return []gcp.Project{{ID: "prod"}}, nil
+		},
+		collectorFor: func(_ context.Context, project string, _ *discovery.Limiter) (discovery.Collector, error) {
+			return projectCollector{project: project, seen: &seen, mu: &mu}, nil
+		},
+	}
+
+	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, nil, logger, deps)
+
+	if !strings.Contains(logs.String(), "push gcp org resources failed") || !strings.Contains(logs.String(), "0.25.0") {
+		t.Fatalf("logs = %s, want the rejected push logged with the upgrade hint", logs.String())
+	}
+	if strings.Contains(logs.String(), "gcp org sync completed") {
+		t.Fatalf("logs = %s, must not report a completed sync", logs.String())
 	}
 }

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -223,8 +225,11 @@ func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequ
 				"accounts_created", ingestResp.AccountsCreated,
 				"total_resources", ingestResp.TotalResources,
 			)
+			if ingestResp.AccountsProcessed == 0 && len(ingestResp.Errors) > 0 && len(req.Accounts) > 0 {
+				return orgIngestRejected(len(req.Accounts), ingestResp.Errors)
+			}
 			if len(ingestResp.Errors) > 0 {
-				p.logger.Warn("org ingest had errors", "errors", ingestResp.Errors)
+				p.logger.Error("org ingest had errors", "errors", ingestResp.Errors)
 			}
 			return nil
 		}
@@ -245,6 +250,20 @@ func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequ
 	}
 
 	return fmt.Errorf("org push failed after %d attempts: %w", maxRetries+1, lastErr)
+}
+
+// orgIngestRejected reports a 2xx bulk ingest that processed none of the
+// accounts sent. A server older than 0.25.0 answers GCP entries this way,
+// because it requires aws_account_id on every entry.
+func orgIngestRejected(accounts int, errs []string) error {
+	msg := fmt.Sprintf("server accepted none of the %d accounts: %s", accounts, strings.Join(errs[:min(3, len(errs))], "; "))
+	for _, e := range errs {
+		if strings.Contains(e, "aws_account_id") {
+			msg += " (upgrade the CloudPAM server to 0.25.0 or later before GCP agents)"
+			break
+		}
+	}
+	return errors.New(msg)
 }
 
 // Heartbeat sends a heartbeat to the server.
