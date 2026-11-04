@@ -327,9 +327,15 @@ type AgentRegisterResponse struct {
 	Message        string              `json:"message,omitempty"`
 }
 
-// OrgAccountIngest represents a single AWS account's discovered resources for bulk org ingest.
+// OrgAccountIngest is one cloud account's (AWS account or GCP project)
+// discovered resources for bulk org ingest.
 type OrgAccountIngest struct {
-	AWSAccountID string               `json:"aws_account_id"`
+	// ExternalID is the provider's account identifier: the AWS account ID or the
+	// GCP project ID.
+	ExternalID string `json:"external_id,omitempty"`
+	// AWSAccountID is the deprecated spelling of ExternalID, still accepted so
+	// agents older than 0.25.0 keep working.
+	AWSAccountID string               `json:"aws_account_id,omitempty"`
 	AccountName  string               `json:"account_name"`
 	AccountEmail string               `json:"account_email"`
 	Provider     string               `json:"provider"`

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/discovery/aws"
+	"cloudpam/internal/discovery/gcp"
 	"cloudpam/internal/domain"
 )
 
@@ -37,6 +39,7 @@ func main() {
 	logger.Info("cloudpam-agent starting",
 		"version", version,
 		"server_url", cfg.ServerURL,
+		"provider", cfg.Provider,
 		"account_id", cfg.AccountID,
 		"agent_name", cfg.AgentName,
 		"sync_interval", cfg.SyncInterval,
@@ -74,9 +77,11 @@ func main() {
 		)
 	}
 
-	// Create AWS collector
-	collector := aws.New()
-	collector.SetLimiter(discovery.NewLimiter(cfg.DiscoveryAWSRPS))
+	collector, err := newSingleAccountCollector(cfg)
+	if err != nil {
+		logger.Error("failed to create collector", "error", err)
+		os.Exit(1)
+	}
 
 	// Setup signal handling
 	ctx, cancel := context.WithCancel(context.Background())
@@ -112,7 +117,7 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 	syncFn := func(syncJobID *uuid.UUID) { runSync(ctx, cfg, collector, pusher, syncJobID, logger) }
 	if cfg.AWSOrg.Enabled {
 		logger.Info("org mode enabled", "role_name", cfg.AWSOrg.RoleName, "regions", cfg.AWSOrg.Regions)
-		syncFn = func(syncJobID *uuid.UUID) { runOrgSync(ctx, cfg, pusher, syncJobID, logger) }
+		syncFn = func(syncJobID *uuid.UUID) { runAWSOrgSync(ctx, cfg, pusher, syncJobID, logger) }
 	}
 
 	// Initial sync and heartbeat. Org-mode agents still need to appear as live
@@ -147,7 +152,7 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 	}
 }
 
-func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
+func runAWSOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
 	logger.Info("starting org discovery sync")
 
 	// One limiter for the whole pass, so every member account's EC2 calls
@@ -208,6 +213,7 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 		logger.Info("discovered resources for account", "account_id", orgAcct.ID, "count", len(resources))
 
 		ingestAccounts = append(ingestAccounts, domain.OrgAccountIngest{
+			ExternalID:   orgAcct.ID,
 			AWSAccountID: orgAcct.ID,
 			AccountName:  orgAcct.Name,
 			AccountEmail: orgAcct.Email,
@@ -236,14 +242,9 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 }
 
 func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
-	logger.Info("starting discovery sync", "account_id", cfg.AccountID)
+	logger.Info("starting discovery sync", "account_id", cfg.AccountID, "provider", cfg.Provider)
 
-	// Create mock account with AWS regions
-	account := domain.Account{
-		ID:       cfg.AccountID,
-		Provider: "aws",
-		Regions:  cfg.AWSRegions,
-	}
+	account := singleAccount(cfg)
 
 	// Discover resources
 	resources, err := collector.Discover(ctx, account)
@@ -261,4 +262,34 @@ func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pu
 	}
 
 	logger.Info("sync completed successfully", "account_id", account.ID)
+}
+
+// newSingleAccountCollector returns the collector for single-account mode.
+func newSingleAccountCollector(cfg *Config) (discovery.Collector, error) {
+	switch cfg.Provider {
+	case providerAWS:
+		c := aws.New()
+		c.SetLimiter(discovery.NewLimiter(cfg.DiscoveryAWSRPS))
+		return c, nil
+	case providerGCP:
+		c := gcp.New()
+		c.SetLimiter(discovery.NewLimiter(cfg.DiscoveryGCPRPS))
+		return c, nil
+	default:
+		return nil, fmt.Errorf("unsupported provider %q", cfg.Provider)
+	}
+}
+
+// singleAccount is the account single-account mode discovers. The server owns
+// the real record; the agent only needs what its collector reads.
+func singleAccount(cfg *Config) domain.Account {
+	account := domain.Account{ID: cfg.AccountID, Provider: cfg.Provider}
+	switch cfg.Provider {
+	case providerAWS:
+		account.Regions = cfg.AWSRegions
+	case providerGCP:
+		account.ExternalID = cfg.GCPProject
+		account.Regions = cfg.GCPRegions
+	}
+	return account
 }
