@@ -156,7 +156,7 @@ func TestCovRunSyncDiscoversAndPushes(t *testing.T) {
 	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
 	syncJobID := uuid.New()
 
-	cfg := &Config{AccountID: 55, AWSRegions: []string{"us-east-1", "us-west-2"}, MaxRetries: 0, RetryBackoff: time.Millisecond}
+	cfg := &Config{Provider: "aws", AccountID: 55, AWSRegions: []string{"us-east-1", "us-west-2"}, MaxRetries: 0, RetryBackoff: time.Millisecond}
 	runSync(context.Background(), cfg, collector, pusher, &syncJobID, covQuietLogger())
 
 	if collector.callCount() != 1 {
@@ -193,7 +193,7 @@ func TestCovRunSyncSkipsPushWhenDiscoveryFails(t *testing.T) {
 	collector := &covStubCollector{err: errors.New("ec2:DescribeVpcs denied")}
 	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
 
-	cfg := &Config{AccountID: 7, MaxRetries: 0, RetryBackoff: time.Millisecond}
+	cfg := &Config{Provider: "aws", AccountID: 7, MaxRetries: 0, RetryBackoff: time.Millisecond}
 	runSync(context.Background(), cfg, collector, pusher, nil, covQuietLogger())
 
 	if collector.callCount() != 1 {
@@ -219,7 +219,7 @@ func TestCovRunSyncToleratesPushFailure(t *testing.T) {
 	collector := &covStubCollector{resources: []domain.DiscoveredResource{{ID: uuid.New(), ResourceID: "vpc-a"}}}
 	pusher := NewPusher(srv.URL, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
 
-	cfg := &Config{AccountID: 3, MaxRetries: 2, RetryBackoff: time.Millisecond}
+	cfg := &Config{Provider: "aws", AccountID: 3, MaxRetries: 2, RetryBackoff: time.Millisecond}
 	runSync(context.Background(), cfg, collector, pusher, nil, covQuietLogger())
 
 	mu.Lock()
@@ -236,6 +236,7 @@ func TestCovRunSchedulerRunsInitialSyncAndHeartbeatThenStopsOnCancel(t *testing.
 	pusher := NewPusher(url, "cpk", agentID, 5*time.Second, covQuietLogger())
 
 	cfg := &Config{
+		Provider:          "aws",
 		AgentName:         "sched-agent",
 		AccountID:         12,
 		SyncInterval:      time.Hour,
@@ -284,6 +285,7 @@ func TestCovRunSchedulerSkipsHeartbeatWhenAccountIDUnset(t *testing.T) {
 	pusher := NewPusher(url, "cpk", agentID, 5*time.Second, covQuietLogger())
 
 	cfg := &Config{
+		Provider:          "aws",
 		AgentName:         "no-account",
 		AccountID:         0,
 		SyncInterval:      time.Hour,
@@ -329,6 +331,7 @@ func TestCovRunSchedulerRunsServerRequestedSync(t *testing.T) {
 	pusher := NewPusher(url, "cpk", agentID, 5*time.Second, covQuietLogger())
 
 	cfg := &Config{
+		Provider:          "aws",
 		AgentName:         "req-agent",
 		AccountID:         31,
 		SyncInterval:      time.Hour,
@@ -404,6 +407,7 @@ func TestCovRunSchedulerContinuesAfterHeartbeatFailure(t *testing.T) {
 	pusher := NewPusher(srv.URL, "cpk", agentID, 5*time.Second, covQuietLogger())
 
 	cfg := &Config{
+		Provider:          "aws",
 		AgentName:         "flaky",
 		AccountID:         4,
 		SyncInterval:      time.Hour,
