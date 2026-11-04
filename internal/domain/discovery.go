@@ -2,6 +2,7 @@ package domain
 
 import (
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -345,15 +346,53 @@ type OrgAccountIngest struct {
 
 // BulkIngestRequest is the request body for the /api/v1/discovery/ingest/org endpoint.
 type BulkIngestRequest struct {
-	Accounts  []OrgAccountIngest `json:"accounts"`
-	AgentID   string             `json:"agent_id,omitempty"`
-	SyncJobID *uuid.UUID         `json:"sync_job_id,omitempty"`
+	Accounts []OrgAccountIngest `json:"accounts"`
+	// Failures are the accounts the agent could not read this pass. They are
+	// reported, never ingested, so their inventory is left as it was.
+	Failures  []OrgAccountFailure `json:"failures,omitempty"`
+	AgentID   string              `json:"agent_id,omitempty"`
+	SyncJobID *uuid.UUID          `json:"sync_job_id,omitempty"`
+}
+
+// OrgAccountFailure is one account an org pass could not discover. When the
+// pass could not list accounts at all, ExternalID is the GCP org parent
+// (organizations/... or folders/...) or empty for an AWS organization.
+type OrgAccountFailure struct {
+	Provider   string `json:"provider"`
+	ExternalID string `json:"external_id"`
+	Error      string `json:"error"`
+}
+
+// orgFailureErrorMax caps a failure's error text, so one verbose provider error
+// cannot bloat an ingest request or a sync job's message.
+const orgFailureErrorMax = 300
+
+// NewOrgAccountFailure records err as the reason an account could not be read.
+func NewOrgAccountFailure(provider, externalID string, err error) OrgAccountFailure {
+	return OrgAccountFailure{Provider: provider, ExternalID: externalID, Error: clipRunes(err.Error(), orgFailureErrorMax)}
+}
+
+// Message is the failure as reported in an ingest response and sync job.
+func (f OrgAccountFailure) Message() string {
+	target := f.Provider
+	if f.ExternalID != "" {
+		target += ":" + f.ExternalID
+	}
+	return "discovery failed for " + target + ": " + clipRunes(f.Error, orgFailureErrorMax)
+}
+
+func clipRunes(s string, limit int) string {
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	return string([]rune(s)[:limit])
 }
 
 // BulkIngestResponse is the response body for the /api/v1/discovery/ingest/org endpoint.
 type BulkIngestResponse struct {
 	AccountsProcessed int      `json:"accounts_processed"`
 	AccountsCreated   int      `json:"accounts_created"`
+	AccountsFailed    int      `json:"accounts_failed"`
 	TotalResources    int      `json:"total_resources"`
 	Errors            []string `json:"errors,omitempty"`
 }

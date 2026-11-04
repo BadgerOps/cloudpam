@@ -133,6 +133,16 @@ func TestRunGCPOrgSyncPushesEveryHealthyProject(t *testing.T) {
 			t.Fatalf("collector saw account %+v", a)
 		}
 	}
+	var failed []string
+	for _, f := range req.Failures {
+		failed = append(failed, f.ExternalID)
+		if f.Provider != "gcp" || f.Error == "" {
+			t.Fatalf("failure = %+v", f)
+		}
+	}
+	if !reflect.DeepEqual(failed, []string{"broken", "half", "noauth"}) {
+		t.Fatalf("failures = %v, want [broken half noauth] (sandbox is excluded, not failed)", failed)
+	}
 }
 
 func TestRunGCPOrgSyncPrefersOrgRegions(t *testing.T) {
@@ -159,7 +169,7 @@ func TestRunGCPOrgSyncPrefersOrgRegions(t *testing.T) {
 	}
 }
 
-func TestRunGCPOrgSyncPushesNothingWhenListingFails(t *testing.T) {
+func TestRunGCPOrgSyncReportsAListingFailure(t *testing.T) {
 	rec, url := newOrgIngestServer(t)
 	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
 	deps := gcpOrgDeps{
@@ -171,9 +181,17 @@ func TestRunGCPOrgSyncPushesNothingWhenListingFails(t *testing.T) {
 			return nil, nil
 		},
 	}
-	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, nil, covQuietLogger(), deps)
-	if len(rec.reqs) != 0 {
-		t.Fatalf("org pushes = %d, want 0", len(rec.reqs))
+	jobID := uuid.New()
+	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, &jobID, covQuietLogger(), deps)
+	if len(rec.reqs) != 1 {
+		t.Fatalf("org pushes = %d, want 1 reporting the listing failure", len(rec.reqs))
+	}
+	req := rec.reqs[0]
+	if len(req.Accounts) != 0 || len(req.Failures) != 1 || req.SyncJobID == nil || *req.SyncJobID != jobID {
+		t.Fatalf("request = %+v, want no accounts and one failure for the job", req)
+	}
+	if f := req.Failures[0]; f.Provider != "gcp" || f.ExternalID != "organizations/1" || !strings.Contains(f.Error, "list folders under organizations/1: 403") {
+		t.Fatalf("failure = %+v", f)
 	}
 }
 
@@ -249,6 +267,9 @@ func TestRunGCPOrgSyncSkipsAProjectThatOutlivesItsDeadline(t *testing.T) {
 	if len(rec.reqs) != 1 || len(rec.reqs[0].Accounts) != 1 || rec.reqs[0].Accounts[0].ExternalID != "prod" {
 		t.Fatalf("pushes = %+v, want only prod", rec.reqs)
 	}
+	if f := rec.reqs[0].Failures; len(f) != 1 || f[0].ExternalID != "stuck" || !strings.Contains(f[0].Error, "deadline") {
+		t.Fatalf("failures = %+v, want stuck reported as timed out", f)
+	}
 }
 
 func TestRunGCPOrgSyncDoesNotReportSuccessWhenTheServerAcceptsNothing(t *testing.T) {
@@ -272,10 +293,10 @@ func TestRunGCPOrgSyncDoesNotReportSuccessWhenTheServerAcceptsNothing(t *testing
 
 	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, nil, logger, deps)
 
-	if !strings.Contains(logs.String(), "push gcp org resources failed") || !strings.Contains(logs.String(), "0.25.0") {
+	if !strings.Contains(logs.String(), "push org resources failed") || !strings.Contains(logs.String(), "0.25.0") {
 		t.Fatalf("logs = %s, want the rejected push logged with the upgrade hint", logs.String())
 	}
-	if strings.Contains(logs.String(), "gcp org sync completed") {
+	if strings.Contains(logs.String(), "org sync completed") {
 		t.Fatalf("logs = %s, must not report a completed sync", logs.String())
 	}
 }

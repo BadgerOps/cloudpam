@@ -841,6 +841,7 @@ export interface GenerateRecommendationsResponse {
 export interface BulkIngestResponse {
   accounts_processed: number
   accounts_created: number
+  accounts_failed: number
   total_resources: number
   errors?: string[]
 }

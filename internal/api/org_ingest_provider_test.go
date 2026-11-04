@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"cloudpam/internal/domain"
 )
@@ -128,5 +131,93 @@ func TestOrgIngestIgnoresAnotherProvidersExternalID(t *testing.T) {
 	resp := postOrgIngest(t, discSrv, `{"accounts":[{"provider":"gcp","external_id":"shared-id"}]}`)
 	if resp.AccountsCreated != 1 {
 		t.Fatalf("resp = %+v, want a new gcp account", resp)
+	}
+}
+
+func TestOrgIngestReportsFailedAccountsWithoutTouchingTheirInventory(t *testing.T) {
+	discSrv, st, ds, _ := setupDiscoveryTestServer()
+	ctx := t.Context()
+	failing, err := st.CreateAccount(ctx, domain.CreateAccount{Key: "gcp:broken", Name: "broken", Provider: "gcp", ExternalID: "broken"})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	now := time.Now().UTC()
+	kept := domain.DiscoveredResource{
+		ID: uuid.New(), AccountID: failing.ID, Provider: "gcp", Region: "global", ResourceType: domain.ResourceTypeVPC,
+		ResourceID: "broken-net", Name: "net", CIDR: "10.9.0.0/16", Status: domain.DiscoveryStatusActive,
+		DiscoveredAt: now, LastSeenAt: now, UpdatedAt: now,
+	}
+	if err := ds.UpsertDiscoveredResource(ctx, kept); err != nil {
+		t.Fatalf("upsert resource: %v", err)
+	}
+	job, err := ds.CreateSyncJob(ctx, domain.SyncJob{ID: uuid.New(), AccountID: failing.ID, Status: domain.SyncJobStatusPending, Source: "agent", CreatedAt: now})
+	if err != nil {
+		t.Fatalf("create sync job: %v", err)
+	}
+
+	resp := postOrgIngest(t, discSrv, `{"sync_job_id":"`+job.ID.String()+`","accounts":[
+		{"provider":"gcp","external_id":"prod","resources":[{"provider":"gcp","region":"global","resource_type":"vpc","resource_id":"prod-net","name":"n","cidr":"10.0.0.0/16","status":"active"}]},
+		{"provider":"gcp","external_id":"dev"}
+	],"failures":[{"provider":"gcp","external_id":"broken","error":"compute api disabled"}]}`)
+
+	const want = "discovery failed for gcp:broken: compute api disabled"
+	if resp.AccountsProcessed != 2 || resp.AccountsFailed != 1 || resp.TotalResources != 1 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(resp.Errors) != 1 || resp.Errors[0] != want {
+		t.Fatalf("errors = %#v, want [%q]", resp.Errors, want)
+	}
+	got, err := ds.GetSyncJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("get sync job: %v", err)
+	}
+	if got.Status != domain.SyncJobStatusFailed || got.ErrorMessage != want || got.ResourcesFound != 1 {
+		t.Fatalf("job = status %q, message %q, found %d", got.Status, got.ErrorMessage, got.ResourcesFound)
+	}
+	res, err := ds.GetDiscoveredResource(ctx, kept.ID)
+	if err != nil {
+		t.Fatalf("get resource: %v", err)
+	}
+	if res.Status != domain.DiscoveryStatusActive {
+		t.Fatalf("failed account's resource status = %q, want active", res.Status)
+	}
+}
+
+func TestOrgIngestAcceptsAFailuresOnlyRequest(t *testing.T) {
+	discSrv, _, ds, _ := setupDiscoveryTestServer()
+	job, err := ds.CreateSyncJob(t.Context(), domain.SyncJob{ID: uuid.New(), AccountID: 1, Status: domain.SyncJobStatusPending, Source: "agent", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("create sync job: %v", err)
+	}
+
+	resp := postOrgIngest(t, discSrv, `{"sync_job_id":"`+job.ID.String()+`","accounts":[],
+		"failures":[{"provider":"aws","error":"list organization accounts: access denied"}]}`)
+
+	const want = "discovery failed for aws: list organization accounts: access denied"
+	if resp.AccountsProcessed != 0 || resp.AccountsFailed != 1 || len(resp.Errors) != 1 || resp.Errors[0] != want {
+		t.Fatalf("resp = %+v", resp)
+	}
+	got, err := ds.GetSyncJob(t.Context(), job.ID)
+	if err != nil {
+		t.Fatalf("get sync job: %v", err)
+	}
+	if got.Status != domain.SyncJobStatusFailed || got.ErrorMessage != want {
+		t.Fatalf("job = status %q, message %q", got.Status, got.ErrorMessage)
+	}
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/ingest/org", `{"accounts":[],"failures":[]}`, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "accounts list is required") {
+		t.Fatalf("body = %s", rr.Body.String())
+	}
+}
+
+func TestOrgIngestClipsALongFailureError(t *testing.T) {
+	discSrv, _, _, _ := setupDiscoveryTestServer()
+	long := strings.Repeat("x", 1000)
+
+	resp := postOrgIngest(t, discSrv, `{"failures":[{"provider":"gcp","external_id":"p","error":"`+long+`"}]}`)
+
+	if want := "discovery failed for gcp:p: " + long[:300]; len(resp.Errors) != 1 || resp.Errors[0] != want {
+		t.Fatalf("errors = %#v, want the error clipped to 300 characters", resp.Errors)
 	}
 }

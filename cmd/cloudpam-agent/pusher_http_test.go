@@ -621,3 +621,14 @@ func TestPushOrgResourcesLogsPartialFailuresAsErrors(t *testing.T) {
 		t.Fatalf("logs = %s, want the server errors at error level", logs.String())
 	}
 }
+
+func TestPushOrgResourcesAcceptsAFailuresOnlyReport(t *testing.T) {
+	pusher, _, _ := covNewPusherFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"accounts_processed":0,"accounts_failed":1,"errors":["discovery failed for gcp:organizations/1: list projects: 403"]}`))
+	})
+	req := domain.BulkIngestRequest{Failures: []domain.OrgAccountFailure{{Provider: "gcp", ExternalID: "organizations/1", Error: "list projects: 403"}}}
+
+	if err := pusher.PushOrgResources(context.Background(), req, 0, time.Millisecond); err != nil {
+		t.Fatalf("PushOrgResources() = %v, want nil for a report with no accounts", err)
+	}
+}

@@ -1024,6 +1024,9 @@ curl -X POST http://localhost:8080/api/v1/discovery/ingest/org \
         "resources": [...]
       }
     ],
+    "failures": [
+      {"provider": "aws", "external_id": "222222222222", "error": "assume role: access denied"}
+    ],
     "agent_id": "uuid"
   }'
 ```
@@ -1034,12 +1037,15 @@ Response:
 {
   "accounts_processed": 5,
   "accounts_created": 2,
+  "accounts_failed": 1,
   "total_resources": 47,
-  "errors": []
+  "errors": ["discovery failed for aws:222222222222: assume role: access denied"]
 }
 ```
 
 The server auto-creates CloudPAM Account records (key `aws:<account_id>`) for any AWS accounts not yet registered.
+
+`failures` lists the accounts the agent could not read this pass: an AssumeRole, credential or discovery error, or a project that ran past its deadline. When listing the organization fails, the agent sends one failure with no accounts. Failures are reported in `errors` and counted in `accounts_failed`, and the failed accounts' existing inventory is left as it was, so nothing goes stale because one pass could not read it. A supplied `sync_job_id` ends `failed` whenever `errors` is non-empty.
 
 ### Terraform Modules
 

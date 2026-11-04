@@ -1910,7 +1910,7 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if len(req.Accounts) == 0 {
+	if len(req.Accounts) == 0 && len(req.Failures) == 0 {
 		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "accounts list is required", "")
 		return
 	}
@@ -2007,6 +2007,11 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 		resp.AccountsProcessed++
 		resp.TotalResources += len(orgAcct.Resources)
 	}
+
+	for _, f := range req.Failures {
+		resp.Errors = append(resp.Errors, f.Message())
+	}
+	resp.AccountsFailed = len(req.Failures)
 
 	if syncJob != nil {
 		completedAt := time.Now().UTC()

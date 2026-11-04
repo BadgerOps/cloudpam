@@ -178,6 +178,10 @@ func runAWSOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 	orgAccounts, err := aws.ListOrgAccounts(ctx, limiter)
 	if err != nil {
 		logger.Error("failed to list org accounts", "error", err)
+		pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{
+			SyncJobID: syncJobID,
+			Failures:  []domain.OrgAccountFailure{domain.NewOrgAccountFailure(providerAWS, "", fmt.Errorf("list organization accounts: %w", err))},
+		})
 		return
 	}
 
@@ -193,6 +197,7 @@ func runAWSOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 	}
 
 	var ingestAccounts []domain.OrgAccountIngest
+	var failures []domain.OrgAccountFailure
 
 	for _, orgAcct := range orgAccounts {
 		if excludeSet[orgAcct.ID] {
@@ -206,6 +211,7 @@ func runAWSOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 		creds, err := aws.AssumeRole(ctx, orgAcct.ID, cfg.AWSOrg.RoleName, cfg.AWSOrg.ExternalID)
 		if err != nil {
 			logger.Error("assume role failed", "account_id", orgAcct.ID, "error", err)
+			failures = append(failures, domain.NewOrgAccountFailure(providerAWS, orgAcct.ID, fmt.Errorf("assume role: %w", err)))
 			continue
 		}
 
@@ -222,6 +228,7 @@ func runAWSOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 		resources, err := collector.Discover(ctx, account)
 		if err != nil {
 			logger.Error("discovery failed for account", "account_id", orgAcct.ID, "error", err)
+			failures = append(failures, domain.NewOrgAccountFailure(providerAWS, orgAcct.ID, err))
 			continue
 		}
 
@@ -238,22 +245,20 @@ func runAWSOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 		})
 	}
 
-	if len(ingestAccounts) == 0 {
+	if len(ingestAccounts) == 0 && len(failures) == 0 {
 		logger.Info("no accounts to ingest")
 		return
 	}
+	pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{Accounts: ingestAccounts, Failures: failures, SyncJobID: syncJobID})
+}
 
-	req := domain.BulkIngestRequest{
-		Accounts:  ingestAccounts,
-		SyncJobID: syncJobID,
-	}
-
+// pushOrg sends one org pass's accounts and failures to the server.
+func pushOrg(ctx context.Context, cfg *Config, pusher *Pusher, logger *slog.Logger, req domain.BulkIngestRequest) {
 	if err := pusher.PushOrgResources(ctx, req, cfg.MaxRetries, cfg.RetryBackoff); err != nil {
 		logger.Error("push org resources failed", "error", err)
 		return
 	}
-
-	logger.Info("org sync completed", "accounts", len(ingestAccounts))
+	logger.Info("org sync completed", "accounts", len(req.Accounts), "failed", len(req.Failures))
 }
 
 func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {

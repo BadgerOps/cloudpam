@@ -79,8 +79,9 @@ func gcpDefaultClient(ctx context.Context, scope string, timeout time.Duration) 
 }
 
 // runGCPOrgSync discovers every active project under the configured parent and
-// bulk-ingests them. A project that cannot be read is skipped; a listing
-// failure pushes nothing, so the next tick retries the whole pass.
+// bulk-ingests them. A project that cannot be read is reported as a failure
+// rather than ingested, so its inventory stays as it was; a listing failure is
+// reported the same way for the parent.
 func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger, deps gcpOrgDeps) {
 	parent := cfg.GCPOrg.Parent
 	logger.Info("starting gcp org discovery sync", "parent", parent,
@@ -93,6 +94,10 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 	projects, err := deps.listProjects(ctx, parent, limiter)
 	if err != nil {
 		logger.Error("failed to list gcp projects", "parent", parent, "error", err)
+		pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{
+			SyncJobID: syncJobID,
+			Failures:  []domain.OrgAccountFailure{domain.NewOrgAccountFailure(providerGCP, parent, fmt.Errorf("list projects: %w", err))},
+		})
 		return
 	}
 
@@ -106,6 +111,7 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 	}
 
 	var entries []domain.OrgAccountIngest
+	var failures []domain.OrgAccountFailure
 	for _, project := range projects {
 		if exclude[project.ID] {
 			logger.Info("excluding project", "project", project.ID)
@@ -116,6 +122,7 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 		if err != nil {
 			cancel()
 			logger.Error("gcp credentials failed for project", "project", project.ID, "error", err)
+			failures = append(failures, domain.NewOrgAccountFailure(providerGCP, project.ID, fmt.Errorf("credentials: %w", err)))
 			continue
 		}
 		account := domain.Account{Provider: providerGCP, ExternalID: project.ID, Regions: regions}
@@ -125,6 +132,7 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 			// Partial results are dropped: pushing them would mark the missing
 			// resources stale.
 			logger.Error("discovery failed for project", "project", project.ID, "error", err)
+			failures = append(failures, domain.NewOrgAccountFailure(providerGCP, project.ID, err))
 			continue
 		}
 		logger.Info("discovered resources for project", "project", project.ID, "count", len(resources))
@@ -142,15 +150,9 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 		})
 	}
 
-	if len(entries) == 0 {
+	if len(entries) == 0 && len(failures) == 0 {
 		logger.Info("no gcp projects to ingest", "parent", parent)
 		return
 	}
-
-	req := domain.BulkIngestRequest{Accounts: entries, SyncJobID: syncJobID}
-	if err := pusher.PushOrgResources(ctx, req, cfg.MaxRetries, cfg.RetryBackoff); err != nil {
-		logger.Error("push gcp org resources failed", "error", err)
-		return
-	}
-	logger.Info("gcp org sync completed", "projects", len(entries))
+	pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{Accounts: entries, Failures: failures, SyncJobID: syncJobID})
 }
