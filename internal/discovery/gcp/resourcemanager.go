@@ -2,7 +2,6 @@ package gcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -144,15 +143,7 @@ func (w *projectWalker) get(ctx context.Context, url string, dest any) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	resp, err := doRetrying(w.client, w.limiter, req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
-		return fmt.Errorf("decode response: %w", err)
-	}
-	return nil
+	return doRetrying(w.client, w.limiter, req, dest)
 }
 
 func rmListURL(kind, parent, pageToken string) string {

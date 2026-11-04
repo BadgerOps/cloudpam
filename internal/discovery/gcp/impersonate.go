@@ -73,18 +73,12 @@ func (s *impersonatedSource) Token() (*oauth2.Token, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := doRetrying(s.client, s.limiter, req)
-	if err != nil {
-		return nil, fmt.Errorf("impersonate %s: %w", s.email, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
 	var out struct {
 		AccessToken string    `json:"accessToken"`
 		ExpireTime  time.Time `json:"expireTime"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("impersonate %s: decode response: %w", s.email, err)
+	if err := doRetrying(s.client, s.limiter, req, &out); err != nil {
+		return nil, fmt.Errorf("impersonate %s: %w", s.email, err)
 	}
 	if out.AccessToken == "" {
 		return nil, fmt.Errorf("impersonate %s: response carried no access token", s.email)

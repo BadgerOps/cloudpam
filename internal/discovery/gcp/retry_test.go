@@ -1,11 +1,14 @@
 package gcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -147,5 +150,103 @@ func TestImpersonatedTokenSourceRetriesRateLimiting(t *testing.T) {
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("generateAccessToken calls = %d, want 2", got)
+	}
+}
+
+// writeTruncated promises body in full, sends half of it, then drops the
+// connection, as a reset mid-body does.
+func writeTruncated(w http.ResponseWriter, body []byte) {
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body[:len(body)/2])
+	w.(http.Flusher).Flush()
+	panic(http.ErrAbortHandler)
+}
+
+// truncatingServer truncates the first `truncations` responses (forever when
+// truncations < 0), then serves body whole.
+func truncatingServer(t *testing.T, truncations int, body []byte) (*http.Client, *atomic.Int32) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if n := int(calls.Add(1)); truncations < 0 || n <= truncations {
+			writeTruncated(w, body)
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return &http.Client{Transport: &rewriteTransport{baseURL: srv.URL}}, &calls
+}
+
+func TestListProjectsRetriesABodyCutOffMidway(t *testing.T) {
+	fastRetries(t, time.Millisecond)
+	page, _ := json.Marshal(rmProjectList{Projects: []rmProject{active("p-1", "One")}})
+	client, calls := truncatingServer(t, 1, page)
+
+	projects, err := ListProjects(t.Context(), client, "organizations/1", nil)
+	if err != nil {
+		t.Fatalf("ListProjects() error = %v, want success after one truncated page", err)
+	}
+	if len(projects) != 1 || projects[0].ID != "p-1" {
+		t.Fatalf("projects = %+v, want p-1", projects)
+	}
+	// A truncated and a whole projects page, then the folders page.
+	if got := calls.Load(); got != 3 {
+		t.Fatalf("requests = %d, want 3", got)
+	}
+}
+
+func TestListProjectsGivesUpOnAPersistentlyTruncatedBody(t *testing.T) {
+	fastRetries(t, time.Millisecond)
+	page, _ := json.Marshal(rmProjectList{Projects: []rmProject{active("p-1", "One")}})
+	client, calls := truncatingServer(t, -1, page)
+
+	if _, err := ListProjects(t.Context(), client, "organizations/1", nil); err == nil {
+		t.Fatal("ListProjects() = nil error, want failure on a body that never arrives whole")
+	}
+	if got := calls.Load(); got != 4 {
+		t.Fatalf("requests = %d, want 4", got)
+	}
+}
+
+func TestListProjectsDoesNotRetryAWellFormedButInvalidBody(t *testing.T) {
+	fastRetries(t, time.Millisecond)
+	client, calls := truncatingServer(t, 0, []byte(`{"projects":"not a list"}`))
+
+	if _, err := ListProjects(t.Context(), client, "organizations/1", nil); err == nil {
+		t.Fatal("ListProjects() = nil error, want a decode failure")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("requests = %d, want 1", got)
+	}
+}
+
+func TestImpersonatedTokenSourceRetriesABodyCutOffMidway(t *testing.T) {
+	fastRetries(t, time.Millisecond)
+	body, _ := json.Marshal(map[string]string{
+		"accessToken": "minted",
+		"expireTime":  time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	})
+	client, calls := truncatingServer(t, 1, body)
+
+	tok, err := ImpersonatedTokenSource(t.Context(), client, "sa@p.iam.gserviceaccount.com", nil).Token()
+	if err != nil || tok.AccessToken != "minted" {
+		t.Fatalf("Token() = %v, %v, want the minted token after one truncated response", tok, err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("generateAccessToken calls = %d, want 2", got)
+	}
+}
+
+func TestListProjectsRefusesAnOversizedBody(t *testing.T) {
+	fastRetries(t, time.Millisecond)
+	body := append([]byte(`{"projects":[]}`), bytes.Repeat([]byte(" "), maxBodyBytes)...)
+	client, calls := truncatingServer(t, 0, body)
+
+	if _, err := ListProjects(t.Context(), client, "organizations/1", nil); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("ListProjects() error = %v, want the body size cap", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("requests = %d, want 1", got)
 	}
 }
