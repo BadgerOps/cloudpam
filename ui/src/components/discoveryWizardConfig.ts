@@ -390,6 +390,8 @@ ${listing}
 
 # generateAccessToken is checked against the caller's project, so enable the IAM Credentials API in the
 # agent's own project. Enabling it in the discovery service accounts' home project is not required.
+# If the agent runs as the default compute service account (NNN-compute@developer.gserviceaccount.com),
+# set AGENT_PROJECT to the agent's project ID by hand instead.
 AGENT_PROJECT=\${AGENT_SA_EMAIL#*@}
 AGENT_PROJECT=\${AGENT_PROJECT%%.iam.gserviceaccount.com}
 gcloud services enable ${shellQuote('iamcredentials.googleapis.com')} --project="\${AGENT_PROJECT}"

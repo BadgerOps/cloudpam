@@ -240,6 +240,7 @@ describe('buildAgentConfigs for gcp', () => {
     const enable = iam.indexOf(`gcloud services enable 'iamcredentials.googleapis.com' --project="\${AGENT_PROJECT}"`)
     expect(enable).toBeGreaterThan(0)
     expect(iam).toMatch(/caller's project/)
+    expect(iam).toMatch(/default compute service account.*\n# set AGENT_PROJECT to the agent's project ID by hand/)
     expect(iam.match(/gcloud services enable/g)).toHaveLength(1)
     expect(enable).toBeLessThan(iam.indexOf('gcloud iam service-accounts add-iam-policy-binding'))
     expect(enable).toBeLessThan(iam.indexOf('gcloud projects add-iam-policy-binding'))

@@ -530,7 +530,7 @@ Common workflows:
 - Trigger sync: `POST /api/v1/discovery/sync` with `{"account_id":1}`
 - List sync jobs: `GET /api/v1/discovery/sync?account_id=1`
 - Get sync job: `GET /api/v1/discovery/sync/{id}`
-- Org bulk ingest: `POST /api/v1/discovery/ingest/org` with `{"accounts":[{"aws_account_id":"...","resources":[...]}]}`
+- Org bulk ingest: `POST /api/v1/discovery/ingest/org` with `{"accounts":[{"provider":"aws","external_id":"...","resources":[...]}]}`
 - Full analysis: `POST /api/v1/analysis` with `{"pool_ids":[1], "include_children":true}`
 - Gap analysis: `POST /api/v1/analysis/gaps` with `{"pool_id":1}`
 - Fragmentation: `POST /api/v1/analysis/fragmentation` with `{"pool_ids":[1,2]}`

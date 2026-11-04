@@ -23,7 +23,7 @@ Upgrade the CloudPAM server to 0.25.0 before you upgrade agents. A 0.24.0 server
 - The Discovery wizard offers AWS or GCP, and for GCP generates single-project and organization configs plus the `gcloud` IAM commands. Its Docker snippet, for AWS as well, first creates the host state directory owned by UID 65532, assuming a Linux host with rootful Docker. (#274)
 
 ### Changed
-- `POST /api/v1/discovery/ingest/org` requires `provider` (`aws` or `gcp`) and `external_id` on every entry. `aws_account_id` is a deprecated alias of `external_id`. An entry with no `<provider>:<external_id>` account attaches to the single existing account with the same provider and external ID instead of creating a duplicate, for AWS as well. (#274)
+- `POST /api/v1/discovery/ingest/org` requires `provider` and `external_id` on every entry. Callers that omitted `provider`, which used to default to `aws`, must now send it, and the value is case-sensitive (`aws` or `gcp`). `aws_account_id` is a deprecated alias of `external_id`. An entry with no `<provider>:<external_id>` account attaches to the single existing account with the same provider and external ID instead of creating a duplicate. (#274)
 - The agent errors when the server ingests none of the accounts it sent, or does not acknowledge the failures it sent. Both mean the server is older than 0.25.0. The AWS org-mode startup log line is now `aws org mode enabled`. (#274)
 - Server and agent Helm charts advertise application version `0.25.0`; chart package versions remain `0.2.1`.
 
