@@ -22,6 +22,10 @@ config:
   # reports to the same CloudPAM server and account.
   agentName: ""
 
+  # Cloud provider this agent discovers (required): aws or gcp. There is no
+  # default; one agent serves one provider.
+  provider: ""
+
   # Sync interval (default: 15m)
   syncInterval: "15m"
 
@@ -52,6 +56,35 @@ config:
     regions: []           # falls back to awsRegions
     excludeAccounts: []   # account IDs as strings
 
+  # GCP project to discover in single-project mode (required when provider is
+  # gcp and gcpOrg is disabled).
+  gcpProject: ""
+
+  # GCP regions to keep (empty = all regions). Networks are global.
+  gcpRegions: []
+
+  # Cap on GCP API calls per second (Compute, Resource Manager, IAM
+  # Credentials), shared by every project in an org pass. 0 is unlimited.
+  discoveryGcpRps: 0
+
+  # GCP organization/folder mode: discover every active project under parent.
+  gcpOrg:
+    enabled: false
+    parent: ""                     # organizations/<id> or folders/<id>
+    regions: []                    # falls back to gcpRegions
+    excludeProjects: []            # project IDs
+    # Empty: read every project as the agent's own identity (grant
+    # roles/browser + roles/compute.networkViewer on the parent).
+    # Set: impersonate this service account per project; {project} is replaced
+    # by each project ID.
+    impersonateServiceAccount: ""
+
+# GCP service-account key, for clusters without Workload Identity. The secret
+# must hold the key JSON under "key.json"; it is mounted read-only and
+# GOOGLE_APPLICATION_CREDENTIALS points at it.
+gcpCredentials:
+  existingSecret: ""
+
 # API key for authentication (required)
 # Can be provided directly or via existingSecret
 apiKey: ""
@@ -69,6 +102,9 @@ serviceAccount:
   # Example for AWS IRSA:
   # annotations:
   #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/cloudpam-discovery
+  # Example for GKE Workload Identity:
+  # annotations:
+  #   iam.gke.io/gcp-service-account: cloudpam-agent@my-project.iam.gserviceaccount.com
   # The name of the service account to use
   name: ""
 

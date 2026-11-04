@@ -3,6 +3,7 @@ config:
   serverUrl: https://cloudpam.example.com
   accountId: 7
   agentName: ci-cluster-agent
+  provider: aws
   awsRegions: [us-east-1, us-west-2]
   discoveryAwsRps: 5
   awsOrg:

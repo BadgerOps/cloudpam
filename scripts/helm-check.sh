@@ -45,7 +45,15 @@ helm lint "$AGENT" -f "$AGENT/ci/full-values.yaml"
 render cloudpam "$SERVER" server-default
 render cloudpam "$SERVER" server-full -f "$SERVER/ci/full-values.yaml"
 render cloudpam-agent "$AGENT" agent-full -f "$AGENT/ci/full-values.yaml"
-render cloudpam-agent "$AGENT" agent-explicit --set config.accountId=1 --set config.agentName=cluster-a-discovery --set apiKey=x
+helm lint "$AGENT" -f "$AGENT/ci/gcp-org-values.yaml"
+render cloudpam-agent "$AGENT" agent-gcp-org -f "$AGENT/ci/gcp-org-values.yaml"
+grep -q 'provider: "gcp"' "$OUT/agent-gcp-org-configmap.yaml" || fail "gcp chart does not render provider gcp"
+grep -q 'parent: "organizations/123456789"' "$OUT/agent-gcp-org-configmap.yaml" || fail "gcp chart does not render gcp_org.parent"
+grep -q 'impersonate_service_account: "cloudpam-discovery@{project}.iam.gserviceaccount.com"' "$OUT/agent-gcp-org-configmap.yaml" ||
+	fail "gcp chart does not render the impersonation template"
+want_once GOOGLE_APPLICATION_CREDENTIALS "$OUT/agent-gcp-org-deployment.yaml"
+want_absent GOOGLE_APPLICATION_CREDENTIALS "$OUT/agent-full-deployment.yaml"
+render cloudpam-agent "$AGENT" agent-explicit --set config.accountId=1 --set config.agentName=cluster-a-discovery --set apiKey=x --set config.provider=aws
 
 render cloudpam "$SERVER" server-vector --set vector.enabled=true
 helm template cloudpam "$SERVER" --set vector.enabled=true -s templates/vector-configmap.yaml |
@@ -67,10 +75,18 @@ want_fail vector-own-network 'config.CLOUDPAM_AUDIT_SYSLOG_NETWORK is set by the
 want_fail vector-no-listener 'vector.config must keep a syslog source' \
 	--set vector.enabled=true --set-string 'vector.config=data_dir = "/var/lib/vector"'
 
-if helm template cloudpam-agent "$AGENT" --set apiKey=x >"$OUT/agent-missing-name.txt" 2>&1; then
+if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.provider=aws >"$OUT/agent-missing-name.txt" 2>&1; then
 	fail "agent chart renders without required config.agentName"
 elif ! grep -q 'config.agentName is required' "$OUT/agent-missing-name.txt"; then
 	fail "agent chart does not explain that config.agentName is required"
+fi
+if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.agentName=a >"$OUT/agent-missing-provider.txt" 2>&1; then
+	fail "agent chart renders without required config.provider"
+elif ! grep -q 'config.provider is required (aws or gcp)' "$OUT/agent-missing-provider.txt"; then
+	fail "agent chart does not explain that config.provider is required"
+fi
+if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.agentName=a --set config.provider=azure >"$OUT/agent-bad-provider.txt" 2>&1; then
+	fail "agent chart renders with an unsupported config.provider"
 fi
 
 release="$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+' docs/CHANGELOG.md | sed 's/^## \[//')"
