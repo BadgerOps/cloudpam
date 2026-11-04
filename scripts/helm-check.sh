@@ -85,9 +85,30 @@ if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.agentName=a
 elif ! grep -q 'config.provider is required (aws or gcp)' "$OUT/agent-missing-provider.txt"; then
 	fail "agent chart does not explain that config.provider is required"
 fi
-if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.agentName=a --set config.provider=azure >"$OUT/agent-bad-provider.txt" 2>&1; then
-	fail "agent chart renders with an unsupported config.provider"
-fi
+agent_want_fail() {
+	local tag=$1 message=$2
+	shift 2
+	if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.agentName=a "$@" >"$OUT/$tag.txt" 2>&1; then
+		fail "agent chart renders with $* (want failure)"
+	elif ! grep -qF "$message" "$OUT/$tag.txt"; then
+		fail "agent chart with $* does not explain: $message"
+	fi
+}
+agent_want_fail agent-bad-provider 'config.provider is required (aws or gcp), got "azure"' \
+	--set config.provider=azure
+agent_want_fail agent-gcp-no-project 'config.gcpProject is required when config.provider is gcp and config.gcpOrg.enabled is false' \
+	--set config.provider=gcp
+agent_want_fail agent-gcp-org-no-parent 'config.gcpOrg.parent must be organizations/<id> or folders/<id>' \
+	--set config.provider=gcp --set config.gcpOrg.enabled=true
+agent_want_fail agent-gcp-org-bad-parent 'config.gcpOrg.parent must be organizations/<id> or folders/<id>' \
+	--set config.provider=gcp --set config.gcpOrg.enabled=true --set config.gcpOrg.parent=projects/123
+agent_want_fail agent-aws-org-on-gcp 'config.awsOrg.enabled requires config.provider aws' \
+	--set config.provider=gcp --set config.gcpProject=p --set config.awsOrg.enabled=true
+agent_want_fail agent-gcp-org-on-aws 'config.gcpOrg.enabled requires config.provider gcp' \
+	--set config.provider=aws --set config.gcpOrg.enabled=true --set config.gcpOrg.parent=organizations/1
+render cloudpam-agent "$AGENT" agent-gcp-project --set config.accountId=1 --set config.agentName=a --set apiKey=x \
+	--set config.provider=gcp --set config.gcpProject=net-prod
+grep -q '^    gcp_project: "net-prod"$' "$OUT/agent-gcp-project-configmap.yaml" || fail "gcp single-project chart does not render gcp_project"
 
 release="$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+' docs/CHANGELOG.md | sed 's/^## \[//')"
 for chart in "$SERVER" "$AGENT"; do
