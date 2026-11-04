@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  GCP_PARENT_PATTERN,
   availableTabs,
   buildAgentConfigs,
+  gcpProjectFor,
   splitList,
   type AgentConfigInput,
 } from '../components/discoveryWizardConfig'
@@ -71,5 +73,132 @@ describe('buildAgentConfigs for aws', () => {
   it('quotes hostile values', () => {
     const c = buildAgentConfigs(awsInput({ token: `x'; rm -rf /; '` }))
     expect(c.shell).toContain(`export CLOUDPAM_BOOTSTRAP_TOKEN='x'\\''; rm -rf /; '\\'''`)
+  })
+})
+
+function gcpInput(overrides: Partial<AgentConfigInput> = {}): AgentConfigInput {
+  return awsInput({
+    provider: 'gcp',
+    gcpProject: 'my-project',
+    accountRegions: ['us-central1'],
+    gcpOrg: { parent: 'organizations/123', regions: ['us-central1'], exclude: ['sandbox'], impersonateServiceAccount: '' },
+    ...overrides,
+  })
+}
+
+describe('gcp helpers', () => {
+  it('validates parents', () => {
+    expect(GCP_PARENT_PATTERN.test('organizations/1')).toBe(true)
+    expect(GCP_PARENT_PATTERN.test('folders/22')).toBe(true)
+    expect(GCP_PARENT_PATTERN.test('projects/1')).toBe(false)
+    expect(GCP_PARENT_PATTERN.test('folders/x')).toBe(false)
+  })
+
+  it('derives the project from external_id, then key', () => {
+    expect(gcpProjectFor({ external_id: 'ext', key: 'gcp:k' })).toBe('ext')
+    expect(gcpProjectFor({ external_id: '', key: 'gcp:k' })).toBe('k')
+    expect(gcpProjectFor({ key: 'bare' })).toBe('bare')
+    expect(gcpProjectFor(null)).toBe('')
+  })
+})
+
+describe('availableTabs for gcp', () => {
+  it('has no terraform tab and always an iam tab', () => {
+    expect(availableTabs('gcp', 'single')).toEqual(['shell', 'yaml', 'docker', 'iam'])
+    expect(availableTabs('gcp', 'organization')).toEqual(['shell', 'yaml', 'docker', 'iam'])
+  })
+})
+
+describe('buildAgentConfigs for gcp', () => {
+  it('renders single-project settings', () => {
+    const c = buildAgentConfigs(gcpInput())
+    expect(c.terraform).toBeUndefined()
+    expect(c.shell).toContain("export CLOUDPAM_PROVIDER='gcp'")
+    expect(c.shell).toContain("export CLOUDPAM_GCP_PROJECT='my-project'")
+    expect(c.shell).toContain("export CLOUDPAM_GCP_REGIONS='us-central1'")
+    expect(c.shell).not.toContain('AWS')
+    expect(c.yaml).toContain('provider: "gcp"\n')
+    expect(c.yaml).toContain('gcp_project: "my-project"')
+    expect(c.docker).toContain('GOOGLE_APPLICATION_CREDENTIALS')
+    expect(c.iam).toContain('gcloud projects add-iam-policy-binding \'my-project\'')
+    expect(c.iam).toContain('roles/compute.networkViewer')
+    expect(c.iam).not.toContain('roles/browser')
+  })
+
+  it('keeps the docker note above the command it describes', () => {
+    const lines = buildAgentConfigs(gcpInput()).docker!.split('\n')
+    const run = lines.findIndex(l => l.startsWith('docker run'))
+    expect(run).toBeGreaterThan(0)
+    expect(lines.slice(run).some(l => l.trimStart().startsWith('#'))).toBe(false)
+    expect(lines.slice(run, -1).every(l => l.endsWith(' \\'))).toBe(true)
+  })
+
+  it('renders org settings with direct grants', () => {
+    const c = buildAgentConfigs(gcpInput({ mode: 'organization' }))
+    expect(c.shell).toContain('export CLOUDPAM_GCP_ORG_ENABLED=true')
+    expect(c.shell).toContain("export CLOUDPAM_GCP_ORG_PARENT='organizations/123'")
+    expect(c.shell).toContain("export CLOUDPAM_GCP_ORG_EXCLUDE_PROJECTS='sandbox'")
+    expect(c.shell).not.toContain('CLOUDPAM_GCP_PROJECT=')
+    expect(c.shell).not.toContain('IMPERSONATE')
+    expect(c.yaml).toContain('gcp_org:\n  enabled: true\n  parent: "organizations/123"')
+    expect(c.iam).toContain("gcloud organizations add-iam-policy-binding '123'")
+    expect(c.iam).toContain('roles/browser')
+    expect(c.iam).toContain('roles/compute.networkViewer')
+    expect(c.iam).not.toContain('serviceAccountTokenCreator')
+  })
+
+  it('renders folder grants and impersonation', () => {
+    const c = buildAgentConfigs(gcpInput({
+      mode: 'organization',
+      gcpOrg: { parent: 'folders/9', regions: [], exclude: [], impersonateServiceAccount: 'cloudpam-discovery@{project}.iam.gserviceaccount.com' },
+    }))
+    expect(c.shell).toContain("export CLOUDPAM_GCP_ORG_IMPERSONATE_SA='cloudpam-discovery@{project}.iam.gserviceaccount.com'")
+    expect(c.yaml).toContain('  impersonate_service_account: "cloudpam-discovery@{project}.iam.gserviceaccount.com"')
+    expect(c.iam).toContain("gcloud resource-manager folders add-iam-policy-binding '9'")
+    expect(c.iam).toContain('roles/iam.serviceAccountTokenCreator')
+    expect(c.iam).toContain('PROJECT_ID')
+    // With impersonation the agent itself gets no compute role on the folder:
+    // every networkViewer grant goes to the per-project service account.
+    const viewerGrants = c.iam!.split('\n').filter(l => l.includes('compute.networkViewer'))
+    expect(viewerGrants.length).toBeGreaterThan(0)
+    expect(viewerGrants.every(l => l.includes('cloudpam-discovery@'))).toBe(true)
+  })
+
+  it('creates a service account in the project its email names', () => {
+    const perProject = buildAgentConfigs(gcpInput({
+      mode: 'organization',
+      gcpOrg: { parent: 'folders/9', regions: [], exclude: [], impersonateServiceAccount: 'disc-{project}@hub.iam.gserviceaccount.com' },
+    })).iam!
+    expect(perProject).toContain(`gcloud iam service-accounts create 'disc-'"\${PROJECT_ID}" --project='hub'`)
+
+    const shared = buildAgentConfigs(gcpInput({
+      mode: 'organization',
+      gcpOrg: { parent: 'folders/9', regions: [], exclude: [], impersonateServiceAccount: 'cloudpam@hub.iam.gserviceaccount.com' },
+    })).iam!
+    expect(shared).toContain('one shared service account')
+    expect(shared).toContain("gcloud iam service-accounts create 'cloudpam' --project='hub'")
+  })
+
+  it('quotes hostile project ids in every output', () => {
+    const project = `p'$(id)"x`
+    const c = buildAgentConfigs(gcpInput({ gcpProject: project }))
+    const shellLit = `'p'\\''$(id)"x'`
+    expect(c.shell).toContain(`export CLOUDPAM_GCP_PROJECT=${shellLit}\n`)
+    expect(c.docker).toContain(`  -e CLOUDPAM_GCP_PROJECT=${shellLit} \\`)
+    expect(c.yaml).toContain(`gcp_project: "p'$(id)\\"x"\n`)
+    expect(c.iam).toContain(`gcloud projects add-iam-policy-binding ${shellLit} \\`)
+  })
+
+  it('quotes hostile impersonation templates in every output', () => {
+    const template = `x'$(id)"@{project}.iam.gserviceaccount.com`
+    const c = buildAgentConfigs(gcpInput({
+      mode: 'organization',
+      gcpOrg: { parent: 'organizations/1', regions: [], exclude: [], impersonateServiceAccount: template },
+    }))
+    expect(c.shell).toContain(`export CLOUDPAM_GCP_ORG_IMPERSONATE_SA='x'\\''$(id)"@{project}.iam.gserviceaccount.com'`)
+    expect(c.docker).toContain(`  -e CLOUDPAM_GCP_ORG_IMPERSONATE_SA='x'\\''$(id)"@{project}.iam.gserviceaccount.com' \\`)
+    expect(c.yaml).toContain(`  impersonate_service_account: "x'$(id)\\"@{project}.iam.gserviceaccount.com"`)
+    expect(c.iam).toContain(`gcloud iam service-accounts create 'x'\\''$(id)"' --project="\${PROJECT_ID}"`)
+    expect(c.iam).toContain(`--member='serviceAccount:x'\\''$(id)"@'"\${PROJECT_ID}"'.iam.gserviceaccount.com'`)
   })
 })

@@ -7,12 +7,15 @@ import ConnectivityBadge from './ConnectivityBadge'
 import { safeFilename } from '../utils/escape'
 import type { Account, CreateAccountRequest, AgentProvisionResponse, DiscoveryAgent } from '../api/types'
 import {
+  GCP_PARENT_PATTERN,
   availableTabs as tabsFor,
   buildAgentConfigs,
+  gcpProjectFor,
   resolveConfigTab,
   splitList,
   type ConfigTab,
   type DiscoveryMode,
+  type WizardProvider,
 } from './discoveryWizardConfig'
 
 export { resolveConfigTab, type ConfigTab }
@@ -27,8 +30,10 @@ interface DiscoveryWizardProps {
 export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, onComplete }: DiscoveryWizardProps) {
   const [step, setStep] = useState(1)
   const [discoveryMode, setDiscoveryMode] = useState<DiscoveryMode>('single')
+  const [provider, setProvider] = useState<WizardProvider>('aws')
+  const providerAccounts = accounts.filter(a => a.provider === provider)
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(
-    accounts.length > 0 ? accounts[0].id : null,
+    accounts.find(a => a.provider === 'aws')?.id ?? null,
   )
   const [showNewAccount, setShowNewAccount] = useState(false)
   const [newAccount, setNewAccount] = useState<CreateAccountRequest>({
@@ -50,6 +55,13 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const [orgExternalId, setOrgExternalId] = useState('')
   const [orgRegionsInput, setOrgRegionsInput] = useState('us-east-1, us-west-2')
   const [orgExcludeInput, setOrgExcludeInput] = useState('')
+
+  // GCP fields
+  const [gcpProjectInput, setGcpProjectInput] = useState('')
+  const [gcpOrgParent, setGcpOrgParent] = useState('')
+  const [gcpOrgRegionsInput, setGcpOrgRegionsInput] = useState('')
+  const [gcpOrgExcludeInput, setGcpOrgExcludeInput] = useState('')
+  const [gcpOrgImpersonate, setGcpOrgImpersonate] = useState('')
 
   // Agent status tracking
   const [connectedAgent, setConnectedAgent] = useState<DiscoveryAgent | null>(null)
@@ -169,9 +181,15 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
     if (discoveryMode === 'single' && selectedAccount && !agentName) {
       setAgentName(`${selectedAccount.name.toLowerCase().replace(/\s+/g, '-')}-agent`)
     } else if (discoveryMode === 'organization' && !agentName) {
-      setAgentName('org-discovery-agent')
+      setAgentName(provider === 'gcp' ? 'gcp-org-discovery-agent' : 'org-discovery-agent')
     }
     handleNext()
+  }
+
+  function chooseProvider(next: WizardProvider) {
+    setProvider(next)
+    setSelectedAccountId(accounts.find(a => a.provider === next)?.id ?? null)
+    setNewAccount(prev => ({ ...prev, provider: next }))
   }
 
   // Generate config content
@@ -185,8 +203,14 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const orgRegions = splitList(orgRegionsInput)
   const orgExclude = splitList(orgExcludeInput)
 
+  const derivedGcpProject = gcpProjectFor(selectedAccount)
+  const gcpProject = gcpProjectInput.trim() || derivedGcpProject
+  const step1Valid = selectedAccountId !== null && (
+    provider !== 'gcp' || (isOrg ? GCP_PARENT_PATTERN.test(gcpOrgParent) : gcpProject !== '')
+  )
+
   const generated = buildAgentConfigs({
-    provider: 'aws',
+    provider,
     mode: discoveryMode,
     token,
     serverUrl,
@@ -194,10 +218,15 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
     accountId,
     accountRegions,
     awsOrg: { roleName: orgRoleName, externalId: orgExternalId, regions: orgRegions, exclude: orgExclude },
-    gcpProject: '',
-    gcpOrg: { parent: '', regions: [], exclude: [], impersonateServiceAccount: '' },
+    gcpProject,
+    gcpOrg: {
+      parent: gcpOrgParent,
+      regions: splitList(gcpOrgRegionsInput),
+      exclude: splitList(gcpOrgExcludeInput),
+      impersonateServiceAccount: gcpOrgImpersonate,
+    },
   })
-  const availableTabs = tabsFor('aws', discoveryMode)
+  const availableTabs = tabsFor(provider, discoveryMode)
 
   // The selected tab is derived rather than trusted: 'iam' only exists in org
   // mode, so switching back to single-account mode would otherwise keep
@@ -211,13 +240,13 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
     yaml: { filename: `${filenameStem}.yaml`, label: 'YAML' },
     terraform: { filename: `${filenameStem}.tf`, label: 'Terraform' },
     docker: { filename: `${filenameStem}-docker.sh`, label: 'Docker' },
-    iam: { filename: `${filenameStem}-iam.tf`, label: 'IAM Setup' },
+    iam: { filename: provider === 'gcp' ? `${filenameStem}-iam.sh` : `${filenameStem}-iam.tf`, label: 'IAM Setup' },
   }
   const configs = Object.fromEntries(
     availableTabs.map(tab => [tab, { content: generated[tab] ?? '', ...tabMeta[tab] }]),
   ) as Record<ConfigTab, { content: string; filename: string; label: string }>
 
-  const canGoNext = (step === 1 && selectedAccountId !== null) ||
+  const canGoNext = (step === 1 && step1Valid) ||
     (step === 2 && provisionResult !== null)
 
   return (
@@ -255,6 +284,30 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
           {/* Step 1: Select Mode & Account */}
           {step === 1 && (
             <div className="space-y-4">
+              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Cloud Provider</h3>
+              <div className="flex gap-3" role="radiogroup" aria-label="Cloud provider">
+                {(['aws', 'gcp'] as const).map(p => (
+                  <label
+                    key={p}
+                    className={`flex-1 cursor-pointer rounded-lg border-2 p-3 text-sm font-medium transition-colors ${
+                      provider === p
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400 text-gray-900 dark:text-gray-100'
+                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="provider"
+                      value={p}
+                      checked={provider === p}
+                      onChange={() => chooseProvider(p)}
+                      className="sr-only"
+                    />
+                    {p.toUpperCase()}
+                  </label>
+                ))}
+              </div>
+
               <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Discovery Mode</h3>
 
               {/* Mode toggle */}
@@ -272,9 +325,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                     onChange={() => setDiscoveryMode('single')}
                     className="sr-only"
                   />
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Single Account</div>
+                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{provider === 'gcp' ? 'Single Project' : 'Single Account'}</div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Discover resources in one AWS account
+                    {provider === 'gcp' ? 'Discover networks in one GCP project' : 'Discover resources in one AWS account'}
                   </div>
                 </label>
                 <label className={`flex-1 cursor-pointer rounded-lg border-2 p-3 transition-colors ${
@@ -290,9 +343,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                     onChange={() => setDiscoveryMode('organization')}
                     className="sr-only"
                   />
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">AWS Organization</div>
+                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{provider === 'gcp' ? 'GCP Organization or Folder' : 'AWS Organization'}</div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Discover across all member accounts via AssumeRole
+                    {provider === 'gcp' ? 'Discover every active project under an organization or folder' : 'Discover across all member accounts via AssumeRole'}
                   </div>
                 </label>
               </div>
@@ -301,7 +354,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
               {(discoveryMode === 'single' || discoveryMode === 'organization') && (
                 <div className="space-y-3">
                   <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    {discoveryMode === 'organization' ? 'Select Management Account' : 'Select Cloud Account'}
+                    {discoveryMode === 'organization'
+                      ? (provider === 'gcp' ? 'Select the Account This Agent Reports As' : 'Select Management Account')
+                      : (provider === 'gcp' ? 'Select GCP Project Account' : 'Select Cloud Account')}
                   </h4>
                   {!showNewAccount ? (
                     <>
@@ -311,12 +366,27 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                         className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
                       >
                         <option value="" disabled>Choose an account...</option>
-                        {accounts.map(a => (
+                        {providerAccounts.map(a => (
                           <option key={a.id} value={a.id}>
                             {a.name} ({a.provider || 'unknown'})
                           </option>
                         ))}
                       </select>
+                      {provider === 'gcp' && discoveryMode === 'single' && selectedAccount && (
+                        <div>
+                          <label htmlFor="gcp-project" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">GCP project ID</label>
+                          <input
+                            id="gcp-project"
+                            value={gcpProjectInput}
+                            onChange={e => setGcpProjectInput(e.target.value)}
+                            placeholder={derivedGcpProject || 'my-project-123'}
+                            className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                          />
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Defaults to the account&apos;s external ID, else its key without <code>gcp:</code>.
+                          </p>
+                        </div>
+                      )}
                       {selectedAccount?.provider && (
                         <div className="flex flex-col gap-1 text-xs text-gray-500 dark:text-gray-400">
                           <span className="font-medium text-gray-700 dark:text-gray-300">Server connectivity</span>
@@ -396,7 +466,7 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
               )}
 
               {/* Organization mode */}
-              {discoveryMode === 'organization' && (
+              {discoveryMode === 'organization' && provider === 'aws' && (
                 <div className="space-y-3">
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     The agent will run in the management account and discover resources across all member accounts
@@ -443,6 +513,64 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                   </div>
                 </div>
               )}
+
+              {discoveryMode === 'organization' && provider === 'gcp' && (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    The agent lists every active project under the organization or folder and discovers each one.
+                    Projects are auto-created in CloudPAM as <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 rounded">gcp:&lt;project&gt;</code> accounts.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label htmlFor="gcp-org-parent" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Organization or folder</label>
+                      <input
+                        id="gcp-org-parent"
+                        value={gcpOrgParent}
+                        onChange={e => setGcpOrgParent(e.target.value.trim())}
+                        placeholder="organizations/123456789 or folders/987654321"
+                        className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                      />
+                      {gcpOrgParent && !GCP_PARENT_PATTERN.test(gcpOrgParent) && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">Use organizations/&lt;id&gt; or folders/&lt;id&gt;.</p>
+                      )}
+                    </div>
+                    <div>
+                      <label htmlFor="gcp-org-regions" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Regions (optional, comma-separated)</label>
+                      <input
+                        id="gcp-org-regions"
+                        value={gcpOrgRegionsInput}
+                        onChange={e => setGcpOrgRegionsInput(e.target.value)}
+                        placeholder="us-central1, europe-west1"
+                        className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="gcp-org-exclude" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Exclude projects (optional)</label>
+                      <input
+                        id="gcp-org-exclude"
+                        value={gcpOrgExcludeInput}
+                        onChange={e => setGcpOrgExcludeInput(e.target.value)}
+                        placeholder="sandbox-project, legacy-project"
+                        className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label htmlFor="gcp-org-impersonate" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Impersonate service account (optional)</label>
+                      <input
+                        id="gcp-org-impersonate"
+                        value={gcpOrgImpersonate}
+                        onChange={e => setGcpOrgImpersonate(e.target.value.trim())}
+                        placeholder="cloudpam-discovery@{project}.iam.gserviceaccount.com"
+                        className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                      />
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Empty: the agent reads every project as itself, through grants on the organization or folder.
+                        Set: it impersonates this account in each project; <code>{'{project}'}</code> becomes the project ID.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -452,7 +580,7 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
               <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Provision Agent</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 {isOrg
-                  ? 'Create a discovery agent for your AWS Organization. This generates a bootstrap token and API key.'
+                  ? `Create a discovery agent for your ${provider === 'gcp' ? 'GCP organization or folder' : 'AWS Organization'}. This generates a bootstrap token and API key.`
                   : <>Create a discovery agent for <strong>{selectedAccount?.name}</strong>. This generates a bootstrap token and API key.</>
                 }
               </p>
@@ -527,7 +655,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
               <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Deployment Configuration</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Choose a deployment method and use the generated configuration to start the agent.
-                {isOrg && ' The "IAM Setup" tab shows the Terraform snippet for member role and management policy.'}
+                {provider === 'gcp'
+                  ? ' The "IAM Setup" tab shows the gcloud commands that grant the agent read access.'
+                  : isOrg && ' The "IAM Setup" tab shows the Terraform snippet for member role and management policy.'}
               </p>
 
               {/* Tabs */}

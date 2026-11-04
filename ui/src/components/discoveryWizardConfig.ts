@@ -33,6 +33,16 @@ export interface AgentConfigInput {
 
 const AGENT_ID_FILE = '/var/lib/cloudpam-agent/agent-id'
 const AGENT_IMAGE = 'ghcr.io/badgerops/cloudpam/agent:latest'
+const GCP_KEY_FILE = '/var/run/secrets/cloudpam/gcp/key.json'
+
+export const GCP_PARENT_PATTERN = /^(organizations|folders)\/[0-9]+$/
+
+/** The GCP project an account maps to: external ID, else key without "gcp:". */
+export function gcpProjectFor(account: { external_id?: string; key: string } | null | undefined): string {
+  if (!account) return ''
+  if (account.external_id) return account.external_id
+  return account.key.startsWith('gcp:') ? account.key.slice(4) : account.key
+}
 
 /**
  * Resolves which config tab to render. The selection is kept in state, but the
@@ -86,9 +96,21 @@ function awsEnvVars(input: AgentConfigInput): EnvVar[] {
   return vars
 }
 
-// Task 9 replaces this with the real GCP variables.
-function gcpEnvVars(_input: AgentConfigInput): EnvVar[] {
-  return []
+function gcpEnvVars(input: AgentConfigInput): EnvVar[] {
+  if (input.mode === 'single') {
+    const vars: EnvVar[] = [['CLOUDPAM_GCP_PROJECT', input.gcpProject]]
+    if (input.accountRegions.length > 0) vars.push(['CLOUDPAM_GCP_REGIONS', input.accountRegions.join(',')])
+    return vars
+  }
+  const org = input.gcpOrg
+  const vars: EnvVar[] = [
+    ['CLOUDPAM_GCP_ORG_ENABLED', true],
+    ['CLOUDPAM_GCP_ORG_PARENT', org.parent],
+  ]
+  if (org.regions.length > 0) vars.push(['CLOUDPAM_GCP_ORG_REGIONS', org.regions.join(',')])
+  if (org.exclude.length > 0) vars.push(['CLOUDPAM_GCP_ORG_EXCLUDE_PROJECTS', org.exclude.join(',')])
+  if (org.impersonateServiceAccount) vars.push(['CLOUDPAM_GCP_ORG_IMPERSONATE_SA', org.impersonateServiceAccount])
+  return vars
 }
 
 function renderShellValue(value: EnvValue, quote: (v: unknown) => string): string {
@@ -102,11 +124,25 @@ function shellConfig(vars: EnvVar[]): string {
   return ['#!/bin/bash', ...lines, './cloudpam-agent'].join('\n')
 }
 
-function dockerConfig(vars: EnvVar[]): string {
+function dockerConfig(input: AgentConfigInput, vars: EnvVar[]): string {
+  const isGcp = input.provider === 'gcp'
+  // The note goes above `docker run`: a comment line inside a
+  // backslash-continued command would end the command.
+  const note = isGcp
+    ? ['# Omit the key mount and GOOGLE_APPLICATION_CREDENTIALS when the host has Application Default Credentials (GCE metadata, Workload Identity).']
+    : []
+  const gcpKey = isGcp
+    ? [
+        `  -v "$PWD/key.json:${GCP_KEY_FILE}:ro" \\`,
+        `  -e GOOGLE_APPLICATION_CREDENTIALS=${shellQuote(GCP_KEY_FILE)} \\`,
+      ]
+    : []
   const lines = [
+    ...note,
     'docker run -d \\',
     '  --name cloudpam-agent \\',
     '  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\',
+    ...gcpKey,
     ...vars.map(([name, value]) => `  -e ${name}=${renderShellValue(value, shellQuote)} \\`),
     `  ${AGENT_IMAGE}`,
   ]
@@ -160,9 +196,18 @@ function awsYamlLines(input: AgentConfigInput): string[] {
   return lines
 }
 
-// Task 9 replaces this with the real GCP YAML.
-function gcpYamlLines(_input: AgentConfigInput): string[] {
-  return []
+function gcpYamlLines(input: AgentConfigInput): string[] {
+  if (input.mode === 'single') {
+    const lines = [`gcp_project: ${yamlQuote(input.gcpProject)}`]
+    if (input.accountRegions.length > 0) lines.push(`gcp_regions: ${yamlList(input.accountRegions)}`)
+    return lines
+  }
+  const org = input.gcpOrg
+  const lines = ['gcp_org:', '  enabled: true', `  parent: ${yamlQuote(org.parent)}`]
+  if (org.regions.length > 0) lines.push(`  regions: ${yamlList(org.regions)}`)
+  if (org.exclude.length > 0) lines.push(`  exclude_projects: ${yamlList(org.exclude)}`)
+  if (org.impersonateServiceAccount) lines.push(`  impersonate_service_account: ${yamlQuote(org.impersonateServiceAccount)}`)
+  return lines
 }
 
 function awsIamConfig(input: AgentConfigInput): string {
@@ -232,9 +277,81 @@ resource "aws_iam_policy" "cloudpam_org" {
 }`
 }
 
-// Task 9 replaces this with the gcloud commands.
-function gcpIamConfig(_input: AgentConfigInput): string {
-  return ''
+const PROJECT_PLACEHOLDER = '{project}'
+const SERVICE_ACCOUNT_DOMAIN = '.iam.gserviceaccount.com'
+
+/**
+ * One shell word for a template: every literal part single-quoted, every
+ * {project} replaced by a double-quoted ${PROJECT_ID} expansion.
+ */
+function shellTemplate(template: string): string {
+  const word = template
+    .split(PROJECT_PLACEHOLDER)
+    .map(part => (part ? shellQuote(part) : ''))
+    .join('"${PROJECT_ID}"')
+  return word || "''"
+}
+
+function gcpBindCommand(parent: string): string {
+  const [kind, id] = parent.split('/')
+  const group = kind === 'folders' ? 'resource-manager folders' : 'organizations'
+  return `gcloud ${group} add-iam-policy-binding ${shellQuote(id ?? '')}`
+}
+
+function gcpIamConfig(input: AgentConfigInput): string {
+  const header = `#!/bin/bash
+# IAM setup for CloudPAM GCP discovery.
+# Replace AGENT_SA_EMAIL with the service account the agent runs as
+# (its Workload Identity service account, VM service account, or key's account).
+AGENT_SA_EMAIL='cloudpam-agent@YOUR_PROJECT.iam.gserviceaccount.com'
+`
+  if (input.mode === 'single') {
+    return `${header}
+gcloud projects add-iam-policy-binding ${shellQuote(input.gcpProject)} \\
+  --member="serviceAccount:\${AGENT_SA_EMAIL}" --role='roles/compute.networkViewer'`
+  }
+
+  const org = input.gcpOrg
+  const bind = gcpBindCommand(org.parent)
+  const listing = `# List the projects under the organization or folder (needed in every org mode):
+${bind} \\
+  --member="serviceAccount:\${AGENT_SA_EMAIL}" --role='roles/browser'`
+
+  const template = org.impersonateServiceAccount
+  if (!template) {
+    return `${header}
+${listing}
+
+# Read every project's networks through inheritance:
+${bind} \\
+  --member="serviceAccount:\${AGENT_SA_EMAIL}" --role='roles/compute.networkViewer'`
+  }
+
+  const at = template.lastIndexOf('@')
+  const name = at < 0 ? template : template.slice(0, at)
+  const domain = at < 0 ? '' : template.slice(at + 1)
+  // A service account lives in the project its email names, which is not
+  // necessarily the project it reads.
+  const homeProject = domain.endsWith(SERVICE_ACCOUNT_DOMAIN)
+    ? shellTemplate(domain.slice(0, -SERVICE_ACCOUNT_DOMAIN.length))
+    : '"${PROJECT_ID}"'
+  const email = shellTemplate(template)
+  const member = shellTemplate(`serviceAccount:${template}`)
+  const shared = template.includes(PROJECT_PLACEHOLDER)
+    ? ''
+    : '\n# The template names one shared service account: create it and grant token creator once, then grant roles/compute.networkViewer in each project.'
+  return `${header}
+${listing}
+
+# Per project: create the discovery service account, let it read networks, and
+# let the agent impersonate it. Run once per project ID.${shared}
+PROJECT_ID='my-project'
+gcloud iam service-accounts create ${shellTemplate(name)} --project=${homeProject} \\
+  --display-name='CloudPAM discovery'
+gcloud projects add-iam-policy-binding "\${PROJECT_ID}" \\
+  --member=${member} --role='roles/compute.networkViewer'
+gcloud iam service-accounts add-iam-policy-binding ${email} \\
+  --member="serviceAccount:\${AGENT_SA_EMAIL}" --role='roles/iam.serviceAccountTokenCreator'`
 }
 
 /** Builds the content of every tab the provider and mode offer. */
@@ -245,7 +362,7 @@ export function buildAgentConfigs(input: AgentConfigInput): Partial<Record<Confi
     switch (tab) {
       case 'shell': out.shell = shellConfig(vars); break
       case 'yaml': out.yaml = yamlConfig(input); break
-      case 'docker': out.docker = dockerConfig(vars); break
+      case 'docker': out.docker = dockerConfig(input, vars); break
       case 'terraform': out.terraform = terraformConfig(input, vars); break
       case 'iam': out.iam = input.provider === 'gcp' ? gcpIamConfig(input) : awsIamConfig(input); break
     }
