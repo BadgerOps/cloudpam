@@ -63,7 +63,7 @@ Audit retention is enforced by `internal/audit/retention.go` from the `audit_ret
 2. **Cloud credentials are the host's, not the account's.** No encrypted per-account secrets, no cloud-connect OAuth. AWS uses the default credential chain / AssumeRole. GCP uses ADC. The standalone agent (`cmd/cloudpam-agent`) hardcodes `aws.New()`, so **GCP cannot run in the agent**.
 3. **Soft delete is one-way.** `deleted_at` is set; there is no restore API or UI.
 4. **The local observability stack ships no logs.** `deploy/docker-compose.observability.yml` starts Prometheus, Grafana, and Jaeger from a clean checkout. Vector runs only in Kubernetes: the server chart's optional audit sidecar, and the standalone example DaemonSet (`deploy/k8s/vector-daemonset.yaml`) for stdout logs.
-5. **Sync is full rescan, on-demand.** No incremental sync, no server-side retry or schedule. The agent has a timer and HTTP push retry for AWS only.
+5. **Server sync supports opt-in per-account intervals and bounded transient retries (#276).** Collection remains a full scan; persistence compares fields and only touches observation time on unchanged resources. See [Scheduled server discovery](DISCOVERY.md#scheduled-server-discovery) for API configuration and coordination limits. The agent retains its own timer and HTTP push retry.
 6. **Rate limit is per client IP** (`RATE_LIMIT_RPS` / `RATE_LIMIT_BURST`). No per-user, per-key, or per-org quotas.
 7. **`skip_conflicts: true` skips the overlap check.** Every endpoint that creates pools lists, checks, and inserts under one lock. On PostgreSQL that lock is a per-organization advisory lock held in one transaction, so replicas on one database cannot both store overlapping siblings. SQLite and the in-memory store use the in-process `Server.placeGate`. Schema apply and AI plan apply with `skip_conflicts: true` still take the lock and check parent containment, but store overlapping pools.
 
@@ -105,7 +105,7 @@ Enable with `CLOUDPAM_LLM_API_KEY` and/or `CLOUDPAM_LLM_ENDPOINT`, or on the Con
 
 **Shipped:** AWS + GCP collectors on the server; AWS agent; bootstrap tokens; register / approve / reject; ingest and org ingest; drift detect/resolve/ignore with reconciliation suggestions; merged network objects and relationships; schema policy evaluation (request-scoped and persistable via API).
 
-**Not shipped:** Azure collector; GCP in the agent; per-account stored credentials; incremental sync; in-process scheduled sync; collector rate limiter.
+**Not shipped:** Azure collector; GCP in the agent; provider delta-query sync. Stored per-account credentials, incremental persistence, in-process scheduled sync, and collector rate limiting are implemented.
 
 The Discovery UI at `/discovery` has four tabs: Resources, Network, Sync History, Agents. GCP and Azure in the account picker have no matching wizard path; the wizard is AWS-shaped (IAM role, org mode, Terraform/CloudFormation snippets).
 

@@ -86,6 +86,7 @@ type DiscoveredResource struct {
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	DiscoveredAt     time.Time         `json:"discovered_at"`
 	LastSeenAt       time.Time         `json:"last_seen_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
 }
 
 // SyncJob tracks a discovery sync run for a cloud account.
@@ -94,6 +95,9 @@ type SyncJob struct {
 	AccountID        int64         `json:"account_id"`
 	Status           SyncJobStatus `json:"status"`
 	Source           string        `json:"source"` // "local" or "agent"
+	IdentitySource   string        `json:"identity_source"`
+	Trigger          string        `json:"trigger"`
+	Attempts         int           `json:"attempts"`
 	AgentID          *uuid.UUID    `json:"agent_id,omitempty"`
 	StartedAt        *time.Time    `json:"started_at,omitempty"`
 	CompletedAt      *time.Time    `json:"completed_at,omitempty"`

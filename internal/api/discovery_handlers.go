@@ -43,6 +43,8 @@ func (d *DiscoveryServer) SetNetworkStore(networkStore storage.NetworkStore) {
 
 // RegisterDiscoveryRoutes registers discovery routes without RBAC.
 func (d *DiscoveryServer) RegisterDiscoveryRoutes() {
+	d.srv.handleOpenAPIRouteFunc("GET "+schedulePath, d.handleSchedule)
+	d.srv.handleOpenAPIRouteFunc("PUT "+schedulePath, d.handleSchedule)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/resources", d.handleResources)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/resources/", d.handleResourcesSubroutes)
 	d.srv.handleOpenAPIRouteFunc("/api/v1/discovery/import", d.handleImportDiscoveredSchema)
@@ -74,6 +76,7 @@ func (d *DiscoveryServer) RegisterProtectedDiscoveryRoutes(dualMW Middleware, lo
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/agents", dualMW(readMW(http.HandlerFunc(d.handleListAgents))))
 	d.srv.handleOpenAPIRoute("/api/v1/discovery/agents/", dualMW(d.protectedAgentsSubroutes(logger)))
 	d.registerAccountConnectivityRoute(dualMW, logger)
+	d.registerScheduleRoutes(dualMW, logger)
 }
 
 // protectedAgentsSubroutes returns a handler for /api/v1/discovery/agents/ with RBAC.
@@ -1424,6 +1427,10 @@ func (d *DiscoveryServer) triggerSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job, err := d.syncService.Sync(r.Context(), account)
+	if errors.Is(err, discovery.ErrSyncBusy) {
+		d.srv.writeErr(r.Context(), w, 409, err.Error(), "")
+		return
+	}
 	if err != nil {
 		// Job was still created even on failure — return it
 		if job != nil {
@@ -1711,8 +1718,14 @@ func (d *DiscoveryServer) handleIngest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	job.IdentitySource = "agent"
+	job.Trigger = "agent"
+	job.Attempts = 1
 	// Process resources using shared logic
 	created, updated, staleCount, processErr := d.syncService.ProcessResources(r.Context(), account.ID, req.Resources, nowTime)
+	if processErr == nil && req.AgentID != nil {
+		processErr = d.recordSyncAgent(r.Context(), account.ID, req.AgentID.String())
+	}
 
 	// Update job with results
 	completedAtTime := time.Now().UTC()
@@ -1913,6 +1926,9 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 		}
 		job.Status = domain.SyncJobStatusRunning
 		job.Source = "agent"
+		job.IdentitySource = "agent"
+		job.Trigger = "agent"
+		job.Attempts = 1
 		if job.StartedAt == nil {
 			job.StartedAt = &syncTime
 		}
@@ -1978,6 +1994,9 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 
 		// Process resources
 		_, _, _, processErr := d.syncService.ProcessResources(r.Context(), account.ID, orgAcct.Resources, syncTime)
+		if processErr == nil && req.AgentID != "" {
+			processErr = d.recordSyncAgent(r.Context(), account.ID, req.AgentID)
+		}
 		if processErr != nil {
 			resp.Errors = append(resp.Errors, "process "+key+": "+processErr.Error())
 		}
@@ -2012,4 +2031,15 @@ func (d *DiscoveryServer) refreshAgentLastSeen(ctx context.Context, agentID uuid
 
 	agent.LastSeenAt = seenAt
 	return d.store.UpsertAgent(ctx, *agent)
+}
+
+func (d *DiscoveryServer) recordSyncAgent(ctx context.Context, accountID int64, agentID string) error {
+	if schedules, ok := d.store.(storage.SyncScheduleStore); ok {
+		owner, err := uuid.Parse(agentID)
+		if err != nil {
+			return err
+		}
+		return schedules.RecordSyncAgent(ctx, accountID, owner.String())
+	}
+	return nil
 }

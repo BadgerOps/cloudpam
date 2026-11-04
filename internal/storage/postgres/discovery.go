@@ -61,10 +61,10 @@ func (s *Store) ListDiscoveredResources(ctx context.Context, accountID int64, fi
 	offset := storage.PageOffset(page, pageSize, total)
 
 	queryArgs := append(append([]any{}, args...), pageSize, offset)
-	query := fmt.Sprintf(`SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at
+	query := fmt.Sprintf(`SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at, updated_at
 		FROM discovered_resources
 		WHERE %s
-		ORDER BY discovered_at DESC
+		ORDER BY discovered_at DESC, id ASC
 		LIMIT $%d OFFSET $%d`, whereClause, len(queryArgs)-1, len(queryArgs))
 
 	rows, err := s.pool.Query(ctx, query, queryArgs...)
@@ -88,7 +88,7 @@ func (s *Store) ListDiscoveredResources(ctx context.Context, accountID int64, fi
 }
 
 func (s *Store) GetDiscoveredResource(ctx context.Context, id uuid.UUID) (*domain.DiscoveredResource, error) {
-	row := s.pool.QueryRow(ctx, `SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at
+	row := s.pool.QueryRow(ctx, `SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at, updated_at
 		FROM discovered_resources
 		WHERE id = $1 AND organization_id = $2`, id, s.orgID)
 	r, err := scanPostgresDiscoveredResource(row)
@@ -105,6 +105,9 @@ func (s *Store) UpsertDiscoveredResource(ctx context.Context, res domain.Discove
 	if res.DiscoveredAt.IsZero() {
 		res.DiscoveredAt = time.Now().UTC()
 	}
+	if res.UpdatedAt.IsZero() {
+		res.UpdatedAt = time.Now().UTC()
+	}
 	if res.LastSeenAt.IsZero() {
 		res.LastSeenAt = time.Now().UTC()
 	}
@@ -114,8 +117,8 @@ func (s *Store) UpsertDiscoveredResource(ctx context.Context, res domain.Discove
 	}
 
 	_, err := s.pool.Exec(ctx, `INSERT INTO discovered_resources
-		(id, organization_id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
+		(id, organization_id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16)
 		ON CONFLICT (organization_id, account_id, resource_id) DO UPDATE SET
 			name = EXCLUDED.name,
 			cidr = EXCLUDED.cidr,
@@ -123,15 +126,18 @@ func (s *Store) UpsertDiscoveredResource(ctx context.Context, res domain.Discove
 			parent_resource_id = EXCLUDED.parent_resource_id,
 			status = EXCLUDED.status,
 			metadata = EXCLUDED.metadata,
-			last_seen_at = EXCLUDED.last_seen_at`,
+			last_seen_at = EXCLUDED.last_seen_at,
+			updated_at = EXCLUDED.updated_at,
+			provider = EXCLUDED.provider,
+			resource_type = EXCLUDED.resource_type`,
 		res.ID, s.orgID, res.AccountID, res.Provider, res.Region, string(res.ResourceType), res.ResourceID,
-		res.Name, res.CIDR, res.ParentResourceID, res.PoolID, string(res.Status), string(metadataJSON), res.DiscoveredAt, res.LastSeenAt)
+		res.Name, res.CIDR, res.ParentResourceID, res.PoolID, string(res.Status), string(metadataJSON), res.DiscoveredAt, res.LastSeenAt, res.UpdatedAt)
 	return err
 }
 
 func (s *Store) MarkStaleResources(ctx context.Context, accountID int64, before time.Time) (int, error) {
 	tag, err := s.pool.Exec(ctx, `UPDATE discovered_resources
-		SET status = $1
+		SET status = $1, updated_at=$5
 		WHERE organization_id = $2 AND account_id = $3 AND status = $4 AND last_seen_at < $5`,
 		string(domain.DiscoveryStatusStale), s.orgID, accountID, string(domain.DiscoveryStatusActive), before)
 	if err != nil {
@@ -194,6 +200,13 @@ func (s *Store) DeleteDiscoveredResource(ctx context.Context, id uuid.UUID) erro
 }
 
 func (s *Store) CreateSyncJob(ctx context.Context, job domain.SyncJob) (domain.SyncJob, error) {
+	if job.Source == "agent" {
+		job.IdentitySource = "agent"
+		job.Trigger = "agent"
+		if job.Status != domain.SyncJobStatusPending {
+			job.Attempts = 1
+		}
+	}
 	if job.ID == uuid.Nil {
 		job.ID = uuid.New()
 	}
@@ -201,10 +214,10 @@ func (s *Store) CreateSyncJob(ctx context.Context, job domain.SyncJob) (domain.S
 		job.CreatedAt = time.Now().UTC()
 	}
 	_, err := s.pool.Exec(ctx, `INSERT INTO sync_jobs
-		(id, organization_id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+		(id, organization_id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at, attempts, trigger, identity_source)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		job.ID, s.orgID, job.AccountID, string(job.Status), job.Source, job.AgentID, job.StartedAt, job.CompletedAt,
-		job.ResourcesFound, job.ResourcesCreated, job.ResourcesUpdated, job.ResourcesDeleted, job.ErrorMessage, job.CreatedAt)
+		job.ResourcesFound, job.ResourcesCreated, job.ResourcesUpdated, job.ResourcesDeleted, job.ErrorMessage, job.CreatedAt, job.Attempts, job.Trigger, job.IdentitySource)
 	if err != nil {
 		return domain.SyncJob{}, err
 	}
@@ -222,11 +235,11 @@ func (s *Store) UpdateSyncJob(ctx context.Context, job domain.SyncJob) error {
 			resources_created = $7,
 			resources_updated = $8,
 			resources_deleted = $9,
-			error_message = $10
+			error_message = $10, attempts=$13, trigger=$14, identity_source=$15
 		WHERE id = $11 AND organization_id = $12`,
 		string(job.Status), job.Source, job.AgentID, job.StartedAt, job.CompletedAt,
 		job.ResourcesFound, job.ResourcesCreated, job.ResourcesUpdated, job.ResourcesDeleted, job.ErrorMessage,
-		job.ID, s.orgID)
+		job.ID, s.orgID, job.Attempts, job.Trigger, job.IdentitySource)
 	if err != nil {
 		return err
 	}
@@ -237,7 +250,7 @@ func (s *Store) UpdateSyncJob(ctx context.Context, job domain.SyncJob) error {
 }
 
 func (s *Store) GetSyncJob(ctx context.Context, id uuid.UUID) (*domain.SyncJob, error) {
-	row := s.pool.QueryRow(ctx, `SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at
+	row := s.pool.QueryRow(ctx, `SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at, attempts, trigger, identity_source
 		FROM sync_jobs
 		WHERE id = $1 AND organization_id = $2`, id, s.orgID)
 	return scanPostgresSyncJob(row)
@@ -247,7 +260,7 @@ func (s *Store) ListSyncJobs(ctx context.Context, accountID int64, limit int) ([
 	if limit < 1 {
 		limit = 20
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at
+	rows, err := s.pool.Query(ctx, `SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at, attempts, trigger, identity_source
 		FROM sync_jobs
 		WHERE organization_id = $1 AND account_id = $2
 		ORDER BY created_at DESC
@@ -278,7 +291,7 @@ func (s *Store) ClaimPendingAgentSync(ctx context.Context, agentID uuid.UUID) (*
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	row := tx.QueryRow(ctx, `SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at
+	row := tx.QueryRow(ctx, `SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at, attempts, trigger, identity_source
 		FROM sync_jobs
 		WHERE organization_id = $1 AND status = $2 AND source = 'agent' AND agent_id = $3
 		ORDER BY created_at ASC
@@ -396,7 +409,7 @@ func scanPostgresDiscoveredResource(row pgx.Row) (domain.DiscoveredResource, err
 	var metadataJSON []byte
 	var parentResourceID *string
 	var poolID *int64
-	if err := row.Scan(&r.ID, &r.AccountID, &r.Provider, &r.Region, &r.ResourceType, &r.ResourceID, &r.Name, &r.CIDR, &parentResourceID, &poolID, &r.Status, &metadataJSON, &r.DiscoveredAt, &r.LastSeenAt); err != nil {
+	if err := row.Scan(&r.ID, &r.AccountID, &r.Provider, &r.Region, &r.ResourceType, &r.ResourceID, &r.Name, &r.CIDR, &parentResourceID, &poolID, &r.Status, &metadataJSON, &r.DiscoveredAt, &r.LastSeenAt, &r.UpdatedAt); err != nil {
 		if err == pgx.ErrNoRows {
 			return domain.DiscoveredResource{}, storage.ErrNotFound
 		}
@@ -410,7 +423,7 @@ func scanPostgresDiscoveredResource(row pgx.Row) (domain.DiscoveredResource, err
 
 func scanPostgresSyncJob(row pgx.Row) (*domain.SyncJob, error) {
 	var j domain.SyncJob
-	if err := row.Scan(&j.ID, &j.AccountID, &j.Status, &j.Source, &j.AgentID, &j.StartedAt, &j.CompletedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &j.CreatedAt); err != nil {
+	if err := row.Scan(&j.ID, &j.AccountID, &j.Status, &j.Source, &j.AgentID, &j.StartedAt, &j.CompletedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &j.CreatedAt, &j.Attempts, &j.Trigger, &j.IdentitySource); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, storage.ErrNotFound
 		}
@@ -430,4 +443,15 @@ func scanPostgresAgent(row pgx.Row) (*domain.DiscoveryAgent, error) {
 	}
 	a.ApprovalStatus = domain.AgentApprovalStatus(approvalStatus)
 	return &a, nil
+}
+
+func (s *Store) TouchDiscoveredResource(ctx context.Context, id uuid.UUID, at time.Time) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE discovered_resources SET last_seen_at=$1 WHERE id=$2 AND organization_id=$3`, at, id, s.orgID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return storage.ErrNotFound
+	}
+	return nil
 }

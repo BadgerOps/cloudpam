@@ -513,7 +513,7 @@ func TestDiscover_PropagatesEndpointFailures(t *testing.T) {
 	}
 }
 
-func TestDiscover_ClipsOversizedErrorBody(t *testing.T) {
+func TestDiscover_OmitsErrorBody(t *testing.T) {
 	body := strings.Repeat("x", 1<<20)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/compute/v1/projects/test-project/global/networks", func(w http.ResponseWriter, r *http.Request) {
@@ -543,7 +543,7 @@ func TestDiscover_ClipsOversizedErrorBody(t *testing.T) {
 	if len(msg) > 1024 {
 		t.Fatalf("error length = %d, want at most 1024", len(msg))
 	}
-	if !strings.Contains(msg, "http 403") || !strings.HasSuffix(msg, "... (truncated)") {
-		t.Fatalf("error %q lacks status or truncation marker", msg)
+	if !strings.Contains(msg, "http 403") || strings.Contains(msg, "xxxx") {
+		t.Fatalf("error %q lacks status or includes provider body", msg)
 	}
 }

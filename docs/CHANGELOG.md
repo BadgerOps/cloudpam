@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.24.0] - 2026-11-03
+
+### Added
+- Per-account server discovery schedules via `GET/PUT /api/v1/discovery/schedules/{accountId}`. Intervals are disabled by default; set `interval_seconds` to 60–604800 to enable, or 0 to disable. Scheduled runs skip accounts with a healthy assigned discovery agent. Database-backed leases coordinate scheduled and manual server runs across replicas. (#276)
+- Sync history includes `trigger`, `identity_source`, and `attempts`. Server discovery retries transient network, throttling, and 5xx failures up to three collector attempts with cancellable backoff. (#276)
+
+### Changed
+- Discovery compares cloud-owned resource fields before writing. Unchanged resources refresh only `last_seen_at`, changed resources advance the new `updated_at`, and `resources_updated` counts actual changes. Failed persistence does not mark missing resources stale. Cloud collection still reads the full inventory. (#276)
+- GCP discovery errors retain HTTP status but omit provider response bodies. (#276)
+- Server and agent Helm charts advertise application version `0.24.0`; chart package versions remain `0.2.1`.
+
 ## [0.23.11] - 2026-11-02
 
 ### Changed

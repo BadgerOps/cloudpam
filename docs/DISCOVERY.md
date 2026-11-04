@@ -1339,3 +1339,74 @@ To add Azure (or another provider):
 4. Create accounts with `"provider": "azure"` — the sync service selects the collector by `account.Provider`
 
 The HTTP API and storage layer are provider-agnostic. The Discovery wizard, IAM snippets, and agent binary are still AWS-oriented and will need matching work. Account keys for `azure:` already validate as subscription UUIDs; without a collector, sync fails.
+
+
+## Scheduled server discovery
+
+Schedules are opt-in per account. Read or configure them through
+`GET/PUT /api/v1/discovery/schedules/{accountId}`. Reading requires
+`discovery:read`; changing an interval requires `discovery:create`, the same
+permission as triggering a manual sync. Each change writes an account audit event.
+
+```bash
+curl -X PUT http://localhost:8080/api/v1/discovery/schedules/1 \
+  -H "Authorization: Bearer $CLOUDPAM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"interval_seconds":900}'
+```
+
+The response contains `account_id`, `interval_seconds`, and `next_run_at` (Unix
+seconds). Use 0 to disable, or an interval from 60 seconds through 7 days. The
+first run is due one interval after saving. Only AWS and GCP can be enabled.
+There is no schedule editor in the UI yet.
+
+The server checks due schedules every 30 seconds and processes them sequentially.
+A slow account can delay other accounts. It skips deleted accounts and accounts
+with a healthy assigned approved agent (heartbeat within five minutes; legacy
+agents with no approval state are also recognized). Legacy AWS account-number
+assignments are recognized. Successful agent ingest also records account ownership,
+including organization members served by one agent. A healthy recorded agent
+suppresses that account’s schedule. An unrelated agent does not suppress the schedule.
+Agent-list failures prevent scheduled execution. Agents retain their own timers.
+
+A scheduled run uses the account's stored credential when present, otherwise the
+server identity, exactly as a manual server sync does. A stored-credential failure
+never falls back to the host. Schedule state survives restarts on SQLite and
+PostgreSQL. Missed intervals are coalesced into one run; the next due time advances
+when a run is claimed, including a manual server run on a scheduled account.
+Disabling a schedule prevents future runs but does not cancel one already claimed.
+
+Manual and scheduled server runs share an atomic database lease per account.
+An overlapping manual request returns 409. Runs have a ten-minute context deadline;
+leases expire after fifteen minutes for crash recovery. All replicas must have
+synchronized clocks. Shutdown cancels and joins the scheduler before closing storage.
+Leases do not coordinate agent ingest during an agent/server ownership transition.
+A hard process crash can leave the old job displayed as running until an operator
+reviews it; the expired lease permits a later run.
+
+### Retry and incremental persistence
+
+Server collector failures retry at most twice (three attempts total), waiting one
+then two seconds. Network timeouts, connection resets/refusals, broken pipes, HTTP 429/5xx, and recognized
+AWS throttling/server errors qualify. Permission/configuration errors, cancellation,
+and persistence failures do not. Provider SDKs may also perform their own retries.
+Attempts are saved before each collector call. Retries discard partial inventories;
+resources are processed only after a successful full collection.
+
+Sync jobs keep `source: local|agent` and add:
+
+- `identity_source`: `host`, `stored_credential`, or `agent`.
+- `trigger`: `manual`, `scheduled`, or `agent`.
+- `attempts`: collector calls made by the server (agent runs report one ingest;
+  this does not count retries internal to an agent).
+
+Older job rows have empty new metadata fields and zero attempts.
+
+Incremental means **persistence**, not provider delta queries. Each successful
+collection compares cloud-owned fields to the stored inventory. Unchanged rows
+only refresh `last_seen_at`; `updated_at` tracks observed field or stale-status
+changes, and `discovered_at`, IDs, and managed-pool links are preserved.
+`resources_updated` counts changed rows, including resources returning from stale
+state. Missing resources become stale only after all writes succeed. A database
+failure can leave some resource writes applied, but never triggers stale marking
+for that incomplete snapshot; the next successful run reconciles it.
