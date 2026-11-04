@@ -275,6 +275,9 @@ func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pu
 	// Discover resources
 	resources, err := collector.Discover(ctx, account)
 	if err != nil {
+		if cfg.Provider == providerGCP {
+			err = gcp.ReduceTokenError(err)
+		}
 		logger.Error("discovery failed", "error", err)
 		return
 	}

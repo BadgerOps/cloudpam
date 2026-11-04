@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -11,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
 
 	"cloudpam/internal/domain"
 )
@@ -198,6 +202,37 @@ func TestCovRunSyncSkipsPushWhenDiscoveryFails(t *testing.T) {
 
 	if collector.callCount() != 1 {
 		t.Fatalf("collector calls = %d, want 1", collector.callCount())
+	}
+	if rec.ingestCount() != 0 {
+		t.Fatalf("ingest requests = %d, want 0 when discovery fails", rec.ingestCount())
+	}
+}
+
+func TestRunSyncGCPLogsReducedTokenError(t *testing.T) {
+	rec, url := covNewIngestServer(t)
+	tokenErr := &oauth2.RetrieveError{
+		Response:         &http.Response{StatusCode: http.StatusBadRequest},
+		Body:             []byte("sentinel-body"),
+		ErrorCode:        "invalid_grant",
+		ErrorDescription: "sentinel-desc",
+	}
+	collector := &covStubCollector{err: errors.Join(fmt.Errorf("discover networks: %w", tokenErr), errors.New("other"))}
+	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
+
+	var logs bytes.Buffer
+	cfg := &Config{Provider: "gcp", AccountID: 7, MaxRetries: 0, RetryBackoff: time.Millisecond}
+	runSync(context.Background(), cfg, collector, pusher, nil, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	out := logs.String()
+	for _, want := range []string{"invalid_grant", "http 400"} {
+		if !bytes.Contains(logs.Bytes(), []byte(want)) {
+			t.Errorf("log missing %q:\n%s", want, out)
+		}
+	}
+	for _, leak := range []string{"sentinel-body", "sentinel-desc"} {
+		if bytes.Contains(logs.Bytes(), []byte(leak)) {
+			t.Errorf("log leaks %q:\n%s", leak, out)
+		}
 	}
 	if rec.ingestCount() != 0 {
 		t.Fatalf("ingest requests = %d, want 0 when discovery fails", rec.ingestCount())
