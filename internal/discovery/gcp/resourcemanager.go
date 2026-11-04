@@ -109,9 +109,13 @@ func (w *projectWalker) walk(ctx context.Context, node string, depth int) error 
 				Number: strings.TrimPrefix(p.Name, "projects/"),
 			})
 		}
-		if token = page.NextPageToken; token == "" {
+		if page.NextPageToken == "" {
 			break
 		}
+		if page.NextPageToken == token {
+			return fmt.Errorf("list projects under %s: repeated page token", node)
+		}
+		token = page.NextPageToken
 	}
 
 	var children []string
@@ -125,9 +129,13 @@ func (w *projectWalker) walk(ctx context.Context, node string, depth int) error 
 				children = append(children, f.Name)
 			}
 		}
-		if token = page.NextPageToken; token == "" {
+		if page.NextPageToken == "" {
 			break
 		}
+		if page.NextPageToken == token {
+			return fmt.Errorf("list folders under %s: repeated page token", node)
+		}
+		token = page.NextPageToken
 	}
 	for _, child := range children {
 		if err := w.walk(ctx, child, depth+1); err != nil {

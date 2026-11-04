@@ -166,3 +166,32 @@ func TestListProjectsCountsEveryPageAgainstTheLimiter(t *testing.T) {
 		t.Fatalf("calls = %d, want 2", f.calls)
 	}
 }
+
+func TestListProjectsFailsOnARepeatedPageToken(t *testing.T) {
+	for _, kind := range []string{"projects", "folders"} {
+		t.Run(kind, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls > 10 {
+					t.Errorf("walk kept paging: %d requests", calls)
+					http.Error(w, "too many pages", http.StatusBadRequest)
+					return
+				}
+				if strings.HasSuffix(r.URL.Path, "/"+kind) {
+					_, _ = w.Write([]byte(`{"nextPageToken":"same"}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			t.Cleanup(srv.Close)
+			client := &http.Client{Transport: &rewriteTransport{baseURL: srv.URL}}
+
+			_, err := ListProjects(t.Context(), client, "organizations/1", nil)
+			want := "list " + kind + " under organizations/1: repeated page token"
+			if err == nil || err.Error() != want {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+		})
+	}
+}
