@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
 )
@@ -568,5 +570,25 @@ func TestSetRequestTimeoutBoundsAStalledComputeCall(t *testing.T) {
 	// Three listings, each bounded by the 100ms timeout.
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("elapsed = %s, want about 300ms", elapsed)
+	}
+}
+
+func TestTokenSourceCollectorKeepsTheInjectedClientTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewWithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "t"}))
+	c.httpClient = &http.Client{Transport: &rewriteTransport{baseURL: srv.URL}, Timeout: 100 * time.Millisecond}
+
+	start := time.Now()
+	if _, err := c.Discover(t.Context(), domain.Account{ID: 1, ExternalID: "p"}); err == nil {
+		t.Fatal("Discover() = nil error, want the injected client's timeout to fail the stalled calls")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("elapsed = %s, want the injected 100ms timeout kept with no request timeout set", elapsed)
 	}
 }

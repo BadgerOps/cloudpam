@@ -258,6 +258,7 @@ func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequ
 func orgIngestRejected(accounts int, errs []string) error {
 	msg := fmt.Sprintf("server accepted none of the %d accounts: %s", accounts, strings.Join(errs[:min(3, len(errs))], "; "))
 	for _, e := range errs {
+		// Matches the old server's "skipped account with empty aws_account_id".
 		if strings.Contains(e, "aws_account_id") {
 			msg += " (upgrade the CloudPAM server to 0.25.0 or later before GCP agents)"
 			break

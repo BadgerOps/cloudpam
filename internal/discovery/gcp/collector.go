@@ -124,7 +124,9 @@ func (c *Collector) getHTTPClient(ctx context.Context) (*http.Client, error) {
 			ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
 		}
 		client := oauth2.NewClient(ctx, c.tokenSource)
-		client.Timeout = c.timeout
+		if c.timeout > 0 {
+			client.Timeout = c.timeout
+		}
 		return client, nil
 	}
 	if c.httpClient != nil {
@@ -143,7 +145,9 @@ func (c *Collector) getHTTPClient(ctx context.Context) (*http.Client, error) {
 		return nil, fmt.Errorf("get default credentials: %w", err)
 	}
 	client := oauth2.NewClient(ctx, ts)
-	client.Timeout = c.timeout
+	if c.timeout > 0 {
+		client.Timeout = c.timeout
+	}
 	return client, nil
 }
 
