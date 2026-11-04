@@ -233,7 +233,7 @@ The storage layer uses build tags to switch between implementations:
 |---------|---------|--------|
 | `internal/auth` | Authentication, RBAC, users, sessions | Implemented |
 | `internal/audit` | Audit logging | Implemented |
-| `internal/discovery` | Cloud resource discovery (Collector, SyncService, AWS Org, GCP, drift) | Implemented (AWS single + org, GCP; **no Azure collector**) |
+| `internal/discovery` | Cloud resource discovery (Collector, SyncService, AWS Org, GCP, GCP org, drift) | Implemented (AWS single + org, GCP single + org; **no Azure collector**) |
 | `internal/observability` | Logging, metrics, OpenTelemetry tracing (opt-in, OTLP/HTTP) | Implemented |
 | `internal/cidr` | CIDR math utilities | Implemented |
 | `internal/planning` | Smart planning engine (analysis, gaps, fragmentation, compliance, recommendations) | Implemented (Phase 3 analysis + recommendations) |
@@ -463,7 +463,12 @@ When adding endpoints:
 - `RATE_LIMIT_BURST`: Burst size (default: `200`)
 - The global limiter keeps one token bucket per API key, per user, or per TCP peer address for unauthenticated requests. It ignores `X-Forwarded-For`, so unauthenticated clients behind one reverse proxy share a bucket. Requests that carry credentials are admitted against a separate per-address budget that only rejected credentials spend, so anonymous traffic cannot starve authenticated principals behind the same address. An API key can carry its own `rate_limit` (set at creation, requires `settings:write`), which applies even with `RATE_LIMIT_RPS=0`. The login limiter and the audit client IP honor `CLOUDPAM_TRUSTED_PROXIES`, and the global limiter does not. Behind a proxy, set `RATE_LIMIT_RPS=0` and limit at the ingress.
 
-### Agent (Org Mode)
+### Agent
+- `CLOUDPAM_PROVIDER`: Required, `aws` or `gcp` (no default)
+- `CLOUDPAM_GCP_PROJECT`: GCP project for single-project mode
+- `CLOUDPAM_GCP_REGIONS`: Comma-separated GCP regions to keep
+- `CLOUDPAM_DISCOVERY_GCP_RPS`: Cap on GCP API calls per second
+- `CLOUDPAM_GCP_ORG_ENABLED`, `CLOUDPAM_GCP_ORG_PARENT` (`organizations/<id>` or `folders/<id>`), `CLOUDPAM_GCP_ORG_REGIONS`, `CLOUDPAM_GCP_ORG_EXCLUDE_PROJECTS`, `CLOUDPAM_GCP_ORG_IMPERSONATE_SA` (`{project}` placeholder): GCP organization/folder mode
 - `CLOUDPAM_AWS_ORG_ENABLED`: Enable AWS Organizations discovery mode
 - `CLOUDPAM_AWS_ORG_ROLE_NAME`: IAM role name in member accounts (default: `CloudPAMDiscoveryRole`)
 - `CLOUDPAM_AWS_ORG_EXTERNAL_ID`: External ID for STS AssumeRole (optional)

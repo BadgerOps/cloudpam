@@ -60,7 +60,7 @@ Audit retention is enforced by `internal/audit/retention.go` from the `audit_ret
 ## Production and deploy gaps
 
 1. **Azure is selectable but cannot sync.** No collector is planned (#273 was closed as not planned). The API keeps accepting `azure` as an account provider, so operators can track Azure accounts and their pools by hand.
-2. **Cloud credentials are the host's, not the account's.** No encrypted per-account secrets, no cloud-connect OAuth. AWS uses the default credential chain / AssumeRole. GCP uses ADC. The standalone agent (`cmd/cloudpam-agent`) hardcodes `aws.New()`, so **GCP cannot run in the agent**.
+2. **Cloud credentials are the host's, not the account's.** No encrypted per-account secrets, no cloud-connect OAuth. AWS uses the default credential chain / AssumeRole. GCP uses ADC. Since 0.25.0 the standalone agent (`cmd/cloudpam-agent`) runs AWS or GCP, chosen by `CLOUDPAM_PROVIDER`, and GCP org mode can impersonate a per-project service account.
 3. **Soft delete is one-way.** `deleted_at` is set; there is no restore API or UI.
 4. **The local observability stack ships no logs.** `deploy/docker-compose.observability.yml` starts Prometheus, Grafana, and Jaeger from a clean checkout. Vector runs only in Kubernetes: the server chart's optional audit sidecar, and the standalone example DaemonSet (`deploy/k8s/vector-daemonset.yaml`) for stdout logs.
 5. **Server sync supports opt-in per-account intervals and bounded transient retries (#276).** Collection remains a full scan; persistence compares fields and only touches observation time on unchanged resources. See [Scheduled server discovery](DISCOVERY.md#scheduled-server-discovery) for API configuration and coordination limits. The agent retains its own timer and HTTP push retry.

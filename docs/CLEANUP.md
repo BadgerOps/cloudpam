@@ -26,7 +26,7 @@ Runtime API contract: `/openapi` and `/openapi.yaml` on a running server. Do not
 | [OBSERVABILITY.md](OBSERVABILITY.md) | slog/metrics/tracing/CEF mixed with Vector/Jaeger/HEC design |
 | [IMPLEMENTATION_ROADMAP.md](IMPLEMENTATION_ROADMAP.md) | 24-week plan; week checkboxes are mixed history |
 | [PROJECT_PLAN.md](PROJECT_PLAN.md) | Original plan plus a current-state summary |
-| [DISCOVERY_AGENT_PLAN.md](DISCOVERY_AGENT_PLAN.md) | Agent separation plan (the agent shipped; GCP agent in the diagram did not) |
+| [DISCOVERY_AGENT_PLAN.md](DISCOVERY_AGENT_PLAN.md) | Agent separation plan (the agent shipped; the GCP agent shipped in 0.25.0) |
 | [UI_ENHANCEMENT.md](UI_ENHANCEMENT.md) | Early UI research |
 | [API_EXAMPLES.md](API_EXAMPLES.md) | Design-era curls with the current auth header. Most paths are not served, so use `/openapi` for the real API |
 | [design/](design/), [plans/](plans/), [superpowers/plans/](superpowers/plans/) | Dated design notes |

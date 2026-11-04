@@ -1,6 +1,6 @@
 # Discovery Agent Separation Plan
 
-> **Plan status (0.23.4):** The standalone agent shipped (`cmd/cloudpam-agent/`, Docker image, Helm chart, ingest/heartbeat, bootstrap register/approve). The diagram's **GCP agent is not built**. `cmd/cloudpam-agent/main.go` hardcodes `aws.New()`. Server-side GCP discovery uses host ADC. Do not treat this file as remaining-work; remaining discovery gaps are in [CURRENT_STATUS.md](CURRENT_STATUS.md).
+> **Plan status (0.25.0):** The standalone agent shipped (`cmd/cloudpam-agent/`, Docker image, Helm chart, ingest/heartbeat, bootstrap register/approve). The diagram's GCP agent is implemented in 0.25.0: single-project and organization/folder modes, selected with `CLOUDPAM_PROVIDER=gcp` (see [GCP Agent](DISCOVERY.md#gcp-agent)). Server-side GCP discovery uses host ADC or a stored per-account credential. Do not treat this file as remaining-work; remaining discovery gaps are in [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 ## Goal
 
