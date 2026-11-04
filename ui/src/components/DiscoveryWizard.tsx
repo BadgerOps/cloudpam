@@ -13,6 +13,7 @@ import {
   gcpProjectFor,
   resolveConfigTab,
   splitList,
+  validImpersonationTemplate,
   type ConfigTab,
   type DiscoveryMode,
   type WizardProvider,
@@ -36,12 +37,7 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
     accounts.find(a => a.provider === 'aws')?.id ?? null,
   )
   const [showNewAccount, setShowNewAccount] = useState(false)
-  const [newAccount, setNewAccount] = useState<CreateAccountRequest>({
-    key: '',
-    name: '',
-    provider: 'aws',
-    regions: [],
-  })
+  const [newAccount, setNewAccount] = useState<Pick<CreateAccountRequest, 'key' | 'name'>>({ key: '', name: '' })
   const [createdAccount, setCreatedAccount] = useState<Account | null>(null)
   const [regionsInput, setRegionsInput] = useState('')
   const [agentName, setAgentName] = useState('')
@@ -72,7 +68,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const { agents, fetch: fetchAgents } = useDiscoveryAgents()
   const { showToast } = useToast()
 
-  const selectedAccount = accounts.find(a => a.id === selectedAccountId) ?? createdAccount
+  // A just-created account may not be in `accounts` until the parent refetches.
+  const selectedAccount = accounts.find(a => a.id === selectedAccountId) ??
+    (createdAccount?.id === selectedAccountId && createdAccount.provider === provider ? createdAccount : null)
 
   // Poll for agent connection when on step 3 with a provisioned agent
   useEffect(() => {
@@ -138,9 +136,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   async function handleCreateAccount() {
     try {
       const regions = regionsInput.split(',').map(r => r.trim()).filter(Boolean)
-      const account = await createAccount({ ...newAccount, regions })
+      const account = await createAccount({ ...newAccount, provider, regions })
       setCreatedAccount(account)
-      setSelectedAccountId(account.id)
+      selectAccount(account.id)
       setShowNewAccount(false)
       onAccountCreated()
       showToast(`Account "${account.name}" created`, 'success')
@@ -186,10 +184,15 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
     handleNext()
   }
 
+  // The project override belongs to one account, so it never survives a change of account.
+  function selectAccount(id: number | null) {
+    setSelectedAccountId(id)
+    setGcpProjectInput('')
+  }
+
   function chooseProvider(next: WizardProvider) {
     setProvider(next)
-    setSelectedAccountId(accounts.find(a => a.provider === next)?.id ?? null)
-    setNewAccount(prev => ({ ...prev, provider: next }))
+    selectAccount(accounts.find(a => a.provider === next)?.id ?? null)
   }
 
   // Generate config content
@@ -205,8 +208,10 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
 
   const derivedGcpProject = gcpProjectFor(selectedAccount)
   const gcpProject = gcpProjectInput.trim() || derivedGcpProject
-  const step1Valid = selectedAccountId !== null && (
-    provider !== 'gcp' || (isOrg ? GCP_PARENT_PATTERN.test(gcpOrgParent) : gcpProject !== '')
+  const impersonateValid = validImpersonationTemplate(gcpOrgImpersonate)
+  const step1Valid = selectedAccount?.provider === provider && (
+    provider !== 'gcp' ||
+    (isOrg ? GCP_PARENT_PATTERN.test(gcpOrgParent) && impersonateValid : gcpProject !== '')
   )
 
   const generated = buildAgentConfigs({
@@ -362,7 +367,7 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                     <>
                       <select
                         value={selectedAccountId ?? ''}
-                        onChange={e => setSelectedAccountId(Number(e.target.value))}
+                        onChange={e => selectAccount(Number(e.target.value))}
                         className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
                       >
                         <option value="" disabled>Choose an account...</option>
@@ -406,34 +411,33 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                       <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">New Account</h4>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Key</label>
+                          <label htmlFor="new-account-key" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Key</label>
                           <input
+                            id="new-account-key"
                             value={newAccount.key}
                             onChange={e => setNewAccount(prev => ({ ...prev, key: e.target.value }))}
-                            placeholder="aws-prod"
+                            placeholder={provider === 'gcp' ? 'gcp:my-project' : 'aws-prod'}
                             className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Name</label>
+                          <label htmlFor="new-account-name" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Name</label>
                           <input
+                            id="new-account-name"
                             value={newAccount.name}
                             onChange={e => setNewAccount(prev => ({ ...prev, name: e.target.value }))}
-                            placeholder="AWS Production"
+                            placeholder={provider === 'gcp' ? 'GCP Production' : 'AWS Production'}
                             className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Provider</label>
-                          <select
-                            value={newAccount.provider}
-                            onChange={e => setNewAccount(prev => ({ ...prev, provider: e.target.value }))}
-                            className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                          <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Provider</span>
+                          <span
+                            data-testid="new-account-provider"
+                            className="block px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300"
                           >
-                            <option value="aws">AWS</option>
-                            <option value="gcp">GCP</option>
-                            <option value="azure">Azure</option>
-                          </select>
+                            {provider.toUpperCase()}
+                          </span>
                         </div>
                         <div>
                           <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Regions (comma-separated)</label>
@@ -563,6 +567,12 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
                         placeholder="cloudpam-discovery@{project}.iam.gserviceaccount.com"
                         className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                       />
+                      {!impersonateValid && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          Use a service account email. The part before @ must be 6 to 30 lowercase letters, digits or hyphens,
+                          starting with a letter, even when <code>{'{project}'}</code> is a 30-character project ID.
+                        </p>
+                      )}
                       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         Empty: the agent reads every project as itself, through grants on the organization or folder.
                         Set: it impersonates this account in each project; <code>{'{project}'}</code> becomes the project ID.

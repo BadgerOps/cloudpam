@@ -41,6 +41,22 @@ const HOST_GCP_KEY_FILE = '/etc/cloudpam-agent/gcp-key.json'
 
 export const GCP_PARENT_PATTERN = /^(organizations|folders)\/[0-9]+$/
 
+const SERVICE_ACCOUNT_ID = /^[a-z][a-z0-9-]{5,29}$/
+const SERVICE_ACCOUNT_EMAIL = /^[^@\s{}]+@[^@\s{}]+\.[^@\s{}]+$/
+// The longest project ID GCP allows, so a template valid here is valid for every project.
+const LONGEST_PROJECT_ID = 'p'.repeat(30)
+
+/**
+ * Whether the agent can impersonate the account a template names in every
+ * project. Empty means no impersonation and is valid.
+ */
+export function validImpersonationTemplate(template: string): boolean {
+  if (!template) return true
+  const email = template.split('{project}').join(LONGEST_PROJECT_ID)
+  const at = email.indexOf('@')
+  return at > 0 && SERVICE_ACCOUNT_ID.test(email.slice(0, at)) && SERVICE_ACCOUNT_EMAIL.test(email)
+}
+
 /** The GCP project an account maps to: external ID, else key without "gcp:". */
 export function gcpProjectFor(account: { external_id?: string; key: string } | null | undefined): string {
   if (!account) return ''

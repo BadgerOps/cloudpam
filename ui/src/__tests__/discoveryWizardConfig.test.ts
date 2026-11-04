@@ -5,6 +5,7 @@ import {
   buildAgentConfigs,
   gcpProjectFor,
   splitList,
+  validImpersonationTemplate,
   type AgentConfigInput,
 } from '../components/discoveryWizardConfig'
 
@@ -103,6 +104,28 @@ describe('gcp helpers', () => {
     expect(GCP_PARENT_PATTERN.test('folders/22')).toBe(true)
     expect(GCP_PARENT_PATTERN.test('projects/1')).toBe(false)
     expect(GCP_PARENT_PATTERN.test('folders/x')).toBe(false)
+  })
+
+  it('validates impersonation templates against a 30-character project id', () => {
+    for (const ok of [
+      '',
+      'cloudpam-discovery@{project}.iam.gserviceaccount.com',
+      'discovery@hub.iam.gserviceaccount.com',
+      '{project}@hub.iam.gserviceaccount.com',
+      'abcdef@x.co',
+    ]) expect(validImpersonationTemplate(ok), ok).toBe(true)
+    for (const bad of [
+      'cloudpam-discovery',
+      'Disc@hub.iam.gserviceaccount.com',
+      '1disc@hub.iam.gserviceaccount.com',
+      'abcde@hub.iam.gserviceaccount.com',
+      'a234567890123456789012345678901@hub.iam.gserviceaccount.com',
+      'disc-{project}@hub.iam.gserviceaccount.com',
+      'disc_sa@hub.iam.gserviceaccount.com',
+      'disc@hub',
+      'disc@{project}',
+      'disc@hub .iam.gserviceaccount.com',
+    ]) expect(validImpersonationTemplate(bad), bad).toBe(false)
   })
 
   it('derives the project from external_id, then key', () => {
