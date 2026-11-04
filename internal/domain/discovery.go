@@ -271,6 +271,9 @@ type AgentHeartbeatRequest struct {
 	AccountID int64     `json:"account_id"`
 	Version   string    `json:"version"`
 	Hostname  string    `json:"hostname"`
+	// ClaimSync false asks the server not to hand out a pending sync job, because
+	// the agent is busy. Absent means true, which is what agents before it send.
+	ClaimSync *bool `json:"claim_sync,omitempty"`
 }
 
 // AgentHeartbeatResponse is returned to agents after each heartbeat.

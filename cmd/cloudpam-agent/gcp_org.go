@@ -96,7 +96,7 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 		logger.Error("failed to list gcp projects", "parent", parent, "error", err)
 		pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{
 			SyncJobID: syncJobID,
-			Failures:  []domain.OrgAccountFailure{domain.NewOrgAccountFailure(providerGCP, parent, fmt.Errorf("list projects: %w", err))},
+			Failures:  []domain.OrgAccountFailure{gcpFailure(parent, fmt.Errorf("list projects: %w", err))},
 		})
 		return
 	}
@@ -122,7 +122,7 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 		if err != nil {
 			cancel()
 			logger.Error("gcp credentials failed for project", "project", project.ID, "error", err)
-			failures = append(failures, domain.NewOrgAccountFailure(providerGCP, project.ID, fmt.Errorf("credentials: %w", err)))
+			failures = append(failures, gcpFailure(project.ID, fmt.Errorf("credentials: %w", err)))
 			continue
 		}
 		account := domain.Account{Provider: providerGCP, ExternalID: project.ID, Regions: regions}
@@ -132,7 +132,7 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 			// Partial results are dropped: pushing them would mark the missing
 			// resources stale.
 			logger.Error("discovery failed for project", "project", project.ID, "error", err)
-			failures = append(failures, domain.NewOrgAccountFailure(providerGCP, project.ID, err))
+			failures = append(failures, gcpFailure(project.ID, err))
 			continue
 		}
 		logger.Info("discovered resources for project", "project", project.ID, "count", len(resources))
@@ -152,7 +152,15 @@ func runGCPOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 
 	if len(entries) == 0 && len(failures) == 0 {
 		logger.Info("no gcp projects to ingest", "parent", parent)
-		return
+		if syncJobID == nil {
+			return
+		}
 	}
 	pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{Accounts: entries, Failures: failures, SyncJobID: syncJobID})
+}
+
+// gcpFailure records a project or parent the pass could not read. The server
+// stores the text, so a token endpoint's response body is reduced away first.
+func gcpFailure(externalID string, err error) domain.OrgAccountFailure {
+	return domain.NewOrgAccountFailure(providerGCP, externalID, gcp.ReduceTokenError(err))
 }

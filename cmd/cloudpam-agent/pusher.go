@@ -228,6 +228,10 @@ func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequ
 			if ingestResp.AccountsProcessed == 0 && len(ingestResp.Errors) > 0 && len(req.Accounts) > 0 {
 				return orgIngestRejected(len(req.Accounts), ingestResp.Errors)
 			}
+			// A server before 0.25.0 ignores failures and would complete the job.
+			if len(req.Failures) > 0 && ingestResp.AccountsFailed != len(req.Failures) {
+				return fmt.Errorf("server did not acknowledge %d account failure(s); upgrade the CloudPAM server to 0.25.0 or later before upgrading agents", len(req.Failures))
+			}
 			if len(ingestResp.Errors) > 0 {
 				p.logger.Error("org ingest had errors", "errors", ingestResp.Errors)
 			}
@@ -267,14 +271,16 @@ func orgIngestRejected(accounts int, errs []string) error {
 	return errors.New(msg)
 }
 
-// Heartbeat sends a heartbeat to the server.
-func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, version, hostname string) (*domain.AgentHeartbeatResponse, error) {
+// Heartbeat sends a heartbeat to the server. claimSync false asks the server
+// to keep any pending sync job for a later heartbeat.
+func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, version, hostname string, claimSync bool) (*domain.AgentHeartbeatResponse, error) {
 	req := domain.AgentHeartbeatRequest{
 		AgentID:   p.agentID,
 		Name:      name,
 		AccountID: accountID,
 		Version:   version,
 		Hostname:  hostname,
+		ClaimSync: &claimSync,
 	}
 
 	body, err := json.Marshal(req)

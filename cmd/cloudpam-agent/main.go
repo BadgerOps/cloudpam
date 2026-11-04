@@ -139,7 +139,7 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 		if cfg.AccountID <= 0 {
 			return
 		}
-		resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
+		resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname, !worker.busy())
 		if err != nil {
 			logger.Error("heartbeat failed", "error", err)
 			return
@@ -247,7 +247,9 @@ func runAWSOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *
 
 	if len(ingestAccounts) == 0 && len(failures) == 0 {
 		logger.Info("no accounts to ingest")
-		return
+		if syncJobID == nil {
+			return
+		}
 	}
 	pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{Accounts: ingestAccounts, Failures: failures, SyncJobID: syncJobID})
 }
@@ -258,7 +260,11 @@ func pushOrg(ctx context.Context, cfg *Config, pusher *Pusher, logger *slog.Logg
 		logger.Error("push org resources failed", "error", err)
 		return
 	}
-	logger.Info("org sync completed", "accounts", len(req.Accounts), "failed", len(req.Failures))
+	if len(req.Failures) > 0 {
+		logger.Warn("org sync finished with failures", "accounts", len(req.Accounts), "failed", len(req.Failures))
+		return
+	}
+	logger.Info("org sync completed", "accounts", len(req.Accounts))
 }
 
 func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {

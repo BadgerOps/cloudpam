@@ -495,7 +495,7 @@ func TestCovHeartbeatSendsIdentityAndReturnsSyncJob(t *testing.T) {
 		})
 	})
 
-	resp, err := pusher.Heartbeat(context.Background(), "agent-1", 77, "v9", "host-b")
+	resp, err := pusher.Heartbeat(context.Background(), "agent-1", 77, "v9", "host-b", true)
 	if err != nil {
 		t.Fatalf("Heartbeat() error = %v", err)
 	}
@@ -536,7 +536,7 @@ func TestCovHeartbeatSurfacesServerError(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized", "detail": "bad key"})
 	})
 
-	resp, err := pusher.Heartbeat(context.Background(), "agent-1", 1, "v1", "host")
+	resp, err := pusher.Heartbeat(context.Background(), "agent-1", 1, "v1", "host", true)
 	if err == nil {
 		t.Fatal("Heartbeat() error = nil, want failure")
 	}
@@ -555,14 +555,14 @@ func TestCovHeartbeatFailsOnUndecodableSuccessBody(t *testing.T) {
 		_, _ = w.Write([]byte("nope"))
 	})
 
-	if _, err := pusher.Heartbeat(context.Background(), "a", 1, "v1", "host"); err == nil ||
+	if _, err := pusher.Heartbeat(context.Background(), "a", 1, "v1", "host", true); err == nil ||
 		!strings.Contains(err.Error(), "decode response") {
 		t.Fatalf("Heartbeat() error = %v, want decode response", err)
 	}
 }
 
 func TestCovHeartbeatFailsWhenServerUnreachable(t *testing.T) {
-	if _, err := covDeadServerPusher(t).Heartbeat(context.Background(), "a", 1, "v1", "host"); err == nil ||
+	if _, err := covDeadServerPusher(t).Heartbeat(context.Background(), "a", 1, "v1", "host", true); err == nil ||
 		!strings.Contains(err.Error(), "http request") {
 		t.Fatalf("Heartbeat() error = %v, want http request failure", err)
 	}
@@ -630,5 +630,27 @@ func TestPushOrgResourcesAcceptsAFailuresOnlyReport(t *testing.T) {
 
 	if err := pusher.PushOrgResources(context.Background(), req, 0, time.Millisecond); err != nil {
 		t.Fatalf("PushOrgResources() = %v, want nil for a report with no accounts", err)
+	}
+}
+
+func TestPushOrgResourcesRequiresTheServerToAcknowledgeFailures(t *testing.T) {
+	req := twoGCPAccounts()
+	req.Accounts = req.Accounts[:1]
+	req.Failures = []domain.OrgAccountFailure{{Provider: "gcp", ExternalID: "p-2", Error: "compute: http 403"}}
+
+	oldServer, _, _ := covNewPusherFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"accounts_processed":1}`))
+	})
+	err := oldServer.PushOrgResources(context.Background(), req, 0, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "did not acknowledge 1 account failure") ||
+		!strings.Contains(err.Error(), "upgrade the CloudPAM server to 0.25.0 or later") {
+		t.Fatalf("PushOrgResources() = %v, want an unacknowledged-failures error naming the upgrade", err)
+	}
+
+	newServer, _, _ := covNewPusherFor(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"accounts_processed":1,"accounts_failed":1,"errors":["discovery failed for gcp:p-2: compute: http 403"]}`))
+	})
+	if err := newServer.PushOrgResources(context.Background(), req, 0, time.Millisecond); err != nil {
+		t.Fatalf("PushOrgResources() = %v, want nil when the server counted the failure", err)
 	}
 }

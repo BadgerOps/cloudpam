@@ -1799,14 +1799,16 @@ func (d *DiscoveryServer) handleAgentHeartbeat(w http.ResponseWriter, r *http.Re
 	}
 
 	resp := domain.AgentHeartbeatResponse{Status: "ok"}
-	job, err := d.store.ClaimPendingAgentSync(r.Context(), req.AgentID)
-	if err != nil && !errors.Is(err, storage.ErrNotFound) {
-		d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "claim sync job failed", err.Error())
-		return
-	}
-	if job != nil {
-		resp.SyncJobID = &job.ID
-		resp.AccountID = job.AccountID
+	if req.ClaimSync == nil || *req.ClaimSync {
+		job, err := d.store.ClaimPendingAgentSync(r.Context(), req.AgentID)
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			d.srv.writeErr(r.Context(), w, http.StatusInternalServerError, "claim sync job failed", err.Error())
+			return
+		}
+		if job != nil {
+			resp.SyncJobID = &job.ID
+			resp.AccountID = job.AccountID
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -1910,7 +1912,8 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if len(req.Accounts) == 0 && len(req.Failures) == 0 {
+	// An agent whose pass found nothing still names its job, so the job completes.
+	if len(req.Accounts) == 0 && len(req.Failures) == 0 && req.SyncJobID == nil {
 		d.srv.writeErr(r.Context(), w, http.StatusBadRequest, "accounts list is required", "")
 		return
 	}

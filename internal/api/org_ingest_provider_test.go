@@ -221,3 +221,33 @@ func TestOrgIngestClipsALongFailureError(t *testing.T) {
 		t.Fatalf("errors = %#v, want the error clipped to 300 characters", resp.Errors)
 	}
 }
+
+func TestOrgIngestCompletesAJobWithAnEmptyReport(t *testing.T) {
+	discSrv, _, ds, _ := setupDiscoveryTestServer()
+	agentID := uuid.New()
+	job, err := ds.CreateSyncJob(t.Context(), domain.SyncJob{ID: uuid.New(), AccountID: 1, Status: domain.SyncJobStatusPending, Source: "agent", AgentID: &agentID, CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("create sync job: %v", err)
+	}
+	if _, err := ds.ClaimPendingAgentSync(t.Context(), agentID); err != nil {
+		t.Fatalf("claim sync job: %v", err)
+	}
+
+	resp := postOrgIngest(t, discSrv, `{"sync_job_id":"`+job.ID.String()+`"}`)
+
+	if resp.AccountsProcessed != 0 || resp.AccountsFailed != 0 || len(resp.Errors) != 0 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	got, err := ds.GetSyncJob(t.Context(), job.ID)
+	if err != nil {
+		t.Fatalf("get sync job: %v", err)
+	}
+	if got.Status != domain.SyncJobStatusCompleted || got.ResourcesFound != 0 || got.CompletedAt == nil {
+		t.Fatalf("job = %+v, want completed with no resources", got)
+	}
+
+	rr := doJSON(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/ingest/org", `{}`, http.StatusBadRequest)
+	if !strings.Contains(rr.Body.String(), "accounts list is required") {
+		t.Fatalf("body = %s", rr.Body.String())
+	}
+}

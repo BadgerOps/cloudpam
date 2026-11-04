@@ -620,3 +620,38 @@ func TestRunSchedulerReturnsAfterPassObservesCancel(t *testing.T) {
 		t.Fatal("runScheduler returned while the pass was still running")
 	}
 }
+
+func TestRunSchedulerDeclinesJobsWhileAPassRuns(t *testing.T) {
+	rec, url := covNewIngestServer(t)
+	collector := newBlockingCollector()
+	cfg := &Config{Provider: "aws", AgentName: "a", AccountID: 1, SyncInterval: time.Hour, HeartbeatInterval: 10 * time.Millisecond, RetryBackoff: time.Millisecond}
+	cancel, done := startScheduler(t, cfg, collector, url)
+
+	covWaitFor(t, collector.started, "first pass to start")
+	covWaitFor(t, rec.beat, "heartbeat")
+	busyFrom := rec.heartbeatCount()
+	for i := 1; i <= 2; i++ {
+		covWaitFor(t, rec.beat, "heartbeat while the pass is blocked")
+	}
+	busyTo := rec.heartbeatCount()
+	close(collector.release)
+	covWaitFor(t, rec.ingested, "ingest after release")
+	idleFrom := rec.heartbeatCount()
+	for i := 1; i <= 2; i++ {
+		covWaitFor(t, rec.beat, "heartbeat after the pass")
+	}
+	cancel()
+	waitSchedulerReturn(t, done)
+
+	beats := rec.allHeartbeats()
+	for i := busyFrom; i < busyTo; i++ {
+		if c := beats[i].ClaimSync; c == nil || *c {
+			t.Fatalf("heartbeat %d during the pass claim_sync = %v, want false", i, c)
+		}
+	}
+	for i := idleFrom + 1; i < len(beats); i++ {
+		if c := beats[i].ClaimSync; c == nil || !*c {
+			t.Fatalf("heartbeat %d after the pass claim_sync = %v, want true", i, c)
+		}
+	}
+}

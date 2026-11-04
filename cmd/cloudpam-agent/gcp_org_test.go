@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/oauth2"
 
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/discovery/gcp"
@@ -62,7 +65,7 @@ func newOrgIngestServer(t *testing.T) (*orgIngestRecorder, string) {
 		rec.mu.Lock()
 		rec.reqs = append(rec.reqs, req)
 		rec.mu.Unlock()
-		_ = json.NewEncoder(w).Encode(domain.BulkIngestResponse{AccountsProcessed: len(req.Accounts)})
+		_ = json.NewEncoder(w).Encode(domain.BulkIngestResponse{AccountsProcessed: len(req.Accounts), AccountsFailed: len(req.Failures)})
 	}))
 	t.Cleanup(srv.Close)
 	return rec, srv.URL
@@ -213,6 +216,31 @@ func TestRunGCPOrgSyncPushesNothingWhenNoProjectSucceeds(t *testing.T) {
 	}
 }
 
+func TestRunGCPOrgSyncCompletesARequestedJobThatFindsNothing(t *testing.T) {
+	rec, url := newOrgIngestServer(t)
+	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, covQuietLogger())
+	deps := gcpOrgDeps{
+		listProjects: func(context.Context, string, *discovery.Limiter) ([]gcp.Project, error) {
+			return []gcp.Project{{ID: "sandbox"}}, nil
+		},
+		collectorFor: func(context.Context, string, *discovery.Limiter) (discovery.Collector, error) {
+			t.Fatal("excluded project must not be discovered")
+			return nil, nil
+		},
+	}
+	jobID := uuid.New()
+
+	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, &jobID, covQuietLogger(), deps)
+
+	if len(rec.reqs) != 1 {
+		t.Fatalf("org pushes = %d, want 1", len(rec.reqs))
+	}
+	req := rec.reqs[0]
+	if req.SyncJobID == nil || *req.SyncJobID != jobID || len(req.Accounts) != 0 || len(req.Failures) != 0 {
+		t.Fatalf("push = %+v, want an empty report naming job %s", req, jobID)
+	}
+}
+
 func TestDefaultGCPOrgDepsDirectModeUsesADCCollector(t *testing.T) {
 	deps := defaultGCPOrgDeps(gcpOrgConfig())
 	c, err := deps.collectorFor(context.Background(), "p", nil)
@@ -298,5 +326,42 @@ func TestRunGCPOrgSyncDoesNotReportSuccessWhenTheServerAcceptsNothing(t *testing
 	}
 	if strings.Contains(logs.String(), "org sync completed") {
 		t.Fatalf("logs = %s, must not report a completed sync", logs.String())
+	}
+}
+
+type tokenFailingCollector struct{}
+
+func (tokenFailingCollector) Provider() string { return "gcp" }
+
+func (tokenFailingCollector) Discover(context.Context, domain.Account) ([]domain.DiscoveredResource, error) {
+	re := &oauth2.RetrieveError{Response: &http.Response{StatusCode: 400}, Body: []byte("secret-ish body"), ErrorCode: "invalid_grant", ErrorDescription: "secret-ish description"}
+	return nil, fmt.Errorf("list networks: %w", &url.Error{Op: "Get", URL: "https://compute.googleapis.com", Err: re})
+}
+
+func TestRunGCPOrgSyncKeepsTokenEndpointBodiesOutOfFailures(t *testing.T) {
+	rec, url := newOrgIngestServer(t)
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	pusher := NewPusher(url, "cpk", uuid.New(), 5*time.Second, logger)
+	deps := gcpOrgDeps{
+		listProjects: func(context.Context, string, *discovery.Limiter) ([]gcp.Project, error) {
+			return []gcp.Project{{ID: "prod"}}, nil
+		},
+		collectorFor: func(context.Context, string, *discovery.Limiter) (discovery.Collector, error) {
+			return tokenFailingCollector{}, nil
+		},
+	}
+
+	runGCPOrgSync(context.Background(), gcpOrgConfig(), pusher, nil, logger, deps)
+
+	if len(rec.reqs) != 1 || len(rec.reqs[0].Failures) != 1 {
+		t.Fatalf("pushes = %+v, want one report with one failure", rec.reqs)
+	}
+	msg := rec.reqs[0].Failures[0].Error
+	if !strings.Contains(msg, "http 400") || !strings.Contains(msg, "invalid_grant") || strings.Contains(msg, "secret-ish") {
+		t.Fatalf("failure error = %q, want the status and code without the token endpoint's body", msg)
+	}
+	if !strings.Contains(logs.String(), `level=WARN msg="org sync finished with failures"`) || strings.Contains(logs.String(), "org sync completed") {
+		t.Fatalf("logs = %s, want a warning that the pass finished with failures", logs.String())
 	}
 }
