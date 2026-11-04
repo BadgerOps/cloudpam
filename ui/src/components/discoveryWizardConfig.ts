@@ -31,9 +31,13 @@ export interface AgentConfigInput {
   gcpOrg: GcpOrgInput
 }
 
-const AGENT_ID_FILE = '/var/lib/cloudpam-agent/agent-id'
+const AGENT_STATE_DIR = '/var/lib/cloudpam-agent'
+const AGENT_ID_FILE = `${AGENT_STATE_DIR}/agent-id`
+// The nonroot user of the cgr.dev/chainguard/static agent images.
+const AGENT_UID = 65532
 const AGENT_IMAGE = 'ghcr.io/badgerops/cloudpam/agent:latest'
 const GCP_KEY_FILE = '/var/run/secrets/cloudpam/gcp/key.json'
+const HOST_GCP_KEY_FILE = '/etc/cloudpam-agent/gcp-key.json'
 
 export const GCP_PARENT_PATTERN = /^(organizations|folders)\/[0-9]+$/
 
@@ -126,22 +130,31 @@ function shellConfig(vars: EnvVar[]): string {
 
 function dockerConfig(input: AgentConfigInput, vars: EnvVar[]): string {
   const isGcp = input.provider === 'gcp'
-  // The note goes above `docker run`: a comment line inside a
-  // backslash-continued command would end the command.
-  const note = isGcp
-    ? ['# Omit the key mount and GOOGLE_APPLICATION_CREDENTIALS when the host has Application Default Credentials (GCE metadata, Workload Identity).']
-    : []
+  // Preparation goes above `docker run`: a comment line inside a
+  // backslash-continued command would end the command. The image runs as
+  // nonroot, and Docker creates a missing bind-mount source owned by root.
+  const prepare = [
+    `# The agent runs as UID ${AGENT_UID} and writes its ID under this directory.`,
+    `sudo install -d -o ${AGENT_UID} -g ${AGENT_UID} ${AGENT_STATE_DIR}`,
+    ...(isGcp
+      ? [
+          '# Copy the service account key so only the agent user can read it. Omit this line, the key mount and',
+          '# GOOGLE_APPLICATION_CREDENTIALS when the host has Application Default Credentials (GCE metadata, Workload Identity).',
+          `sudo install -D -o ${AGENT_UID} -g ${AGENT_UID} -m 0400 key.json ${HOST_GCP_KEY_FILE}`,
+        ]
+      : []),
+  ]
   const gcpKey = isGcp
     ? [
-        `  -v "$PWD/key.json:${GCP_KEY_FILE}:ro" \\`,
+        `  -v ${HOST_GCP_KEY_FILE}:${GCP_KEY_FILE}:ro \\`,
         `  -e GOOGLE_APPLICATION_CREDENTIALS=${shellQuote(GCP_KEY_FILE)} \\`,
       ]
     : []
   const lines = [
-    ...note,
+    ...prepare,
     'docker run -d \\',
     '  --name cloudpam-agent \\',
-    '  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\',
+    `  -v ${AGENT_STATE_DIR}:${AGENT_STATE_DIR} \\`,
     ...gcpKey,
     ...vars.map(([name, value]) => `  -e ${name}=${renderShellValue(value, shellQuote)} \\`),
     `  ${AGENT_IMAGE}`,

@@ -70,6 +70,17 @@ describe('buildAgentConfigs for aws', () => {
     expect(c.iam).toContain('"sts:ExternalId" = "ext"')
   })
 
+  it('prepares a state directory the non-root agent can write before docker run', () => {
+    for (const mode of ['single', 'organization'] as const) {
+      const lines = buildAgentConfigs(awsInput({ mode })).docker!.split('\n')
+      const run = lines.findIndex(l => l.startsWith('docker run'))
+      expect(lines.slice(0, run)).toContain('sudo install -d -o 65532 -g 65532 /var/lib/cloudpam-agent')
+      expect(lines.slice(run)).toContain('  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\')
+      expect(lines.slice(run).some(l => l.trimStart().startsWith('#'))).toBe(false)
+      expect(lines.slice(run, -1).every(l => l.endsWith(' \\'))).toBe(true)
+    }
+  })
+
   it('quotes hostile values', () => {
     const c = buildAgentConfigs(awsInput({ token: `x'; rm -rf /; '` }))
     expect(c.shell).toContain(`export CLOUDPAM_BOOTSTRAP_TOKEN='x'\\''; rm -rf /; '\\'''`)
@@ -131,6 +142,15 @@ describe('buildAgentConfigs for gcp', () => {
     expect(run).toBeGreaterThan(0)
     expect(lines.slice(run).some(l => l.trimStart().startsWith('#'))).toBe(false)
     expect(lines.slice(run, -1).every(l => l.endsWith(' \\'))).toBe(true)
+  })
+
+  it('hands the key to the non-root agent without making it world-readable', () => {
+    const lines = buildAgentConfigs(gcpInput()).docker!.split('\n')
+    const run = lines.findIndex(l => l.startsWith('docker run'))
+    expect(lines.slice(0, run)).toContain('sudo install -d -o 65532 -g 65532 /var/lib/cloudpam-agent')
+    expect(lines.slice(0, run)).toContain('sudo install -D -o 65532 -g 65532 -m 0400 key.json /etc/cloudpam-agent/gcp-key.json')
+    expect(lines.slice(run)).toContain('  -v /etc/cloudpam-agent/gcp-key.json:/var/run/secrets/cloudpam/gcp/key.json:ro \\')
+    expect(lines.join('\n')).not.toContain('$PWD/key.json')
   })
 
   it('renders org settings with direct grants', () => {
