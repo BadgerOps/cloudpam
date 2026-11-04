@@ -64,7 +64,7 @@ func (s *Store) ListDiscoveredResources(ctx context.Context, accountID int64, fi
 	offset := storage.PageOffset(page, pageSize, total)
 
 	query := fmt.Sprintf(
-		"SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at FROM discovered_resources WHERE %s ORDER BY discovered_at DESC LIMIT ? OFFSET ?",
+		"SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at, updated_at FROM discovered_resources WHERE %s ORDER BY discovered_at DESC, id ASC LIMIT ? OFFSET ?",
 		whereClause,
 	)
 	args = append(args, pageSize, offset)
@@ -92,14 +92,15 @@ func (s *Store) ListDiscoveredResources(ctx context.Context, accountID int64, fi
 // GetDiscoveredResource returns a single discovered resource by UUID.
 func (s *Store) GetDiscoveredResource(ctx context.Context, id uuid.UUID) (*domain.DiscoveredResource, error) {
 	row := s.db.QueryRowContext(ctx,
-		"SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at FROM discovered_resources WHERE id = ?",
+		"SELECT id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at, updated_at FROM discovered_resources WHERE id = ?",
 		id.String(),
 	)
 	var r domain.DiscoveredResource
 	var idStr, metadataJSON, discoveredAt, lastSeenAt string
+	var updatedAt sql.NullString
 	var parentResID sql.NullString
 	var poolID sql.NullInt64
-	if err := row.Scan(&idStr, &r.AccountID, &r.Provider, &r.Region, &r.ResourceType, &r.ResourceID, &r.Name, &r.CIDR, &parentResID, &poolID, &r.Status, &metadataJSON, &discoveredAt, &lastSeenAt); err != nil {
+	if err := row.Scan(&idStr, &r.AccountID, &r.Provider, &r.Region, &r.ResourceType, &r.ResourceID, &r.Name, &r.CIDR, &parentResID, &poolID, &r.Status, &metadataJSON, &discoveredAt, &lastSeenAt, &updatedAt); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, storage.ErrNotFound
 		}
@@ -115,6 +116,7 @@ func (s *Store) GetDiscoveredResource(ctx context.Context, id uuid.UUID) (*domai
 	_ = json.Unmarshal([]byte(metadataJSON), &r.Metadata)
 	r.DiscoveredAt, _ = time.Parse(time.RFC3339, discoveredAt)
 	r.LastSeenAt, _ = time.Parse(time.RFC3339, lastSeenAt)
+	r.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
 	return &r, nil
 }
 
@@ -129,9 +131,11 @@ func (s *Store) UpsertDiscoveredResource(ctx context.Context, res domain.Discove
 			metadataJSON = string(b)
 		}
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
 	if res.DiscoveredAt.IsZero() {
 		res.DiscoveredAt = time.Now().UTC()
+	}
+	if res.UpdatedAt.IsZero() {
+		res.UpdatedAt = time.Now().UTC()
 	}
 	if res.LastSeenAt.IsZero() {
 		res.LastSeenAt = time.Now().UTC()
@@ -143,8 +147,8 @@ func (s *Store) UpsertDiscoveredResource(ctx context.Context, res domain.Discove
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO discovered_resources (id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO discovered_resources (id, account_id, provider, region, resource_type, resource_id, name, cidr, parent_resource_id, pool_id, status, metadata, discovered_at, last_seen_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(account_id, resource_id) DO UPDATE SET
 		   name = excluded.name,
 		   cidr = excluded.cidr,
@@ -152,10 +156,13 @@ func (s *Store) UpsertDiscoveredResource(ctx context.Context, res domain.Discove
 		   parent_resource_id = excluded.parent_resource_id,
 		   status = excluded.status,
 		   metadata = excluded.metadata,
-		   last_seen_at = excluded.last_seen_at`,
+		   last_seen_at = excluded.last_seen_at,
+			updated_at = excluded.updated_at,
+			provider = excluded.provider,
+			resource_type = excluded.resource_type`,
 		res.ID.String(), res.AccountID, res.Provider, res.Region, string(res.ResourceType), res.ResourceID,
 		res.Name, res.CIDR, parentResID, res.PoolID, string(res.Status), metadataJSON,
-		res.DiscoveredAt.Format(time.RFC3339), now,
+		res.DiscoveredAt.Format(time.RFC3339Nano), res.LastSeenAt.Format(time.RFC3339Nano), res.UpdatedAt.Format(time.RFC3339Nano),
 	)
 	return err
 }
@@ -163,8 +170,8 @@ func (s *Store) UpsertDiscoveredResource(ctx context.Context, res domain.Discove
 // MarkStaleResources marks active resources not seen since the given time as stale.
 func (s *Store) MarkStaleResources(ctx context.Context, accountID int64, before time.Time) (int, error) {
 	res, err := s.db.ExecContext(ctx,
-		"UPDATE discovered_resources SET status = ? WHERE account_id = ? AND status = ? AND last_seen_at < ?",
-		string(domain.DiscoveryStatusStale), accountID, string(domain.DiscoveryStatusActive), before.Format(time.RFC3339),
+		"UPDATE discovered_resources SET status = ?, updated_at = ? WHERE account_id = ? AND status = ? AND julianday(last_seen_at) < julianday(?)",
+		string(domain.DiscoveryStatusStale), before.Format(time.RFC3339Nano), accountID, string(domain.DiscoveryStatusActive), before.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return 0, err
@@ -245,6 +252,13 @@ func (s *Store) DeleteDiscoveredResource(ctx context.Context, id uuid.UUID) erro
 
 // CreateSyncJob creates a new sync job record.
 func (s *Store) CreateSyncJob(ctx context.Context, job domain.SyncJob) (domain.SyncJob, error) {
+	if job.Source == "agent" {
+		job.IdentitySource = "agent"
+		job.Trigger = "agent"
+		if job.Status != domain.SyncJobStatusPending {
+			job.Attempts = 1
+		}
+	}
 	if job.ID == uuid.Nil {
 		job.ID = uuid.New()
 	}
@@ -269,11 +283,11 @@ func (s *Store) CreateSyncJob(ctx context.Context, job domain.SyncJob) (domain.S
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sync_jobs (id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sync_jobs (id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at, attempts, trigger, identity_source)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.ID.String(), job.AccountID, string(job.Status), job.Source, agentID, startedAt, completedAt,
 		job.ResourcesFound, job.ResourcesCreated, job.ResourcesUpdated, job.ResourcesDeleted,
-		job.ErrorMessage, job.CreatedAt.Format(time.RFC3339),
+		job.ErrorMessage, job.CreatedAt.Format(time.RFC3339), job.Attempts, job.Trigger, job.IdentitySource,
 	)
 	if err != nil {
 		return domain.SyncJob{}, err
@@ -300,10 +314,10 @@ func (s *Store) UpdateSyncJob(ctx context.Context, job domain.SyncJob) error {
 	}
 
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE sync_jobs SET status = ?, source = ?, agent_id = ?, started_at = ?, completed_at = ?, resources_found = ?, resources_created = ?, resources_updated = ?, resources_deleted = ?, error_message = ? WHERE id = ?`,
+		`UPDATE sync_jobs SET status = ?, source = ?, agent_id = ?, started_at = ?, completed_at = ?, resources_found = ?, resources_created = ?, resources_updated = ?, resources_deleted = ?, error_message = ?, attempts=?, trigger=?, identity_source=? WHERE id = ?`,
 		string(job.Status), job.Source, agentID, startedAt, completedAt,
 		job.ResourcesFound, job.ResourcesCreated, job.ResourcesUpdated, job.ResourcesDeleted,
-		job.ErrorMessage, job.ID.String(),
+		job.ErrorMessage, job.Attempts, job.Trigger, job.IdentitySource, job.ID.String(),
 	)
 	if err != nil {
 		return err
@@ -318,7 +332,7 @@ func (s *Store) UpdateSyncJob(ctx context.Context, job domain.SyncJob) error {
 // GetSyncJob returns a sync job by UUID.
 func (s *Store) GetSyncJob(ctx context.Context, id uuid.UUID) (*domain.SyncJob, error) {
 	row := s.db.QueryRowContext(ctx,
-		"SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at FROM sync_jobs WHERE id = ?",
+		"SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at, attempts, trigger, identity_source FROM sync_jobs WHERE id = ?",
 		id.String(),
 	)
 	return scanSyncJob(row)
@@ -330,7 +344,7 @@ func (s *Store) ListSyncJobs(ctx context.Context, accountID int64, limit int) ([
 		limit = 20
 	}
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at FROM sync_jobs WHERE account_id = ? ORDER BY created_at DESC LIMIT ?",
+		"SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at, attempts, trigger, identity_source FROM sync_jobs WHERE account_id = ? ORDER BY created_at DESC LIMIT ?",
 		accountID, limit,
 	)
 	if err != nil {
@@ -343,7 +357,7 @@ func (s *Store) ListSyncJobs(ctx context.Context, accountID int64, limit int) ([
 		var j domain.SyncJob
 		var idStr, createdAt string
 		var startedAt, completedAt, agentID sql.NullString
-		if err := rows.Scan(&idStr, &j.AccountID, &j.Status, &j.Source, &agentID, &startedAt, &completedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &createdAt); err != nil {
+		if err := rows.Scan(&idStr, &j.AccountID, &j.Status, &j.Source, &agentID, &startedAt, &completedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &createdAt, &j.Attempts, &j.Trigger, &j.IdentitySource); err != nil {
 			return nil, err
 		}
 		j.ID = uuid.MustParse(idStr)
@@ -377,7 +391,7 @@ func (s *Store) ClaimPendingAgentSync(ctx context.Context, agentID uuid.UUID) (*
 	defer func() { _ = tx.Rollback() }()
 
 	row := tx.QueryRowContext(ctx,
-		`SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at
+		`SELECT id, account_id, status, source, agent_id, started_at, completed_at, resources_found, resources_created, resources_updated, resources_deleted, error_message, created_at, attempts, trigger, identity_source
 		 FROM sync_jobs
 		 WHERE status = ? AND source = 'agent' AND agent_id = ?
 		 ORDER BY created_at ASC
@@ -413,9 +427,10 @@ func (s *Store) ClaimPendingAgentSync(ctx context.Context, agentID uuid.UUID) (*
 func scanDiscoveredResource(rows *sql.Rows) (domain.DiscoveredResource, error) {
 	var r domain.DiscoveredResource
 	var idStr, metadataJSON, discoveredAt, lastSeenAt string
+	var updatedAt sql.NullString
 	var parentResID sql.NullString
 	var poolID sql.NullInt64
-	if err := rows.Scan(&idStr, &r.AccountID, &r.Provider, &r.Region, &r.ResourceType, &r.ResourceID, &r.Name, &r.CIDR, &parentResID, &poolID, &r.Status, &metadataJSON, &discoveredAt, &lastSeenAt); err != nil {
+	if err := rows.Scan(&idStr, &r.AccountID, &r.Provider, &r.Region, &r.ResourceType, &r.ResourceID, &r.Name, &r.CIDR, &parentResID, &poolID, &r.Status, &metadataJSON, &discoveredAt, &lastSeenAt, &updatedAt); err != nil {
 		return domain.DiscoveredResource{}, err
 	}
 	r.ID = uuid.MustParse(idStr)
@@ -428,6 +443,7 @@ func scanDiscoveredResource(rows *sql.Rows) (domain.DiscoveredResource, error) {
 	_ = json.Unmarshal([]byte(metadataJSON), &r.Metadata)
 	r.DiscoveredAt, _ = time.Parse(time.RFC3339, discoveredAt)
 	r.LastSeenAt, _ = time.Parse(time.RFC3339, lastSeenAt)
+	r.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
 	return r, nil
 }
 
@@ -436,7 +452,7 @@ func scanSyncJob(row *sql.Row) (*domain.SyncJob, error) {
 	var j domain.SyncJob
 	var idStr, createdAt string
 	var startedAt, completedAt, agentID sql.NullString
-	if err := row.Scan(&idStr, &j.AccountID, &j.Status, &j.Source, &agentID, &startedAt, &completedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &createdAt); err != nil {
+	if err := row.Scan(&idStr, &j.AccountID, &j.Status, &j.Source, &agentID, &startedAt, &completedAt, &j.ResourcesFound, &j.ResourcesCreated, &j.ResourcesUpdated, &j.ResourcesDeleted, &j.ErrorMessage, &createdAt, &j.Attempts, &j.Trigger, &j.IdentitySource); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, storage.ErrNotFound
 		}
@@ -477,7 +493,10 @@ func (s *Store) UpsertAgent(ctx context.Context, agent domain.DiscoveryAgent) er
 		   api_key_id = excluded.api_key_id,
 		   version = excluded.version,
 		   hostname = excluded.hostname,
-		   last_seen_at = excluded.last_seen_at`,
+		   last_seen_at = excluded.last_seen_at,
+			updated_at = excluded.updated_at,
+			provider = excluded.provider,
+			resource_type = excluded.resource_type`,
 		agent.ID.String(), agent.Name, agent.AccountID, agent.APIKeyID,
 		agent.Version, agent.Hostname, agent.LastSeenAt.Format(time.RFC3339),
 		agent.CreatedAt.Format(time.RFC3339),
@@ -554,4 +573,19 @@ func (s *Store) ListAgents(ctx context.Context, accountID int64) ([]domain.Disco
 		agents = []domain.DiscoveryAgent{}
 	}
 	return agents, rows.Err()
+}
+
+func (s *Store) TouchDiscoveredResource(ctx context.Context, id uuid.UUID, at time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE discovered_resources SET last_seen_at=? WHERE id=?`, at.UTC().Format(time.RFC3339Nano), id.String())
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return storage.ErrNotFound
+	}
+	return nil
 }

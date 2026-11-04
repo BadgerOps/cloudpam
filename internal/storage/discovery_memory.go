@@ -18,6 +18,7 @@ type MemoryDiscoveryStore struct {
 	resources map[uuid.UUID]domain.DiscoveredResource
 	syncJobs  map[uuid.UUID]domain.SyncJob
 	agents    map[uuid.UUID]domain.DiscoveryAgent
+	schedules map[int64]memorySyncSchedule
 }
 
 // NewMemoryDiscoveryStore creates a new in-memory discovery store.
@@ -27,6 +28,7 @@ func NewMemoryDiscoveryStore(store *MemoryStore) *MemoryDiscoveryStore {
 		resources: make(map[uuid.UUID]domain.DiscoveredResource),
 		syncJobs:  make(map[uuid.UUID]domain.SyncJob),
 		agents:    make(map[uuid.UUID]domain.DiscoveryAgent),
+		schedules: make(map[int64]memorySyncSchedule),
 	}
 }
 
@@ -70,6 +72,9 @@ func (m *MemoryDiscoveryStore) ListDiscoveredResources(_ context.Context, accoun
 
 	// Sort by discovered_at desc
 	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].DiscoveredAt.Equal(filtered[j].DiscoveredAt) {
+			return filtered[i].ID.String() < filtered[j].ID.String()
+		}
 		return filtered[i].DiscoveredAt.After(filtered[j].DiscoveredAt)
 	})
 
@@ -94,6 +99,9 @@ func (m *MemoryDiscoveryStore) UpsertDiscoveredResource(_ context.Context, res d
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
 
+	if res.UpdatedAt.IsZero() {
+		res.UpdatedAt = time.Now().UTC()
+	}
 	// Check for existing by (account_id, resource_id)
 	for id, existing := range m.resources {
 		if existing.AccountID == res.AccountID && existing.ResourceID == res.ResourceID {
@@ -126,6 +134,7 @@ func (m *MemoryDiscoveryStore) MarkStaleResources(_ context.Context, accountID i
 	for id, r := range m.resources {
 		if r.AccountID == accountID && r.Status == domain.DiscoveryStatusActive && r.LastSeenAt.Before(before) {
 			r.Status = domain.DiscoveryStatusStale
+			r.UpdatedAt = before
 			m.resources[id] = r
 			count++
 		}
@@ -187,6 +196,13 @@ func (m *MemoryDiscoveryStore) CreateSyncJob(_ context.Context, job domain.SyncJ
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
 
+	if job.Source == "agent" {
+		job.IdentitySource = "agent"
+		job.Trigger = "agent"
+		if job.Status != domain.SyncJobStatusPending {
+			job.Attempts = 1
+		}
+	}
 	if job.ID == uuid.Nil {
 		job.ID = uuid.New()
 	}
@@ -328,4 +344,16 @@ func (m *MemoryDiscoveryStore) ListAgents(_ context.Context, accountID int64) ([
 	})
 
 	return agents, nil
+}
+
+func (m *MemoryDiscoveryStore) TouchDiscoveredResource(_ context.Context, id uuid.UUID, at time.Time) error {
+	m.store.mu.Lock()
+	defer m.store.mu.Unlock()
+	r, ok := m.resources[id]
+	if !ok {
+		return ErrNotFound
+	}
+	r.LastSeenAt = at
+	m.resources[id] = r
+	return nil
 }

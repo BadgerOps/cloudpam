@@ -310,6 +310,12 @@ func main() {
 		logger.Info("authentication enforced", "users", len(existingUsers))
 	}
 
+	// Stop and join scheduled discovery before closing its store.
+	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
+	schedulerDone := make(chan struct{})
+	go func() { defer close(schedulerDone); syncService.RunScheduler(schedulerCtx, store) }()
+	defer stopScheduler()
+
 	// Audit retention: dry run on startup, purge hourly from then on.
 	retention := audit.NewRetention(auditLogger, auditRetentionPolicy(settingsStore), logger.Slog())
 	go retention.Run(context.Background(), audit.RetentionInterval)
@@ -373,6 +379,9 @@ func main() {
 	case sig := <-sigChan:
 		logger.Info("received shutdown signal", "signal", sig)
 	}
+
+	stopScheduler()
+	<-schedulerDone
 
 	// Graceful shutdown with 15-second timeout
 	logger.Info("shutting down server", "timeout", "15s")

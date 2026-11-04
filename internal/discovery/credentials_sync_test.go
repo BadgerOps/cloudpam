@@ -100,7 +100,7 @@ func TestSyncUsesStoredCredentialWhenPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sync() error = %v", err)
 	}
-	if job.Status != domain.SyncJobStatusCompleted || job.ResourcesFound != 1 {
+	if job.Status != domain.SyncJobStatusCompleted || job.ResourcesFound != 1 || job.IdentitySource != "stored_credential" || job.Attempts != 1 {
 		t.Fatalf("job = %+v", job)
 	}
 	if strings.Join(f.aws.ran, ",") != "credential:aws_assume_role" {

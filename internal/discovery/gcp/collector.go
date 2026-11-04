@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -435,7 +434,7 @@ func (c computeClient) get(ctx context.Context, url string, dest any) error {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http %d from %s: %s", resp.StatusCode, url, errorBodySnippet(resp.Body))
+		return &discovery.HTTPError{Status: resp.StatusCode}
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
@@ -473,14 +472,4 @@ func LastPathComponent(url string) string {
 		return url[idx+1:]
 	}
 	return url
-}
-
-const maxErrorBodySnippet = 512
-
-func errorBodySnippet(r io.Reader) string {
-	buf, _ := io.ReadAll(io.LimitReader(r, maxErrorBodySnippet+1))
-	if len(buf) <= maxErrorBodySnippet {
-		return string(buf)
-	}
-	return string(buf[:maxErrorBodySnippet]) + "... (truncated)"
 }

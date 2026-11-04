@@ -20,6 +20,9 @@ type DiscoveryStore interface {
 	// UpsertDiscoveredResource inserts or updates a discovered resource, keyed by (account_id, resource_id).
 	UpsertDiscoveredResource(ctx context.Context, res domain.DiscoveredResource) error
 
+	// TouchDiscoveredResource updates only the observation time for an unchanged resource.
+	TouchDiscoveredResource(context.Context, uuid.UUID, time.Time) error
+
 	// MarkStaleResources marks resources not seen since the given time as stale. Returns count affected.
 	MarkStaleResources(ctx context.Context, accountID int64, before time.Time) (int, error)
 
