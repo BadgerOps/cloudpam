@@ -4,28 +4,18 @@ import { useAgentProvisioning, useDiscoveryAgents } from '../hooks/useDiscovery'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
 import ConnectivityBadge from './ConnectivityBadge'
-import {
-  hclHeredocShellQuote,
-  hclIdent,
-  hclQuote,
-  safeFilename,
-  shellQuote,
-  yamlQuote,
-} from '../utils/escape'
+import { safeFilename } from '../utils/escape'
 import type { Account, CreateAccountRequest, AgentProvisionResponse, DiscoveryAgent } from '../api/types'
+import {
+  availableTabs as tabsFor,
+  buildAgentConfigs,
+  resolveConfigTab,
+  splitList,
+  type ConfigTab,
+  type DiscoveryMode,
+} from './discoveryWizardConfig'
 
-export type ConfigTab = 'shell' | 'yaml' | 'terraform' | 'docker' | 'iam'
-type DiscoveryMode = 'single' | 'organization'
-
-/**
- * Resolves which config tab to render. The selection is kept in state, but the
- * set of available tabs depends on the discovery mode ('iam' is org-only), so a
- * stale selection must fall back instead of rendering a tab the strip no longer
- * offers.
- */
-export function resolveConfigTab(selected: ConfigTab, available: ConfigTab[]): ConfigTab {
-  return available.includes(selected) ? selected : available[0]
-}
+export { resolveConfigTab, type ConfigTab }
 
 interface DiscoveryWizardProps {
   accounts: Account[]
@@ -192,192 +182,22 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const serverUrl = provisionResult?.server_url ?? window.location.origin
   const isOrg = discoveryMode === 'organization'
 
-  const orgRegions = orgRegionsInput.split(',').map(r => r.trim()).filter(Boolean)
-  const orgExclude = orgExcludeInput.split(',').map(r => r.trim()).filter(Boolean)
-  const orgPrimaryRegion = orgRegions[0] ?? 'us-east-1'
+  const orgRegions = splitList(orgRegionsInput)
+  const orgExclude = splitList(orgExcludeInput)
 
-  // Single-account configs
-  const shellConfigSingle = `#!/bin/bash
-export CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)}
-export CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id"
-export CLOUDPAM_ACCOUNT_ID=${accountId}
-export CLOUDPAM_AWS_REGIONS=${shellQuote(accountRegions.join(','))}
-./cloudpam-agent`
-
-  const yamlConfigSingle = `server_url: ${yamlQuote(serverUrl)}
-bootstrap_token: ${yamlQuote(token)}
-agent_id_file: "/var/lib/cloudpam-agent/agent-id"
-account_id: ${accountId}
-agent_name: ${yamlQuote(agentNameFinal)}
-sync_interval: "15m"
-heartbeat_interval: "1m"
-aws_regions: [${accountRegions.map(yamlQuote).join(', ')}]`
-
-  // Org-mode configs
-  const shellConfigOrg = `#!/bin/bash
-export CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)}
-export CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id"
-export CLOUDPAM_ACCOUNT_ID=${accountId}
-export AWS_REGION=${shellQuote(orgPrimaryRegion)}
-export AWS_DEFAULT_REGION=${shellQuote(orgPrimaryRegion)}
-export CLOUDPAM_AWS_ORG_ENABLED=true
-export CLOUDPAM_AWS_ORG_ROLE_NAME=${shellQuote(orgRoleName)}${orgExternalId ? `
-export CLOUDPAM_AWS_ORG_EXTERNAL_ID=${shellQuote(orgExternalId)}` : ''}
-export CLOUDPAM_AWS_ORG_REGIONS=${shellQuote(orgRegions.join(','))}${orgExclude.length > 0 ? `
-export CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${shellQuote(orgExclude.join(','))}` : ''}
-./cloudpam-agent`
-
-  const yamlConfigOrg = `server_url: ${yamlQuote(serverUrl)}
-bootstrap_token: ${yamlQuote(token)}
-agent_id_file: "/var/lib/cloudpam-agent/agent-id"
-account_id: ${accountId}
-agent_name: ${yamlQuote(agentNameFinal)}
-sync_interval: "15m"
-heartbeat_interval: "1m"
-aws_org:
-  enabled: true
-  role_name: ${yamlQuote(orgRoleName)}${orgExternalId ? `
-  external_id: ${yamlQuote(orgExternalId)}` : ''}
-  regions: [${orgRegions.map(yamlQuote).join(', ')}]${orgExclude.length > 0 ? `
-  exclude_accounts: [${orgExclude.map(yamlQuote).join(', ')}]` : ''}`
-
-  const terraformConfigSingle = `variable "cloudpam_bootstrap_token" {
-  default   = ${hclQuote(token)}
-  sensitive = true
-}
-
-resource "null_resource" "cloudpam_agent" {
-  provisioner "local-exec" {
-    command = <<-EOT
-      CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
-      CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
-      CLOUDPAM_ACCOUNT_ID=${accountId} \\
-      CLOUDPAM_AWS_REGIONS=${hclHeredocShellQuote(accountRegions.join(','))} \\
-      ./cloudpam-agent
-    EOT
-  }
-}`
-
-  const terraformConfigOrg = `variable "cloudpam_bootstrap_token" {
-  default   = ${hclQuote(token)}
-  sensitive = true
-}
-
-resource "null_resource" "cloudpam_agent" {
-  provisioner "local-exec" {
-    command = <<-EOT
-      CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
-      CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
-      CLOUDPAM_ACCOUNT_ID=${accountId} \\
-      AWS_REGION=${hclHeredocShellQuote(orgPrimaryRegion)} \\
-      AWS_DEFAULT_REGION=${hclHeredocShellQuote(orgPrimaryRegion)} \\
-      CLOUDPAM_AWS_ORG_ENABLED=true \\
-      CLOUDPAM_AWS_ORG_ROLE_NAME=${hclHeredocShellQuote(orgRoleName)} \\${orgExternalId ? `
-      CLOUDPAM_AWS_ORG_EXTERNAL_ID=${hclHeredocShellQuote(orgExternalId)} \\` : ''}
-      CLOUDPAM_AWS_ORG_REGIONS=${hclHeredocShellQuote(orgRegions.join(','))} \\${orgExclude.length > 0 ? `
-      CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${hclHeredocShellQuote(orgExclude.join(','))} \\` : ''}
-      ./cloudpam-agent
-    EOT
-  }
-}`
-
-  const dockerConfigSingle = `docker run -d \\
-  --name cloudpam-agent \\
-  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\
-  -e CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)} \\
-  -e CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id" \\
-  -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
-  -e CLOUDPAM_AWS_REGIONS=${shellQuote(accountRegions.join(','))} \\
-  ghcr.io/badgerops/cloudpam/agent:latest`
-
-  const dockerConfigOrg = `docker run -d \\
-  --name cloudpam-agent \\
-  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\
-  -e CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)} \\
-  -e CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id" \\
-  -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
-  -e AWS_REGION=${shellQuote(orgPrimaryRegion)} \\
-  -e AWS_DEFAULT_REGION=${shellQuote(orgPrimaryRegion)} \\
-  -e CLOUDPAM_AWS_ORG_ENABLED=true \\
-  -e CLOUDPAM_AWS_ORG_ROLE_NAME=${shellQuote(orgRoleName)} \\${orgExternalId ? `
-  -e CLOUDPAM_AWS_ORG_EXTERNAL_ID=${shellQuote(orgExternalId)} \\` : ''}
-  -e CLOUDPAM_AWS_ORG_REGIONS=${shellQuote(orgRegions.join(','))} \\${orgExclude.length > 0 ? `
-  -e CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${shellQuote(orgExclude.join(','))} \\` : ''}
-  ghcr.io/badgerops/cloudpam/agent:latest`
-
-  const orgRoleIdent = hclIdent(orgRoleName, 'cloudpam_discovery_role')
-
-  const iamSetupContent = `# IAM Setup for AWS Organizations Discovery
-#
-# 1. Deploy the member role to all accounts via CloudFormation StackSet
-#    or Terraform (deploy/terraform/aws-org-discovery/member-role/)
-#
-# 2. Attach the management policy to the agent's IAM role
-#    (deploy/terraform/aws-org-discovery/management-policy/)
-
-# --- Member Account Role (Terraform) ---
-# Deploy to each member account:
-
-resource "aws_iam_role" "${orgRoleIdent}" {
-  name = ${hclQuote(orgRoleName)}
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { AWS = "arn:aws:iam::<MANAGEMENT_ACCOUNT_ID>:root" }
-      Action    = "sts:AssumeRole"${orgExternalId ? `
-      Condition = { StringEquals = { "sts:ExternalId" = ${hclQuote(orgExternalId)} } }` : ''}
-    }]
+  const generated = buildAgentConfigs({
+    provider: 'aws',
+    mode: discoveryMode,
+    token,
+    serverUrl,
+    agentName: agentNameFinal,
+    accountId,
+    accountRegions,
+    awsOrg: { roleName: orgRoleName, externalId: orgExternalId, regions: orgRegions, exclude: orgExclude },
+    gcpProject: '',
+    gcpOrg: { parent: '', regions: [], exclude: [], impersonateServiceAccount: '' },
   })
-}
-
-resource "aws_iam_role_policy" "discovery" {
-  role = aws_iam_role.${orgRoleIdent}.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = [
-        "ec2:DescribeVpcs",
-        "ec2:DescribeSubnets",
-        "ec2:DescribeAddresses"
-      ]
-      Resource = "*"
-    }]
-  })
-}
-
-# --- Management Account Policy ---
-# Attach to the IAM role running the CloudPAM agent:
-
-resource "aws_iam_policy" "cloudpam_org" {
-  name = "CloudPAMOrgDiscoveryPolicy"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["organizations:ListAccounts", "organizations:DescribeOrganization"]
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = "sts:AssumeRole"
-        Resource = ${hclQuote(`arn:aws:iam::*:role/${orgRoleName}`)}
-      }
-    ]
-  })
-}`
-
-  const shellConfig = isOrg ? shellConfigOrg : shellConfigSingle
-  const yamlConfig = isOrg ? yamlConfigOrg : yamlConfigSingle
-  const terraformConfig = isOrg ? terraformConfigOrg : terraformConfigSingle
-  const dockerConfig = isOrg ? dockerConfigOrg : dockerConfigSingle
-
-  const availableTabs: ConfigTab[] = isOrg
-    ? ['shell', 'yaml', 'terraform', 'docker', 'iam']
-    : ['shell', 'yaml', 'terraform', 'docker']
+  const availableTabs = tabsFor('aws', discoveryMode)
 
   // The selected tab is derived rather than trusted: 'iam' only exists in org
   // mode, so switching back to single-account mode would otherwise keep
@@ -386,13 +206,16 @@ resource "aws_iam_policy" "cloudpam_org" {
 
   const filenameStem = safeFilename(agentNameFinal)
 
-  const configs: Record<ConfigTab, { content: string; filename: string; label: string }> = {
-    shell: { content: shellConfig, filename: `${filenameStem}.sh`, label: 'Shell' },
-    yaml: { content: yamlConfig, filename: `${filenameStem}.yaml`, label: 'YAML' },
-    terraform: { content: terraformConfig, filename: `${filenameStem}.tf`, label: 'Terraform' },
-    docker: { content: dockerConfig, filename: `${filenameStem}-docker.sh`, label: 'Docker' },
-    iam: { content: iamSetupContent, filename: `${filenameStem}-iam.tf`, label: 'IAM Setup' },
+  const tabMeta: Record<ConfigTab, { filename: string; label: string }> = {
+    shell: { filename: `${filenameStem}.sh`, label: 'Shell' },
+    yaml: { filename: `${filenameStem}.yaml`, label: 'YAML' },
+    terraform: { filename: `${filenameStem}.tf`, label: 'Terraform' },
+    docker: { filename: `${filenameStem}-docker.sh`, label: 'Docker' },
+    iam: { filename: `${filenameStem}-iam.tf`, label: 'IAM Setup' },
   }
+  const configs = Object.fromEntries(
+    availableTabs.map(tab => [tab, { content: generated[tab] ?? '', ...tabMeta[tab] }]),
+  ) as Record<ConfigTab, { content: string; filename: string; label: string }>
 
   const canGoNext = (step === 1 && selectedAccountId !== null) ||
     (step === 2 && provisionResult !== null)
