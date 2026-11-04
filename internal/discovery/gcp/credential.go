@@ -47,7 +47,7 @@ func (c *Collector) WithCredential(ctx context.Context, _ domain.Account, cred d
 	}
 	tokenCtx := context.WithValue(ctx, oauth2.HTTPClient, tokenClient)
 	return &serviceAccountCollector{
-		Collector: &Collector{tokenSource: conf.TokenSource(tokenCtx), httpClient: c.httpClient, limiter: c.limiter},
+		Collector: &Collector{tokenSource: conf.TokenSource(tokenCtx), httpClient: c.httpClient, limiter: c.limiter, timeout: c.timeout},
 		email:     sa.ClientEmail(),
 		token:     tokenHTTP,
 	}, nil

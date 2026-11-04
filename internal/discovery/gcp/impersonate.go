@@ -59,9 +59,6 @@ type impersonatedSource struct {
 }
 
 func (s *impersonatedSource) Token() (*oauth2.Token, error) {
-	if err := s.limiter.Wait(s.ctx); err != nil {
-		return nil, err
-	}
 	body, err := json.Marshal(map[string]any{
 		"scope":    []string{computeScope},
 		"lifetime": "3600s",
@@ -76,14 +73,11 @@ func (s *impersonatedSource) Token() (*oauth2.Token, error) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.client.Do(req)
+	resp, err := doRetrying(s.client, s.limiter, req)
 	if err != nil {
 		return nil, fmt.Errorf("impersonate %s: %w", s.email, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("impersonate %s: %w", s.email, &discovery.HTTPError{Status: resp.StatusCode})
-	}
 
 	var out struct {
 		AccessToken string    `json:"accessToken"`

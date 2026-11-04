@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
@@ -545,5 +546,27 @@ func TestDiscover_OmitsErrorBody(t *testing.T) {
 	}
 	if !strings.Contains(msg, "http 403") || strings.Contains(msg, "xxxx") {
 		t.Fatalf("error %q lacks status or includes provider body", msg)
+	}
+}
+
+func TestSetRequestTimeoutBoundsAStalledComputeCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewWithHTTPClient(&http.Client{Transport: &rewriteTransport{baseURL: srv.URL}})
+	c.SetRequestTimeout(100 * time.Millisecond)
+
+	start := time.Now()
+	_, err := c.Discover(t.Context(), domain.Account{ID: 1, ExternalID: "p"})
+	if err == nil {
+		t.Fatal("Discover() = nil error, want the stalled calls to time out")
+	}
+	// Three listings, each bounded by the 100ms timeout.
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("elapsed = %s, want about 300ms", elapsed)
 	}
 }

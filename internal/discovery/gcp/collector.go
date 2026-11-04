@@ -30,6 +30,7 @@ type Collector struct {
 	tokenSource oauth2.TokenSource
 	httpClient  *http.Client
 	limiter     *discovery.Limiter
+	timeout     time.Duration
 }
 
 // New creates a new GCP collector using Application Default Credentials.
@@ -55,6 +56,10 @@ func (c *Collector) Provider() string { return "gcp" }
 // SetLimiter paces every Compute API call made by this collector and by the
 // collectors it binds through WithCredential. nil removes the pacing.
 func (c *Collector) SetLimiter(l *discovery.Limiter) { c.limiter = l }
+
+// SetRequestTimeout bounds every HTTP request this collector makes, token
+// fetches included. Zero leaves requests bounded only by the caller's context.
+func (c *Collector) SetRequestTimeout(d time.Duration) { c.timeout = d }
 
 // Discover discovers VPC networks, subnetworks, and external addresses for the given account.
 // The account's ExternalID (or Key) is used as the GCP project ID.
@@ -118,19 +123,28 @@ func (c *Collector) getHTTPClient(ctx context.Context) (*http.Client, error) {
 		if c.httpClient != nil {
 			ctx = context.WithValue(ctx, oauth2.HTTPClient, c.httpClient)
 		}
-		return oauth2.NewClient(ctx, c.tokenSource), nil
+		client := oauth2.NewClient(ctx, c.tokenSource)
+		client.Timeout = c.timeout
+		return client, nil
 	}
 	if c.httpClient != nil {
-		return c.httpClient, nil
+		if c.timeout == 0 {
+			return c.httpClient, nil
+		}
+		client := *c.httpClient
+		client.Timeout = c.timeout
+		return &client, nil
 	}
 	// A service-account ADC file posts its token request without a context, so the
 	// caller's deadline has to come from the token client's transport.
-	tokenClient := &http.Client{Transport: &tokenTransport{ctx: ctx, base: http.DefaultTransport}}
+	tokenClient := &http.Client{Transport: &tokenTransport{ctx: ctx, base: http.DefaultTransport}, Timeout: c.timeout}
 	ts, err := google.DefaultTokenSource(context.WithValue(ctx, oauth2.HTTPClient, tokenClient), computeScope)
 	if err != nil {
 		return nil, fmt.Errorf("get default credentials: %w", err)
 	}
-	return oauth2.NewClient(ctx, ts), nil
+	client := oauth2.NewClient(ctx, ts)
+	client.Timeout = c.timeout
+	return client, nil
 }
 
 // --- GCP Compute REST API response types ---

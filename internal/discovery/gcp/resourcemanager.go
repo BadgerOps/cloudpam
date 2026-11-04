@@ -2,6 +2,7 @@ package gcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -65,7 +66,8 @@ func ListProjects(ctx context.Context, client *http.Client, parent string, limit
 		return nil, fmt.Errorf("invalid parent %q: want organizations/<id> or folders/<id>", parent)
 	}
 	w := projectWalker{
-		client:  computeClient{http: client, limiter: limiter},
+		client:  client,
+		limiter: limiter,
 		visited: map[string]bool{},
 		seen:    map[string]bool{},
 	}
@@ -76,7 +78,8 @@ func ListProjects(ctx context.Context, client *http.Client, parent string, limit
 }
 
 type projectWalker struct {
-	client   computeClient
+	client   *http.Client
+	limiter  *discovery.Limiter
 	visited  map[string]bool
 	seen     map[string]bool
 	projects []Project
@@ -93,7 +96,7 @@ func (w *projectWalker) walk(ctx context.Context, node string, depth int) error 
 
 	for token := ""; ; {
 		var page rmProjectList
-		if err := w.client.get(ctx, rmListURL("projects", node, token), &page); err != nil {
+		if err := w.get(ctx, rmListURL("projects", node, token), &page); err != nil {
 			return fmt.Errorf("list projects under %s: %w", node, err)
 		}
 		for _, p := range page.Projects {
@@ -115,7 +118,7 @@ func (w *projectWalker) walk(ctx context.Context, node string, depth int) error 
 	var children []string
 	for token := ""; ; {
 		var page rmFolderList
-		if err := w.client.get(ctx, rmListURL("folders", node, token), &page); err != nil {
+		if err := w.get(ctx, rmListURL("folders", node, token), &page); err != nil {
 			return fmt.Errorf("list folders under %s: %w", node, err)
 		}
 		for _, f := range page.Folders {
@@ -131,6 +134,23 @@ func (w *projectWalker) walk(ctx context.Context, node string, depth int) error 
 		if err := w.walk(ctx, child, depth+1); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// get fetches one listing page, retrying transient failures.
+func (w *projectWalker) get(ctx context.Context, url string, dest any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	resp, err := doRetrying(w.client, w.limiter, req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if err := json.NewDecoder(resp.Body).Decode(dest); err != nil {
+		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil
 }
