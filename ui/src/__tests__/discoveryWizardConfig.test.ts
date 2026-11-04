@@ -190,6 +190,7 @@ describe('buildAgentConfigs for gcp', () => {
       gcpOrg: { parent: 'folders/9', regions: [], exclude: [], impersonateServiceAccount: 'disc-{project}@hub.iam.gserviceaccount.com' },
     })).iam!
     expect(perProject).toContain(`gcloud iam service-accounts create 'disc-'"\${PROJECT_ID}" --project='hub'`)
+    expect(perProject).toContain(`gcloud iam service-accounts add-iam-policy-binding 'disc-'"\${PROJECT_ID}"'@hub.iam.gserviceaccount.com' --project='hub'`)
 
     const shared = buildAgentConfigs(gcpInput({
       mode: 'organization',
@@ -197,6 +198,27 @@ describe('buildAgentConfigs for gcp', () => {
     })).iam!
     expect(shared).toContain('one shared service account')
     expect(shared).toContain("gcloud iam service-accounts create 'cloudpam' --project='hub'")
+    expect(shared).toContain("gcloud iam service-accounts add-iam-policy-binding 'cloudpam@hub.iam.gserviceaccount.com' --project='hub'")
+  })
+
+  it('enables the IAM Credentials API before the impersonation bindings', () => {
+    const iam = buildAgentConfigs(gcpInput({
+      mode: 'organization',
+      gcpOrg: { parent: 'folders/9', regions: [], exclude: [], impersonateServiceAccount: 'disc@hub.iam.gserviceaccount.com' },
+    })).iam!
+    const enable = iam.indexOf("gcloud services enable 'iamcredentials.googleapis.com' --project='hub'")
+    expect(enable).toBeGreaterThan(0)
+    expect(enable).toBeLessThan(iam.indexOf('gcloud iam service-accounts add-iam-policy-binding'))
+    expect(enable).toBeLessThan(iam.indexOf('gcloud projects add-iam-policy-binding'))
+
+    const direct = buildAgentConfigs(gcpInput({ mode: 'organization' })).iam!
+    expect(direct).not.toContain('iamcredentials')
+  })
+
+  it('says compute.googleapis.com must be enabled in each discovered project', () => {
+    for (const mode of ['single', 'organization'] as const) {
+      expect(buildAgentConfigs(gcpInput({ mode })).iam).toContain('compute.googleapis.com')
+    }
   })
 
   it('quotes hostile project ids in every output', () => {

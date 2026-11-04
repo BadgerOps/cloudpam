@@ -316,6 +316,7 @@ function gcpIamConfig(input: AgentConfigInput): string {
 # IAM setup for CloudPAM GCP discovery.
 # Replace AGENT_SA_EMAIL with the service account the agent runs as
 # (its Workload Identity service account, VM service account, or key's account).
+# Every discovered project must have the Compute Engine API (compute.googleapis.com) enabled.
 AGENT_SA_EMAIL='cloudpam-agent@YOUR_PROJECT.iam.gserviceaccount.com'
 `
   if (input.mode === 'single') {
@@ -359,11 +360,13 @@ ${listing}
 # Per project: create the discovery service account, let it read networks, and
 # let the agent impersonate it. Run once per project ID.${shared}
 PROJECT_ID='my-project'
+# The agent mints tokens through the IAM Credentials API (also enable it in the agent's own project if that differs):
+gcloud services enable ${shellQuote('iamcredentials.googleapis.com')} --project=${homeProject}
 gcloud iam service-accounts create ${shellTemplate(name)} --project=${homeProject} \\
   --display-name='CloudPAM discovery'
 gcloud projects add-iam-policy-binding "\${PROJECT_ID}" \\
   --member=${member} --role='roles/compute.networkViewer'
-gcloud iam service-accounts add-iam-policy-binding ${email} \\
+gcloud iam service-accounts add-iam-policy-binding ${email} --project=${homeProject} \\
   --member="serviceAccount:\${AGENT_SA_EMAIL}" --role='roles/iam.serviceAccountTokenCreator'`
 }
 
