@@ -1894,8 +1894,9 @@ func getAPIKeyIDFromContext(ctx context.Context) (string, bool) {
 }
 
 // handleOrgIngest handles POST /api/v1/discovery/ingest/org
-// Accepts discovered resources from multiple AWS accounts (via Organizations) and
-// auto-creates CloudPAM Account records for new AWS accounts.
+// Accepts discovered resources from many cloud accounts at once (AWS
+// Organizations member accounts, GCP projects under an organization or folder)
+// and auto-creates CloudPAM Account records for accounts it has not seen.
 func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -1948,35 +1949,37 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 	}
 
 	for _, orgAcct := range req.Accounts {
-		if orgAcct.AWSAccountID == "" {
-			resp.Errors = append(resp.Errors, "skipped account with empty aws_account_id")
+		provider := strings.TrimSpace(orgAcct.Provider)
+		if provider == "" {
+			resp.Errors = append(resp.Errors, "skipped account: provider is required")
 			continue
 		}
-
-		// Build key: "aws:<account_id>"
-		key := "aws:" + orgAcct.AWSAccountID
-		provider := orgAcct.Provider
-		if provider == "" {
-			provider = "aws"
+		if !orgIngestProviders[provider] {
+			resp.Errors = append(resp.Errors, fmt.Sprintf("skipped account: unsupported provider %q", provider))
+			continue
 		}
-
-		// Look up or auto-create the CloudPAM account
-		account, err := d.srv.store.GetAccountByKey(r.Context(), key)
+		externalID, err := orgIngestExternalID(orgAcct)
 		if err != nil {
-			if !errors.Is(err, storage.ErrNotFound) {
-				resp.Errors = append(resp.Errors, "lookup "+key+": "+err.Error())
-				continue
-			}
-			// Auto-create
+			resp.Errors = append(resp.Errors, "skipped account: "+err.Error())
+			continue
+		}
+		key := provider + ":" + externalID
+
+		account, err := d.resolveOrgAccount(r.Context(), provider, externalID)
+		if err != nil {
+			resp.Errors = append(resp.Errors, "skipped account: "+err.Error())
+			continue
+		}
+		if account == nil {
 			name := orgAcct.AccountName
 			if name == "" {
-				name = orgAcct.AWSAccountID
+				name = externalID
 			}
 			created, createErr := d.srv.store.CreateAccount(r.Context(), domain.CreateAccount{
 				Key:        key,
 				Name:       name,
 				Provider:   provider,
-				ExternalID: orgAcct.AWSAccountID,
+				ExternalID: externalID,
 				Regions:    orgAcct.Regions,
 			})
 			if createErr != nil {
@@ -2018,6 +2021,60 @@ func (d *DiscoveryServer) handleOrgIngest(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// orgIngestProviders are the providers org ingest accepts.
+var orgIngestProviders = map[string]bool{"aws": true, "gcp": true}
+
+// orgIngestExternalID returns the entry's account identifier. external_id is the
+// field; aws_account_id is its deprecated spelling from agents before 0.25.0.
+func orgIngestExternalID(a domain.OrgAccountIngest) (string, error) {
+	ext := strings.TrimSpace(a.ExternalID)
+	legacy := strings.TrimSpace(a.AWSAccountID)
+	switch {
+	case ext != "" && legacy != "" && ext != legacy:
+		return "", fmt.Errorf("external_id %q and aws_account_id %q disagree", ext, legacy)
+	case ext != "":
+		return ext, nil
+	case legacy != "":
+		return legacy, nil
+	}
+	return "", errors.New("external_id is required")
+}
+
+// resolveOrgAccount finds the account an org-ingest entry belongs to: the
+// <provider>:<external_id> key first, then a single account with the same
+// provider and external ID (one an operator created by hand). It returns nil
+// when neither exists, and an error when the fallback is ambiguous.
+func (d *DiscoveryServer) resolveOrgAccount(ctx context.Context, provider, externalID string) (*domain.Account, error) {
+	account, err := d.srv.store.GetAccountByKey(ctx, provider+":"+externalID)
+	if err == nil {
+		return account, nil
+	}
+	if !errors.Is(err, storage.ErrNotFound) {
+		return nil, fmt.Errorf("lookup %s:%s: %w", provider, externalID, err)
+	}
+	accounts, err := d.srv.store.ListAccounts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list accounts: %w", err)
+	}
+	var matches []domain.Account
+	for _, a := range accounts {
+		if a.Provider == provider && a.ExternalID == externalID {
+			matches = append(matches, a)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, nil
+	case 1:
+		return &matches[0], nil
+	}
+	ids := make([]string, len(matches))
+	for i, m := range matches {
+		ids[i] = strconv.FormatInt(m.ID, 10)
+	}
+	return nil, fmt.Errorf("ambiguous accounts for %s %s: ids %s", provider, externalID, strings.Join(ids, ", "))
 }
 
 func (d *DiscoveryServer) refreshAgentLastSeen(ctx context.Context, agentID uuid.UUID, seenAt time.Time) error {
