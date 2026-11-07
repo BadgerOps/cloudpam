@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
 )
@@ -373,5 +375,27 @@ func TestHostIdentityDeadlineBoundsTheADCTokenFetch(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Identity() kept waiting on the stalled ADC token endpoint past the probe deadline")
+	}
+}
+
+// listError is an error whose dynamic type cannot be compared with ==.
+type listError []string
+
+func (e listError) Error() string { return strings.Join(e, "; ") }
+
+type failingTokenSource struct{ err error }
+
+func (s failingTokenSource) Token() (*oauth2.Token, error) { return nil, s.err }
+
+func TestIdentityReportsAnIncomparableTokenError(t *testing.T) {
+	c := &serviceAccountCollector{
+		Collector: &Collector{tokenSource: failingTokenSource{err: listError{"metadata unreachable"}}},
+		token:     &tokenTransport{},
+	}
+
+	_, err := c.Identity(context.Background(), domain.Account{Provider: "gcp", Key: "gcp:proj-1"})
+
+	if err == nil || err.Error() != "token: metadata unreachable" {
+		t.Fatalf("Identity() error = %v, want the token step with the source's error", err)
 	}
 }

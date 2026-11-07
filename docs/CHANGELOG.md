@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This repository does not use an `Unreleased` changelog section. Add a concrete
 patch or minor version entry for every user-facing change.
 
+## [0.25.0] - 2026-11-04
+
+Upgrade the CloudPAM server to 0.25.0 before you upgrade agents. A 0.24.0 server skips GCP entries in a bulk ingest, ignores reported failures, and rejects the empty ingest a 0.25.0 agent sends to complete a server-requested sync with no accounts (`server rejected request (status 400): accounts list is required`).
+
+### Breaking
+- The discovery agent no longer assumes AWS. Set `CLOUDPAM_PROVIDER` (`provider:` in YAML) to `aws` or `gcp`. Without it the agent refuses to start with `provider is required (aws or gcp); set CLOUDPAM_PROVIDER or yaml`. Existing AWS agents need `CLOUDPAM_PROVIDER=aws`. (#274)
+- The agent Helm chart requires `config.provider`. Existing releases must set `config.provider: aws` before they upgrade. The chart also accepts `config.gcpProject`, `config.gcpRegions`, `config.discoveryGcpRps`, `config.gcpOrg.*`, and `gcpCredentials.existingSecret`, and refuses GCP or org settings that do not match the provider. See [Helm](DISCOVERY.md#helm). (#274)
+
+### Added
+- The discovery agent discovers GCP networks, subnetworks, and external addresses. It reads one project with `CLOUDPAM_PROVIDER=gcp` and `CLOUDPAM_GCP_PROJECT`, or every active project under an organization or folder with `CLOUDPAM_GCP_ORG_ENABLED` and `CLOUDPAM_GCP_ORG_PARENT`, optionally impersonating a per-project service account named by `CLOUDPAM_GCP_ORG_IMPERSONATE_SA`. Requests are bounded by `request_timeout`, each project by 10 minutes, and transient failures are retried. Token-endpoint response bodies never reach logs or sync job messages. See [GCP Agent](DISCOVERY.md#gcp-agent). (#274)
+- `POST /api/v1/discovery/ingest/org` accepts `failures` (`provider`, `external_id`, `error`) for accounts an org pass could not read, and returns `accounts_failed`. Each failure appears in `errors` as `discovery failed for <provider>:<external_id>: <error>`, or `discovery failed for <provider>: <error>` with no external ID, with the error clipped to 300 characters. The failed account's inventory is left unchanged. A request that names a `sync_job_id` now ends `failed` when the pass reported failures, and a request with no accounts and no failures completes the job with no resources. Both AWS and GCP org passes report failures, including a failure to list the organization. (#274)
+- `POST /api/v1/discovery/agents/heartbeat` accepts `claim_sync`. With `false`, the server keeps a pending sync job for a later heartbeat. The agent runs discovery in a worker, so heartbeats continue during long passes, and it claims at most one more job while a pass runs. (#274)
+- The Discovery wizard offers AWS or GCP, and for GCP generates single-project and organization configs plus the `gcloud` IAM commands. Its Docker snippet, for AWS as well, first creates the host state directory owned by UID 65532, assuming a Linux host with rootful Docker. (#274)
+
+### Changed
+- `POST /api/v1/discovery/ingest/org` requires `provider` and `external_id` on every entry. Callers that omitted `provider`, which used to default to `aws`, must now send it, and the value is case-sensitive (`aws` or `gcp`). `aws_account_id` is a deprecated alias of `external_id`. An entry with no `<provider>:<external_id>` account attaches to the single existing account with the same provider and external ID instead of creating a duplicate. (#274)
+- The agent errors when the server ingests none of the accounts it sent, or does not acknowledge the failures it sent. Both mean the server is older than 0.25.0. The AWS org-mode startup log line is now `aws org mode enabled`. (#274)
+- Server and agent Helm charts advertise application version `0.25.0`; chart package versions remain `0.2.1`.
+
 ## [0.24.0] - 2026-11-03
 
 ### Added

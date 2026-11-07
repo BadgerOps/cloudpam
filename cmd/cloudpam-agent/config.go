@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"cloudpam/internal/discovery"
+	"cloudpam/internal/discovery/gcp"
 	"cloudpam/internal/domain"
 
 	"gopkg.in/yaml.v3"
@@ -29,6 +30,20 @@ type AWSOrg struct {
 	ExcludeAccounts []string `yaml:"exclude_accounts"`
 }
 
+const (
+	providerAWS = "aws"
+	providerGCP = "gcp"
+)
+
+// GCPOrg holds GCP organization/folder discovery configuration.
+type GCPOrg struct {
+	Enabled                   bool     `yaml:"enabled"`
+	Parent                    string   `yaml:"parent"`
+	Regions                   []string `yaml:"regions"`
+	ExcludeProjects           []string `yaml:"exclude_projects"`
+	ImpersonateServiceAccount string   `yaml:"impersonate_service_account"`
+}
+
 // Config holds the agent configuration.
 type Config struct {
 	ServerURL         string        `yaml:"server_url"`
@@ -36,6 +51,7 @@ type Config struct {
 	AgentName         string        `yaml:"agent_name"`
 	AgentID           string        `yaml:"agent_id"`
 	AgentIDFile       string        `yaml:"agent_id_file"`
+	Provider          string        `yaml:"provider"`
 	AccountID         int64         `yaml:"account_id"`
 	SyncInterval      time.Duration `yaml:"sync_interval"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
@@ -46,6 +62,10 @@ type Config struct {
 	RequestTimeout    time.Duration `yaml:"request_timeout"`
 	BootstrapToken    string        `yaml:"bootstrap_token"`
 	AWSOrg            AWSOrg        `yaml:"aws_org"`
+	GCPProject        string        `yaml:"gcp_project"`
+	GCPRegions        []string      `yaml:"gcp_regions"`
+	DiscoveryGCPRPS   float64       `yaml:"discovery_gcp_rps"`
+	GCPOrg            GCPOrg        `yaml:"gcp_org"`
 
 	// Bootstrapped is set to true when config was populated from a bootstrap token.
 	Bootstrapped bool `yaml:"-"`
@@ -89,6 +109,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLOUDPAM_AGENT_ID_FILE"); v != "" {
 		cfg.AgentIDFile = v
+	}
+	if v := os.Getenv("CLOUDPAM_PROVIDER"); v != "" {
+		cfg.Provider = strings.TrimSpace(v)
 	}
 	if v := os.Getenv("CLOUDPAM_ACCOUNT_ID"); v != "" {
 		id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
@@ -136,6 +159,36 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS"); v != "" {
 		cfg.AWSOrg.ExcludeAccounts = strings.Split(v, ",")
+	}
+
+	// GCP env vars
+	if v := os.Getenv("CLOUDPAM_GCP_PROJECT"); v != "" {
+		cfg.GCPProject = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("CLOUDPAM_GCP_REGIONS"); v != "" {
+		cfg.GCPRegions = splitList(v)
+	}
+	if v := os.Getenv("CLOUDPAM_DISCOVERY_GCP_RPS"); v != "" {
+		rps, err := discovery.ParseRPS(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CLOUDPAM_DISCOVERY_GCP_RPS: %w", err)
+		}
+		cfg.DiscoveryGCPRPS = rps
+	}
+	if v := os.Getenv("CLOUDPAM_GCP_ORG_ENABLED"); v == "true" || v == "1" {
+		cfg.GCPOrg.Enabled = true
+	}
+	if v := os.Getenv("CLOUDPAM_GCP_ORG_PARENT"); v != "" {
+		cfg.GCPOrg.Parent = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("CLOUDPAM_GCP_ORG_REGIONS"); v != "" {
+		cfg.GCPOrg.Regions = splitList(v)
+	}
+	if v := os.Getenv("CLOUDPAM_GCP_ORG_EXCLUDE_PROJECTS"); v != "" {
+		cfg.GCPOrg.ExcludeProjects = splitList(v)
+	}
+	if v := os.Getenv("CLOUDPAM_GCP_ORG_IMPERSONATE_SA"); v != "" {
+		cfg.GCPOrg.ImpersonateServiceAccount = strings.TrimSpace(v)
 	}
 
 	// Validate required fields
@@ -229,6 +282,9 @@ func (c *Config) Validate() error {
 	if c.AccountID < 1 {
 		return errors.New("account_id must be a positive integer (set CLOUDPAM_ACCOUNT_ID or yaml)")
 	}
+	if err := c.validateProvider(); err != nil {
+		return err
+	}
 	if c.AWSOrg.Enabled {
 		if c.AWSOrg.RoleName == "" {
 			c.AWSOrg.RoleName = "CloudPAMDiscoveryRole"
@@ -242,6 +298,46 @@ func (c *Config) Validate() error {
 	}
 	if err := discovery.CheckRPS(c.DiscoveryAWSRPS); err != nil {
 		return fmt.Errorf("discovery_aws_rps: %w", err)
+	}
+	if err := discovery.CheckRPS(c.DiscoveryGCPRPS); err != nil {
+		return fmt.Errorf("discovery_gcp_rps: %w", err)
+	}
+	return nil
+}
+
+// validateProvider checks the provider and the settings that depend on it.
+// Nothing defaults the provider, so a third one can be added without guessing
+// what an unset value meant.
+func (c *Config) validateProvider() error {
+	switch c.Provider {
+	case "":
+		return errors.New("provider is required (aws or gcp); set CLOUDPAM_PROVIDER or yaml")
+	case providerAWS, providerGCP:
+	default:
+		return fmt.Errorf("unsupported provider %q (aws or gcp)", c.Provider)
+	}
+	if c.AWSOrg.Enabled && c.Provider != providerAWS {
+		return fmt.Errorf("aws_org.enabled requires provider aws (provider is %q)", c.Provider)
+	}
+	if c.GCPOrg.Enabled && c.Provider != providerGCP {
+		return fmt.Errorf("gcp_org.enabled requires provider gcp (provider is %q)", c.Provider)
+	}
+	if c.Provider != providerGCP {
+		return nil
+	}
+	if !c.GCPOrg.Enabled {
+		if c.GCPProject == "" {
+			return errors.New("gcp_project is required when provider is gcp and gcp_org is off (set CLOUDPAM_GCP_PROJECT or yaml)")
+		}
+		return nil
+	}
+	if !gcp.ValidParent(c.GCPOrg.Parent) {
+		return fmt.Errorf("gcp_org.parent %q must be organizations/<id> or folders/<id> (set CLOUDPAM_GCP_ORG_PARENT or yaml)", c.GCPOrg.Parent)
+	}
+	if t := c.GCPOrg.ImpersonateServiceAccount; t != "" {
+		if err := gcp.CheckServiceAccountTemplate(t); err != nil {
+			return fmt.Errorf("gcp_org.impersonate_service_account: %w", err)
+		}
 	}
 	return nil
 }
@@ -260,4 +356,16 @@ func decodeBootstrapToken(token string) (*domain.AgentProvisionBundle, error) {
 		return nil, errors.New("bundle missing required fields (api_key, server_url, agent_name)")
 	}
 	return &bundle, nil
+}
+
+// splitList splits a comma-separated setting, trimming spaces and dropping
+// empty entries.
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

@@ -47,7 +47,7 @@ func (c *Collector) WithCredential(ctx context.Context, _ domain.Account, cred d
 	}
 	tokenCtx := context.WithValue(ctx, oauth2.HTTPClient, tokenClient)
 	return &serviceAccountCollector{
-		Collector: &Collector{tokenSource: conf.TokenSource(tokenCtx), httpClient: c.httpClient, limiter: c.limiter},
+		Collector: &Collector{tokenSource: conf.TokenSource(tokenCtx), httpClient: c.httpClient, limiter: c.limiter, timeout: c.timeout},
 		email:     sa.ClientEmail(),
 		token:     tokenHTTP,
 	}, nil
@@ -181,21 +181,37 @@ func (c *serviceAccountCollector) Discover(ctx context.Context, account domain.A
 func (c *serviceAccountCollector) tokenProbeError(err error) error {
 	var re *oauth2.RetrieveError
 	if errors.As(err, &re) {
-		pe := &discovery.ProbeError{Step: discovery.ProbeStepToken, Code: re.ErrorCode}
-		if re.Response != nil {
-			pe.Status = re.Response.StatusCode
-		}
-		if pe.Code == "" {
-			var body struct {
-				Error string `json:"error"`
-			}
-			_ = json.Unmarshal(re.Body, &body)
-			pe.Code = body.Error
-		}
-		return pe
+		return retrieveProbeError(re)
 	}
 	if c.token.lastErr != nil {
 		return fmt.Errorf("token: %w", c.token.lastErr)
 	}
 	return fmt.Errorf("token: %w", err)
+}
+
+// ReduceTokenError replaces an error carrying a rejected token request with a
+// ProbeError holding only its status and OAuth error code, because the
+// RetrieveError text includes the token endpoint's response body. Any other
+// error is returned as is.
+func ReduceTokenError(err error) error {
+	var re *oauth2.RetrieveError
+	if errors.As(err, &re) {
+		return retrieveProbeError(re)
+	}
+	return err
+}
+
+func retrieveProbeError(re *oauth2.RetrieveError) *discovery.ProbeError {
+	pe := &discovery.ProbeError{Step: discovery.ProbeStepToken, Code: re.ErrorCode}
+	if re.Response != nil {
+		pe.Status = re.Response.StatusCode
+	}
+	if pe.Code == "" {
+		var body struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(re.Body, &body)
+		pe.Code = body.Error
+	}
+	return pe
 }

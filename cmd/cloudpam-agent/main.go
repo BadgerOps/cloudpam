@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/discovery/aws"
+	"cloudpam/internal/discovery/gcp"
 	"cloudpam/internal/domain"
 )
 
@@ -37,6 +39,7 @@ func main() {
 	logger.Info("cloudpam-agent starting",
 		"version", version,
 		"server_url", cfg.ServerURL,
+		"provider", cfg.Provider,
 		"account_id", cfg.AccountID,
 		"agent_name", cfg.AgentName,
 		"sync_interval", cfg.SyncInterval,
@@ -74,9 +77,11 @@ func main() {
 		)
 	}
 
-	// Create AWS collector
-	collector := aws.New()
-	collector.SetLimiter(discovery.NewLimiter(cfg.DiscoveryAWSRPS))
+	collector, err := newSingleAccountCollector(cfg)
+	if err != nil {
+		logger.Error("failed to create collector", "error", err)
+		os.Exit(1)
+	}
 
 	// Setup signal handling
 	ctx, cancel := context.WithCancel(context.Background())
@@ -110,44 +115,59 @@ func runScheduler(ctx context.Context, cfg *Config, collector discovery.Collecto
 
 	// Choose sync function based on mode
 	syncFn := func(syncJobID *uuid.UUID) { runSync(ctx, cfg, collector, pusher, syncJobID, logger) }
-	if cfg.AWSOrg.Enabled {
-		logger.Info("org mode enabled", "role_name", cfg.AWSOrg.RoleName, "regions", cfg.AWSOrg.Regions)
-		syncFn = func(syncJobID *uuid.UUID) { runOrgSync(ctx, cfg, pusher, syncJobID, logger) }
+	switch {
+	case cfg.AWSOrg.Enabled:
+		logger.Info("aws org mode enabled", "role_name", cfg.AWSOrg.RoleName, "regions", cfg.AWSOrg.Regions)
+		syncFn = func(syncJobID *uuid.UUID) { runAWSOrgSync(ctx, cfg, pusher, syncJobID, logger) }
+	case cfg.GCPOrg.Enabled:
+		logger.Info("gcp org mode enabled", "parent", cfg.GCPOrg.Parent, "regions", cfg.GCPOrg.Regions)
+		syncFn = func(syncJobID *uuid.UUID) {
+			runGCPOrgSync(ctx, cfg, pusher, syncJobID, logger, defaultGCPOrgDeps(cfg))
+		}
 	}
 
-	// Initial sync and heartbeat. Org-mode agents still need to appear as live
-	// agents in the server UI even though discovery itself is pushed in bulk.
-	syncFn(nil)
-	if cfg.AccountID > 0 {
-		_, _ = pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
+	worker := newSyncWorker()
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		worker.run(ctx, syncFn)
+	}()
+
+	// Org-mode agents still heartbeat so they appear as live agents in the
+	// server UI even though discovery itself is pushed in bulk.
+	heartbeat := func() {
+		if cfg.AccountID <= 0 {
+			return
+		}
+		resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname, !worker.holdingRequest())
+		if err != nil {
+			logger.Error("heartbeat failed", "error", err)
+			return
+		}
+		if resp != nil && resp.SyncJobID != nil {
+			logger.Info("received server-requested sync", "sync_job_id", resp.SyncJobID, "account_id", resp.AccountID)
+			worker.request(*resp.SyncJobID)
+		}
 	}
+
+	worker.schedule()
+	heartbeat()
 
 	for {
 		select {
 		case <-ctx.Done():
 			logger.Info("context cancelled, stopping scheduler")
+			<-workerDone
 			return nil
-
 		case <-syncTicker.C:
-			syncFn(nil)
-
+			worker.schedule()
 		case <-heartbeatTicker.C:
-			if cfg.AccountID > 0 {
-				resp, err := pusher.Heartbeat(ctx, cfg.AgentName, cfg.AccountID, version, hostname)
-				if err != nil {
-					logger.Error("heartbeat failed", "error", err)
-					continue
-				}
-				if resp != nil && resp.SyncJobID != nil {
-					logger.Info("received server-requested sync", "sync_job_id", resp.SyncJobID, "account_id", resp.AccountID)
-					syncFn(resp.SyncJobID)
-				}
-			}
+			heartbeat()
 		}
 	}
 }
 
-func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
+func runAWSOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
 	logger.Info("starting org discovery sync")
 
 	// One limiter for the whole pass, so every member account's EC2 calls
@@ -158,6 +178,10 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 	orgAccounts, err := aws.ListOrgAccounts(ctx, limiter)
 	if err != nil {
 		logger.Error("failed to list org accounts", "error", err)
+		pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{
+			SyncJobID: syncJobID,
+			Failures:  []domain.OrgAccountFailure{domain.NewOrgAccountFailure(providerAWS, "", fmt.Errorf("list organization accounts: %w", err))},
+		})
 		return
 	}
 
@@ -173,6 +197,7 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 	}
 
 	var ingestAccounts []domain.OrgAccountIngest
+	var failures []domain.OrgAccountFailure
 
 	for _, orgAcct := range orgAccounts {
 		if excludeSet[orgAcct.ID] {
@@ -186,6 +211,7 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 		creds, err := aws.AssumeRole(ctx, orgAcct.ID, cfg.AWSOrg.RoleName, cfg.AWSOrg.ExternalID)
 		if err != nil {
 			logger.Error("assume role failed", "account_id", orgAcct.ID, "error", err)
+			failures = append(failures, domain.NewOrgAccountFailure(providerAWS, orgAcct.ID, fmt.Errorf("assume role: %w", err)))
 			continue
 		}
 
@@ -202,12 +228,14 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 		resources, err := collector.Discover(ctx, account)
 		if err != nil {
 			logger.Error("discovery failed for account", "account_id", orgAcct.ID, "error", err)
+			failures = append(failures, domain.NewOrgAccountFailure(providerAWS, orgAcct.ID, err))
 			continue
 		}
 
 		logger.Info("discovered resources for account", "account_id", orgAcct.ID, "count", len(resources))
 
 		ingestAccounts = append(ingestAccounts, domain.OrgAccountIngest{
+			ExternalID:   orgAcct.ID,
 			AWSAccountID: orgAcct.ID,
 			AccountName:  orgAcct.Name,
 			AccountEmail: orgAcct.Email,
@@ -217,37 +245,39 @@ func runOrgSync(ctx context.Context, cfg *Config, pusher *Pusher, syncJobID *uui
 		})
 	}
 
-	if len(ingestAccounts) == 0 {
+	if len(ingestAccounts) == 0 && len(failures) == 0 {
 		logger.Info("no accounts to ingest")
-		return
+		if syncJobID == nil {
+			return
+		}
 	}
+	pushOrg(ctx, cfg, pusher, logger, domain.BulkIngestRequest{Accounts: ingestAccounts, Failures: failures, SyncJobID: syncJobID})
+}
 
-	req := domain.BulkIngestRequest{
-		Accounts:  ingestAccounts,
-		SyncJobID: syncJobID,
-	}
-
+// pushOrg sends one org pass's accounts and failures to the server.
+func pushOrg(ctx context.Context, cfg *Config, pusher *Pusher, logger *slog.Logger, req domain.BulkIngestRequest) {
 	if err := pusher.PushOrgResources(ctx, req, cfg.MaxRetries, cfg.RetryBackoff); err != nil {
 		logger.Error("push org resources failed", "error", err)
 		return
 	}
-
-	logger.Info("org sync completed", "accounts", len(ingestAccounts))
+	if len(req.Failures) > 0 {
+		logger.Warn("org sync finished with failures", "accounts", len(req.Accounts), "failed", len(req.Failures))
+		return
+	}
+	logger.Info("org sync completed", "accounts", len(req.Accounts))
 }
 
 func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pusher *Pusher, syncJobID *uuid.UUID, logger *slog.Logger) {
-	logger.Info("starting discovery sync", "account_id", cfg.AccountID)
+	logger.Info("starting discovery sync", "account_id", cfg.AccountID, "provider", cfg.Provider)
 
-	// Create mock account with AWS regions
-	account := domain.Account{
-		ID:       cfg.AccountID,
-		Provider: "aws",
-		Regions:  cfg.AWSRegions,
-	}
+	account := singleAccount(cfg)
 
 	// Discover resources
 	resources, err := collector.Discover(ctx, account)
 	if err != nil {
+		if cfg.Provider == providerGCP {
+			err = gcp.ReduceTokenError(err)
+		}
 		logger.Error("discovery failed", "error", err)
 		return
 	}
@@ -261,4 +291,35 @@ func runSync(ctx context.Context, cfg *Config, collector discovery.Collector, pu
 	}
 
 	logger.Info("sync completed successfully", "account_id", account.ID)
+}
+
+// newSingleAccountCollector returns the collector for single-account mode.
+func newSingleAccountCollector(cfg *Config) (discovery.Collector, error) {
+	switch cfg.Provider {
+	case providerAWS:
+		c := aws.New()
+		c.SetLimiter(discovery.NewLimiter(cfg.DiscoveryAWSRPS))
+		return c, nil
+	case providerGCP:
+		c := gcp.New()
+		c.SetLimiter(discovery.NewLimiter(cfg.DiscoveryGCPRPS))
+		c.SetRequestTimeout(cfg.RequestTimeout)
+		return c, nil
+	default:
+		return nil, fmt.Errorf("unsupported provider %q", cfg.Provider)
+	}
+}
+
+// singleAccount is the account single-account mode discovers. The server owns
+// the real record; the agent only needs what its collector reads.
+func singleAccount(cfg *Config) domain.Account {
+	account := domain.Account{ID: cfg.AccountID, Provider: cfg.Provider}
+	switch cfg.Provider {
+	case providerAWS:
+		account.Regions = cfg.AWSRegions
+	case providerGCP:
+		account.ExternalID = cfg.GCPProject
+		account.Regions = cfg.GCPRegions
+	}
+	return account
 }

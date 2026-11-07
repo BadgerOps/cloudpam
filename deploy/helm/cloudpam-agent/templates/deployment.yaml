@@ -39,6 +39,10 @@ spec:
               secretKeyRef:
                 name: {{ include "cloudpam-agent.secretName" . }}
                 key: api-key
+          {{- if .Values.gcpCredentials.existingSecret }}
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            value: /var/run/secrets/cloudpam/gcp/key.json
+          {{- end }}
           {{- with .Values.env }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
@@ -48,6 +52,11 @@ spec:
           - name: config
             mountPath: /etc/cloudpam
             readOnly: true
+          {{- if .Values.gcpCredentials.existingSecret }}
+          - name: gcp-credentials
+            mountPath: /var/run/secrets/cloudpam/gcp
+            readOnly: true
+          {{- end }}
           {{- with .Values.extraVolumeMounts }}
           {{- toYaml . | nindent 10 }}
           {{- end }}
@@ -55,6 +64,14 @@ spec:
         - name: config
           configMap:
             name: {{ include "cloudpam-agent.fullname" . }}
+        {{- if .Values.gcpCredentials.existingSecret }}
+        - name: gcp-credentials
+          secret:
+            secretName: {{ .Values.gcpCredentials.existingSecret }}
+            items:
+              - key: key.json
+                path: key.json
+        {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

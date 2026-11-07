@@ -1,0 +1,18 @@
+apiKey: ci-placeholder
+config:
+  serverUrl: https://cloudpam.example.com
+  accountId: 8
+  agentName: ci-gcp-org-agent
+  provider: gcp
+  gcpRegions: [us-central1]
+  discoveryGcpRps: 10
+  gcpOrg:
+    enabled: true
+    parent: organizations/123456789
+    excludeProjects: [sandbox-project]
+    impersonateServiceAccount: "cloudpam-discovery@{project}.iam.gserviceaccount.com"
+gcpCredentials:
+  existingSecret: cloudpam-agent-gcp-key
+serviceAccount:
+  annotations:
+    iam.gke.io/gcp-service-account: cloudpam-agent@ops-project.iam.gserviceaccount.com

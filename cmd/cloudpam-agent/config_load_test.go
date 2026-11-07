@@ -32,6 +32,15 @@ var covAgentEnvKeys = []string{
 	"CLOUDPAM_AWS_ORG_REGIONS",
 	"CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS",
 	"CLOUDPAM_DISCOVERY_AWS_RPS",
+	"CLOUDPAM_PROVIDER",
+	"CLOUDPAM_GCP_PROJECT",
+	"CLOUDPAM_GCP_REGIONS",
+	"CLOUDPAM_DISCOVERY_GCP_RPS",
+	"CLOUDPAM_GCP_ORG_ENABLED",
+	"CLOUDPAM_GCP_ORG_PARENT",
+	"CLOUDPAM_GCP_ORG_REGIONS",
+	"CLOUDPAM_GCP_ORG_EXCLUDE_PROJECTS",
+	"CLOUDPAM_GCP_ORG_IMPERSONATE_SA",
 }
 
 func covIsolateAgentEnv(t *testing.T) {
@@ -61,6 +70,7 @@ func covBootstrapToken(t *testing.T, bundle domain.AgentProvisionBundle) string 
 
 func TestCovLoadConfigAppliesDefaultsWithEnvOnly(t *testing.T) {
 	covIsolateAgentEnv(t)
+	t.Setenv("CLOUDPAM_PROVIDER", "aws")
 	t.Setenv("CLOUDPAM_SERVER_URL", "https://pam.example.com")
 	t.Setenv("CLOUDPAM_API_KEY", "cpk_env")
 	t.Setenv("CLOUDPAM_AGENT_NAME", "env-agent")
@@ -110,6 +120,7 @@ server_url: https://yaml.example.com
 api_key: cpk_yaml
 agent_name: yaml-agent
 account_id: 77
+provider: aws
 sync_interval: 2m
 heartbeat_interval: 30s
 aws_regions:
@@ -180,6 +191,7 @@ server_url: https://yaml.example.com
 api_key: cpk_yaml
 agent_name: yaml-agent
 account_id: 1
+provider: aws
 agent_id_file: /yaml/agent-id
 aws_regions:
   - yaml-region
@@ -244,6 +256,7 @@ aws_org:
 
 func TestCovLoadConfigOrgEnabledAcceptsTrueLiteral(t *testing.T) {
 	covIsolateAgentEnv(t)
+	t.Setenv("CLOUDPAM_PROVIDER", "aws")
 	t.Setenv("CLOUDPAM_SERVER_URL", "https://pam.example.com")
 	t.Setenv("CLOUDPAM_API_KEY", "cpk")
 	t.Setenv("CLOUDPAM_AGENT_NAME", "agent")
@@ -272,6 +285,7 @@ func TestCovLoadConfigOrgEnabledAcceptsTrueLiteral(t *testing.T) {
 
 func TestCovLoadConfigIgnoresUnparsableDurations(t *testing.T) {
 	covIsolateAgentEnv(t)
+	t.Setenv("CLOUDPAM_PROVIDER", "aws")
 	t.Setenv("CLOUDPAM_SERVER_URL", "https://pam.example.com")
 	t.Setenv("CLOUDPAM_API_KEY", "cpk")
 	t.Setenv("CLOUDPAM_AGENT_NAME", "agent")
@@ -332,6 +346,7 @@ func TestCovLoadConfigRejectsNonNumericAccountID(t *testing.T) {
 
 func TestCovLoadConfigRejectsABadDiscoveryRPS(t *testing.T) {
 	covIsolateAgentEnv(t)
+	t.Setenv("CLOUDPAM_PROVIDER", "aws")
 	t.Setenv("CLOUDPAM_SERVER_URL", "https://pam.example.com")
 	t.Setenv("CLOUDPAM_API_KEY", "cpk")
 	t.Setenv("CLOUDPAM_AGENT_NAME", "agent")
@@ -376,6 +391,7 @@ func TestCovValidateRejectsIncompleteConfigs(t *testing.T) {
 			AccountID:         1,
 			SyncInterval:      time.Minute,
 			HeartbeatInterval: 10 * time.Second,
+			Provider:          "aws",
 		}
 	}
 
@@ -413,6 +429,7 @@ func TestCovValidateAcceptsBoundaryIntervals(t *testing.T) {
 		AccountID:         1,
 		SyncInterval:      time.Minute,
 		HeartbeatInterval: 10 * time.Second,
+		Provider:          "aws",
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v, want nil at the exact minimum intervals", err)
@@ -423,7 +440,8 @@ func TestCovValidateDefaultsOrgRoleNameOnlyWhenOrgEnabled(t *testing.T) {
 	enabled := &Config{
 		ServerURL: "https://pam.example.com", APIKey: "cpk", AgentName: "agent", AccountID: 1,
 		SyncInterval: time.Minute, HeartbeatInterval: 10 * time.Second,
-		AWSOrg: AWSOrg{Enabled: true},
+		Provider: "aws",
+		AWSOrg:   AWSOrg{Enabled: true},
 	}
 	if err := enabled.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
@@ -435,7 +453,8 @@ func TestCovValidateDefaultsOrgRoleNameOnlyWhenOrgEnabled(t *testing.T) {
 	explicit := &Config{
 		ServerURL: "https://pam.example.com", APIKey: "cpk", AgentName: "agent", AccountID: 1,
 		SyncInterval: time.Minute, HeartbeatInterval: 10 * time.Second,
-		AWSOrg: AWSOrg{Enabled: true, RoleName: "CustomRole"},
+		Provider: "aws",
+		AWSOrg:   AWSOrg{Enabled: true, RoleName: "CustomRole"},
 	}
 	if err := explicit.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
@@ -447,6 +466,7 @@ func TestCovValidateDefaultsOrgRoleNameOnlyWhenOrgEnabled(t *testing.T) {
 	disabled := &Config{
 		ServerURL: "https://pam.example.com", APIKey: "cpk", AgentName: "agent", AccountID: 1,
 		SyncInterval: time.Minute, HeartbeatInterval: 10 * time.Second,
+		Provider: "aws",
 	}
 	if err := disabled.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
@@ -470,6 +490,7 @@ func TestCovValidateAppliesBootstrapToken(t *testing.T) {
 		SyncInterval:      time.Minute,
 		HeartbeatInterval: 10 * time.Second,
 		BootstrapToken:    token,
+		Provider:          "aws",
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
@@ -503,6 +524,7 @@ func TestCovValidateIgnoresBootstrapTokenWhenAPIKeySet(t *testing.T) {
 		SyncInterval:      time.Minute,
 		HeartbeatInterval: 10 * time.Second,
 		BootstrapToken:    token,
+		Provider:          "aws",
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
@@ -583,6 +605,7 @@ func TestCovDecodeBootstrapTokenRoundTrip(t *testing.T) {
 
 func TestCovLoadConfigBootstrapTokenFromEnv(t *testing.T) {
 	covIsolateAgentEnv(t)
+	t.Setenv("CLOUDPAM_PROVIDER", "aws")
 	t.Setenv("CLOUDPAM_BOOTSTRAP_TOKEN", covBootstrapToken(t, domain.AgentProvisionBundle{
 		AgentName: "env-bootstrapped",
 		APIKey:    "cpk_env_bootstrap",

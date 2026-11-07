@@ -120,7 +120,7 @@ Each collector can pace its provider API calls with a token bucket. The cap is r
 | Where | Setting | Scope |
 |-------|---------|-------|
 | Server | `CLOUDPAM_DISCOVERY_AWS_RPS`, `CLOUDPAM_DISCOVERY_GCP_RPS` | All syncs of that provider, including stored per-account credentials |
-| Agent | `discovery_aws_rps` / `CLOUDPAM_DISCOVERY_AWS_RPS` | Single-account syncs and every member account of an org-mode pass |
+| Agent | `discovery_aws_rps` / `CLOUDPAM_DISCOVERY_AWS_RPS`, `discovery_gcp_rps` / `CLOUDPAM_DISCOVERY_GCP_RPS` | Single-account syncs and every account of an org-mode pass. A GCP org pass also spends tokens on Resource Manager listing and IAM Credentials token requests. |
 
 A sync whose context ends while it waits for a token fails with that context error, the same as a provider call that times out.
 
@@ -553,11 +553,13 @@ Every sync runs as some cloud identity. Until stored credentials existed, that i
 | Path | Identity used | Reaches | Where it is set up |
 |------|---------------|---------|--------------------|
 | Server sync | The server host. An EC2 instance profile, ECS task role, or `AWS_*` variables for AWS. Application Default Credentials for GCP. | The host's own AWS account. The GCP projects the ADC identity can read. | The server registers the AWS and GCP collectors at startup. `POST /api/v1/discovery/sync` runs them when no agent is connected for the account. |
-| Agent, single account | The agent host's identity, deployed next to the account. | That one account. | `cloudpam-agent` with `CLOUDPAM_ACCOUNT_ID`. It pushes through the ingest API. |
-| Agent, organization mode | The agent host's identity in the management account, then STS `AssumeRole` into `CloudPAMDiscoveryRole` in every member account, with the configured external ID. | Every account in one AWS organization. | `cloudpam-agent` with the `CLOUDPAM_AWS_ORG_*` variables. The Terraform `member-role` module or the CloudFormation StackSet creates the role. See [AWS Organizations Discovery](#aws-organizations-discovery). |
+| Agent, AWS single account | The agent host's identity, deployed next to the account. | That one account. | `cloudpam-agent` with `CLOUDPAM_PROVIDER=aws` and `CLOUDPAM_ACCOUNT_ID`. It pushes through the ingest API. |
+| Agent, AWS organization mode | The agent host's identity in the management account, then STS `AssumeRole` into `CloudPAMDiscoveryRole` in every member account, with the configured external ID. | Every account in one AWS organization. | `cloudpam-agent` with `CLOUDPAM_PROVIDER=aws` and the `CLOUDPAM_AWS_ORG_*` variables. The Terraform `member-role` module or the CloudFormation StackSet creates the role. See [AWS Organizations Discovery](#aws-organizations-discovery). |
+| Agent, GCP single-project mode | The agent's Application Default Credentials: GKE Workload Identity, a service-account key, or the GCE metadata server. | That one project. | `cloudpam-agent` with `CLOUDPAM_PROVIDER=gcp` and `CLOUDPAM_GCP_PROJECT`. See [GCP Agent](#gcp-agent). |
+| Agent, GCP organization mode | The agent's Application Default Credentials, optionally impersonating a per-project service account. | Every active project under one organization or folder. | `cloudpam-agent` with `CLOUDPAM_PROVIDER=gcp` and the `CLOUDPAM_GCP_ORG_*` variables. You grant the roles with `gcloud`. See [GCP Agent](#gcp-agent). |
 | Stored per-account credential | A role ARN the server assumes, or a GCP service-account key, saved encrypted on the account record. | That account, from the server, with no agent and no change to the host identity. | The **Credentials** action on the Accounts page, or `PUT /api/v1/accounts/{id}/credentials`. |
 
-For one AWS organization with the member role deployed, the first three paths are complete. You give the instance or the agent an IAM identity and CloudPAM uses it. No credential goes into the application.
+For one AWS organization with the member role deployed, or one GCP organization with the roles granted, the server and agent paths are complete. You give the instance or the agent an IAM identity and CloudPAM uses it. No credential goes into the application.
 
 ### Why stored credentials exist
 
@@ -773,11 +775,11 @@ The `cloudpam-agent` binary runs alongside your cloud resources and pushes disco
 
 ```
 ┌─────────────────────────────┐          ┌─────────────────────────┐
-│       Your AWS Account      │          │    CloudPAM Server      │
+│      Your Cloud Account     │          │    CloudPAM Server      │
 │                             │          │                         │
 │  ┌───────────────────────┐  │  HTTPS   │  POST /discovery/ingest │
 │  │   cloudpam-agent      │──┼─────────>│  POST /agents/heartbeat │
-│  │  - AWS SDK creds      │  │          │  POST /agents/register  │
+│  │  - Cloud credentials  │  │          │  POST /agents/register  │
 │  │  - Bootstrap token    │  │          │                         │
 │  └───────────────────────┘  │          └─────────────────────────┘
 └─────────────────────────────┘
@@ -815,8 +817,11 @@ Save the `token` value — it's shown only once.
 CLOUDPAM_BOOTSTRAP_TOKEN=eyJhZ2VudF9uYW1lIjoi... \
 CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \
 CLOUDPAM_ACCOUNT_ID=1 \
+CLOUDPAM_PROVIDER=aws \
 ./cloudpam-agent
 ```
+
+`CLOUDPAM_PROVIDER` is required and has no default. Set it to `aws` or `gcp`. For GCP settings, see [GCP Agent](#gcp-agent).
 
 The agent will:
 1. Decode the token to extract `server_url`, `api_key`, and `agent_name`
@@ -836,6 +841,7 @@ CLOUDPAM_API_KEY=cpk_abc123... \
 CLOUDPAM_AGENT_NAME=prod-us-east-1 \
 CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \
 CLOUDPAM_ACCOUNT_ID=1 \
+CLOUDPAM_PROVIDER=aws \
 CLOUDPAM_AWS_REGIONS=us-east-1,us-west-2 \
 ./cloudpam-agent
 ```
@@ -849,6 +855,7 @@ api_key: cpk_abc123...
 agent_name: prod-us-east-1
 agent_id_file: /var/lib/cloudpam-agent/agent-id
 account_id: 1
+provider: aws
 aws_regions:
   - us-east-1
   - us-west-2
@@ -869,27 +876,36 @@ heartbeat_interval: 1m
 | `agent_name` | `CLOUDPAM_AGENT_NAME` | (required) | Human-readable agent name |
 | `agent_id` | `CLOUDPAM_AGENT_ID` | | Explicit discovery agent UUID |
 | `agent_id_file` | `CLOUDPAM_AGENT_ID_FILE` | deterministic fallback | Host-side file used to persist a generated discovery agent UUID |
-| `account_id` | `CLOUDPAM_ACCOUNT_ID` | (required) | CloudPAM account ID to discover for |
+| `account_id` | `CLOUDPAM_ACCOUNT_ID` | (required) | CloudPAM account ID to discover for. In org mode, the account the agent heartbeats as. |
+| `provider` | `CLOUDPAM_PROVIDER` | (required) | `aws` or `gcp`. One agent serves one provider. |
 | `bootstrap_token` | `CLOUDPAM_BOOTSTRAP_TOKEN` | | Base64 provisioning bundle (replaces server_url, api_key, agent_name) |
 | `aws_regions` | `CLOUDPAM_AWS_REGIONS` | SDK default | Comma-separated AWS regions |
 | `discovery_aws_rps` | `CLOUDPAM_DISCOVERY_AWS_RPS` | `0` (unlimited) | Cap on AWS API calls per second, shared across every account in an org-mode pass |
+| `gcp_project` | `CLOUDPAM_GCP_PROJECT` | | GCP project ID. Required when `provider` is `gcp` and `gcp_org` is off. |
+| `gcp_regions` | `CLOUDPAM_GCP_REGIONS` | all regions | Comma-separated GCP regions to keep |
+| `discovery_gcp_rps` | `CLOUDPAM_DISCOVERY_GCP_RPS` | `0` (unlimited) | Cap on GCP API calls per second, shared across every project in an org-mode pass |
 | `sync_interval` | `CLOUDPAM_SYNC_INTERVAL` | `15m` | How often to run discovery |
 | `heartbeat_interval` | `CLOUDPAM_HEARTBEAT_INTERVAL` | `1m` | How often to send heartbeats |
 | `max_retries` | | `3` | Push retry attempts on server error |
 | `retry_backoff` | | `5s` | Initial retry delay (exponential) |
-| `request_timeout` | | `30s` | HTTP request timeout |
+| `request_timeout` | | `30s` | Timeout for each request to the CloudPAM server, and for each GCP API request and token fetch |
 
 When `bootstrap_token` is set and `api_key` is not, the token is decoded and its fields populate `server_url`, `api_key`, and `agent_name`. If `api_key` is set explicitly, the token is ignored.
 
 ### Deploying with Docker
 
+The agent image runs as the nonroot user, UID 65532. Docker creates a missing bind-mount source owned by root, and the agent then cannot write its ID file. Create the state directory first. These commands assume a Linux host with rootful Docker. With rootless Docker or userns-remap, use the host UID that container UID 65532 maps to.
+
 ```bash
 docker build -f deploy/docker/Dockerfile.agent -t cloudpam-agent .
+
+sudo install -d -o 65532 -g 65532 /var/lib/cloudpam-agent
 
 docker run -e CLOUDPAM_BOOTSTRAP_TOKEN=eyJhZ2VudF9uYW1lIjoi... \
            -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \
            -e CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \
            -e CLOUDPAM_ACCOUNT_ID=1 \
+           -e CLOUDPAM_PROVIDER=aws \
            -e AWS_REGION=us-east-1 \
            cloudpam-agent
 ```
@@ -903,6 +919,7 @@ helm install cloudpam-agent deploy/helm/cloudpam-agent/ \
   --set config.serverUrl=https://cloudpam.example.com \
   --set config.accountId=1 \
   --set config.agentName=prod-us-east-eks \
+  --set config.provider=aws \
   --set config.awsRegions='{us-east-1,us-west-2}' \
   --set apiKey=cpk_abc123... \
   --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=arn:aws:iam::123456789012:role/cloudpam-discovery
@@ -910,6 +927,8 @@ helm install cloudpam-agent deploy/helm/cloudpam-agent/ \
 
 `config.agentName` is required. Keep it stable across upgrades and make it unique
 across clusters that report to the same CloudPAM server and account.
+
+`config.provider` is required (`aws` or `gcp`), and the chart fails to render without it. A release installed before 0.25.0 must add `config.provider: aws` before it upgrades. For GCP values, see [GCP Agent](#gcp-agent).
 
 ### Agent Health & Monitoring
 
@@ -977,6 +996,8 @@ Management Account (agent runs here)
 
    ```bash
    CLOUDPAM_BOOTSTRAP_TOKEN=eyJhZ2VudF9uYW1lIjoi... \
+   CLOUDPAM_ACCOUNT_ID=1 \
+   CLOUDPAM_PROVIDER=aws \
    CLOUDPAM_AWS_ORG_ENABLED=true \
    CLOUDPAM_AWS_ORG_ROLE_NAME=CloudPAMDiscoveryRole \
    CLOUDPAM_AWS_ORG_REGIONS=us-east-1,us-west-2 \
@@ -989,6 +1010,8 @@ Management Account (agent runs here)
    server_url: https://cloudpam.example.com
    bootstrap_token: eyJhZ2VudF9uYW1lIjoi...
    agent_name: org-discovery-agent
+   account_id: 1
+   provider: aws
    aws_org:
      enabled: true
      role_name: CloudPAMDiscoveryRole
@@ -1016,7 +1039,7 @@ curl -X POST http://localhost:8080/api/v1/discovery/ingest/org \
   -d '{
     "accounts": [
       {
-        "aws_account_id": "111111111111",
+        "external_id": "111111111111",
         "account_name": "Production",
         "account_email": "prod@example.com",
         "provider": "aws",
@@ -1024,7 +1047,11 @@ curl -X POST http://localhost:8080/api/v1/discovery/ingest/org \
         "resources": [...]
       }
     ],
-    "agent_id": "uuid"
+    "failures": [
+      {"provider": "aws", "external_id": "222222222222", "error": "assume role: access denied"}
+    ],
+    "agent_id": "uuid",
+    "sync_job_id": "uuid"
   }'
 ```
 
@@ -1034,12 +1061,21 @@ Response:
 {
   "accounts_processed": 5,
   "accounts_created": 2,
+  "accounts_failed": 1,
   "total_resources": 47,
-  "errors": []
+  "errors": ["discovery failed for aws:222222222222: assume role: access denied"]
 }
 ```
 
-The server auto-creates CloudPAM Account records (key `aws:<account_id>`) for any AWS accounts not yet registered.
+Every entry needs `provider` (`aws` or `gcp`) and `external_id`, the AWS account ID or GCP project ID. `aws_account_id` is a deprecated alias of `external_id`, still accepted from agents older than 0.25.0. The server matches each entry to an account in this order:
+
+1. The account whose key is `<provider>:<external_id>`.
+2. The single account with the same provider and external ID, such as one an operator created by hand. If more than one matches, the entry is skipped with an `ambiguous accounts` error.
+3. A new account with key `<provider>:<external_id>`, counted in `accounts_created`.
+
+`sync_job_id` is optional. The agent sends it when the pass answers a server-requested sync. A request with no accounts and no failures is accepted only with a `sync_job_id`, and completes that job with no resources.
+
+`failures` lists the accounts the agent could not read this pass: an AssumeRole, credential or discovery error, or a project that ran past its deadline. When listing the organization fails, the agent sends one failure with no accounts. Failures are reported in `errors` and counted in `accounts_failed`, and the failed accounts' existing inventory is left as it was, so nothing goes stale because one pass could not read it. A supplied `sync_job_id` ends `failed` whenever `errors` is non-empty.
 
 ### Terraform Modules
 
@@ -1049,12 +1085,181 @@ The server auto-creates CloudPAM Account records (key `aws:<account_id>`) for an
 | Member role | `deploy/terraform/aws-org-discovery/member-role/` | Cross-account discovery role with trust to management account |
 | CF StackSet | `deploy/cloudformation/discovery-role-stackset.yaml` | Deploy member role across org via StackSet |
 
+There is no Terraform module for GCP discovery IAM yet. Use the `gcloud` commands in [GCP Agent](#gcp-agent). Moving these modules to their own repository and adding a GCP module is tracked in #416.
+
 ### Frontend Wizard
 
-The Discovery wizard (Plan Discovery button) supports org mode:
-1. Step 1: Choose "AWS Organization" mode, configure role name, regions, exclude list
+The Discovery wizard (Plan Discovery button) supports org mode for AWS and GCP:
+1. Step 1: Choose the provider, then the organization mode. For AWS, set the role name, regions, and exclude list. For GCP, set the parent, regions, excluded projects, and an optional impersonation template
 2. Step 2: Provision the agent (generates bootstrap token)
 3. Step 3: Deploy using generated configs; wizard polls for agent connection and shows live status
+
+## GCP Agent
+
+With `CLOUDPAM_PROVIDER=gcp`, the agent discovers GCP networks, subnetworks, and external addresses. It authenticates with Application Default Credentials (ADC): GKE Workload Identity, a service-account key at `GOOGLE_APPLICATION_CREDENTIALS`, or the metadata server on a GCE VM. It has no credential settings of its own.
+
+Upgrade the CloudPAM server to 0.25.0 or later before you deploy or upgrade GCP agents. An older server skips GCP entries in a bulk ingest and ignores reported failures. The agent detects both cases and logs an error that says to upgrade the server. An older server also rejects the empty ingest a 0.25.0 agent sends to complete a server-requested sync that found no accounts, with `server rejected request (status 400): accounts list is required`.
+
+The [base agent settings](#configuration-reference) still apply. `CLOUDPAM_ACCOUNT_ID` is required in every mode. In org mode it is the account the agent heartbeats as.
+
+### Single project
+
+| Setting | Meaning |
+|---|---|
+| `CLOUDPAM_PROVIDER=gcp` | Required. |
+| `CLOUDPAM_GCP_PROJECT` | The project ID to discover. Required. |
+| `CLOUDPAM_GCP_REGIONS` | Optional comma-separated list of regions to keep. Networks are global and always kept. |
+| `CLOUDPAM_DISCOVERY_GCP_RPS` | Optional cap on GCP API calls per second. |
+
+The project must have the Compute Engine API (`compute.googleapis.com`) enabled. Grant the agent's service account `roles/compute.networkViewer` on the project:
+
+```bash
+gcloud projects add-iam-policy-binding my-project \
+  --member="serviceAccount:cloudpam-agent@ops-project.iam.gserviceaccount.com" \
+  --role=roles/compute.networkViewer
+```
+
+### Organization or folder
+
+| Setting | Meaning |
+|---|---|
+| `CLOUDPAM_PROVIDER=gcp` | Required. |
+| `CLOUDPAM_GCP_ORG_ENABLED=true` | Turns on org mode. `CLOUDPAM_GCP_PROJECT` is not needed. |
+| `CLOUDPAM_GCP_ORG_PARENT` | `organizations/<id>` or `folders/<id>`. Required. |
+| `CLOUDPAM_GCP_ORG_REGIONS` | Optional. Falls back to `CLOUDPAM_GCP_REGIONS`. |
+| `CLOUDPAM_GCP_ORG_EXCLUDE_PROJECTS` | Optional comma-separated list of project IDs to skip. |
+| `CLOUDPAM_GCP_ORG_IMPERSONATE_SA` | Optional service-account email. The agent replaces `{project}` with each project ID. |
+
+The YAML keys are `gcp_org.enabled`, `gcp_org.parent`, `gcp_org.regions`, `gcp_org.exclude_projects`, and `gcp_org.impersonate_service_account`.
+
+Each pass lists every `ACTIVE` project under the parent, walking folders up to 10 levels deep. It then discovers the projects one at a time and sends one bulk ingest at the end. Each project has 10 minutes for its token and discovery calls. A project arrives in CloudPAM as the account keyed `gcp:<project>`, or attaches to the single existing account whose provider is `gcp` and whose external ID is the project ID.
+
+A project that fails is reported to the server as a failure, and its existing inventory is left unchanged. The partial results of a failed project are dropped, so nothing goes stale because of one failed read. If the project listing fails, the agent reports one failure for the parent and ingests nothing. When the pass answers a server-requested sync, the sync job ends `failed` if any project failed.
+
+Every project must have the Compute Engine API enabled. Exclude a project that does not, or it fails on every pass.
+
+**Grant roles directly.** Without impersonation, the agent reads every project as itself. Grant its service account two roles on the organization or folder:
+
+```bash
+gcloud organizations add-iam-policy-binding 123456789 \
+  --member="serviceAccount:cloudpam-agent@ops-project.iam.gserviceaccount.com" --role=roles/browser
+gcloud organizations add-iam-policy-binding 123456789 \
+  --member="serviceAccount:cloudpam-agent@ops-project.iam.gserviceaccount.com" --role=roles/compute.networkViewer
+```
+
+For a folder, use `gcloud resource-manager folders add-iam-policy-binding <folder-id>`.
+
+**Impersonate a service account per project.** The agent always lists projects as itself, so it keeps `roles/browser` on the parent. The IAM Credentials API checks `generateAccessToken` against the caller's project, so enable `iamcredentials.googleapis.com` in the project that owns the agent's service account. Then, in each project, create the discovery service account, grant it `roles/compute.networkViewer`, and grant the agent `roles/iam.serviceAccountTokenCreator` on it:
+
+```bash
+gcloud services enable iamcredentials.googleapis.com --project=ops-project
+
+PROJECT_ID=my-project
+gcloud iam service-accounts create cloudpam-discovery --project="$PROJECT_ID"
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:cloudpam-discovery@${PROJECT_ID}.iam.gserviceaccount.com" --role=roles/compute.networkViewer
+gcloud iam service-accounts add-iam-policy-binding "cloudpam-discovery@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --project="$PROJECT_ID" \
+  --member="serviceAccount:cloudpam-agent@ops-project.iam.gserviceaccount.com" --role=roles/iam.serviceAccountTokenCreator
+```
+
+Then set `CLOUDPAM_GCP_ORG_IMPERSONATE_SA='cloudpam-discovery@{project}.iam.gserviceaccount.com'`. A value without `{project}` reads every project through one shared service account. In that case, grant token creator on that account once, and grant it `roles/compute.networkViewer` in each project.
+
+The Discovery wizard generates these commands for the parent and template you enter. A Terraform module for GCP IAM is tracked in #416.
+
+### Timeouts and retries
+
+- `request_timeout` (default `30s`) bounds each GCP API request and each token fetch.
+- Project listing and impersonated token requests retry `429`, `500`, `502`, `503`, and `504` responses and transport errors, up to 4 attempts. The backoff starts at 1 second and doubles, and a `Retry-After` header in seconds (capped at 30) replaces it.
+- Compute calls are not retried within a pass. The next scheduled pass reads the project again.
+- Errors carry the HTTP status but not the provider's response body. Token-endpoint response bodies never reach the agent's logs or the server's sync job messages.
+
+### Run the GCP agent
+
+Shell, for an organization with impersonation:
+
+```bash
+CLOUDPAM_BOOTSTRAP_TOKEN=eyJhZ2VudF9uYW1lIjoi... \
+CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \
+CLOUDPAM_ACCOUNT_ID=1 \
+CLOUDPAM_PROVIDER=gcp \
+CLOUDPAM_GCP_ORG_ENABLED=true \
+CLOUDPAM_GCP_ORG_PARENT=organizations/123456789 \
+CLOUDPAM_GCP_ORG_IMPERSONATE_SA='cloudpam-discovery@{project}.iam.gserviceaccount.com' \
+./cloudpam-agent
+```
+
+Docker, with a service-account key. The image runs as UID 65532, so copy the key where only that user can read it. On a host with ADC (GCE metadata), leave out the key lines, the key mount, and `GOOGLE_APPLICATION_CREDENTIALS`. These commands assume a Linux host with rootful Docker.
+
+```bash
+sudo install -d -o 65532 -g 65532 /var/lib/cloudpam-agent
+sudo install -d -o 65532 -g 65532 -m 0700 /etc/cloudpam-agent
+sudo install -o 65532 -g 65532 -m 0400 key.json /etc/cloudpam-agent/gcp-key.json
+
+docker run -d --name cloudpam-agent \
+  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \
+  -v /etc/cloudpam-agent/gcp-key.json:/var/run/secrets/cloudpam/gcp/key.json:ro \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/var/run/secrets/cloudpam/gcp/key.json \
+  -e CLOUDPAM_BOOTSTRAP_TOKEN=eyJhZ2VudF9uYW1lIjoi... \
+  -e CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \
+  -e CLOUDPAM_ACCOUNT_ID=1 \
+  -e CLOUDPAM_PROVIDER=gcp \
+  -e CLOUDPAM_GCP_PROJECT=my-project \
+  ghcr.io/badgerops/cloudpam/agent:latest
+```
+
+### Helm
+
+Set `config.provider: gcp` and one of these:
+
+- `config.gcpProject` for one project.
+- `config.gcpOrg.enabled: true` with `config.gcpOrg.parent`, plus the optional `config.gcpOrg.regions`, `config.gcpOrg.excludeProjects`, and `config.gcpOrg.impersonateServiceAccount`.
+
+`config.gcpRegions` and `config.discoveryGcpRps` apply in both modes. The chart fails to render when `config.provider` is `gcp` with neither `config.gcpProject` nor `config.gcpOrg.enabled`, when `config.gcpOrg.parent` is not `organizations/<id>` or `folders/<id>`, and when `config.awsOrg.enabled` is set with provider `gcp` or `config.gcpOrg.enabled` with provider `aws`.
+
+On GKE, annotate the Kubernetes service account for Workload Identity:
+
+```yaml
+config:
+  serverUrl: https://cloudpam.example.com
+  accountId: 1
+  agentName: prod-gke-org
+  provider: gcp
+  gcpOrg:
+    enabled: true
+    parent: organizations/123456789
+apiKey: cpk_abc123...
+serviceAccount:
+  annotations:
+    iam.gke.io/gcp-service-account: cloudpam-agent@ops-project.iam.gserviceaccount.com
+```
+
+Without Workload Identity, store the key in a secret under the key `key.json` and set `gcpCredentials.existingSecret` to the secret's name. The chart mounts it read-only and points `GOOGLE_APPLICATION_CREDENTIALS` at it.
+
+### Troubleshooting
+
+The agent logs JSON. The table quotes the `msg` field and the start of the `error` field.
+
+| Log message and error | Cause | Fix |
+|---|---|---|
+| `failed to load config`, `provider is required (aws or gcp); set CLOUDPAM_PROVIDER or yaml` | `CLOUDPAM_PROVIDER` is not set. Agents before 0.25.0 assumed AWS. | Set `CLOUDPAM_PROVIDER=aws` or `gcp`. |
+| `failed to load config`, `gcp_project is required when provider is gcp and gcp_org is off` | Single-project mode without a project. | Set `CLOUDPAM_GCP_PROJECT`, or turn on org mode. |
+| `failed to load config`, `gcp_org.parent "..." must be organizations/<id> or folders/<id>` | The parent is missing or malformed. | Use the numeric ID, as in `organizations/123456789`. |
+| `failed to list gcp projects`, `list projects: list projects under organizations/<id>: cloud request failed: http 403` | The agent lacks `resourcemanager.projects.list` on that node. The same error with `list folders under` means it lacks `resourcemanager.folders.list`. | Grant `roles/browser` on the organization or folder. |
+| `discovery failed for project`, error containing `impersonate <email>: cloud request failed: http 403` | The agent lacks `roles/iam.serviceAccountTokenCreator` on that project's service account, the account does not exist, or `iamcredentials.googleapis.com` is disabled in the agent's own project. | Create the account, grant token creator, and enable the IAM Credentials API. |
+| `discovery failed for project`, `discover networks for project <id>: cloud request failed: http 403` | The identity lacks `roles/compute.networkViewer`, or the Compute Engine API is disabled in that project. | Grant the role, enable `compute.googleapis.com`, or exclude the project. |
+| `discovery failed for project`, error containing `context deadline exceeded` | The project ran past its 10-minute limit or a request ran past `request_timeout`. | Check the network path to `compute.googleapis.com`, or exclude the project. |
+| `gcp credentials failed for project`, `credentials: gcp default credentials: ...` | The agent found no ADC to impersonate from. | Configure Workload Identity, a key at `GOOGLE_APPLICATION_CREDENTIALS`, or a VM service account. |
+| `push org resources failed`, `server accepted none of the <n> accounts: ...` ending in `(upgrade the CloudPAM server to 0.25.0 or later before GCP agents)` | The server is older than 0.25.0 and rejects GCP entries. | Upgrade the server. |
+| `push org resources failed`, `server did not acknowledge <n> account failure(s); upgrade the CloudPAM server to 0.25.0 or later before upgrading agents` | The server is older than 0.25.0 and ignores `failures`. | Upgrade the server. |
+| `push org resources failed`, `server rejected request (status 400): accounts list is required` | A server-requested pass found no accounts to ingest, and the server is older than 0.25.0, which rejects the empty ingest that completes the job. | Upgrade the server. |
+| `org sync finished with failures` | Some projects failed and were reported to the server. A server-requested sync job ends `failed`. | Read the per-project `discovery failed for project` lines. For a server-requested sync, the job's error message in Sync History lists them too. |
+
+### Known limitations
+
+- A server-requested sync job stays `running` if the agent restarts or crashes during the pass. Later heartbeats claim only `pending` jobs. Tracked in #417.
+- In single-project mode, a discovery failure is logged but not reported to the server, so a server-requested job for that account stays `running`. Org mode reports failures. Tracked in #418.
+- An org pass reads projects one at a time and pushes once at the end. A large organization can run for a long time with nothing reaching the server until the pass ends, and there is no overall pass deadline. Tracked in #419.
 
 ## Terraform Example
 
@@ -1232,9 +1437,12 @@ curl -X POST http://localhost:8080/api/v1/discovery/agents/heartbeat \
     "name": "prod-us-east-1",
     "account_id": 1,
     "version": "dev",
-    "hostname": "ip-10-0-1-42"
+    "hostname": "ip-10-0-1-42",
+    "claim_sync": true
   }'
 ```
+
+The response carries `sync_job_id` and `account_id` when the server hands the agent a pending sync job. `claim_sync` is optional and defaults to `true`. With `false`, the server leaves the job pending for a later heartbeat. Agents from 0.25.0 send `false` while they already hold a requested job, so each agent holds at most one job it has not started.
 
 ### List Agents
 
@@ -1287,7 +1495,7 @@ The Discovery page is at `/discovery` in the CloudPAM UI. It has four tabs:
 - **Sync History** — table of past sync jobs showing status, timing, and resource counts.
 - **Agents** — table of registered discovery agents with health status, version, hostname, and last heartbeat time. Auto-refreshes every 30 seconds.
 
-Select a cloud account from the dropdown, then click **Sync Now** to run discovery. The setup wizard is AWS-shaped (IAM role, optional Organizations mode). GCP accounts can still be synced in-process when the server has Application Default Credentials; Azure accounts can be created but have no collector. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
+Select a cloud account from the dropdown, then click **Sync Now** to run discovery. The setup wizard sets up an AWS or GCP agent, for one account or for an organization. GCP accounts can also be synced in-process when the server has Application Default Credentials; Azure accounts can be created but have no collector. See [CURRENT_STATUS.md](CURRENT_STATUS.md).
 
 ## Architecture
 
@@ -1300,7 +1508,7 @@ type Collector interface {
 }
 ```
 
-Each cloud provider implements this interface. AWS and GCP collectors are registered at startup in `cmd/cloudpam/main.go`. The standalone agent (`cmd/cloudpam-agent`) registers AWS only.
+Each cloud provider implements this interface. AWS and GCP collectors are registered at startup in `cmd/cloudpam/main.go`. The standalone agent (`cmd/cloudpam-agent`) picks the AWS or GCP collector from `CLOUDPAM_PROVIDER`.
 
 ### SyncService
 
@@ -1338,7 +1546,7 @@ To add Azure (or another provider):
 3. Register the collector in `cmd/cloudpam/main.go` (and in `cmd/cloudpam-agent` if the agent should run it)
 4. Create accounts with `"provider": "azure"` — the sync service selects the collector by `account.Provider`
 
-The HTTP API and storage layer are provider-agnostic. The Discovery wizard, IAM snippets, and agent binary are still AWS-oriented and will need matching work. Account keys for `azure:` already validate as subscription UUIDs; without a collector, sync fails.
+The HTTP API and storage layer are provider-agnostic. The agent's provider setting, the bulk org ingest's `provider` check, the Helm chart's provider check, and the Discovery wizard accept only `aws` and `gcp`, so each needs matching work. Account keys for `azure:` already validate as subscription UUIDs; without a collector, sync fails.
 
 
 ## Scheduled server discovery

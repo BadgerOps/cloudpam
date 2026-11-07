@@ -928,8 +928,8 @@ func TestDiscoveryOrgIngestCov(t *testing.T) {
 		{"method not allowed", http.MethodGet, "", http.StatusMethodNotAllowed, "method not allowed"},
 		{"malformed json", http.MethodPost, `{`, http.StatusBadRequest, "invalid request body"},
 		{"no accounts", http.MethodPost, `{"accounts":[]}`, http.StatusBadRequest, "accounts list is required"},
-		{"unknown sync job", http.MethodPost, `{"accounts":[{"aws_account_id":"1"}],"sync_job_id":"` + uuid.New().String() + `"}`, http.StatusBadRequest, "sync job not found"},
-		{"invalid agent id", http.MethodPost, `{"accounts":[{"aws_account_id":"1"}],"agent_id":"nope"}`, http.StatusBadRequest, "invalid agent_id"},
+		{"unknown sync job", http.MethodPost, `{"accounts":[{"provider":"aws","aws_account_id":"1"}],"sync_job_id":"` + uuid.New().String() + `"}`, http.StatusBadRequest, "sync job not found"},
+		{"invalid agent id", http.MethodPost, `{"accounts":[{"provider":"aws","aws_account_id":"1"}],"agent_id":"nope"}`, http.StatusBadRequest, "invalid agent_id"},
 	}
 	for _, tc := range errCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -942,9 +942,9 @@ func TestDiscoveryOrgIngestCov(t *testing.T) {
 
 	t.Run("auto creates accounts and records errors", func(t *testing.T) {
 		body := `{"accounts":[
-			{"aws_account_id":"111111111111","account_name":"prod","regions":["us-east-1"],
+			{"provider":"aws","aws_account_id":"111111111111","account_name":"prod","regions":["us-east-1"],
 			 "resources":[{"provider":"aws","region":"us-east-1","resource_type":"vpc","resource_id":"vpc-1","name":"v","cidr":"10.0.0.0/16","status":"active"}]},
-			{"aws_account_id":""}
+			{"provider":"aws","aws_account_id":""}
 		]}`
 		rr := assertStatusCov(t, doReqCov(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/ingest/org", body), http.StatusOK)
 		var resp domain.BulkIngestResponse
@@ -954,8 +954,8 @@ func TestDiscoveryOrgIngestCov(t *testing.T) {
 		if resp.AccountsCreated != 1 || resp.AccountsProcessed != 1 || resp.TotalResources != 1 {
 			t.Fatalf("unexpected response: %+v", resp)
 		}
-		if len(resp.Errors) != 1 || !strings.Contains(resp.Errors[0], "empty aws_account_id") {
-			t.Fatalf("expected an empty-account error, got %#v", resp.Errors)
+		if len(resp.Errors) != 1 || !strings.Contains(resp.Errors[0], "external_id is required") {
+			t.Fatalf("expected an external_id-required error, got %#v", resp.Errors)
 		}
 		acct, err := st.GetAccountByKey(t.Context(), "aws:111111111111")
 		if err != nil {
@@ -974,7 +974,7 @@ func TestDiscoveryOrgIngestCov(t *testing.T) {
 		if err != nil {
 			t.Fatalf("create sync job: %v", err)
 		}
-		body := `{"accounts":[{"aws_account_id":""}],"sync_job_id":"` + job.ID.String() + `"}`
+		body := `{"accounts":[{"provider":"aws","aws_account_id":""}],"sync_job_id":"` + job.ID.String() + `"}`
 		assertStatusCov(t, doReqCov(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/ingest/org", body), http.StatusOK)
 
 		got, err := ds.GetSyncJob(t.Context(), job.ID)
@@ -984,7 +984,7 @@ func TestDiscoveryOrgIngestCov(t *testing.T) {
 		if got.Status != domain.SyncJobStatusFailed {
 			t.Fatalf("status = %q, want failed", got.Status)
 		}
-		if !strings.Contains(got.ErrorMessage, "empty aws_account_id") {
+		if !strings.Contains(got.ErrorMessage, "external_id is required") {
 			t.Fatalf("error_message = %q", got.ErrorMessage)
 		}
 	})
@@ -997,7 +997,7 @@ func TestDiscoveryOrgIngestCov(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("upsert agent: %v", err)
 		}
-		body := `{"accounts":[{"aws_account_id":"222222222222"}],"agent_id":"` + agentID.String() + `"}`
+		body := `{"accounts":[{"provider":"aws","aws_account_id":"222222222222"}],"agent_id":"` + agentID.String() + `"}`
 		assertStatusCov(t, doReqCov(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/ingest/org", body), http.StatusOK)
 
 		agent, err := ds.GetAgent(t.Context(), agentID)
@@ -1010,7 +1010,7 @@ func TestDiscoveryOrgIngestCov(t *testing.T) {
 	})
 
 	t.Run("unknown agent id is tolerated", func(t *testing.T) {
-		body := `{"accounts":[{"aws_account_id":"333333333333"}],"agent_id":"` + uuid.New().String() + `"}`
+		body := `{"accounts":[{"provider":"aws","aws_account_id":"333333333333"}],"agent_id":"` + uuid.New().String() + `"}`
 		rr := assertStatusCov(t, doReqCov(t, discSrv.srv.mux, http.MethodPost, "/api/v1/discovery/ingest/org", body), http.StatusOK)
 		var resp domain.BulkIngestResponse
 		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {

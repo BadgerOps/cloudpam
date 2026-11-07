@@ -45,7 +45,15 @@ helm lint "$AGENT" -f "$AGENT/ci/full-values.yaml"
 render cloudpam "$SERVER" server-default
 render cloudpam "$SERVER" server-full -f "$SERVER/ci/full-values.yaml"
 render cloudpam-agent "$AGENT" agent-full -f "$AGENT/ci/full-values.yaml"
-render cloudpam-agent "$AGENT" agent-explicit --set config.accountId=1 --set config.agentName=cluster-a-discovery --set apiKey=x
+helm lint "$AGENT" -f "$AGENT/ci/gcp-org-values.yaml"
+render cloudpam-agent "$AGENT" agent-gcp-org -f "$AGENT/ci/gcp-org-values.yaml"
+grep -q 'provider: "gcp"' "$OUT/agent-gcp-org-configmap.yaml" || fail "gcp chart does not render provider gcp"
+grep -q 'parent: "organizations/123456789"' "$OUT/agent-gcp-org-configmap.yaml" || fail "gcp chart does not render gcp_org.parent"
+grep -q 'impersonate_service_account: "cloudpam-discovery@{project}.iam.gserviceaccount.com"' "$OUT/agent-gcp-org-configmap.yaml" ||
+	fail "gcp chart does not render the impersonation template"
+want_once GOOGLE_APPLICATION_CREDENTIALS "$OUT/agent-gcp-org-deployment.yaml"
+want_absent GOOGLE_APPLICATION_CREDENTIALS "$OUT/agent-full-deployment.yaml"
+render cloudpam-agent "$AGENT" agent-explicit --set config.accountId=1 --set config.agentName=cluster-a-discovery --set apiKey=x --set config.provider=aws
 
 render cloudpam "$SERVER" server-vector --set vector.enabled=true
 helm template cloudpam "$SERVER" --set vector.enabled=true -s templates/vector-configmap.yaml |
@@ -67,11 +75,42 @@ want_fail vector-own-network 'config.CLOUDPAM_AUDIT_SYSLOG_NETWORK is set by the
 want_fail vector-no-listener 'vector.config must keep a syslog source' \
 	--set vector.enabled=true --set-string 'vector.config=data_dir = "/var/lib/vector"'
 
-if helm template cloudpam-agent "$AGENT" --set apiKey=x >"$OUT/agent-missing-name.txt" 2>&1; then
+if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.provider=aws >"$OUT/agent-missing-name.txt" 2>&1; then
 	fail "agent chart renders without required config.agentName"
 elif ! grep -q 'config.agentName is required' "$OUT/agent-missing-name.txt"; then
 	fail "agent chart does not explain that config.agentName is required"
 fi
+if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.agentName=a >"$OUT/agent-missing-provider.txt" 2>&1; then
+	fail "agent chart renders without required config.provider"
+elif ! grep -q 'config.provider is required (aws or gcp)' "$OUT/agent-missing-provider.txt"; then
+	fail "agent chart does not explain that config.provider is required"
+fi
+agent_want_fail() {
+	local tag=$1 message=$2
+	shift 2
+	if helm template cloudpam-agent "$AGENT" --set apiKey=x --set config.agentName=a "$@" >"$OUT/$tag.txt" 2>&1; then
+		fail "agent chart renders with $* (want failure)"
+	elif ! grep -qF "$message" "$OUT/$tag.txt"; then
+		fail "agent chart with $* does not explain: $message"
+	fi
+}
+agent_want_fail agent-bad-provider 'config.provider is required (aws or gcp), got "azure"' \
+	--set config.provider=azure
+agent_want_fail agent-gcp-no-project 'config.gcpProject is required when config.provider is gcp and config.gcpOrg.enabled is false' \
+	--set config.provider=gcp
+agent_want_fail agent-gcp-org-no-parent 'config.gcpOrg.parent must be organizations/<id> or folders/<id>' \
+	--set config.provider=gcp --set config.gcpOrg.enabled=true
+agent_want_fail agent-gcp-org-null-parent 'config.gcpOrg.parent must be organizations/<id> or folders/<id> when config.gcpOrg.enabled, got ""' \
+	--set config.provider=gcp --set config.gcpOrg.enabled=true --set config.gcpOrg.parent=null
+agent_want_fail agent-gcp-org-bad-parent 'config.gcpOrg.parent must be organizations/<id> or folders/<id>' \
+	--set config.provider=gcp --set config.gcpOrg.enabled=true --set config.gcpOrg.parent=projects/123
+agent_want_fail agent-aws-org-on-gcp 'config.awsOrg.enabled requires config.provider aws' \
+	--set config.provider=gcp --set config.gcpProject=p --set config.awsOrg.enabled=true
+agent_want_fail agent-gcp-org-on-aws 'config.gcpOrg.enabled requires config.provider gcp' \
+	--set config.provider=aws --set config.gcpOrg.enabled=true --set config.gcpOrg.parent=organizations/1
+render cloudpam-agent "$AGENT" agent-gcp-project --set config.accountId=1 --set config.agentName=a --set apiKey=x \
+	--set config.provider=gcp --set config.gcpProject=net-prod
+grep -q '^    gcp_project: "net-prod"$' "$OUT/agent-gcp-project-configmap.yaml" || fail "gcp single-project chart does not render gcp_project"
 
 release="$(grep -m1 -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+' docs/CHANGELOG.md | sed 's/^## \[//')"
 for chart in "$SERVER" "$AGENT"; do

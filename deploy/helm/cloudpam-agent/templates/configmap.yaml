@@ -1,4 +1,12 @@
 {{- $agentName := required "config.agentName is required and must be unique for this CloudPAM server and account" (.Values.config.agentName | trim) -}}
+{{- $provider := required "config.provider is required (aws or gcp)" (.Values.config.provider | trim) -}}
+{{- if not (has $provider (list "aws" "gcp")) }}{{ fail (printf "config.provider is required (aws or gcp), got %q" $provider) }}{{ end -}}
+{{- $awsOrg := .Values.config.awsOrg.enabled -}}
+{{- $gcpOrg := .Values.config.gcpOrg.enabled -}}
+{{- if and $awsOrg (ne $provider "aws") }}{{ fail (printf "config.awsOrg.enabled requires config.provider aws (provider is %q)" $provider) }}{{ end -}}
+{{- if and $gcpOrg (ne $provider "gcp") }}{{ fail (printf "config.gcpOrg.enabled requires config.provider gcp (provider is %q)" $provider) }}{{ end -}}
+{{- if and (eq $provider "gcp") (not $gcpOrg) (not (.Values.config.gcpProject | trim)) }}{{ fail "config.gcpProject is required when config.provider is gcp and config.gcpOrg.enabled is false" }}{{ end -}}
+{{- if and $gcpOrg (not (regexMatch "^(organizations|folders)/[0-9]+$" (.Values.config.gcpOrg.parent | default "" | toString))) }}{{ fail (printf "config.gcpOrg.parent must be organizations/<id> or folders/<id> when config.gcpOrg.enabled, got %q" (.Values.config.gcpOrg.parent | default "" | toString)) }}{{ end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,6 +18,7 @@ data:
     server_url: {{ .Values.config.serverUrl | quote }}
     account_id: {{ .Values.config.accountId }}
     agent_name: {{ $agentName | quote }}
+    provider: {{ $provider | quote }}
     sync_interval: {{ .Values.config.syncInterval | quote }}
     heartbeat_interval: {{ .Values.config.heartbeatInterval | quote }}
     {{- if .Values.config.awsRegions }}
@@ -44,5 +53,37 @@ data:
         {{- range . }}
         - {{ . | quote }}
         {{- end }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.config.gcpProject }}
+    gcp_project: {{ . | quote }}
+    {{- end }}
+    {{- with .Values.config.gcpRegions }}
+    gcp_regions:
+      {{- range . }}
+      - {{ . | quote }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.config.discoveryGcpRps }}
+    discovery_gcp_rps: {{ . }}
+    {{- end }}
+    {{- if .Values.config.gcpOrg.enabled }}
+    gcp_org:
+      enabled: true
+      parent: {{ .Values.config.gcpOrg.parent | quote }}
+      {{- with .Values.config.gcpOrg.regions }}
+      regions:
+        {{- range . }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.config.gcpOrg.excludeProjects }}
+      exclude_projects:
+        {{- range . }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.config.gcpOrg.impersonateServiceAccount }}
+      impersonate_service_account: {{ . | quote }}
       {{- end }}
     {{- end }}

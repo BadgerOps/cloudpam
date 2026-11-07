@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -223,8 +225,15 @@ func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequ
 				"accounts_created", ingestResp.AccountsCreated,
 				"total_resources", ingestResp.TotalResources,
 			)
+			if ingestResp.AccountsProcessed == 0 && len(ingestResp.Errors) > 0 && len(req.Accounts) > 0 {
+				return orgIngestRejected(len(req.Accounts), ingestResp.Errors)
+			}
+			// A server before 0.25.0 ignores failures and would complete the job.
+			if len(req.Failures) > 0 && ingestResp.AccountsFailed != len(req.Failures) {
+				return fmt.Errorf("server did not acknowledge %d account failure(s); upgrade the CloudPAM server to 0.25.0 or later before upgrading agents", len(req.Failures))
+			}
 			if len(ingestResp.Errors) > 0 {
-				p.logger.Warn("org ingest had errors", "errors", ingestResp.Errors)
+				p.logger.Error("org ingest had errors", "errors", ingestResp.Errors)
 			}
 			return nil
 		}
@@ -247,14 +256,31 @@ func (p *Pusher) PushOrgResources(ctx context.Context, req domain.BulkIngestRequ
 	return fmt.Errorf("org push failed after %d attempts: %w", maxRetries+1, lastErr)
 }
 
-// Heartbeat sends a heartbeat to the server.
-func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, version, hostname string) (*domain.AgentHeartbeatResponse, error) {
+// orgIngestRejected reports a 2xx bulk ingest that processed none of the
+// accounts sent. A server older than 0.25.0 answers GCP entries this way,
+// because it requires aws_account_id on every entry.
+func orgIngestRejected(accounts int, errs []string) error {
+	msg := fmt.Sprintf("server accepted none of the %d accounts: %s", accounts, strings.Join(errs[:min(3, len(errs))], "; "))
+	for _, e := range errs {
+		// Matches the old server's "skipped account with empty aws_account_id".
+		if strings.Contains(e, "aws_account_id") {
+			msg += " (upgrade the CloudPAM server to 0.25.0 or later before GCP agents)"
+			break
+		}
+	}
+	return errors.New(msg)
+}
+
+// Heartbeat sends a heartbeat to the server. claimSync false asks the server
+// to keep any pending sync job for a later heartbeat.
+func (p *Pusher) Heartbeat(ctx context.Context, name string, accountID int64, version, hostname string, claimSync bool) (*domain.AgentHeartbeatResponse, error) {
 	req := domain.AgentHeartbeatRequest{
 		AgentID:   p.agentID,
 		Name:      name,
 		AccountID: accountID,
 		Version:   version,
 		Hostname:  hostname,
+		ClaimSync: &claimSync,
 	}
 
 	body, err := json.Marshal(req)

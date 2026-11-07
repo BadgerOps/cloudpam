@@ -4,28 +4,22 @@ import { useAgentProvisioning, useDiscoveryAgents } from '../hooks/useDiscovery'
 import { useAccounts } from '../hooks/useAccounts'
 import { useToast } from '../hooks/useToast'
 import ConnectivityBadge from './ConnectivityBadge'
-import {
-  hclHeredocShellQuote,
-  hclIdent,
-  hclQuote,
-  safeFilename,
-  shellQuote,
-  yamlQuote,
-} from '../utils/escape'
+import { safeFilename } from '../utils/escape'
 import type { Account, CreateAccountRequest, AgentProvisionResponse, DiscoveryAgent } from '../api/types'
+import {
+  GCP_PARENT_PATTERN,
+  availableTabs as tabsFor,
+  buildAgentConfigs,
+  gcpProjectFor,
+  resolveConfigTab,
+  splitList,
+  checkImpersonationTemplate,
+  type ConfigTab,
+  type DiscoveryMode,
+  type WizardProvider,
+} from './discoveryWizardConfig'
 
-export type ConfigTab = 'shell' | 'yaml' | 'terraform' | 'docker' | 'iam'
-type DiscoveryMode = 'single' | 'organization'
-
-/**
- * Resolves which config tab to render. The selection is kept in state, but the
- * set of available tabs depends on the discovery mode ('iam' is org-only), so a
- * stale selection must fall back instead of rendering a tab the strip no longer
- * offers.
- */
-export function resolveConfigTab(selected: ConfigTab, available: ConfigTab[]): ConfigTab {
-  return available.includes(selected) ? selected : available[0]
-}
+export { resolveConfigTab, type ConfigTab }
 
 interface DiscoveryWizardProps {
   accounts: Account[]
@@ -37,16 +31,13 @@ interface DiscoveryWizardProps {
 export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, onComplete }: DiscoveryWizardProps) {
   const [step, setStep] = useState(1)
   const [discoveryMode, setDiscoveryMode] = useState<DiscoveryMode>('single')
+  const [provider, setProvider] = useState<WizardProvider>('aws')
+  const providerAccounts = accounts.filter(a => a.provider === provider)
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(
-    accounts.length > 0 ? accounts[0].id : null,
+    accounts.find(a => a.provider === 'aws')?.id ?? null,
   )
   const [showNewAccount, setShowNewAccount] = useState(false)
-  const [newAccount, setNewAccount] = useState<CreateAccountRequest>({
-    key: '',
-    name: '',
-    provider: 'aws',
-    regions: [],
-  })
+  const [newAccount, setNewAccount] = useState<Pick<CreateAccountRequest, 'key' | 'name'>>({ key: '', name: '' })
   const [createdAccount, setCreatedAccount] = useState<Account | null>(null)
   const [regionsInput, setRegionsInput] = useState('')
   const [agentName, setAgentName] = useState('')
@@ -61,6 +52,13 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const [orgRegionsInput, setOrgRegionsInput] = useState('us-east-1, us-west-2')
   const [orgExcludeInput, setOrgExcludeInput] = useState('')
 
+  // GCP fields
+  const [gcpProjectInput, setGcpProjectInput] = useState('')
+  const [gcpOrgParent, setGcpOrgParent] = useState('')
+  const [gcpOrgRegionsInput, setGcpOrgRegionsInput] = useState('')
+  const [gcpOrgExcludeInput, setGcpOrgExcludeInput] = useState('')
+  const [gcpOrgImpersonate, setGcpOrgImpersonate] = useState('')
+
   // Agent status tracking
   const [connectedAgent, setConnectedAgent] = useState<DiscoveryAgent | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -70,7 +68,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const { agents, fetch: fetchAgents } = useDiscoveryAgents()
   const { showToast } = useToast()
 
-  const selectedAccount = accounts.find(a => a.id === selectedAccountId) ?? createdAccount
+  // A just-created account may not be in `accounts` until the parent refetches.
+  const selectedAccount = accounts.find(a => a.id === selectedAccountId) ??
+    (createdAccount?.id === selectedAccountId && createdAccount.provider === provider ? createdAccount : null)
 
   // Poll for agent connection when on step 3 with a provisioned agent
   useEffect(() => {
@@ -136,9 +136,9 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   async function handleCreateAccount() {
     try {
       const regions = regionsInput.split(',').map(r => r.trim()).filter(Boolean)
-      const account = await createAccount({ ...newAccount, regions })
+      const account = await createAccount({ ...newAccount, provider, regions })
       setCreatedAccount(account)
-      setSelectedAccountId(account.id)
+      selectAccount(account.id)
       setShowNewAccount(false)
       onAccountCreated()
       showToast(`Account "${account.name}" created`, 'success')
@@ -179,9 +179,20 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
     if (discoveryMode === 'single' && selectedAccount && !agentName) {
       setAgentName(`${selectedAccount.name.toLowerCase().replace(/\s+/g, '-')}-agent`)
     } else if (discoveryMode === 'organization' && !agentName) {
-      setAgentName('org-discovery-agent')
+      setAgentName(provider === 'gcp' ? 'gcp-org-discovery-agent' : 'org-discovery-agent')
     }
     handleNext()
+  }
+
+  // The project override belongs to one account, so it never survives a change of account.
+  function selectAccount(id: number | null) {
+    setSelectedAccountId(id)
+    setGcpProjectInput('')
+  }
+
+  function chooseProvider(next: WizardProvider) {
+    setProvider(next)
+    selectAccount(accounts.find(a => a.provider === next)?.id ?? null)
   }
 
   // Generate config content
@@ -192,192 +203,35 @@ export default function DiscoveryWizard({ accounts, onAccountCreated, onClose, o
   const serverUrl = provisionResult?.server_url ?? window.location.origin
   const isOrg = discoveryMode === 'organization'
 
-  const orgRegions = orgRegionsInput.split(',').map(r => r.trim()).filter(Boolean)
-  const orgExclude = orgExcludeInput.split(',').map(r => r.trim()).filter(Boolean)
-  const orgPrimaryRegion = orgRegions[0] ?? 'us-east-1'
+  const orgRegions = splitList(orgRegionsInput)
+  const orgExclude = splitList(orgExcludeInput)
 
-  // Single-account configs
-  const shellConfigSingle = `#!/bin/bash
-export CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)}
-export CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id"
-export CLOUDPAM_ACCOUNT_ID=${accountId}
-export CLOUDPAM_AWS_REGIONS=${shellQuote(accountRegions.join(','))}
-./cloudpam-agent`
+  const derivedGcpProject = gcpProjectFor(selectedAccount)
+  const gcpProject = gcpProjectInput.trim() || derivedGcpProject
+  const impersonateCheck = checkImpersonationTemplate(gcpOrgImpersonate)
+  const step1Valid = selectedAccount?.provider === provider && (
+    provider !== 'gcp' ||
+    (isOrg ? GCP_PARENT_PATTERN.test(gcpOrgParent) && impersonateCheck !== 'invalid' : gcpProject !== '')
+  )
 
-  const yamlConfigSingle = `server_url: ${yamlQuote(serverUrl)}
-bootstrap_token: ${yamlQuote(token)}
-agent_id_file: "/var/lib/cloudpam-agent/agent-id"
-account_id: ${accountId}
-agent_name: ${yamlQuote(agentNameFinal)}
-sync_interval: "15m"
-heartbeat_interval: "1m"
-aws_regions: [${accountRegions.map(yamlQuote).join(', ')}]`
-
-  // Org-mode configs
-  const shellConfigOrg = `#!/bin/bash
-export CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)}
-export CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id"
-export CLOUDPAM_ACCOUNT_ID=${accountId}
-export AWS_REGION=${shellQuote(orgPrimaryRegion)}
-export AWS_DEFAULT_REGION=${shellQuote(orgPrimaryRegion)}
-export CLOUDPAM_AWS_ORG_ENABLED=true
-export CLOUDPAM_AWS_ORG_ROLE_NAME=${shellQuote(orgRoleName)}${orgExternalId ? `
-export CLOUDPAM_AWS_ORG_EXTERNAL_ID=${shellQuote(orgExternalId)}` : ''}
-export CLOUDPAM_AWS_ORG_REGIONS=${shellQuote(orgRegions.join(','))}${orgExclude.length > 0 ? `
-export CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${shellQuote(orgExclude.join(','))}` : ''}
-./cloudpam-agent`
-
-  const yamlConfigOrg = `server_url: ${yamlQuote(serverUrl)}
-bootstrap_token: ${yamlQuote(token)}
-agent_id_file: "/var/lib/cloudpam-agent/agent-id"
-account_id: ${accountId}
-agent_name: ${yamlQuote(agentNameFinal)}
-sync_interval: "15m"
-heartbeat_interval: "1m"
-aws_org:
-  enabled: true
-  role_name: ${yamlQuote(orgRoleName)}${orgExternalId ? `
-  external_id: ${yamlQuote(orgExternalId)}` : ''}
-  regions: [${orgRegions.map(yamlQuote).join(', ')}]${orgExclude.length > 0 ? `
-  exclude_accounts: [${orgExclude.map(yamlQuote).join(', ')}]` : ''}`
-
-  const terraformConfigSingle = `variable "cloudpam_bootstrap_token" {
-  default   = ${hclQuote(token)}
-  sensitive = true
-}
-
-resource "null_resource" "cloudpam_agent" {
-  provisioner "local-exec" {
-    command = <<-EOT
-      CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
-      CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
-      CLOUDPAM_ACCOUNT_ID=${accountId} \\
-      CLOUDPAM_AWS_REGIONS=${hclHeredocShellQuote(accountRegions.join(','))} \\
-      ./cloudpam-agent
-    EOT
-  }
-}`
-
-  const terraformConfigOrg = `variable "cloudpam_bootstrap_token" {
-  default   = ${hclQuote(token)}
-  sensitive = true
-}
-
-resource "null_resource" "cloudpam_agent" {
-  provisioner "local-exec" {
-    command = <<-EOT
-      CLOUDPAM_BOOTSTRAP_TOKEN=\${var.cloudpam_bootstrap_token} \\
-      CLOUDPAM_AGENT_ID_FILE=/var/lib/cloudpam-agent/agent-id \\
-      CLOUDPAM_ACCOUNT_ID=${accountId} \\
-      AWS_REGION=${hclHeredocShellQuote(orgPrimaryRegion)} \\
-      AWS_DEFAULT_REGION=${hclHeredocShellQuote(orgPrimaryRegion)} \\
-      CLOUDPAM_AWS_ORG_ENABLED=true \\
-      CLOUDPAM_AWS_ORG_ROLE_NAME=${hclHeredocShellQuote(orgRoleName)} \\${orgExternalId ? `
-      CLOUDPAM_AWS_ORG_EXTERNAL_ID=${hclHeredocShellQuote(orgExternalId)} \\` : ''}
-      CLOUDPAM_AWS_ORG_REGIONS=${hclHeredocShellQuote(orgRegions.join(','))} \\${orgExclude.length > 0 ? `
-      CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${hclHeredocShellQuote(orgExclude.join(','))} \\` : ''}
-      ./cloudpam-agent
-    EOT
-  }
-}`
-
-  const dockerConfigSingle = `docker run -d \\
-  --name cloudpam-agent \\
-  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\
-  -e CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)} \\
-  -e CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id" \\
-  -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
-  -e CLOUDPAM_AWS_REGIONS=${shellQuote(accountRegions.join(','))} \\
-  ghcr.io/badgerops/cloudpam/agent:latest`
-
-  const dockerConfigOrg = `docker run -d \\
-  --name cloudpam-agent \\
-  -v /var/lib/cloudpam-agent:/var/lib/cloudpam-agent \\
-  -e CLOUDPAM_BOOTSTRAP_TOKEN=${shellQuote(token)} \\
-  -e CLOUDPAM_AGENT_ID_FILE="/var/lib/cloudpam-agent/agent-id" \\
-  -e CLOUDPAM_ACCOUNT_ID=${accountId} \\
-  -e AWS_REGION=${shellQuote(orgPrimaryRegion)} \\
-  -e AWS_DEFAULT_REGION=${shellQuote(orgPrimaryRegion)} \\
-  -e CLOUDPAM_AWS_ORG_ENABLED=true \\
-  -e CLOUDPAM_AWS_ORG_ROLE_NAME=${shellQuote(orgRoleName)} \\${orgExternalId ? `
-  -e CLOUDPAM_AWS_ORG_EXTERNAL_ID=${shellQuote(orgExternalId)} \\` : ''}
-  -e CLOUDPAM_AWS_ORG_REGIONS=${shellQuote(orgRegions.join(','))} \\${orgExclude.length > 0 ? `
-  -e CLOUDPAM_AWS_ORG_EXCLUDE_ACCOUNTS=${shellQuote(orgExclude.join(','))} \\` : ''}
-  ghcr.io/badgerops/cloudpam/agent:latest`
-
-  const orgRoleIdent = hclIdent(orgRoleName, 'cloudpam_discovery_role')
-
-  const iamSetupContent = `# IAM Setup for AWS Organizations Discovery
-#
-# 1. Deploy the member role to all accounts via CloudFormation StackSet
-#    or Terraform (deploy/terraform/aws-org-discovery/member-role/)
-#
-# 2. Attach the management policy to the agent's IAM role
-#    (deploy/terraform/aws-org-discovery/management-policy/)
-
-# --- Member Account Role (Terraform) ---
-# Deploy to each member account:
-
-resource "aws_iam_role" "${orgRoleIdent}" {
-  name = ${hclQuote(orgRoleName)}
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { AWS = "arn:aws:iam::<MANAGEMENT_ACCOUNT_ID>:root" }
-      Action    = "sts:AssumeRole"${orgExternalId ? `
-      Condition = { StringEquals = { "sts:ExternalId" = ${hclQuote(orgExternalId)} } }` : ''}
-    }]
+  const generated = buildAgentConfigs({
+    provider,
+    mode: discoveryMode,
+    token,
+    serverUrl,
+    agentName: agentNameFinal,
+    accountId,
+    accountRegions,
+    awsOrg: { roleName: orgRoleName, externalId: orgExternalId, regions: orgRegions, exclude: orgExclude },
+    gcpProject,
+    gcpOrg: {
+      parent: gcpOrgParent,
+      regions: splitList(gcpOrgRegionsInput),
+      exclude: splitList(gcpOrgExcludeInput),
+      impersonateServiceAccount: gcpOrgImpersonate,
+    },
   })
-}
-
-resource "aws_iam_role_policy" "discovery" {
-  role = aws_iam_role.${orgRoleIdent}.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = [
-        "ec2:DescribeVpcs",
-        "ec2:DescribeSubnets",
-        "ec2:DescribeAddresses"
-      ]
-      Resource = "*"
-    }]
-  })
-}
-
-# --- Management Account Policy ---
-# Attach to the IAM role running the CloudPAM agent:
-
-resource "aws_iam_policy" "cloudpam_org" {
-  name = "CloudPAMOrgDiscoveryPolicy"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["organizations:ListAccounts", "organizations:DescribeOrganization"]
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = "sts:AssumeRole"
-        Resource = ${hclQuote(`arn:aws:iam::*:role/${orgRoleName}`)}
-      }
-    ]
-  })
-}`
-
-  const shellConfig = isOrg ? shellConfigOrg : shellConfigSingle
-  const yamlConfig = isOrg ? yamlConfigOrg : yamlConfigSingle
-  const terraformConfig = isOrg ? terraformConfigOrg : terraformConfigSingle
-  const dockerConfig = isOrg ? dockerConfigOrg : dockerConfigSingle
-
-  const availableTabs: ConfigTab[] = isOrg
-    ? ['shell', 'yaml', 'terraform', 'docker', 'iam']
-    : ['shell', 'yaml', 'terraform', 'docker']
+  const availableTabs = tabsFor(provider, discoveryMode)
 
   // The selected tab is derived rather than trusted: 'iam' only exists in org
   // mode, so switching back to single-account mode would otherwise keep
@@ -386,15 +240,18 @@ resource "aws_iam_policy" "cloudpam_org" {
 
   const filenameStem = safeFilename(agentNameFinal)
 
-  const configs: Record<ConfigTab, { content: string; filename: string; label: string }> = {
-    shell: { content: shellConfig, filename: `${filenameStem}.sh`, label: 'Shell' },
-    yaml: { content: yamlConfig, filename: `${filenameStem}.yaml`, label: 'YAML' },
-    terraform: { content: terraformConfig, filename: `${filenameStem}.tf`, label: 'Terraform' },
-    docker: { content: dockerConfig, filename: `${filenameStem}-docker.sh`, label: 'Docker' },
-    iam: { content: iamSetupContent, filename: `${filenameStem}-iam.tf`, label: 'IAM Setup' },
+  const tabMeta: Record<ConfigTab, { filename: string; label: string }> = {
+    shell: { filename: `${filenameStem}.sh`, label: 'Shell' },
+    yaml: { filename: `${filenameStem}.yaml`, label: 'YAML' },
+    terraform: { filename: `${filenameStem}.tf`, label: 'Terraform' },
+    docker: { filename: `${filenameStem}-docker.sh`, label: 'Docker' },
+    iam: { filename: provider === 'gcp' ? `${filenameStem}-iam.sh` : `${filenameStem}-iam.tf`, label: 'IAM Setup' },
   }
+  const configs = Object.fromEntries(
+    availableTabs.map(tab => [tab, { content: generated[tab] ?? '', ...tabMeta[tab] }]),
+  ) as Record<ConfigTab, { content: string; filename: string; label: string }>
 
-  const canGoNext = (step === 1 && selectedAccountId !== null) ||
+  const canGoNext = (step === 1 && step1Valid) ||
     (step === 2 && provisionResult !== null)
 
   return (
@@ -432,6 +289,30 @@ resource "aws_iam_policy" "cloudpam_org" {
           {/* Step 1: Select Mode & Account */}
           {step === 1 && (
             <div className="space-y-4">
+              <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Cloud Provider</h3>
+              <div className="flex gap-3" role="radiogroup" aria-label="Cloud provider">
+                {(['aws', 'gcp'] as const).map(p => (
+                  <label
+                    key={p}
+                    className={`flex-1 cursor-pointer rounded-lg border-2 p-3 text-sm font-medium transition-colors ${
+                      provider === p
+                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-400 text-gray-900 dark:text-gray-100'
+                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500 text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="provider"
+                      value={p}
+                      checked={provider === p}
+                      onChange={() => chooseProvider(p)}
+                      className="sr-only"
+                    />
+                    {p.toUpperCase()}
+                  </label>
+                ))}
+              </div>
+
               <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Discovery Mode</h3>
 
               {/* Mode toggle */}
@@ -449,9 +330,9 @@ resource "aws_iam_policy" "cloudpam_org" {
                     onChange={() => setDiscoveryMode('single')}
                     className="sr-only"
                   />
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Single Account</div>
+                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{provider === 'gcp' ? 'Single Project' : 'Single Account'}</div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Discover resources in one AWS account
+                    {provider === 'gcp' ? 'Discover networks in one GCP project' : 'Discover resources in one AWS account'}
                   </div>
                 </label>
                 <label className={`flex-1 cursor-pointer rounded-lg border-2 p-3 transition-colors ${
@@ -467,9 +348,9 @@ resource "aws_iam_policy" "cloudpam_org" {
                     onChange={() => setDiscoveryMode('organization')}
                     className="sr-only"
                   />
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">AWS Organization</div>
+                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{provider === 'gcp' ? 'GCP Organization or Folder' : 'AWS Organization'}</div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Discover across all member accounts via AssumeRole
+                    {provider === 'gcp' ? 'Discover every active project under an organization or folder' : 'Discover across all member accounts via AssumeRole'}
                   </div>
                 </label>
               </div>
@@ -478,22 +359,39 @@ resource "aws_iam_policy" "cloudpam_org" {
               {(discoveryMode === 'single' || discoveryMode === 'organization') && (
                 <div className="space-y-3">
                   <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                    {discoveryMode === 'organization' ? 'Select Management Account' : 'Select Cloud Account'}
+                    {discoveryMode === 'organization'
+                      ? (provider === 'gcp' ? 'Select the Account This Agent Reports As' : 'Select Management Account')
+                      : (provider === 'gcp' ? 'Select GCP Project Account' : 'Select Cloud Account')}
                   </h4>
                   {!showNewAccount ? (
                     <>
                       <select
                         value={selectedAccountId ?? ''}
-                        onChange={e => setSelectedAccountId(Number(e.target.value))}
+                        onChange={e => selectAccount(Number(e.target.value))}
                         className="w-full px-3 py-2 border dark:border-gray-600 rounded-lg text-sm dark:bg-gray-700 dark:text-gray-100"
                       >
                         <option value="" disabled>Choose an account...</option>
-                        {accounts.map(a => (
+                        {providerAccounts.map(a => (
                           <option key={a.id} value={a.id}>
                             {a.name} ({a.provider || 'unknown'})
                           </option>
                         ))}
                       </select>
+                      {provider === 'gcp' && discoveryMode === 'single' && selectedAccount && (
+                        <div>
+                          <label htmlFor="gcp-project" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">GCP project ID</label>
+                          <input
+                            id="gcp-project"
+                            value={gcpProjectInput}
+                            onChange={e => setGcpProjectInput(e.target.value)}
+                            placeholder={derivedGcpProject || 'my-project-123'}
+                            className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                          />
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Defaults to the account&apos;s external ID, else its key without <code>gcp:</code>.
+                          </p>
+                        </div>
+                      )}
                       {selectedAccount?.provider && (
                         <div className="flex flex-col gap-1 text-xs text-gray-500 dark:text-gray-400">
                           <span className="font-medium text-gray-700 dark:text-gray-300">Server connectivity</span>
@@ -513,41 +411,41 @@ resource "aws_iam_policy" "cloudpam_org" {
                       <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">New Account</h4>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Key</label>
+                          <label htmlFor="new-account-key" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Key</label>
                           <input
+                            id="new-account-key"
                             value={newAccount.key}
                             onChange={e => setNewAccount(prev => ({ ...prev, key: e.target.value }))}
-                            placeholder="aws-prod"
+                            placeholder={provider === 'gcp' ? 'gcp:my-project' : 'aws-prod'}
                             className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Name</label>
+                          <label htmlFor="new-account-name" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Name</label>
                           <input
+                            id="new-account-name"
                             value={newAccount.name}
                             onChange={e => setNewAccount(prev => ({ ...prev, name: e.target.value }))}
-                            placeholder="AWS Production"
+                            placeholder={provider === 'gcp' ? 'GCP Production' : 'AWS Production'}
                             className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Provider</label>
-                          <select
-                            value={newAccount.provider}
-                            onChange={e => setNewAccount(prev => ({ ...prev, provider: e.target.value }))}
-                            className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                          <span className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Provider</span>
+                          <span
+                            data-testid="new-account-provider"
+                            className="block px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300"
                           >
-                            <option value="aws">AWS</option>
-                            <option value="gcp">GCP</option>
-                            <option value="azure">Azure</option>
-                          </select>
+                            {provider.toUpperCase()}
+                          </span>
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Regions (comma-separated)</label>
+                          <label htmlFor="new-account-regions" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Regions (comma-separated)</label>
                           <input
+                            id="new-account-regions"
                             value={regionsInput}
                             onChange={e => setRegionsInput(e.target.value)}
-                            placeholder="us-east-1, us-west-2"
+                            placeholder={provider === 'gcp' ? 'us-central1, europe-west1' : 'us-east-1, us-west-2'}
                             className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
                           />
                         </div>
@@ -573,7 +471,7 @@ resource "aws_iam_policy" "cloudpam_org" {
               )}
 
               {/* Organization mode */}
-              {discoveryMode === 'organization' && (
+              {discoveryMode === 'organization' && provider === 'aws' && (
                 <div className="space-y-3">
                   <p className="text-sm text-gray-500 dark:text-gray-400">
                     The agent will run in the management account and discover resources across all member accounts
@@ -620,6 +518,75 @@ resource "aws_iam_policy" "cloudpam_org" {
                   </div>
                 </div>
               )}
+
+              {discoveryMode === 'organization' && provider === 'gcp' && (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    The agent lists every active project under the organization or folder and discovers each one.
+                    Projects are auto-created in CloudPAM as <code className="text-xs bg-gray-100 dark:bg-gray-700 px-1 rounded">gcp:&lt;project&gt;</code> accounts.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label htmlFor="gcp-org-parent" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Organization or folder</label>
+                      <input
+                        id="gcp-org-parent"
+                        value={gcpOrgParent}
+                        onChange={e => setGcpOrgParent(e.target.value.trim())}
+                        placeholder="organizations/123456789 or folders/987654321"
+                        className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                      />
+                      {gcpOrgParent && !GCP_PARENT_PATTERN.test(gcpOrgParent) && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">Use organizations/&lt;id&gt; or folders/&lt;id&gt;.</p>
+                      )}
+                    </div>
+                    <div>
+                      <label htmlFor="gcp-org-regions" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Regions (optional, comma-separated)</label>
+                      <input
+                        id="gcp-org-regions"
+                        value={gcpOrgRegionsInput}
+                        onChange={e => setGcpOrgRegionsInput(e.target.value)}
+                        placeholder="us-central1, europe-west1"
+                        className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="gcp-org-exclude" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Exclude projects (optional)</label>
+                      <input
+                        id="gcp-org-exclude"
+                        value={gcpOrgExcludeInput}
+                        onChange={e => setGcpOrgExcludeInput(e.target.value)}
+                        placeholder="sandbox-project, legacy-project"
+                        className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label htmlFor="gcp-org-impersonate" className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Impersonate service account (optional)</label>
+                      <input
+                        id="gcp-org-impersonate"
+                        value={gcpOrgImpersonate}
+                        onChange={e => setGcpOrgImpersonate(e.target.value.trim())}
+                        placeholder="cloudpam-discovery@{project}.iam.gserviceaccount.com"
+                        className="w-full px-3 py-1.5 border dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-gray-100"
+                      />
+                      {impersonateCheck === 'invalid' && (
+                        <p className="mt-1 text-xs text-red-600 dark:text-red-400">
+                          Use a service account email. The part before @ must be 6 to 30 lowercase letters, digits or hyphens,
+                          starting with a letter.
+                        </p>
+                      )}
+                      {impersonateCheck === 'long' && (
+                        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                          A long project ID can make the part before @ longer than 30 characters, which GCP rejects for those projects.
+                        </p>
+                      )}
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Empty: the agent reads every project as itself, through grants on the organization or folder.
+                        Set: it impersonates this account in each project; <code>{'{project}'}</code> becomes the project ID.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -629,7 +596,7 @@ resource "aws_iam_policy" "cloudpam_org" {
               <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Provision Agent</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 {isOrg
-                  ? 'Create a discovery agent for your AWS Organization. This generates a bootstrap token and API key.'
+                  ? `Create a discovery agent for your ${provider === 'gcp' ? 'GCP organization or folder' : 'AWS Organization'}. This generates a bootstrap token and API key.`
                   : <>Create a discovery agent for <strong>{selectedAccount?.name}</strong>. This generates a bootstrap token and API key.</>
                 }
               </p>
@@ -704,7 +671,9 @@ resource "aws_iam_policy" "cloudpam_org" {
               <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Deployment Configuration</h3>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Choose a deployment method and use the generated configuration to start the agent.
-                {isOrg && ' The "IAM Setup" tab shows the Terraform snippet for member role and management policy.'}
+                {provider === 'gcp'
+                  ? ' The "IAM Setup" tab shows the gcloud commands that grant the agent read access.'
+                  : isOrg && ' The "IAM Setup" tab shows the Terraform snippet for member role and management policy.'}
               </p>
 
               {/* Tabs */}

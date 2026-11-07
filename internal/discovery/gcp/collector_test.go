@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/oauth2"
 
 	"cloudpam/internal/discovery"
 	"cloudpam/internal/domain"
@@ -545,5 +548,47 @@ func TestDiscover_OmitsErrorBody(t *testing.T) {
 	}
 	if !strings.Contains(msg, "http 403") || strings.Contains(msg, "xxxx") {
 		t.Fatalf("error %q lacks status or includes provider body", msg)
+	}
+}
+
+func TestSetRequestTimeoutBoundsAStalledComputeCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewWithHTTPClient(&http.Client{Transport: &rewriteTransport{baseURL: srv.URL}})
+	c.SetRequestTimeout(100 * time.Millisecond)
+
+	start := time.Now()
+	_, err := c.Discover(t.Context(), domain.Account{ID: 1, ExternalID: "p"})
+	if err == nil {
+		t.Fatal("Discover() = nil error, want the stalled calls to time out")
+	}
+	// Three listings, each bounded by the 100ms timeout.
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("elapsed = %s, want about 300ms", elapsed)
+	}
+}
+
+func TestTokenSourceCollectorKeepsTheInjectedClientTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := NewWithTokenSource(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "t"}))
+	c.httpClient = &http.Client{Transport: &rewriteTransport{baseURL: srv.URL}, Timeout: 100 * time.Millisecond}
+
+	start := time.Now()
+	if _, err := c.Discover(t.Context(), domain.Account{ID: 1, ExternalID: "p"}); err == nil {
+		t.Fatal("Discover() = nil error, want the injected client's timeout to fail the stalled calls")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("elapsed = %s, want the injected 100ms timeout kept with no request timeout set", elapsed)
 	}
 }
